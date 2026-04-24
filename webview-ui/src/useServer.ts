@@ -38,6 +38,7 @@ export interface AgentInfo {
   avatar: string;
   color: string;
   isDefault: boolean;
+  busy?: boolean;
 }
 
 export interface Workspace {
@@ -194,6 +195,35 @@ export function useServer() {
               messages: w.messages.map((m) => (m.id === messageId ? { ...m, status, content } : m)),
             };
           }),
+        );
+        break;
+      }
+
+      case "agent_busy": {
+        const wsId = msg.workspaceId as string;
+        const agentId = msg.agentId as string;
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === wsId
+              ? { ...w, agents: w.agents.map((a) => (a.id === agentId ? { ...a, busy: true } : a)) }
+              : w,
+          ),
+        );
+        break;
+      }
+
+      case "agent_idle": {
+        const wsId = msg.workspaceId as string;
+        const agentId = msg.agentId as string;
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === wsId
+              ? {
+                  ...w,
+                  agents: w.agents.map((a) => (a.id === agentId ? { ...a, busy: false } : a)),
+                }
+              : w,
+          ),
         );
         break;
       }

@@ -465,12 +465,32 @@ export function App() {
   const [visibleCount, setVisibleCount] = useState(30);
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
+  const seenCountRef = useRef<Record<string, number>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draggingRef = useRef(false);
 
+  const sortedWorkspaces = [...workspaces].sort((a, b) => {
+    const aTime = a.messages.length > 0 ? a.messages[a.messages.length - 1].timestamp : a.createdAt;
+    const bTime = b.messages.length > 0 ? b.messages[b.messages.length - 1].timestamp : b.createdAt;
+    return bTime - aTime;
+  });
   const activeWs = workspaces.find((w) => w.id === activeWsId);
+
+  useEffect(() => {
+    for (const ws of workspaces) {
+      if (!(ws.id in seenCountRef.current)) {
+        seenCountRef.current[ws.id] = ws.messages.length;
+      }
+    }
+  }, [workspaces]);
+
+  useEffect(() => {
+    if (activeWsId && activeWs) {
+      seenCountRef.current[activeWsId] = activeWs.messages.length;
+    }
+  }, [activeWsId, activeWs?.messages.length]);
 
   interface SearchResult {
     wsId: string;
@@ -525,8 +545,8 @@ export function App() {
   );
 
   useEffect(() => {
-    if (!activeWsId && workspaces.length > 0) setActiveWsId(workspaces[0].id);
-  }, [workspaces, activeWsId]);
+    if (!activeWsId && sortedWorkspaces.length > 0) setActiveWsId(sortedWorkspaces[0].id);
+  }, [sortedWorkspaces, activeWsId]);
 
   useEffect(() => {
     setVisibleCount(30);
@@ -547,7 +567,10 @@ export function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeWs?.messages]);
 
-  const isAnyRunning = activeWs?.messages.some((m) => m.status === "streaming") ?? false;
+  const isAnyRunning =
+    activeWs?.agents.some((a) => a.busy) ||
+    activeWs?.messages.some((m) => m.status === "streaming") ||
+    false;
   const hasAgents = (activeWs?.agents.length ?? 0) > 0;
 
   const onResizeStart = useCallback(
@@ -780,11 +803,16 @@ export function App() {
           </div>
         ) : (
           <div className="task-list">
-            {workspaces.map((ws) => {
-              const streamingMsgs = ws.messages.filter((m) => m.status === "streaming");
-              const activeAgentIds = new Set(streamingMsgs.map((m) => m.agentId).filter(Boolean));
-              const activeAgents = ws.agents.filter((a) => activeAgentIds.has(a.id));
-              const running = streamingMsgs.length > 0;
+            {sortedWorkspaces.map((ws) => {
+              const streamingAgentIds = new Set(
+                ws.messages
+                  .filter((m) => m.status === "streaming")
+                  .map((m) => m.agentId)
+                  .filter(Boolean),
+              );
+              const activeAgents = ws.agents.filter((a) => a.busy || streamingAgentIds.has(a.id));
+              const running = activeAgents.length > 0;
+              const unread = ws.messages.length - (seenCountRef.current[ws.id] ?? 0);
               return (
                 <div
                   key={ws.id}
@@ -793,7 +821,12 @@ export function App() {
                 >
                   <div className={`task-status ${running ? "running" : "idle"}`} />
                   <div className="task-info">
-                    <div className="task-name">{ws.name}</div>
+                    <div className="task-name">
+                      {ws.name}
+                      {unread > 0 && ws.id !== activeWsId && (
+                        <span className="unread-badge">{unread}</span>
+                      )}
+                    </div>
                     <div className="task-project">{ws.project}</div>
                     {activeAgents.length > 0 && (
                       <div className="task-active-agents">
@@ -839,22 +872,33 @@ export function App() {
                   {activeWs.name} — {activeWs.project}
                 </span>
                 <div className="panel-agents">
-                  {activeWs.agents.map((agent) => (
-                    <div
-                      key={agent.id}
-                      className="panel-agent"
-                      title={`${agent.name} (${agent.model})`}
-                    >
-                      <AgentAvatar agent={agent} size={22} />
-                      <span>{agent.name}</span>
-                      <button
-                        className="agent-remove"
-                        onClick={() => removeAgent(activeWs.id, agent.id)}
+                  {activeWs.agents.map((agent) => {
+                    const hasStreaming = activeWs.messages.some(
+                      (m) => m.agentId === agent.id && m.status === "streaming",
+                    );
+                    const status =
+                      agent.busy || hasStreaming ? "busy" : connected ? "online" : "offline";
+                    return (
+                      <div
+                        key={agent.id}
+                        className="panel-agent"
+                        title={`${agent.name} (${agent.model})`}
                       >
-                        x
-                      </button>
-                    </div>
-                  ))}
+                        <AgentAvatar agent={agent} size={22} />
+                        <span className={`agent-status-dot agent-status-${status}`} />
+                        <span>{agent.name}</span>
+                        <span className={`agent-status-label agent-status-${status}`}>
+                          {status === "busy" ? "working" : status}
+                        </span>
+                        <button
+                          className="agent-remove"
+                          onClick={() => removeAgent(activeWs.id, agent.id)}
+                        >
+                          x
+                        </button>
+                      </div>
+                    );
+                  })}
                   <button className="btn-add-agent" onClick={() => setShowAddAgent(true)}>
                     + Agent
                   </button>

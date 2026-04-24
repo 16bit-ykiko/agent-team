@@ -429,6 +429,12 @@ export class Server {
         });
         this.persistWorkspace(wsId);
       },
+      onAgentBusy: (wsId, agentId) => {
+        this.broadcastUI({ type: "agent_busy", workspaceId: wsId, agentId });
+      },
+      onAgentIdle: (wsId, agentId) => {
+        this.broadcastUI({ type: "agent_idle", workspaceId: wsId, agentId });
+      },
     };
   }
 

@@ -58,6 +58,8 @@ export interface WorkspaceCallbacks {
   onNewMessage: (wsId: string, msg: Message) => void;
   onStreamEvent: (wsId: string, msg: Message, event: StreamEvent) => void;
   onMessageDone: (wsId: string, msgId: string, status: MessageStatus, content: string) => void;
+  onAgentBusy?: (wsId: string, agentId: string) => void;
+  onAgentIdle?: (wsId: string, agentId: string) => void;
 }
 
 export class Workspace {
@@ -219,6 +221,7 @@ export class Workspace {
     };
 
     agent.session.on("event", eventHandler);
+    this.cb?.onAgentBusy?.(this.id, agent.info.id);
 
     try {
       await agent.session.send(cleanContent);
@@ -234,6 +237,7 @@ export class Workspace {
       }
     } finally {
       agent.session.off("event", eventHandler);
+      this.cb?.onAgentIdle?.(this.id, agent.info.id);
       if (!textFinalized) {
         this.cb?.onMessageDone(this.id, currentMsg.id, currentMsg.status, currentMsg.content);
       }
@@ -269,7 +273,10 @@ export class Workspace {
       project: this.project,
       cwd: this.cwd,
       gitBranch: this.getGitBranch(),
-      agents: [...this.agents.values()].map((a) => a.info),
+      agents: [...this.agents.values()].map((a) => ({
+        ...a.info,
+        busy: a.session.isRunning,
+      })),
       messages: this.messages,
       createdAt: this.createdAt,
     };
@@ -296,6 +303,7 @@ export class Workspace {
     ws.messages = state.messages.map((m) => ({
       ...m,
       kind: m.kind ?? (m.agentId === null ? "user" : "agent"),
+      status: m.status === "streaming" ? "done" : m.status,
     }));
 
     for (const agentState of state.agents) {

@@ -238,6 +238,23 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.unread-badge {
+  flex-shrink: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
 }
 
 .task-project {
@@ -483,6 +500,43 @@ body {
   font-style: italic;
   font-size: 12px;
   animation: pulse 2s infinite;
+}
+
+.agent-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.agent-status-dot.agent-status-online {
+  background: var(--success, #3ba55d);
+}
+
+.agent-status-dot.agent-status-offline {
+  background: var(--error, #ed4245);
+}
+
+.agent-status-dot.agent-status-busy {
+  background: var(--accent, #5865f2);
+  animation: pulse 1.5s infinite;
+}
+
+.agent-status-label {
+  font-size: 10px;
+  margin-right: 2px;
+}
+
+.agent-status-label.agent-status-online {
+  color: var(--success, #3ba55d);
+}
+
+.agent-status-label.agent-status-offline {
+  color: var(--error, #ed4245);
+}
+
+.agent-status-label.agent-status-busy {
+  color: var(--accent, #5865f2);
 }
 
 .message-content {
