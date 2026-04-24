@@ -2,6 +2,7 @@ import * as http from "http";
 import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
+import { exec } from "child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { Workspace, WorkspaceCallbacks } from "./task";
 import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } from "./state";
@@ -32,11 +33,15 @@ export class Server {
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private prevCpuIdle = 0;
   private prevCpuTotal = 0;
+  private readonly isWSL: boolean;
+  private windowsHost: { memTotal: number; memFree: number; osName: string } | null = null;
+  private windowsHostUpdating = false;
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
     this.webDir = webDir;
     this.config = loadConfig(baseDir);
+    this.isWSL = this.detectWSL();
 
     this.httpServer = http.createServer((req, res) => this.handleHttp(req, res));
     this.wss = new WebSocketServer({ server: this.httpServer });
@@ -44,11 +49,40 @@ export class Server {
 
     this.restoreState();
     this.initCpuBaseline();
+    if (this.isWSL) this.refreshWindowsHost();
     this.statusTimer = setInterval(() => this.broadcastSystemStatus(), 3000);
 
     this.httpServer.listen(port, "0.0.0.0", () => {
       console.log(`Agent Team server listening on http://0.0.0.0:${port}`);
+      if (this.isWSL) console.log("WSL detected — reporting Windows host memory");
     });
+  }
+
+  private detectWSL(): boolean {
+    try {
+      return /microsoft|wsl/i.test(fs.readFileSync("/proc/version", "utf-8"));
+    } catch {
+      return false;
+    }
+  }
+
+  private refreshWindowsHost(): void {
+    if (this.windowsHostUpdating) return;
+    this.windowsHostUpdating = true;
+    exec(
+      "wmic.exe OS get Caption,FreePhysicalMemory,TotalVisibleMemorySize /value",
+      { encoding: "utf-8", timeout: 8000 },
+      (err, stdout) => {
+        this.windowsHostUpdating = false;
+        if (err || !stdout) return;
+        const totalKB = parseInt(stdout.match(/TotalVisibleMemorySize=(\d+)/)?.[1] ?? "0");
+        const freeKB = parseInt(stdout.match(/FreePhysicalMemory=(\d+)/)?.[1] ?? "0");
+        const caption = stdout.match(/Caption=(.+)/)?.[1]?.trim() ?? "Windows";
+        if (totalKB > 0) {
+          this.windowsHost = { memTotal: totalKB * 1024, memFree: freeKB * 1024, osName: caption };
+        }
+      },
+    );
   }
 
   private initCpuBaseline(): void {
@@ -75,18 +109,22 @@ export class Server {
     this.prevCpuIdle = idle;
     this.prevCpuTotal = total;
 
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
+    const wh = this.windowsHost;
+    const memTotal = wh ? wh.memTotal : os.totalmem();
+    const memUsed = wh ? wh.memTotal - wh.memFree : os.totalmem() - os.freemem();
+    const osName = wh ? wh.osName : `${os.type()} ${os.release()}`;
+
+    if (this.isWSL) this.refreshWindowsHost();
 
     return {
       type: "system_status",
-      osName: `${os.type()} ${os.release()}`,
+      osName,
       osArch: os.arch(),
       cpuModel: cpus[0]?.model ?? "Unknown",
       cpuCores: cpus.length,
       cpuUsage,
-      memTotal: totalMem,
-      memUsed: totalMem - freeMem,
+      memTotal,
+      memUsed,
       uptime: os.uptime(),
       hostname: os.hostname(),
     };
