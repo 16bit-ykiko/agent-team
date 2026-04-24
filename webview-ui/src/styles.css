@@ -548,7 +548,12 @@ body {
 }
 
 .event-content pre {
-  margin: 2px 0 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin: 4px 0;
+  overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: inherit;
@@ -848,6 +853,16 @@ body {
 
 .btn-secondary:hover {
   background: var(--bg-hover);
+}
+
+/* ---- Load more ---- */
+
+.load-more-hint {
+  padding: 6px 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
 }
 
 /* ---- Workspace info bar ---- */

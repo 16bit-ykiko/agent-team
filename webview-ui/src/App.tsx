@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, memo } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -183,8 +183,8 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
   );
 }
 
-function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
-  const [eventsOpen, setEventsOpen] = useState(true);
+const MessageItem = memo(function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
+  const [eventsOpen, setEventsOpen] = useState(msg.status === "streaming");
 
   if (msg.kind === "system") {
     return (
@@ -289,7 +289,7 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
       </div>
     </div>
   );
-}
+});
 
 function formatBytes(bytes: number): string {
   const gb = bytes / (1024 * 1024 * 1024);
@@ -386,7 +386,9 @@ export function App() {
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(260);
+  const [visibleCount, setVisibleCount] = useState(30);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draggingRef = useRef(false);
 
@@ -395,6 +397,18 @@ export function App() {
   useEffect(() => {
     if (!activeWsId && workspaces.length > 0) setActiveWsId(workspaces[0].id);
   }, [workspaces, activeWsId]);
+
+  useEffect(() => {
+    setVisibleCount(30);
+  }, [activeWsId]);
+
+  const onMessagesScroll = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    if (el.scrollTop < 80) {
+      setVisibleCount((v) => v + 30);
+    }
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -595,16 +609,32 @@ export function App() {
               </div>
             </div>
 
-            <div className="messages">
-              {activeWs.messages.length === 0 && activeWs.agents.length === 0 && (
-                <div className="empty-state">Add an agent to get started.</div>
-              )}
-              {activeWs.messages.length === 0 && activeWs.agents.length > 0 && (
-                <div className="empty-state">Send a message to start working.</div>
-              )}
-              {activeWs.messages.map((msg) => (
-                <MessageItem key={msg.id} msg={msg} agents={activeWs.agents} />
-              ))}
+            <div className="messages" ref={messagesContainerRef} onScroll={onMessagesScroll}>
+              {(() => {
+                const msgs = activeWs.messages;
+                const total = msgs.length;
+                if (total === 0) {
+                  return (
+                    <div className="empty-state">
+                      {activeWs.agents.length === 0
+                        ? "Add an agent to get started."
+                        : "Send a message to start working."}
+                    </div>
+                  );
+                }
+                const startIdx = Math.max(0, total - visibleCount);
+                const visible = msgs.slice(startIdx);
+                return (
+                  <>
+                    {startIdx > 0 && (
+                      <div className="load-more-hint">{startIdx} earlier messages</div>
+                    )}
+                    {visible.map((msg) => (
+                      <MessageItem key={msg.id} msg={msg} agents={activeWs.agents} />
+                    ))}
+                  </>
+                );
+              })()}
               <div ref={messagesEndRef} />
             </div>
 
