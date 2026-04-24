@@ -1,163 +1,252 @@
 import { ClaudeSession, SessionConfig, StreamEvent, SessionState } from "./session";
 
+export type MessageStatus = "streaming" | "done" | "error";
+
 export interface Message {
   id: string;
-  role: "user" | "planner" | "coder" | "reviewer" | "validator" | "system";
+  agentId: string | null; // null = user
   content: string;
   timestamp: number;
+  status: MessageStatus;
   events?: StreamEvent[];
 }
 
-export type TaskStatus = "idle" | "running" | "done" | "failed";
+export interface AgentInfo {
+  id: string;
+  name: string;
+  model: string;
+  avatar: string;
+  color: string;
+  isDefault: boolean;
+}
 
-export interface TaskInfo {
+export interface AgentState extends AgentInfo {
+  session: SessionState;
+}
+
+export interface WorkspaceInfo {
   id: string;
   name: string;
   project: string;
   cwd: string;
-  status: TaskStatus;
+  agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
 }
 
-export interface TaskState {
+export interface WorkspaceState {
   id: string;
   name: string;
   project: string;
   cwd: string;
-  status: TaskStatus;
+  agents: AgentState[];
   messages: Message[];
   createdAt: number;
-  sessions: Record<string, SessionState>;
 }
 
-export class Task {
+export interface AgentEntry {
+  info: AgentInfo;
+  session: ClaudeSession;
+}
+
+export interface WorkspaceCallbacks {
+  onNewMessage: (wsId: string, msg: Message) => void;
+  onStreamEvent: (wsId: string, msg: Message, event: StreamEvent) => void;
+  onMessageDone: (wsId: string, msgId: string, status: MessageStatus, content: string) => void;
+}
+
+export class Workspace {
   id: string;
   name: string;
   project: string;
   cwd: string;
-  status: TaskStatus = "idle";
+  agents = new Map<string, AgentEntry>();
   messages: Message[] = [];
   createdAt: number;
-  sessions: Map<string, ClaudeSession> = new Map();
 
-  private onEvent?: (taskId: string, msg: Message, event: StreamEvent) => void;
+  private cb?: WorkspaceCallbacks;
 
   constructor(
     id: string,
     name: string,
     project: string,
     cwd: string,
-    agentConfigs: Record<string, SessionConfig>,
-    onEvent?: (taskId: string, msg: Message, event: StreamEvent) => void,
+    cb?: WorkspaceCallbacks,
   ) {
     this.id = id;
     this.name = name;
     this.project = project;
     this.cwd = cwd;
     this.createdAt = Date.now();
-    this.onEvent = onEvent;
-
-    for (const [role, config] of Object.entries(agentConfigs)) {
-      const session = new ClaudeSession({ ...config, cwd });
-      this.sessions.set(role, session);
-    }
+    this.cb = cb;
   }
 
-  async sendToAgent(role: string, content: string, userMessage?: Message): Promise<Message> {
-    const session = this.sessions.get(role);
-    if (!session) throw new Error(`No session for role: ${role}`);
+  addAgent(name: string, model: string, avatar: string, color: string, config: Partial<SessionConfig>): AgentInfo {
+    const id = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const isDefault = this.agents.size === 0;
 
-    if (userMessage) {
-      this.messages.push(userMessage);
+    const info: AgentInfo = { id, name, model, avatar, color, isDefault };
+    const session = new ClaudeSession({
+      cwd: this.cwd,
+      model,
+      ...config,
+    });
+
+    this.agents.set(id, { info, session });
+    return info;
+  }
+
+  removeAgent(agentId: string): boolean {
+    const entry = this.agents.get(agentId);
+    if (!entry) return false;
+
+    entry.session.abort();
+    this.agents.delete(agentId);
+
+    if (entry.info.isDefault && this.agents.size > 0) {
+      const first = this.agents.values().next().value!;
+      first.info.isDefault = true;
     }
 
+    return true;
+  }
+
+  setDefaultAgent(agentId: string): boolean {
+    const entry = this.agents.get(agentId);
+    if (!entry) return false;
+
+    for (const a of this.agents.values()) {
+      a.info.isDefault = a.info.id === agentId;
+    }
+    return true;
+  }
+
+  resolveAgent(target?: string): AgentEntry | null {
+    if (target) {
+      for (const entry of this.agents.values()) {
+        if (entry.info.id === target || entry.info.name === target) {
+          return entry;
+        }
+      }
+      return null;
+    }
+    for (const entry of this.agents.values()) {
+      if (entry.info.isDefault) return entry;
+    }
+    return null;
+  }
+
+  async sendMessage(content: string, target?: string): Promise<void> {
+    const agent = this.resolveAgent(target);
+    if (!agent) throw new Error(target ? `Agent not found: ${target}` : "No default agent");
+    if (agent.session.isRunning) throw new Error(`Agent ${agent.info.name} is busy`);
+
+    const userMsg: Message = {
+      id: genId("msg"),
+      agentId: null,
+      content,
+      timestamp: Date.now(),
+      status: "done",
+    };
+    this.messages.push(userMsg);
+    this.cb?.onNewMessage(this.id, userMsg);
+
     const agentMsg: Message = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      role: role as Message["role"],
+      id: genId("msg"),
+      agentId: agent.info.id,
       content: "",
       timestamp: Date.now(),
+      status: "streaming",
       events: [],
     };
     this.messages.push(agentMsg);
-
-    this.status = "running";
+    this.cb?.onNewMessage(this.id, agentMsg);
 
     const eventHandler = (event: StreamEvent) => {
       agentMsg.events!.push(event);
-      if (event.kind === "text" || event.kind === "result") {
-        agentMsg.content += event.content;
+      if (event.kind === "text") {
+        agentMsg.content = event.content;
       }
-      this.onEvent?.(this.id, agentMsg, event);
+      this.cb?.onStreamEvent(this.id, agentMsg, event);
     };
 
-    session.on("event", eventHandler);
+    agent.session.on("event", eventHandler);
 
     try {
-      await session.send(content);
-      this.status = "idle";
+      await agent.session.send(content);
+      agentMsg.status = "done";
     } catch {
-      this.status = "failed";
+      agentMsg.status = "error";
     } finally {
-      session.off("event", eventHandler);
+      agent.session.off("event", eventHandler);
+      this.cb?.onMessageDone(this.id, agentMsg.id, agentMsg.status, agentMsg.content);
     }
-
-    return agentMsg;
   }
 
-  abortAgent(role: string): void {
-    const session = this.sessions.get(role);
-    if (session) session.abort();
+  abortAgent(agentId: string): void {
+    this.agents.get(agentId)?.session.abort();
   }
 
   abortAll(): void {
-    for (const session of this.sessions.values()) {
-      session.abort();
+    for (const entry of this.agents.values()) {
+      entry.session.abort();
     }
   }
 
-  getInfo(): TaskInfo {
+  getInfo(): WorkspaceInfo {
     return {
       id: this.id,
       name: this.name,
       project: this.project,
       cwd: this.cwd,
-      status: this.status,
+      agents: [...this.agents.values()].map((a) => a.info),
       messages: this.messages,
       createdAt: this.createdAt,
     };
   }
 
-  getState(): TaskState {
-    const sessions: Record<string, SessionState> = {};
-    for (const [role, session] of this.sessions) {
-      sessions[role] = session.getState();
-    }
+  getState(): WorkspaceState {
     return {
       id: this.id,
       name: this.name,
       project: this.project,
       cwd: this.cwd,
-      status: this.status === "running" ? "idle" : this.status,
-      messages: this.messages,
+      agents: [...this.agents.values()].map((a) => ({
+        ...a.info,
+        session: a.session.getState(),
+      })),
+      messages: this.messages.map((m) => ({ ...m, events: undefined })),
       createdAt: this.createdAt,
-      sessions,
     };
   }
 
   static fromState(
-    state: TaskState,
-    onEvent?: (taskId: string, msg: Message, event: StreamEvent) => void,
-  ): Task {
-    const task = new Task(state.id, state.name, state.project, state.cwd, {}, onEvent);
-    task.status = state.status;
-    task.messages = state.messages;
-    task.createdAt = state.createdAt;
+    state: WorkspaceState,
+    cb?: WorkspaceCallbacks,
+  ): Workspace {
+    const ws = new Workspace(state.id, state.name, state.project, state.cwd, cb);
+    ws.createdAt = state.createdAt;
+    ws.messages = state.messages;
 
-    for (const [role, sessionState] of Object.entries(state.sessions)) {
-      task.sessions.set(role, ClaudeSession.fromState(sessionState));
+    for (const agentState of state.agents) {
+      const session = ClaudeSession.fromState(agentState.session);
+      ws.agents.set(agentState.id, {
+        info: {
+          id: agentState.id,
+          name: agentState.name,
+          model: agentState.model,
+          avatar: agentState.avatar,
+          color: agentState.color,
+          isDefault: agentState.isDefault,
+        },
+        session,
+      });
     }
 
-    return task;
+    return ws;
   }
+}
+
+function genId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }

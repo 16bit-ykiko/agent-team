@@ -33,11 +33,7 @@ export interface SessionConfig {
 
 export interface SessionState {
   sessionId: string | null;
-  cwd: string;
-  model?: string;
-  effort?: string;
-  permissionMode?: string;
-  systemPrompt?: string;
+  config: SessionConfig;
   usage: UsageStats;
 }
 
@@ -55,6 +51,7 @@ const TIMEOUT_MS = 600_000;
 
 export class ClaudeSession extends EventEmitter {
   sessionId: string | null = null;
+  config: SessionConfig;
   usage: UsageStats = {
     input_tokens: 0,
     output_tokens: 0,
@@ -64,7 +61,6 @@ export class ClaudeSession extends EventEmitter {
     duration_ms: 0,
   };
 
-  private config: SessionConfig;
   private proc: ChildProcess | null = null;
   private busy = false;
 
@@ -107,23 +103,13 @@ export class ClaudeSession extends EventEmitter {
   getState(): SessionState {
     return {
       sessionId: this.sessionId,
-      cwd: this.config.cwd,
-      model: this.config.model,
-      effort: this.config.effort,
-      permissionMode: this.config.permissionMode,
-      systemPrompt: this.config.systemPrompt,
+      config: { ...this.config },
       usage: { ...this.usage },
     };
   }
 
   static fromState(state: SessionState): ClaudeSession {
-    const session = new ClaudeSession({
-      cwd: state.cwd,
-      model: state.model,
-      effort: state.effort,
-      permissionMode: state.permissionMode,
-      systemPrompt: state.systemPrompt,
-    });
+    const session = new ClaudeSession(state.config);
     session.sessionId = state.sessionId;
     session.usage = { ...state.usage };
     return session;
@@ -263,11 +249,8 @@ function parseStreamEvent(obj: Record<string, unknown>): StreamEvent | null {
     return parseAssistantEvent(obj);
   }
 
+  // "result" only signals completion — don't emit text (already streamed via "assistant")
   if (type === "result") {
-    const text = extractResultText(obj);
-    if (text) {
-      return { kind: "result", content: text, raw: obj };
-    }
     return null;
   }
 
@@ -360,24 +343,4 @@ function formatToolUse(block: Record<string, unknown>): string {
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max) + "...";
-}
-
-function extractResultText(obj: Record<string, unknown>): string | null {
-  const result = obj.result as string | undefined;
-  if (result) return result;
-
-  const message = obj.message as Record<string, unknown> | undefined;
-  if (!message) return null;
-
-  const content = message.content;
-  if (!Array.isArray(content)) return null;
-
-  const texts: string[] = [];
-  for (const block of content) {
-    const b = block as Record<string, unknown>;
-    if (b.type === "text" && typeof b.text === "string") {
-      texts.push(b.text);
-    }
-  }
-  return texts.length > 0 ? texts.join("\n") : null;
 }

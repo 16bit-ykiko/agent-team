@@ -7,107 +7,120 @@ export interface StreamEvent {
 
 export interface Message {
   id: string;
-  role: "user" | "planner" | "coder" | "reviewer" | "validator" | "system";
+  agentId: string | null;
   content: string;
   timestamp: number;
+  status: "streaming" | "done" | "error";
   events?: StreamEvent[];
 }
 
-export interface Task {
+export interface AgentInfo {
+  id: string;
+  name: string;
+  model: string;
+  avatar: string;
+  color: string;
+  isDefault: boolean;
+}
+
+export interface Workspace {
   id: string;
   name: string;
   project: string;
   cwd: string;
-  status: "idle" | "running" | "done" | "failed";
+  agents: AgentInfo[];
   messages: Message[];
+  createdAt: number;
+}
+
+export interface AgentPreset {
+  name: string;
+  avatar: string;
+  color: string;
+}
+
+export interface ModelOption {
+  id: string;
+  label: string;
 }
 
 declare const window: Window & { __AGENT_TEAM_PORT__?: number };
 
 export function useServer() {
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [connected, setConnected] = useState(false);
+  const [presets, setPresets] = useState<AgentPreset[]>([]);
+  const [models, setModels] = useState<ModelOption[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const connect = useCallback(() => {
-    const port = window.__AGENT_TEAM_PORT__ ?? 9800;
-    const ws = new WebSocket(`ws://localhost:${port}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setConnected(true);
-      ws.send(JSON.stringify({ type: "get_config" }));
-    };
-
-    ws.onclose = () => {
-      setConnected(false);
-      wsRef.current = null;
-      reconnectRef.current = setTimeout(connect, 2000);
-    };
-
-    ws.onerror = () => {
-      ws.close();
-    };
-
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      handleServerMessage(msg);
-    };
-  }, []);
-
-  useEffect(() => {
-    connect();
-    return () => {
-      clearTimeout(reconnectRef.current);
-      wsRef.current?.close();
-    };
-  }, [connect]);
-
   const handleServerMessage = useCallback((msg: Record<string, unknown>) => {
     switch (msg.type) {
-      case "tasks":
-        setTasks(msg.tasks as Task[]);
+      case "init": {
+        setWorkspaces(msg.workspaces as Workspace[]);
+        const config = msg.config as { projects: Record<string, string>; presets: AgentPreset[]; models: ModelOption[] };
+        setProjects(Object.keys(config.projects));
+        setPresets(config.presets);
+        setModels(config.models);
+        break;
+      }
+
+      case "workspace_created":
+        setWorkspaces((prev) => [...prev, msg.workspace as Workspace]);
         break;
 
-      case "task_created":
-        setTasks((prev) => [...prev, msg.task as Task]);
+      case "workspace_deleted":
+        setWorkspaces((prev) => prev.filter((w) => w.id !== msg.workspaceId));
         break;
 
-      case "task_deleted":
-        setTasks((prev) => prev.filter((t) => t.id !== msg.taskId));
+      case "agent_added": {
+        const wsId = msg.workspaceId as string;
+        const agent = msg.agent as AgentInfo;
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === wsId ? { ...w, agents: [...w.agents, agent] } : w,
+          ),
+        );
         break;
+      }
 
-      case "message": {
-        const taskId = msg.taskId as string;
+      case "agent_removed": {
+        const wsId = msg.workspaceId as string;
+        const agentId = msg.agentId as string;
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === wsId ? { ...w, agents: w.agents.filter((a) => a.id !== agentId) } : w,
+          ),
+        );
+        break;
+      }
+
+      case "new_message": {
+        const wsId = msg.workspaceId as string;
         const message = msg.message as Message;
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === taskId
-              ? { ...t, messages: [...t.messages, message] }
-              : t,
+        setWorkspaces((prev) =>
+          prev.map((w) =>
+            w.id === wsId ? { ...w, messages: [...w.messages, message] } : w,
           ),
         );
         break;
       }
 
       case "stream_event": {
-        const taskId = msg.taskId as string;
+        const wsId = msg.workspaceId as string;
         const messageId = msg.messageId as string;
         const event = msg.event as StreamEvent;
-        setTasks((prev) =>
-          prev.map((t) => {
-            if (t.id !== taskId) return t;
+        setWorkspaces((prev) =>
+          prev.map((w) => {
+            if (w.id !== wsId) return w;
             return {
-              ...t,
-              messages: t.messages.map((m) => {
+              ...w,
+              messages: w.messages.map((m) => {
                 if (m.id !== messageId) return m;
-                const updated = { ...m, events: [...(m.events ?? []), event] };
-                if (event.kind === "text" || event.kind === "result") {
-                  updated.content = (m.content ?? "") + event.content;
-                }
-                return updated;
+                const events = [...(m.events ?? []), event];
+                const content = event.kind === "text" ? event.content : m.content;
+                return { ...m, events, content };
               }),
             };
           }),
@@ -115,18 +128,22 @@ export function useServer() {
         break;
       }
 
-      case "task_status": {
-        const taskId = msg.taskId as string;
-        const status = msg.status as Task["status"];
-        setTasks((prev) =>
-          prev.map((t) => (t.id === taskId ? { ...t, status } : t)),
+      case "message_done": {
+        const wsId = msg.workspaceId as string;
+        const messageId = msg.messageId as string;
+        const status = msg.status as Message["status"];
+        const content = msg.content as string;
+        setWorkspaces((prev) =>
+          prev.map((w) => {
+            if (w.id !== wsId) return w;
+            return {
+              ...w,
+              messages: w.messages.map((m) =>
+                m.id === messageId ? { ...m, status, content } : m,
+              ),
+            };
+          }),
         );
-        break;
-      }
-
-      case "config": {
-        const config = msg.config as { projects: Record<string, string> };
-        setProjects(Object.keys(config.projects));
         break;
       }
 
@@ -136,32 +153,52 @@ export function useServer() {
     }
   }, []);
 
+  const connect = useCallback(() => {
+    const port = window.__AGENT_TEAM_PORT__ ?? 9800;
+    const ws = new WebSocket(`ws://localhost:${port}`);
+    wsRef.current = ws;
+
+    ws.onopen = () => setConnected(true);
+    ws.onclose = () => {
+      setConnected(false);
+      wsRef.current = null;
+      reconnectRef.current = setTimeout(connect, 2000);
+    };
+    ws.onerror = () => ws.close();
+    ws.onmessage = (e) => handleServerMessage(JSON.parse(e.data));
+  }, [handleServerMessage]);
+
+  useEffect(() => {
+    connect();
+    return () => {
+      clearTimeout(reconnectRef.current);
+      wsRef.current?.close();
+    };
+  }, [connect]);
+
   const send = useCallback((data: unknown) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(data));
     }
   }, []);
 
-  const createTask = useCallback(
-    (name: string, project: string) => {
-      send({ type: "create_task", name, project });
-    },
-    [send],
-  );
-
-  const sendMessage = useCallback(
-    (taskId: string, content: string, role?: string) => {
-      send({ type: "send_message", taskId, content, role });
-    },
-    [send],
-  );
-
-  const deleteTask = useCallback(
-    (taskId: string) => {
-      send({ type: "delete_task", taskId });
-    },
-    [send],
-  );
-
-  return { tasks, connected, projects, createTask, sendMessage, deleteTask };
+  return {
+    workspaces,
+    connected,
+    presets,
+    models,
+    projects,
+    createWorkspace: useCallback((name: string, project: string) =>
+      send({ type: "create_workspace", name, project }), [send]),
+    deleteWorkspace: useCallback((id: string) =>
+      send({ type: "delete_workspace", workspaceId: id }), [send]),
+    addAgent: useCallback((wsId: string, name: string, model: string, avatar: string, color: string) =>
+      send({ type: "add_agent", workspaceId: wsId, name, model, avatar, color }), [send]),
+    removeAgent: useCallback((wsId: string, agentId: string) =>
+      send({ type: "remove_agent", workspaceId: wsId, agentId }), [send]),
+    sendMessage: useCallback((wsId: string, content: string, target?: string) =>
+      send({ type: "send_message", workspaceId: wsId, content, target }), [send]),
+    abort: useCallback((wsId: string, agentId?: string) =>
+      send({ type: "abort", workspaceId: wsId, agentId }), [send]),
+  };
 }
