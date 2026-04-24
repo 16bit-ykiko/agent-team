@@ -87,7 +87,11 @@ export class Server {
         break;
 
       case "send_message":
-        this.sendMessage(msg.workspaceId as string, msg.content as string, msg.target as string | undefined);
+        this.sendMessage(
+          msg.workspaceId as string,
+          msg.content as string,
+          msg.target as string | undefined,
+        );
         break;
 
       case "abort":
@@ -210,7 +214,13 @@ export class Server {
         this.broadcast({ type: "stream_event", workspaceId: wsId, messageId: agentMsg.id, event });
       },
       onMessageDone: (wsId, msgId, status, content) => {
-        this.broadcast({ type: "message_done", workspaceId: wsId, messageId: msgId, status, content });
+        this.broadcast({
+          type: "message_done",
+          workspaceId: wsId,
+          messageId: msgId,
+          status,
+          content,
+        });
         this.persistState();
       },
     };
@@ -232,5 +242,11 @@ const baseDir = process.env.AGENT_TEAM_BASE_DIR ?? process.cwd();
 
 const server = new Server(port, baseDir);
 
-process.on("SIGINT", () => { server.close(); process.exit(0); });
-process.on("SIGTERM", () => { server.close(); process.exit(0); });
+process.on("SIGINT", () => {
+  server.close();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  server.close();
+  process.exit(0);
+});

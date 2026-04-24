@@ -68,13 +68,7 @@ export class Workspace {
 
   private cb?: WorkspaceCallbacks;
 
-  constructor(
-    id: string,
-    name: string,
-    project: string,
-    cwd: string,
-    cb?: WorkspaceCallbacks,
-  ) {
+  constructor(id: string, name: string, project: string, cwd: string, cb?: WorkspaceCallbacks) {
     this.id = id;
     this.name = name;
     this.project = project;
@@ -96,7 +90,13 @@ export class Workspace {
     this.cb?.onNewMessage(this.id, msg);
   }
 
-  addAgent(name: string, model: string, avatar: string, color: string, config: Partial<SessionConfig>): AgentInfo {
+  addAgent(
+    name: string,
+    model: string,
+    avatar: string,
+    color: string,
+    config: Partial<SessionConfig>,
+  ): AgentInfo {
     const id = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const isDefault = this.agents.size === 0;
 
@@ -163,7 +163,8 @@ export class Workspace {
     }
 
     const agent = this.resolveAgent(resolvedTarget);
-    if (!agent) throw new Error(resolvedTarget ? `Agent not found: ${resolvedTarget}` : "No default agent");
+    if (!agent)
+      throw new Error(resolvedTarget ? `Agent not found: ${resolvedTarget}` : "No default agent");
     if (agent.session.isRunning) throw new Error(`Agent ${agent.info.name} is busy`);
 
     const userMsg: Message = {
@@ -247,10 +248,7 @@ export class Workspace {
     };
   }
 
-  static fromState(
-    state: WorkspaceState,
-    cb?: WorkspaceCallbacks,
-  ): Workspace {
+  static fromState(state: WorkspaceState, cb?: WorkspaceCallbacks): Workspace {
     const ws = new Workspace(state.id, state.name, state.project, state.cwd, cb);
     ws.createdAt = state.createdAt;
     ws.messages = state.messages.map((m) => ({

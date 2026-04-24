@@ -66,18 +66,11 @@ export function activate(context: vscode.ExtensionContext) {
         serverProc = startServer(context.extensionUri.fsPath);
       }
 
-      panel = vscode.window.createWebviewPanel(
-        "agent-team",
-        "Agent Team",
-        vscode.ViewColumn.One,
-        {
-          enableScripts: true,
-          retainContextWhenHidden: true,
-          localResourceRoots: [
-            vscode.Uri.joinPath(context.extensionUri, "dist", "webview"),
-          ],
-        },
-      );
+      panel = vscode.window.createWebviewPanel("agent-team", "Agent Team", vscode.ViewColumn.One, {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "dist", "webview")],
+      });
 
       panel.webview.html = getHtml(panel.webview, context.extensionUri);
 

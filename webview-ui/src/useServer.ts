@@ -60,7 +60,11 @@ export function useServer() {
     switch (msg.type) {
       case "init": {
         setWorkspaces(msg.workspaces as Workspace[]);
-        const config = msg.config as { projects: Record<string, string>; presets: AgentPreset[]; models: ModelOption[] };
+        const config = msg.config as {
+          projects: Record<string, string>;
+          presets: AgentPreset[];
+          models: ModelOption[];
+        };
         setProjects(Object.keys(config.projects));
         setPresets(config.presets);
         setModels(config.models);
@@ -79,9 +83,7 @@ export function useServer() {
         const wsId = msg.workspaceId as string;
         const agent = msg.agent as AgentInfo;
         setWorkspaces((prev) =>
-          prev.map((w) =>
-            w.id === wsId ? { ...w, agents: [...w.agents, agent] } : w,
-          ),
+          prev.map((w) => (w.id === wsId ? { ...w, agents: [...w.agents, agent] } : w)),
         );
         break;
       }
@@ -101,9 +103,7 @@ export function useServer() {
         const wsId = msg.workspaceId as string;
         const message = msg.message as Message;
         setWorkspaces((prev) =>
-          prev.map((w) =>
-            w.id === wsId ? { ...w, messages: [...w.messages, message] } : w,
-          ),
+          prev.map((w) => (w.id === wsId ? { ...w, messages: [...w.messages, message] } : w)),
         );
         break;
       }
@@ -139,9 +139,7 @@ export function useServer() {
             if (w.id !== wsId) return w;
             return {
               ...w,
-              messages: w.messages.map((m) =>
-                m.id === messageId ? { ...m, status, content } : m,
-              ),
+              messages: w.messages.map((m) => (m.id === messageId ? { ...m, status, content } : m)),
             };
           }),
         );
@@ -189,17 +187,31 @@ export function useServer() {
     presets,
     models,
     projects,
-    createWorkspace: useCallback((name: string, project: string) =>
-      send({ type: "create_workspace", name, project }), [send]),
-    deleteWorkspace: useCallback((id: string) =>
-      send({ type: "delete_workspace", workspaceId: id }), [send]),
-    addAgent: useCallback((wsId: string, name: string, model: string, avatar: string, color: string) =>
-      send({ type: "add_agent", workspaceId: wsId, name, model, avatar, color }), [send]),
-    removeAgent: useCallback((wsId: string, agentId: string) =>
-      send({ type: "remove_agent", workspaceId: wsId, agentId }), [send]),
-    sendMessage: useCallback((wsId: string, content: string, target?: string) =>
-      send({ type: "send_message", workspaceId: wsId, content, target }), [send]),
-    abort: useCallback((wsId: string, agentId?: string) =>
-      send({ type: "abort", workspaceId: wsId, agentId }), [send]),
+    createWorkspace: useCallback(
+      (name: string, project: string) => send({ type: "create_workspace", name, project }),
+      [send],
+    ),
+    deleteWorkspace: useCallback(
+      (id: string) => send({ type: "delete_workspace", workspaceId: id }),
+      [send],
+    ),
+    addAgent: useCallback(
+      (wsId: string, name: string, model: string, avatar: string, color: string) =>
+        send({ type: "add_agent", workspaceId: wsId, name, model, avatar, color }),
+      [send],
+    ),
+    removeAgent: useCallback(
+      (wsId: string, agentId: string) => send({ type: "remove_agent", workspaceId: wsId, agentId }),
+      [send],
+    ),
+    sendMessage: useCallback(
+      (wsId: string, content: string, target?: string) =>
+        send({ type: "send_message", workspaceId: wsId, content, target }),
+      [send],
+    ),
+    abort: useCallback(
+      (wsId: string, agentId?: string) => send({ type: "abort", workspaceId: wsId, agentId }),
+      [send],
+    ),
   };
 }

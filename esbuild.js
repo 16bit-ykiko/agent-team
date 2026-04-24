@@ -27,8 +27,8 @@ const builds = [
 ];
 
 if (watch) {
-  Promise.all(builds.map((b) => esbuild.context(b).then((ctx) => ctx.watch()))).then(
-    () => console.log("Watching for changes..."),
+  Promise.all(builds.map((b) => esbuild.context(b).then((ctx) => ctx.watch()))).then(() =>
+    console.log("Watching for changes..."),
   );
 } else {
   Promise.all(builds.map((b) => esbuild.build(b))).then(() =>

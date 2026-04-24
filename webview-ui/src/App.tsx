@@ -43,9 +43,15 @@ function AddAgentDialog({
             <div
               key={p.name}
               className={`preset-item ${i === selectedPreset ? "selected" : ""}`}
-              onClick={() => { setSelectedPreset(i); setCustomName(""); }}
+              onClick={() => {
+                setSelectedPreset(i);
+                setCustomName("");
+              }}
             >
-              <div className="agent-avatar" style={{ width: 36, height: 36, background: p.color, fontSize: 18 }}>
+              <div
+                className="agent-avatar"
+                style={{ width: 36, height: 36, background: p.color, fontSize: 18 }}
+              >
                 {p.avatar}
               </div>
               <span>{p.name}</span>
@@ -66,17 +72,24 @@ function AddAgentDialog({
           <span>Model</span>
           <select value={model} onChange={(e) => setModel(e.target.value)}>
             {models.map((m) => (
-              <option key={m.id} value={m.id}>{m.label}</option>
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
             ))}
           </select>
         </label>
 
         <div className="dialog-actions">
-          <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
           <button
             type="button"
             className="btn-primary"
-            onClick={() => { onAdd(finalName, model, preset?.avatar ?? "🤖", preset?.color ?? "#888"); onClose(); }}
+            onClick={() => {
+              onAdd(finalName, model, preset?.avatar ?? "🤖", preset?.color ?? "#888");
+              onClose();
+            }}
           >
             Add
           </button>
@@ -99,11 +112,16 @@ function CreateWorkspaceDialog({
   const [project, setProject] = useState(projects[0] ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim() && project) { onCreate(name.trim(), project); onClose(); }
+    if (name.trim() && project) {
+      onCreate(name.trim(), project);
+      onClose();
+    }
   };
 
   return (
@@ -112,17 +130,30 @@ function CreateWorkspaceDialog({
         <div className="dialog-title">New Workspace</div>
         <label className="dialog-field">
           <span>Name</span>
-          <input ref={inputRef} value={name} onChange={(e) => setName(e.target.value)} placeholder="Workspace name..." />
+          <input
+            ref={inputRef}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Workspace name..."
+          />
         </label>
         <label className="dialog-field">
           <span>Project</span>
           <select value={project} onChange={(e) => setProject(e.target.value)}>
-            {projects.map((p) => <option key={p} value={p}>{p}</option>)}
+            {projects.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
           </select>
         </label>
         <div className="dialog-actions">
-          <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn-primary" disabled={!name.trim()}>Create</button>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary" disabled={!name.trim()}>
+            Create
+          </button>
         </div>
       </form>
     </div>
@@ -139,7 +170,10 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
   const mentioned = agents.find((a) => a.name === mentionName);
   return (
     <>
-      <span className="mention-pill" style={mentioned ? { background: mentioned.color } : undefined}>
+      <span
+        className="mention-pill"
+        style={mentioned ? { background: mentioned.color } : undefined}
+      >
         @{mentionName}
       </span>
       {rest && <Markdown remarkPlugins={[remarkGfm]}>{rest}</Markdown>}
@@ -164,7 +198,9 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
   const events = msg.events ?? [];
   const detailEvents = events.filter((e) => e.kind !== "text");
   const thinkingCount = detailEvents.filter((e) => e.kind === "thinking").length;
-  const toolCount = detailEvents.filter((e) => e.kind === "tool_use" || e.kind === "tool_result").length;
+  const toolCount = detailEvents.filter(
+    (e) => e.kind === "tool_use" || e.kind === "tool_result",
+  ).length;
   const errorCount = detailEvents.filter((e) => e.kind === "error").length;
   const hasDetails = detailEvents.length > 0 || msg.status === "streaming";
 
@@ -174,7 +210,10 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
   if (errorCount > 0) summaryParts.push(`${errorCount} error(s)`);
   if (msg.status === "streaming" && summaryParts.length === 0) summaryParts.push("streaming...");
 
-  const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const time = new Date(msg.timestamp).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
   return (
     <div className="message">
@@ -193,8 +232,12 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
             <span className="message-author user-author">You</span>
           ) : agent ? (
             <>
-              <span className="message-author" style={{ color: agent.color }}>{agent.name}</span>
-              <span className="message-model">{agent.model.replace("claude-", "").replace(/-/g, " ")}</span>
+              <span className="message-author" style={{ color: agent.color }}>
+                {agent.name}
+              </span>
+              <span className="message-model">
+                {agent.model.replace("claude-", "").replace(/-/g, " ")}
+              </span>
             </>
           ) : null}
           <span className="message-time">{time}</span>
@@ -203,10 +246,7 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
 
         {hasDetails && (
           <div className="message-events">
-            <div
-              className="events-header"
-              onClick={() => setEventsOpen((v) => !v)}
-            >
+            <div className="events-header" onClick={() => setEventsOpen((v) => !v)}>
               <span className="events-toggle">{eventsOpen ? "▾" : "▸"}</span>
               <span>{summaryParts.join(" · ")}</span>
             </div>
@@ -235,7 +275,9 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
 
         {msg.content && (
           <div className="message-content">
-            {isUser ? renderMentionContent(msg.content, agents) : (
+            {isUser ? (
+              renderMentionContent(msg.content, agents)
+            ) : (
               <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
             )}
           </div>
@@ -247,8 +289,17 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
 
 export function App() {
   const {
-    workspaces, connected, presets, models, projects,
-    createWorkspace, deleteWorkspace, addAgent, removeAgent, sendMessage, abort,
+    workspaces,
+    connected,
+    presets,
+    models,
+    projects,
+    createWorkspace,
+    deleteWorkspace,
+    addAgent,
+    removeAgent,
+    sendMessage,
+    abort,
   } = useServer();
 
   const [activeWsId, setActiveWsId] = useState<string | null>(null);
@@ -274,46 +325,53 @@ export function App() {
 
   const isAnyRunning = activeWs?.messages.some((m) => m.status === "streaming") ?? false;
 
-  const onResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    draggingRef.current = true;
-    const startX = e.clientX;
-    const startW = sidebarWidth;
+  const onResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      draggingRef.current = true;
+      const startX = e.clientX;
+      const startW = sidebarWidth;
 
-    const onMove = (ev: MouseEvent) => {
-      if (!draggingRef.current) return;
-      const w = Math.max(150, Math.min(500, startW + ev.clientX - startX));
-      setSidebarWidth(w);
-    };
+      const onMove = (ev: MouseEvent) => {
+        if (!draggingRef.current) return;
+        const w = Math.max(150, Math.min(500, startW + ev.clientX - startX));
+        setSidebarWidth(w);
+      };
 
-    const onUp = () => {
-      draggingRef.current = false;
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
+      const onUp = () => {
+        draggingRef.current = false;
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
 
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, [sidebarWidth]);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    },
+    [sidebarWidth],
+  );
 
-  const mentionAgents = activeWs?.agents.filter((a) => {
-    if (mentionQuery === null) return false;
-    if (mentionQuery === "") return true;
-    return a.name.toLowerCase().startsWith(mentionQuery.toLowerCase());
-  }) ?? [];
+  const mentionAgents =
+    activeWs?.agents.filter((a) => {
+      if (mentionQuery === null) return false;
+      if (mentionQuery === "") return true;
+      return a.name.toLowerCase().startsWith(mentionQuery.toLowerCase());
+    }) ?? [];
 
-  const applyMention = useCallback((agentName: string) => {
-    const atIdx = input.lastIndexOf("@");
-    if (atIdx !== -1) {
-      setInput(input.slice(0, atIdx) + `@${agentName} `);
-    }
-    setMentionQuery(null);
-    textareaRef.current?.focus();
-  }, [input]);
+  const applyMention = useCallback(
+    (agentName: string) => {
+      const atIdx = input.lastIndexOf("@");
+      if (atIdx !== -1) {
+        setInput(input.slice(0, atIdx) + `@${agentName} `);
+      }
+      setMentionQuery(null);
+      textareaRef.current?.focus();
+    },
+    [input],
+  );
 
   const handleSend = useCallback(() => {
     const text = input.trim();
@@ -347,7 +405,10 @@ export function App() {
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
   };
 
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -374,7 +435,9 @@ export function App() {
       <div className="sidebar" style={{ width: sidebarWidth }}>
         <div className="sidebar-header">
           <span>Workspaces {!connected && <span className="disconnected">(offline)</span>}</span>
-          <button title="New workspace" onClick={() => setShowCreate(true)}>+</button>
+          <button title="New workspace" onClick={() => setShowCreate(true)}>
+            +
+          </button>
         </div>
         <div className="task-list">
           {workspaces.map((ws) => {
@@ -390,11 +453,17 @@ export function App() {
                   <div className="task-name">{ws.name}</div>
                   <div className="task-project">{ws.project}</div>
                 </div>
-                <button className="task-delete" title="Delete" onClick={(e) => {
-                  e.stopPropagation();
-                  deleteWorkspace(ws.id);
-                  if (activeWsId === ws.id) setActiveWsId(null);
-                }}>x</button>
+                <button
+                  className="task-delete"
+                  title="Delete"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteWorkspace(ws.id);
+                    if (activeWsId === ws.id) setActiveWsId(null);
+                  }}
+                >
+                  x
+                </button>
               </div>
             );
           })}
@@ -407,29 +476,38 @@ export function App() {
         {activeWs ? (
           <>
             <div className="panel-header">
-              <span className="panel-title">{activeWs.name} — {activeWs.project}</span>
+              <span className="panel-title">
+                {activeWs.name} — {activeWs.project}
+              </span>
               <div className="panel-agents">
                 {activeWs.agents.map((agent) => (
-                  <div key={agent.id} className="panel-agent" title={`${agent.name} (${agent.model})`}>
+                  <div
+                    key={agent.id}
+                    className="panel-agent"
+                    title={`${agent.name} (${agent.model})`}
+                  >
                     <AgentAvatar agent={agent} size={22} />
                     <span>{agent.name}</span>
-                    <button className="agent-remove" onClick={() => removeAgent(activeWs.id, agent.id)}>x</button>
+                    <button
+                      className="agent-remove"
+                      onClick={() => removeAgent(activeWs.id, agent.id)}
+                    >
+                      x
+                    </button>
                   </div>
                 ))}
-                <button className="btn-add-agent" onClick={() => setShowAddAgent(true)}>+ Agent</button>
+                <button className="btn-add-agent" onClick={() => setShowAddAgent(true)}>
+                  + Agent
+                </button>
               </div>
             </div>
 
             <div className="messages">
               {activeWs.messages.length === 0 && activeWs.agents.length === 0 && (
-                <div className="empty-state">
-                  Add an agent to get started.
-                </div>
+                <div className="empty-state">Add an agent to get started.</div>
               )}
               {activeWs.messages.length === 0 && activeWs.agents.length > 0 && (
-                <div className="empty-state">
-                  Send a message to start working.
-                </div>
+                <div className="empty-state">Send a message to start working.</div>
               )}
               {activeWs.messages.map((msg) => (
                 <MessageItem key={msg.id} msg={msg} agents={activeWs.agents} />
@@ -444,11 +522,16 @@ export function App() {
                     <div
                       key={a.id}
                       className={`mention-item ${i === mentionIdx ? "active" : ""}`}
-                      onMouseDown={(e) => { e.preventDefault(); applyMention(a.name); }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        applyMention(a.name);
+                      }}
                     >
                       <AgentAvatar agent={a} size={20} />
                       <span className="mention-name">{a.name}</span>
-                      <span className="mention-model">{a.model.replace("claude-", "").replace(/-/g, " ")}</span>
+                      <span className="mention-model">
+                        {a.model.replace("claude-", "").replace(/-/g, " ")}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -459,21 +542,34 @@ export function App() {
                   value={input}
                   onChange={handleTextareaInput}
                   onKeyDown={handleKeyDown}
-                  placeholder={activeWs.agents.length > 1 ? "@name message, or send to default..." : "Send a message..."}
+                  placeholder={
+                    activeWs.agents.length > 1
+                      ? "@name message, or send to default..."
+                      : "Send a message..."
+                  }
                   rows={1}
                   disabled={isAnyRunning || activeWs.agents.length === 0}
                 />
                 {isAnyRunning ? (
-                  <button className="btn-abort" onClick={() => abort(activeWs.id)}>Stop</button>
+                  <button className="btn-abort" onClick={() => abort(activeWs.id)}>
+                    Stop
+                  </button>
                 ) : (
-                  <button onClick={handleSend} disabled={!input.trim() || activeWs.agents.length === 0}>Send</button>
+                  <button
+                    onClick={handleSend}
+                    disabled={!input.trim() || activeWs.agents.length === 0}
+                  >
+                    Send
+                  </button>
                 )}
               </div>
             </div>
           </>
         ) : (
           <div className="empty-state">
-            {workspaces.length === 0 ? "No workspaces yet. Click + to create one." : "Select a workspace."}
+            {workspaces.length === 0
+              ? "No workspaces yet. Click + to create one."
+              : "Select a workspace."}
           </div>
         )}
       </div>

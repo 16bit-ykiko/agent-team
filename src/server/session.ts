@@ -3,13 +3,7 @@ import { EventEmitter } from "events";
 import * as readline from "readline";
 
 export interface StreamEvent {
-  kind:
-    | "thinking"
-    | "text"
-    | "tool_use"
-    | "tool_result"
-    | "result"
-    | "error";
+  kind: "thinking" | "text" | "tool_use" | "tool_result" | "result" | "error";
   content: string;
   raw?: unknown;
 }
@@ -262,9 +256,7 @@ function parseStreamEvent(obj: Record<string, unknown>): StreamEvent | null {
 
   if (type === "error") {
     const msg =
-      (obj.error as Record<string, unknown>)?.message ??
-      obj.message ??
-      JSON.stringify(obj);
+      (obj.error as Record<string, unknown>)?.message ?? obj.message ?? JSON.stringify(obj);
     return { kind: "error", content: String(msg), raw: obj };
   }
 
