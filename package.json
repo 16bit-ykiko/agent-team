@@ -41,6 +41,7 @@
     "typescript": "^5.8.0"
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "@types/ws": "^8.18.1",
     "ws": "^8.20.0"
   }
