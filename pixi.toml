@@ -1,0 +1,23 @@
+[workspace]
+name = "discord-agent-team"
+version = "0.1.0"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+nodejs = ">=22"
+
+[tasks]
+# Webview UI
+dev-webview = { cmd = "npm run dev", cwd = "webview-ui" }
+build-webview = { cmd = "npm run build", cwd = "webview-ui" }
+
+# Extension
+build-ext = "node esbuild.js"
+
+# Server
+serve = { cmd = "node dist/server.js", depends-on = ["build-ext"] }
+
+# All
+build = { depends-on = ["build-webview", "build-ext"] }
+package = { cmd = "npx @vscode/vsce package --no-dependencies", depends-on = ["build"] }

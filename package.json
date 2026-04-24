@@ -1,0 +1,40 @@
+{
+  "name": "agent-team",
+  "displayName": "Agent Team",
+  "description": "Multi-agent orchestration panel for VSCode",
+  "version": "0.1.0",
+  "publisher": "ykiko",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agent-team.open",
+        "title": "Agent Team: Open"
+      }
+    ]
+  },
+  "scripts": {
+    "build:ext": "node esbuild.js",
+    "build:webview": "cd webview-ui && npm run build",
+    "build": "npm run build:webview && npm run build:ext",
+    "watch:ext": "node esbuild.js --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@types/ws": "^8.18.1",
+    "ws": "^8.20.0"
+  }
+}
