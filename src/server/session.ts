@@ -254,7 +254,13 @@ function parseStreamEvent(obj: Record<string, unknown>): StreamEvent | null {
     return null;
   }
 
-  if (type === "error" || type === "rate_limit_event") {
+  if (type === "rate_limit_event") {
+    const info = obj.rate_limit_info as Record<string, unknown> | undefined;
+    if (info?.status === "allowed") return null;
+    return { kind: "error", content: `Rate limited: resets at ${info?.resetsAt}`, raw: obj };
+  }
+
+  if (type === "error") {
     const msg =
       (obj.error as Record<string, unknown>)?.message ??
       obj.message ??
@@ -282,7 +288,7 @@ function parseAssistantEvent(obj: Record<string, unknown>): StreamEvent | null {
     }
 
     if (blockType === "text") {
-      const text = b.text as string;
+      const text = (b.text as string)?.trim();
       if (text) return { kind: "text", content: text, raw: obj };
     }
 

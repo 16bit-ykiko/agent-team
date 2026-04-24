@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { useServer, Workspace, Message, AgentInfo, AgentPreset, ModelOption } from "./useServer";
 
 function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
@@ -191,8 +191,10 @@ export function App() {
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
+  const [sidebarWidth, setSidebarWidth] = useState(260);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const draggingRef = useRef(false);
 
   const activeWs = workspaces.find((w) => w.id === activeWsId);
 
@@ -205,6 +207,32 @@ export function App() {
   }, [activeWs?.messages]);
 
   const isAnyRunning = activeWs?.messages.some((m) => m.status === "streaming") ?? false;
+
+  const onResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    draggingRef.current = true;
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+
+    const onMove = (ev: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const w = Math.max(150, Math.min(500, startW + ev.clientX - startX));
+      setSidebarWidth(w);
+    };
+
+    const onUp = () => {
+      draggingRef.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [sidebarWidth]);
 
   const mentionAgents = activeWs?.agents.filter((a) => {
     if (mentionQuery === null) return false;
@@ -277,7 +305,7 @@ export function App() {
 
   return (
     <div className="app">
-      <div className="sidebar">
+      <div className="sidebar" style={{ width: sidebarWidth }}>
         <div className="sidebar-header">
           <span>Workspaces {!connected && <span className="disconnected">(offline)</span>}</span>
           <button title="New workspace" onClick={() => setShowCreate(true)}>+</button>
@@ -306,6 +334,8 @@ export function App() {
           })}
         </div>
       </div>
+
+      <div className="resize-handle" onMouseDown={onResizeStart} />
 
       <div className="main-panel">
         {activeWs ? (
