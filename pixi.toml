@@ -21,3 +21,7 @@ serve = { cmd = "node dist/server.js", depends-on = ["build-ext"] }
 # All
 build = { depends-on = ["build-webview", "build-ext"] }
 package = { cmd = "npx @vscode/vsce package --no-dependencies", depends-on = ["build"] }
+
+# Formatting
+fmt = "npm run fmt"
+fmt-check = "npm run fmt:check"

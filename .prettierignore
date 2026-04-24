@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.agent-team/
+.pixi/
+python-src/
+*.vsix
+package-lock.json
+pixi.lock
+uv.lock
