@@ -1,3 +1,4 @@
+import { execSync } from "child_process";
 import { ClaudeSession, SessionConfig, StreamEvent, SessionState } from "./session";
 
 export type MessageStatus = "streaming" | "done" | "error";
@@ -31,6 +32,7 @@ export interface WorkspaceInfo {
   name: string;
   project: string;
   cwd: string;
+  gitBranch: string | null;
   agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
@@ -221,12 +223,25 @@ export class Workspace {
     }
   }
 
+  getGitBranch(): string | null {
+    try {
+      return execSync("git rev-parse --abbrev-ref HEAD", {
+        cwd: this.cwd,
+        encoding: "utf-8",
+        timeout: 3000,
+      }).trim();
+    } catch {
+      return null;
+    }
+  }
+
   getInfo(): WorkspaceInfo {
     return {
       id: this.id,
       name: this.name,
       project: this.project,
       cwd: this.cwd,
+      gitBranch: this.getGitBranch(),
       agents: [...this.agents.values()].map((a) => a.info),
       messages: this.messages,
       createdAt: this.createdAt,

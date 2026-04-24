@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useServer, Workspace, Message, AgentInfo, AgentPreset, ModelOption } from "./useServer";
+import { useServer, Workspace, Message, AgentInfo, AgentPreset, ModelOption, SystemStatus } from "./useServer";
 
 function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
   return (
@@ -287,6 +287,78 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
   );
 }
 
+function formatBytes(bytes: number): string {
+  const gb = bytes / (1024 * 1024 * 1024);
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
+}
+
+function formatUptime(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function SystemStatusPanel({ status }: { status: SystemStatus }) {
+  const memPct = Math.round((status.memUsed / status.memTotal) * 100);
+
+  return (
+    <div className="system-status-panel">
+      <div className="system-status-title">System</div>
+      <div className="system-status-grid">
+        <div className="status-item">
+          <span className="status-label">OS</span>
+          <span className="status-value" title={status.osName}>{status.osName}</span>
+        </div>
+        <div className="status-item">
+          <span className="status-label">Host</span>
+          <span className="status-value">{status.hostname}</span>
+        </div>
+        <div className="status-item">
+          <span className="status-label">CPU</span>
+          <span className="status-value">
+            <span className="status-bar">
+              <span
+                className="status-bar-fill"
+                style={{
+                  width: `${status.cpuUsage}%`,
+                  background: status.cpuUsage > 80 ? "var(--error)" : status.cpuUsage > 50 ? "var(--warning)" : "var(--accent)",
+                }}
+              />
+            </span>
+            <span className="status-pct">{status.cpuUsage}%</span>
+          </span>
+        </div>
+        <div className="status-item">
+          <span className="status-label">Mem</span>
+          <span className="status-value">
+            <span className="status-bar">
+              <span
+                className="status-bar-fill"
+                style={{
+                  width: `${memPct}%`,
+                  background: memPct > 80 ? "var(--error)" : memPct > 50 ? "var(--warning)" : "var(--accent)",
+                }}
+              />
+            </span>
+            <span className="status-pct">{formatBytes(status.memUsed)} / {formatBytes(status.memTotal)}</span>
+          </span>
+        </div>
+        <div className="status-item">
+          <span className="status-label">Arch</span>
+          <span className="status-value">{status.osArch}</span>
+        </div>
+        <div className="status-item">
+          <span className="status-label">Uptime</span>
+          <span className="status-value">{formatUptime(status.uptime)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const {
     workspaces,
@@ -294,6 +366,7 @@ export function App() {
     presets,
     models,
     projects,
+    systemStatus,
     createWorkspace,
     deleteWorkspace,
     addAgent,
@@ -468,6 +541,7 @@ export function App() {
             );
           })}
         </div>
+        {systemStatus && <SystemStatusPanel status={systemStatus} />}
       </div>
 
       <div className="resize-handle" onMouseDown={onResizeStart} />
@@ -476,29 +550,43 @@ export function App() {
         {activeWs ? (
           <>
             <div className="panel-header">
-              <span className="panel-title">
-                {activeWs.name} — {activeWs.project}
-              </span>
-              <div className="panel-agents">
-                {activeWs.agents.map((agent) => (
-                  <div
-                    key={agent.id}
-                    className="panel-agent"
-                    title={`${agent.name} (${agent.model})`}
-                  >
-                    <AgentAvatar agent={agent} size={22} />
-                    <span>{agent.name}</span>
-                    <button
-                      className="agent-remove"
-                      onClick={() => removeAgent(activeWs.id, agent.id)}
+              <div className="panel-header-top">
+                <span className="panel-title">
+                  {activeWs.name} — {activeWs.project}
+                </span>
+                <div className="panel-agents">
+                  {activeWs.agents.map((agent) => (
+                    <div
+                      key={agent.id}
+                      className="panel-agent"
+                      title={`${agent.name} (${agent.model})`}
                     >
-                      x
-                    </button>
-                  </div>
-                ))}
-                <button className="btn-add-agent" onClick={() => setShowAddAgent(true)}>
-                  + Agent
-                </button>
+                      <AgentAvatar agent={agent} size={22} />
+                      <span>{agent.name}</span>
+                      <button
+                        className="agent-remove"
+                        onClick={() => removeAgent(activeWs.id, agent.id)}
+                      >
+                        x
+                      </button>
+                    </div>
+                  ))}
+                  <button className="btn-add-agent" onClick={() => setShowAddAgent(true)}>
+                    + Agent
+                  </button>
+                </div>
+              </div>
+              <div className="workspace-info-bar">
+                <span className="ws-info-item" title={activeWs.cwd}>
+                  <span className="ws-info-icon">&#128193;</span>
+                  {activeWs.cwd}
+                </span>
+                {activeWs.gitBranch && (
+                  <span className="ws-info-item ws-info-branch">
+                    <span className="ws-info-icon">&#9831;</span>
+                    {activeWs.gitBranch}
+                  </span>
+                )}
               </div>
             </div>
 

@@ -1,4 +1,5 @@
 import * as http from "http";
+import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
 import { WebSocketServer, WebSocket } from "ws";
@@ -28,6 +29,9 @@ export class Server {
   private config: AppConfig;
   private baseDir: string;
   private webDir: string;
+  private statusTimer: ReturnType<typeof setInterval> | null = null;
+  private prevCpuIdle = 0;
+  private prevCpuTotal = 0;
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
@@ -39,10 +43,58 @@ export class Server {
     this.wss.on("connection", (ws) => this.onConnect(ws));
 
     this.restoreState();
+    this.initCpuBaseline();
+    this.statusTimer = setInterval(() => this.broadcastSystemStatus(), 3000);
 
     this.httpServer.listen(port, "0.0.0.0", () => {
       console.log(`Agent Team server listening on http://0.0.0.0:${port}`);
     });
+  }
+
+  private initCpuBaseline(): void {
+    const cpus = os.cpus();
+    let idle = 0, total = 0;
+    for (const cpu of cpus) {
+      idle += cpu.times.idle;
+      total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.irq + cpu.times.idle;
+    }
+    this.prevCpuIdle = idle;
+    this.prevCpuTotal = total;
+  }
+
+  private getSystemStatus(): Record<string, unknown> {
+    const cpus = os.cpus();
+    let idle = 0, total = 0;
+    for (const cpu of cpus) {
+      idle += cpu.times.idle;
+      total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.irq + cpu.times.idle;
+    }
+    const idleDelta = idle - this.prevCpuIdle;
+    const totalDelta = total - this.prevCpuTotal;
+    const cpuUsage = totalDelta > 0 ? Math.round((1 - idleDelta / totalDelta) * 100) : 0;
+    this.prevCpuIdle = idle;
+    this.prevCpuTotal = total;
+
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+
+    return {
+      type: "system_status",
+      osName: `${os.type()} ${os.release()}`,
+      osArch: os.arch(),
+      cpuModel: cpus[0]?.model ?? "Unknown",
+      cpuCores: cpus.length,
+      cpuUsage,
+      memTotal: totalMem,
+      memUsed: totalMem - freeMem,
+      uptime: os.uptime(),
+      hostname: os.hostname(),
+    };
+  }
+
+  private broadcastSystemStatus(): void {
+    if (this.uiClients.size === 0) return;
+    this.broadcastUI(this.getSystemStatus());
   }
 
   private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -111,6 +163,7 @@ export class Server {
       },
       hostAvailable: this.hostClient !== null,
     });
+    this.sendJson(ws, this.getSystemStatus());
   }
 
   private handleMessage(ws: WebSocket, msg: Record<string, unknown>): void {
@@ -304,6 +357,7 @@ export class Server {
   }
 
   close(): void {
+    if (this.statusTimer) clearInterval(this.statusTimer);
     this.persistState();
     for (const ws of this.workspaces.values()) ws.abortAll();
     this.wss.close();

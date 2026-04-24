@@ -29,9 +29,22 @@ export interface Workspace {
   name: string;
   project: string;
   cwd: string;
+  gitBranch: string | null;
   agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
+}
+
+export interface SystemStatus {
+  osName: string;
+  osArch: string;
+  cpuModel: string;
+  cpuCores: number;
+  cpuUsage: number;
+  memTotal: number;
+  memUsed: number;
+  uptime: number;
+  hostname: string;
 }
 
 export interface AgentPreset {
@@ -59,6 +72,7 @@ export function useServer() {
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>();
 
@@ -157,6 +171,20 @@ export function useServer() {
         break;
       }
 
+      case "system_status":
+        setSystemStatus({
+          osName: msg.osName as string,
+          osArch: msg.osArch as string,
+          cpuModel: msg.cpuModel as string,
+          cpuCores: msg.cpuCores as number,
+          cpuUsage: msg.cpuUsage as number,
+          memTotal: msg.memTotal as number,
+          memUsed: msg.memUsed as number,
+          uptime: msg.uptime as number,
+          hostname: msg.hostname as string,
+        });
+        break;
+
       case "error":
         console.error("[server]", msg.message);
         break;
@@ -198,6 +226,7 @@ export function useServer() {
     presets,
     models,
     projects,
+    systemStatus,
     callHostAction: useCallback(
       (action: string, args: unknown) => send({ type: "host_action", action, args }),
       [send],
