@@ -408,6 +408,40 @@ body {
   opacity: 0.8;
 }
 
+/* ---- @mention popup ---- */
+
+.mention-popup {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.mention-item:hover,
+.mention-item.active {
+  background: var(--bg-hover);
+}
+
+.mention-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mention-model {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* ---- Preset grid ---- */
 
 .preset-grid {

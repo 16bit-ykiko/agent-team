@@ -132,8 +132,17 @@ function MessageBubble({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
   const agent = !isUser ? agents.find((a) => a.id === msg.agentId) : null;
 
   const events = msg.events ?? [];
-  const thinkingEvents = events.filter((e) => e.kind === "thinking");
-  const toolEvents = events.filter((e) => e.kind === "tool_use" || e.kind === "tool_result");
+  const detailEvents = events.filter((e) => e.kind !== "text");
+  const thinkingCount = detailEvents.filter((e) => e.kind === "thinking").length;
+  const toolCount = detailEvents.filter((e) => e.kind === "tool_use" || e.kind === "tool_result").length;
+  const errorCount = detailEvents.filter((e) => e.kind === "error").length;
+  const hasDetails = detailEvents.length > 0 || msg.status === "streaming";
+
+  const summaryParts: string[] = [];
+  if (thinkingCount > 0) summaryParts.push(`${thinkingCount} thinking`);
+  if (toolCount > 0) summaryParts.push(`${toolCount} tool call(s)`);
+  if (errorCount > 0) summaryParts.push(`${errorCount} error(s)`);
+  if (msg.status === "streaming" && summaryParts.length === 0) summaryParts.push("streaming...");
 
   return (
     <div className={`message ${isUser ? "user" : "agent"}`}>
@@ -153,15 +162,11 @@ function MessageBubble({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
 
       {msg.content && <div className="message-content">{msg.content}</div>}
 
-      {(thinkingEvents.length > 0 || toolEvents.length > 0) && (
-        <details className="message-events">
-          <summary>
-            {toolEvents.length > 0 && `${toolEvents.length} tool call(s)`}
-            {thinkingEvents.length > 0 && toolEvents.length > 0 && " · "}
-            {thinkingEvents.length > 0 && `${thinkingEvents.length} thinking`}
-          </summary>
+      {hasDetails && (
+        <details className="message-events" open={msg.status === "streaming" && !msg.content}>
+          <summary>{summaryParts.join(" · ")}</summary>
           <div className="events-list">
-            {events.filter((e) => e.kind !== "text").map((ev, i) => (
+            {detailEvents.map((ev, i) => (
               <div key={i} className={`event event-${ev.kind}`}>
                 <span className="event-kind">{ev.kind}</span>
                 <pre>{ev.content}</pre>
@@ -184,6 +189,8 @@ export function App() {
   const [input, setInput] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+  const [mentionIdx, setMentionIdx] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -199,23 +206,73 @@ export function App() {
 
   const isAnyRunning = activeWs?.messages.some((m) => m.status === "streaming") ?? false;
 
+  const mentionAgents = activeWs?.agents.filter((a) => {
+    if (mentionQuery === null) return false;
+    if (mentionQuery === "") return true;
+    return a.name.toLowerCase().startsWith(mentionQuery.toLowerCase());
+  }) ?? [];
+
+  const applyMention = useCallback((agentName: string) => {
+    const atIdx = input.lastIndexOf("@");
+    if (atIdx !== -1) {
+      setInput(input.slice(0, atIdx) + `@${agentName} `);
+    }
+    setMentionQuery(null);
+    textareaRef.current?.focus();
+  }, [input]);
+
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || !activeWs) return;
     sendMessage(activeWs.id, text);
     setInput("");
+    setMentionQuery(null);
     if (textareaRef.current) textareaRef.current.style.height = "36px";
   }, [input, activeWs, sendMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (mentionQuery !== null && mentionAgents.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIdx((i) => (i + 1) % mentionAgents.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIdx((i) => (i - 1 + mentionAgents.length) % mentionAgents.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        applyMention(mentionAgents[mentionIdx].name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
   const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
+    const val = e.target.value;
+    setInput(val);
+
     const el = e.target;
     el.style.height = "36px";
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
+
+    const cursor = el.selectionStart ?? val.length;
+    const before = val.slice(0, cursor);
+    const atMatch = before.match(/@(\w*)$/);
+    if (atMatch) {
+      setMentionQuery(atMatch[1]);
+      setMentionIdx(0);
+    } else {
+      setMentionQuery(null);
+    }
   };
 
   return (
@@ -285,6 +342,21 @@ export function App() {
             </div>
 
             <div className="input-area">
+              {mentionQuery !== null && mentionAgents.length > 0 && (
+                <div className="mention-popup">
+                  {mentionAgents.map((a, i) => (
+                    <div
+                      key={a.id}
+                      className={`mention-item ${i === mentionIdx ? "active" : ""}`}
+                      onMouseDown={(e) => { e.preventDefault(); applyMention(a.name); }}
+                    >
+                      <AgentAvatar agent={a} size={20} />
+                      <span className="mention-name">{a.name}</span>
+                      <span className="mention-model">{a.model.replace("claude-", "").replace(/-/g, " ")}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="input-row">
                 <textarea
                   ref={textareaRef}
