@@ -397,6 +397,7 @@ export function App() {
   }, [activeWs?.messages]);
 
   const isAnyRunning = activeWs?.messages.some((m) => m.status === "streaming") ?? false;
+  const hasAgents = (activeWs?.agents.length ?? 0) > 0;
 
   const onResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -636,20 +637,19 @@ export function App() {
                       : "Send a message..."
                   }
                   rows={1}
-                  disabled={isAnyRunning || activeWs.agents.length === 0}
+                  disabled={!hasAgents}
                 />
-                {isAnyRunning ? (
+                {isAnyRunning && (
                   <button className="btn-abort" onClick={() => abort(activeWs.id)}>
                     Stop
                   </button>
-                ) : (
-                  <button
-                    onClick={handleSend}
-                    disabled={!input.trim() || activeWs.agents.length === 0}
-                  >
-                    Send
-                  </button>
                 )}
+                <button
+                  onClick={handleSend}
+                  disabled={!input.trim() || !hasAgents}
+                >
+                  Send
+                </button>
               </div>
             </div>
           </>
