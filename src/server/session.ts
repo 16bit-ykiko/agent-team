@@ -251,8 +251,9 @@ function parseStreamEvent(obj: Record<string, unknown>): StreamEvent | null {
     return parseAssistantEvent(obj);
   }
 
-  // "result" only signals completion — don't emit text (already streamed via "assistant")
   if (type === "result") {
+    const text = (obj.result as string)?.trim();
+    if (text) return { kind: "text", content: text, raw: obj };
     return null;
   }
 
@@ -343,7 +344,7 @@ function formatToolUse(block: Record<string, unknown>): string {
       return `**Read** \`${input.file_path}\``;
 
     case "Write":
-      return `**Write** \`${input.file_path}\`\n\`\`\`\n${truncate(String(input.content ?? ""), 500)}\n\`\`\``;
+      return `**Write** \`${input.file_path}\`\n\`\`\`\n${input.content}\n\`\`\``;
 
     case "Edit": {
       const old_str = String(input.old_string ?? "");
@@ -363,17 +364,10 @@ function formatToolUse(block: Record<string, unknown>): string {
     case "Glob":
       return `**Glob** \`${input.pattern}\``;
 
-    case "Agent": {
-      const prompt = truncate(String(input.prompt ?? ""), 200);
-      return `**Agent** ${prompt}`;
-    }
+    case "Agent":
+      return `**Agent** ${input.prompt ?? ""}`;
 
     default:
-      return `**${name}**\n\`\`\`json\n${truncate(JSON.stringify(input, null, 2), 500)}\n\`\`\``;
+      return `**${name}**\n\`\`\`json\n${JSON.stringify(input, null, 2)}\n\`\`\``;
   }
-}
-
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max) + "...";
 }

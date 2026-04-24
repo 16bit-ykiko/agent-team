@@ -38,6 +38,7 @@ export class Server {
   private windowsHost: { memTotal: number; memFree: number; osName: string } | null = null;
   private windowsHostUpdating = false;
   private skills: SkillDef[] = [];
+  private persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
@@ -287,7 +288,7 @@ export class Server {
     const workspace = new Workspace(id, name, project, cwd, this.makeCallbacks());
 
     this.workspaces.set(id, workspace);
-    this.persistWorkspace(id);
+    this.persistWorkspaceNow(id);
     this.persistIndex();
     this.broadcastUI({ type: "workspace_created", workspace: workspace.getInfo() });
   }
@@ -320,7 +321,7 @@ export class Server {
     const agent = workspace.addAgent(name, model, avatar, color, {
       permissionMode: permissionMode ?? "bypassPermissions",
     });
-    this.persistWorkspace(workspaceId);
+    this.persistWorkspaceNow(workspaceId);
     this.broadcastUI({ type: "agent_added", workspaceId, agent });
   }
 
@@ -329,7 +330,7 @@ export class Server {
     if (!workspace) return;
 
     workspace.removeAgent(agentId);
-    this.persistWorkspace(workspaceId);
+    this.persistWorkspaceNow(workspaceId);
     this.broadcastUI({ type: "agent_removed", workspaceId, agentId });
   }
 
@@ -378,6 +379,23 @@ export class Server {
   }
 
   private persistWorkspace(workspaceId: string): void {
+    if (this.persistTimers.has(workspaceId)) return;
+    this.persistTimers.set(
+      workspaceId,
+      setTimeout(() => {
+        this.persistTimers.delete(workspaceId);
+        const ws = this.workspaces.get(workspaceId);
+        if (ws) saveWorkspace(this.baseDir, ws.getState());
+      }, 500),
+    );
+  }
+
+  private persistWorkspaceNow(workspaceId: string): void {
+    const timer = this.persistTimers.get(workspaceId);
+    if (timer) {
+      clearTimeout(timer);
+      this.persistTimers.delete(workspaceId);
+    }
     const ws = this.workspaces.get(workspaceId);
     if (ws) saveWorkspace(this.baseDir, ws.getState());
   }
@@ -387,6 +405,8 @@ export class Server {
   }
 
   private persistAll(): void {
+    for (const timer of this.persistTimers.values()) clearTimeout(timer);
+    this.persistTimers.clear();
     for (const ws of this.workspaces.values()) {
       saveWorkspace(this.baseDir, ws.getState());
     }

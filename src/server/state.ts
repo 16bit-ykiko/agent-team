@@ -28,10 +28,12 @@ function indexPath(baseDir: string): string {
   return path.join(dataRoot(baseDir), CACHE_DIR, INDEX_FILE);
 }
 
+let tmpCounter = 0;
+
 function writeJson(file: string, data: unknown): void {
   const dir = path.dirname(file);
   ensureDir(dir);
-  const tmp = file + ".tmp";
+  const tmp = `${file}.${process.pid}-${++tmpCounter}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
   fs.renameSync(tmp, file);
 }
