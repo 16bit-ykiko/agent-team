@@ -6,19 +6,9 @@
 .cache/
 .logs/
 
-# Python
-__pycache__/
-*.py[oc]
-build/
-*.egg-info
-.venv
-
 # Node
 node_modules/
 dist/
-
-# Tools
-.ruff_cache/
 
 # VSCode extension
 *.vsix
