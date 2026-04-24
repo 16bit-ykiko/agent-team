@@ -1,88 +1,110 @@
 import * as vscode from "vscode";
-import * as path from "path";
-import * as fs from "fs";
-import { ChildProcess, spawn } from "child_process";
+import WebSocket from "ws";
 
-const SERVER_PORT = 9800;
-let panel: vscode.WebviewPanel | undefined;
-let serverProc: ChildProcess | undefined;
+const SERVER_URL = "ws://localhost:9800";
+const RECONNECT_DELAY_MS = 3000;
 
-function startServer(extensionPath: string): ChildProcess {
-  const serverEntry = path.join(extensionPath, "dist", "server.js");
-  const proc = spawn("node", [serverEntry], {
-    env: {
-      ...process.env,
-      AGENT_TEAM_PORT: String(SERVER_PORT),
-      AGENT_TEAM_BASE_DIR: extensionPath,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+let ws: WebSocket | null = null;
+let reconnectTimer: NodeJS.Timeout | undefined;
+let disposed = false;
 
-  proc.stdout?.on("data", (d) => console.log(`[server] ${d.toString().trimEnd()}`));
-  proc.stderr?.on("data", (d) => console.error(`[server] ${d.toString().trimEnd()}`));
-  proc.on("exit", (code) => console.log(`[server] exited with code ${code}`));
-
-  return proc;
+interface HostActionMessage {
+  type: "host_action";
+  action: string;
+  args: Record<string, unknown>;
 }
 
-function getHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
-  const distPath = path.join(extensionUri.fsPath, "dist", "webview");
-  const indexHtml = path.join(distPath, "index.html");
+function connect(output: vscode.OutputChannel) {
+  if (disposed) return;
 
-  if (!fs.existsSync(indexHtml)) {
-    return `<!DOCTYPE html><html><body><p>Webview not built. Run <code>pixi run build</code>.</p></body></html>`;
+  ws = new WebSocket(SERVER_URL);
+
+  ws.on("open", () => {
+    output.appendLine(`[host] connected to ${SERVER_URL}`);
+    ws?.send(JSON.stringify({ type: "register_host" }));
+  });
+
+  ws.on("message", (raw) => {
+    let msg: HostActionMessage;
+    try {
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+    if (msg.type === "host_action") {
+      handleHostAction(msg.action, msg.args ?? {}, output);
+    }
+  });
+
+  ws.on("close", () => {
+    if (disposed) return;
+    scheduleReconnect(output);
+  });
+
+  ws.on("error", (err) => {
+    output.appendLine(`[host] error: ${err.message}`);
+  });
+}
+
+function scheduleReconnect(output: vscode.OutputChannel) {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(() => connect(output), RECONNECT_DELAY_MS);
+}
+
+async function handleHostAction(
+  action: string,
+  args: Record<string, unknown>,
+  output: vscode.OutputChannel,
+): Promise<void> {
+  try {
+    switch (action) {
+      case "open_file": {
+        const uri = vscode.Uri.file(String(args.path));
+        await vscode.window.showTextDocument(uri, { preview: false });
+        break;
+      }
+
+      case "open_diff": {
+        const left = vscode.Uri.file(String(args.left));
+        const right = vscode.Uri.file(String(args.right));
+        const title = String(args.title ?? `${args.left} ↔ ${args.right}`);
+        await vscode.commands.executeCommand("vscode.diff", left, right, title);
+        break;
+      }
+
+      case "reveal_file": {
+        const uri = vscode.Uri.file(String(args.path));
+        await vscode.commands.executeCommand("revealInExplorer", uri);
+        break;
+      }
+
+      default:
+        output.appendLine(`[host] unknown action: ${action}`);
+    }
+  } catch (e) {
+    output.appendLine(`[host] action ${action} failed: ${e}`);
   }
-
-  let html = fs.readFileSync(indexHtml, "utf-8");
-
-  html = html.replace(
-    /(href|src)="(\.?\/?)(assets\/[^"]+)"/g,
-    (_match, attr, _prefix, assetPath) => {
-      const uri = webview.asWebviewUri(
-        vscode.Uri.joinPath(extensionUri, "dist", "webview", assetPath),
-      );
-      return `${attr}="${uri}"`;
-    },
-  );
-
-  // Inject server port so webview can connect
-  html = html.replace(
-    "</head>",
-    `<script>window.__AGENT_TEAM_PORT__=${SERVER_PORT};</script></head>`,
-  );
-
-  return html;
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  const output = vscode.window.createOutputChannel("Agent Team");
+  context.subscriptions.push(output);
+
+  connect(output);
+
   context.subscriptions.push(
     vscode.commands.registerCommand("agent-team.open", () => {
-      if (panel) {
-        panel.reveal();
-        return;
-      }
-
-      if (!serverProc || serverProc.exitCode !== null) {
-        serverProc = startServer(context.extensionUri.fsPath);
-      }
-
-      panel = vscode.window.createWebviewPanel("agent-team", "Agent Team", vscode.ViewColumn.One, {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, "dist", "webview")],
-      });
-
-      panel.webview.html = getHtml(panel.webview, context.extensionUri);
-
-      panel.onDidDispose(() => {
-        panel = undefined;
-      });
+      vscode.env.openExternal(vscode.Uri.parse("http://localhost:9800"));
     }),
   );
 }
 
 export function deactivate() {
-  if (serverProc && serverProc.exitCode === null) {
-    serverProc.kill("SIGTERM");
+  disposed = true;
+  clearTimeout(reconnectTimer);
+  if (ws) {
+    ws.removeAllListeners();
+    ws.close();
+    ws = null;
   }
 }

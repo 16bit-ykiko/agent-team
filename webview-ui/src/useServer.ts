@@ -45,11 +45,17 @@ export interface ModelOption {
   label: string;
 }
 
-declare const window: Window & { __AGENT_TEAM_PORT__?: number };
+const SERVER_PORT = 9800;
+
+function resolveWsUrl(): string {
+  const host = window.location.hostname || "localhost";
+  return `ws://${host}:${SERVER_PORT}`;
+}
 
 export function useServer() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [connected, setConnected] = useState(false);
+  const [hostAvailable, setHostAvailable] = useState(false);
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
@@ -68,8 +74,13 @@ export function useServer() {
         setProjects(Object.keys(config.projects));
         setPresets(config.presets);
         setModels(config.models);
+        setHostAvailable(Boolean(msg.hostAvailable));
         break;
       }
+
+      case "host_state":
+        setHostAvailable(Boolean(msg.available));
+        break;
 
       case "workspace_created":
         setWorkspaces((prev) => [...prev, msg.workspace as Workspace]);
@@ -153,8 +164,7 @@ export function useServer() {
   }, []);
 
   const connect = useCallback(() => {
-    const port = window.__AGENT_TEAM_PORT__ ?? 9800;
-    const ws = new WebSocket(`ws://localhost:${port}`);
+    const ws = new WebSocket(resolveWsUrl());
     wsRef.current = ws;
 
     ws.onopen = () => setConnected(true);
@@ -184,9 +194,14 @@ export function useServer() {
   return {
     workspaces,
     connected,
+    hostAvailable,
     presets,
     models,
     projects,
+    callHostAction: useCallback(
+      (action: string, args: unknown) => send({ type: "host_action", action, args }),
+      [send],
+    ),
     createWorkspace: useCallback(
       (name: string, project: string) => send({ type: "create_workspace", name, project }),
       [send],
