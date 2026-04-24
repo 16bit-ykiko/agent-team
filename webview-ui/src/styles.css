@@ -246,6 +246,30 @@ body {
   margin-top: 2px;
 }
 
+.task-item-active {
+  border-left: 2px solid var(--accent);
+  padding-left: 6px;
+}
+
+.task-active-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.task-active-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  color: #fff;
+  animation: pulse 2s infinite;
+  white-space: nowrap;
+}
+
 .task-delete {
   background: none;
   border: none;

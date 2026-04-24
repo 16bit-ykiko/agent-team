@@ -213,7 +213,7 @@ const MessageItem = memo(function MessageItem({
   highlight?: boolean;
   onOpenDiff?: (filePath: string, oldString: string, newString: string) => void;
 }) {
-  const [eventsOpen, setEventsOpen] = useState(msg.status === "streaming");
+  const [eventsOpen, setEventsOpen] = useState(false);
 
   if (msg.kind === "system") {
     return (
@@ -530,6 +530,9 @@ export function App() {
 
   useEffect(() => {
     setVisibleCount(30);
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView();
+    });
   }, [activeWsId]);
 
   const onMessagesScroll = useCallback(() => {
@@ -778,17 +781,33 @@ export function App() {
         ) : (
           <div className="task-list">
             {workspaces.map((ws) => {
-              const running = ws.messages.some((m) => m.status === "streaming");
+              const streamingMsgs = ws.messages.filter((m) => m.status === "streaming");
+              const activeAgentIds = new Set(streamingMsgs.map((m) => m.agentId).filter(Boolean));
+              const activeAgents = ws.agents.filter((a) => activeAgentIds.has(a.id));
+              const running = streamingMsgs.length > 0;
               return (
                 <div
                   key={ws.id}
-                  className={`task-item ${ws.id === activeWsId ? "active" : ""}`}
+                  className={`task-item ${ws.id === activeWsId ? "active" : ""}${running ? " task-item-active" : ""}`}
                   onClick={() => setActiveWsId(ws.id)}
                 >
                   <div className={`task-status ${running ? "running" : "idle"}`} />
                   <div className="task-info">
                     <div className="task-name">{ws.name}</div>
                     <div className="task-project">{ws.project}</div>
+                    {activeAgents.length > 0 && (
+                      <div className="task-active-agents">
+                        {activeAgents.map((a) => (
+                          <span
+                            key={a.id}
+                            className="task-active-agent"
+                            style={{ background: a.color }}
+                          >
+                            {a.avatar} {a.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <button
                     className="task-delete"
