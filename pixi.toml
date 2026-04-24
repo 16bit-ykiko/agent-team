@@ -21,6 +21,7 @@ serve = { cmd = "node dist/server.js", depends-on = ["build-ext"] }
 # All
 build = { depends-on = ["build-webview", "build-ext"] }
 package = { cmd = "npx @vscode/vsce package --no-dependencies", depends-on = ["build"] }
+install = { cmd = "code --install-extension agent-team-0.1.0.vsix --force", depends-on = ["package"] }
 
 # Formatting
 fmt = "npm run fmt"
