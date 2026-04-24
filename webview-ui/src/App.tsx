@@ -3,7 +3,16 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
-import { useServer, Workspace, Message, AgentInfo, AgentPreset, ModelOption, SystemStatus } from "./useServer";
+import {
+  useServer,
+  Workspace,
+  Message,
+  AgentInfo,
+  AgentPreset,
+  ModelOption,
+  SystemStatus,
+  SkillDef,
+} from "./useServer";
 
 function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
   return (
@@ -165,7 +174,11 @@ function CreateWorkspaceDialog({
 function renderMentionContent(content: string, agents: AgentInfo[]) {
   const match = content.match(/^@(\S+)(\s+|$)/);
   if (!match) {
-    return <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{content}</Markdown>;
+    return (
+      <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+        {content}
+      </Markdown>
+    );
   }
   const mentionName = match[1];
   const rest = content.slice(match[0].length);
@@ -178,18 +191,36 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
       >
         @{mentionName}
       </span>
-      {rest && <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{rest}</Markdown>}
+      {rest && (
+        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+          {rest}
+        </Markdown>
+      )}
     </>
   );
 }
 
-const MessageItem = memo(function MessageItem({ msg, agents, compact, highlight, onOpenDiff }: { msg: Message; agents: AgentInfo[]; compact?: boolean; highlight?: boolean; onOpenDiff?: (filePath: string, oldString: string, newString: string) => void }) {
+const MessageItem = memo(function MessageItem({
+  msg,
+  agents,
+  compact,
+  highlight,
+  onOpenDiff,
+}: {
+  msg: Message;
+  agents: AgentInfo[];
+  compact?: boolean;
+  highlight?: boolean;
+  onOpenDiff?: (filePath: string, oldString: string, newString: string) => void;
+}) {
   const [eventsOpen, setEventsOpen] = useState(msg.status === "streaming");
 
   if (msg.kind === "system") {
     return (
       <div className="system-message">
-        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{msg.content}</Markdown>
+        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+          {msg.content}
+        </Markdown>
       </div>
     );
   }
@@ -218,7 +249,10 @@ const MessageItem = memo(function MessageItem({ msg, agents, compact, highlight,
   });
 
   return (
-    <div id={`msg-${msg.id}`} className={`message ${compact ? "message-compact" : ""}${highlight ? " message-highlight" : ""}`}>
+    <div
+      id={`msg-${msg.id}`}
+      className={`message ${compact ? "message-compact" : ""}${highlight ? " message-highlight" : ""}`}
+    >
       <div className="message-gutter">
         {compact ? null : isUser ? (
           <div className="avatar-user">U</div>
@@ -261,21 +295,33 @@ const MessageItem = memo(function MessageItem({ msg, agents, compact, highlight,
                   <div key={i} className={`event event-${ev.kind}`}>
                     <span className="event-kind">
                       {ev.kind}
-                      {ev.toolInput?.tool === "Edit" && ev.toolInput.old_string != null && onOpenDiff && (
-                        <button
-                          className="btn-diff"
-                          title="Open diff in VS Code"
-                          onClick={() => onOpenDiff(ev.toolInput!.file_path!, ev.toolInput!.old_string!, ev.toolInput!.new_string!)}
-                        >
-                          Diff
-                        </button>
-                      )}
+                      {ev.toolInput?.tool === "Edit" &&
+                        ev.toolInput.old_string != null &&
+                        onOpenDiff && (
+                          <button
+                            className="btn-diff"
+                            title="Open diff in VS Code"
+                            onClick={() =>
+                              onOpenDiff(
+                                ev.toolInput!.file_path!,
+                                ev.toolInput!.old_string!,
+                                ev.toolInput!.new_string!,
+                              )
+                            }
+                          >
+                            Diff
+                          </button>
+                        )}
                     </span>
                     <div className="event-content">
                       {(ev.kind === "tool_use" || ev.kind === "thinking") && ev.content ? (
-                        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{ev.content}</Markdown>
+                        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                          {ev.content}
+                        </Markdown>
                       ) : ev.kind === "tool_result" ? (
-                        <pre><code>{ev.content}</code></pre>
+                        <pre>
+                          <code>{ev.content}</code>
+                        </pre>
                       ) : (
                         <pre>{ev.content}</pre>
                       )}
@@ -296,7 +342,9 @@ const MessageItem = memo(function MessageItem({ msg, agents, compact, highlight,
             {isUser ? (
               renderMentionContent(msg.content, agents)
             ) : (
-              <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{msg.content}</Markdown>
+              <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                {msg.content}
+              </Markdown>
             )}
           </div>
         )}
@@ -328,7 +376,9 @@ function SystemStatusPanel({ status }: { status: SystemStatus }) {
       <div className="system-status-grid">
         <div className="status-item">
           <span className="status-label">OS</span>
-          <span className="status-value" title={status.osName}>{status.osName}</span>
+          <span className="status-value" title={status.osName}>
+            {status.osName}
+          </span>
         </div>
         <div className="status-item">
           <span className="status-label">Host</span>
@@ -342,7 +392,12 @@ function SystemStatusPanel({ status }: { status: SystemStatus }) {
                 className="status-bar-fill"
                 style={{
                   width: `${status.cpuUsage}%`,
-                  background: status.cpuUsage > 80 ? "var(--error)" : status.cpuUsage > 50 ? "var(--warning)" : "var(--accent)",
+                  background:
+                    status.cpuUsage > 80
+                      ? "var(--error)"
+                      : status.cpuUsage > 50
+                        ? "var(--warning)"
+                        : "var(--accent)",
                 }}
               />
             </span>
@@ -357,11 +412,14 @@ function SystemStatusPanel({ status }: { status: SystemStatus }) {
                 className="status-bar-fill"
                 style={{
                   width: `${memPct}%`,
-                  background: memPct > 80 ? "var(--error)" : memPct > 50 ? "var(--warning)" : "var(--accent)",
+                  background:
+                    memPct > 80 ? "var(--error)" : memPct > 50 ? "var(--warning)" : "var(--accent)",
                 }}
               />
             </span>
-            <span className="status-pct">{formatBytes(status.memUsed)} / {formatBytes(status.memTotal)}</span>
+            <span className="status-pct">
+              {formatBytes(status.memUsed)} / {formatBytes(status.memTotal)}
+            </span>
           </span>
         </div>
         <div className="status-item">
@@ -384,6 +442,7 @@ export function App() {
     presets,
     models,
     projects,
+    skills,
     systemStatus,
     createWorkspace,
     deleteWorkspace,
@@ -400,6 +459,8 @@ export function App() {
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
+  const [cmdQuery, setCmdQuery] = useState<string | null>(null);
+  const [cmdIdx, setCmdIdx] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [visibleCount, setVisibleCount] = useState(30);
   const [searchQuery, setSearchQuery] = useState("");
@@ -430,7 +491,10 @@ export function App() {
         if (idx !== -1) {
           const start = Math.max(0, idx - 20);
           const end = Math.min(text.length, idx + q.length + 40);
-          const snippet = (start > 0 ? "..." : "") + msg.content.slice(start, end) + (end < text.length ? "..." : "");
+          const snippet =
+            (start > 0 ? "..." : "") +
+            msg.content.slice(start, end) +
+            (end < text.length ? "..." : "");
           results.push({ wsId: ws.id, wsName: ws.name, msg, snippet });
         }
         if (results.length >= 100) break;
@@ -440,20 +504,25 @@ export function App() {
     return results;
   })();
 
-  const jumpToMessage = useCallback((wsId: string, msgId: string) => {
-    const ws = workspaces.find((w) => w.id === wsId);
-    if (ws) {
-      const msgIdx = ws.messages.findIndex((m) => m.id === msgId);
-      if (msgIdx >= 0) setVisibleCount(Math.max(30, ws.messages.length - msgIdx + 10));
-    }
-    setActiveWsId(wsId);
-    setHighlightMsgId(msgId);
-    setSearchQuery("");
-    setTimeout(() => {
-      document.getElementById(`msg-${msgId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-      setTimeout(() => setHighlightMsgId(null), 2000);
-    }, 100);
-  }, [workspaces]);
+  const jumpToMessage = useCallback(
+    (wsId: string, msgId: string) => {
+      const ws = workspaces.find((w) => w.id === wsId);
+      if (ws) {
+        const msgIdx = ws.messages.findIndex((m) => m.id === msgId);
+        if (msgIdx >= 0) setVisibleCount(Math.max(30, ws.messages.length - msgIdx + 10));
+      }
+      setActiveWsId(wsId);
+      setHighlightMsgId(msgId);
+      setSearchQuery("");
+      setTimeout(() => {
+        document
+          .getElementById(`msg-${msgId}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => setHighlightMsgId(null), 2000);
+      }, 100);
+    },
+    [workspaces],
+  );
 
   useEffect(() => {
     if (!activeWsId && workspaces.length > 0) setActiveWsId(workspaces[0].id);
@@ -514,6 +583,18 @@ export function App() {
       return a.name.toLowerCase().startsWith(mentionQuery.toLowerCase());
     }) ?? [];
 
+  const filteredCmds = skills.filter((c) => {
+    if (cmdQuery === null) return false;
+    if (cmdQuery === "") return true;
+    return c.name.toLowerCase().startsWith(cmdQuery.toLowerCase());
+  });
+
+  const applyCommand = useCallback((cmdName: string) => {
+    setInput(`/${cmdName} `);
+    setCmdQuery(null);
+    textareaRef.current?.focus();
+  }, []);
+
   const applyMention = useCallback(
     (agentName: string) => {
       const atIdx = input.lastIndexOf("@");
@@ -529,13 +610,69 @@ export function App() {
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || !activeWs) return;
+
+    const cmdMatch = text.match(/^\/(\w+)\s*([\s\S]*)/);
+    if (cmdMatch) {
+      const skill = skills.find((c) => c.name === cmdMatch[1]);
+      if (skill) {
+        const args = cmdMatch[2].trim();
+        let content = skill.template.replace(/\{args\}/g, args).trim();
+        let target: string | undefined;
+
+        if (skill.target === "reviewer") {
+          target = activeWs.agents.find((a) => a.name.toLowerCase().includes("review"))?.name;
+        } else if (skill.target === "first_arg") {
+          const parts = args.match(/^(\S+)\s+([\s\S]+)/);
+          if (parts) {
+            const agent = activeWs.agents.find(
+              (a) => a.name.toLowerCase() === parts[1].toLowerCase(),
+            );
+            if (agent) {
+              target = agent.name;
+              content = skill.template.replace(/\{args\}/g, parts[2]).trim();
+            }
+          }
+        }
+
+        sendMessage(activeWs.id, content, target);
+        setInput("");
+        setCmdQuery(null);
+        setMentionQuery(null);
+        if (textareaRef.current) textareaRef.current.style.height = "36px";
+        return;
+      }
+    }
+
     sendMessage(activeWs.id, text);
     setInput("");
     setMentionQuery(null);
+    setCmdQuery(null);
     if (textareaRef.current) textareaRef.current.style.height = "36px";
-  }, [input, activeWs, sendMessage]);
+  }, [input, activeWs, skills, sendMessage]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (cmdQuery !== null && filteredCmds.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setCmdIdx((i) => (i + 1) % filteredCmds.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setCmdIdx((i) => (i - 1 + filteredCmds.length) % filteredCmds.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        applyCommand(filteredCmds[cmdIdx].name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setCmdQuery(null);
+        return;
+      }
+    }
     if (mentionQuery !== null && mentionAgents.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -581,6 +718,14 @@ export function App() {
     } else {
       setMentionQuery(null);
     }
+
+    const cmdMatch = val.match(/^\/(\w*)$/);
+    if (cmdMatch) {
+      setCmdQuery(cmdMatch[1]);
+      setCmdIdx(0);
+    } else {
+      setCmdQuery(null);
+    }
   };
 
   return (
@@ -600,7 +745,9 @@ export function App() {
             placeholder="Search messages..."
           />
           {searchQuery && (
-            <button className="search-clear" onClick={() => setSearchQuery("")}>x</button>
+            <button className="search-clear" onClick={() => setSearchQuery("")}>
+              x
+            </button>
           )}
         </div>
         {searchQuery.trim() ? (
@@ -609,46 +756,55 @@ export function App() {
               <div className="search-empty">No results</div>
             ) : (
               searchResults.map((r, i) => (
-                <div key={i} className="search-result-item" onClick={() => jumpToMessage(r.wsId, r.msg.id)}>
+                <div
+                  key={i}
+                  className="search-result-item"
+                  onClick={() => jumpToMessage(r.wsId, r.msg.id)}
+                >
                   <div className="search-result-ws">{r.wsName}</div>
                   <div className="search-result-snippet">{r.snippet}</div>
                   <div className="search-result-time">
-                    {new Date(r.msg.timestamp).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    {new Date(r.msg.timestamp).toLocaleString([], {
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
                   </div>
                 </div>
               ))
             )}
           </div>
         ) : (
-        <div className="task-list">
-          {workspaces.map((ws) => {
-            const running = ws.messages.some((m) => m.status === "streaming");
-            return (
-              <div
-                key={ws.id}
-                className={`task-item ${ws.id === activeWsId ? "active" : ""}`}
-                onClick={() => setActiveWsId(ws.id)}
-              >
-                <div className={`task-status ${running ? "running" : "idle"}`} />
-                <div className="task-info">
-                  <div className="task-name">{ws.name}</div>
-                  <div className="task-project">{ws.project}</div>
-                </div>
-                <button
-                  className="task-delete"
-                  title="Delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteWorkspace(ws.id);
-                    if (activeWsId === ws.id) setActiveWsId(null);
-                  }}
+          <div className="task-list">
+            {workspaces.map((ws) => {
+              const running = ws.messages.some((m) => m.status === "streaming");
+              return (
+                <div
+                  key={ws.id}
+                  className={`task-item ${ws.id === activeWsId ? "active" : ""}`}
+                  onClick={() => setActiveWsId(ws.id)}
                 >
-                  x
-                </button>
-              </div>
-            );
-          })}
-        </div>
+                  <div className={`task-status ${running ? "running" : "idle"}`} />
+                  <div className="task-info">
+                    <div className="task-name">{ws.name}</div>
+                    <div className="task-project">{ws.project}</div>
+                  </div>
+                  <button
+                    className="task-delete"
+                    title="Delete"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteWorkspace(ws.id);
+                      if (activeWsId === ws.id) setActiveWsId(null);
+                    }}
+                  >
+                    x
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         )}
         {systemStatus && <SystemStatusPanel status={systemStatus} />}
       </div>
@@ -728,7 +884,14 @@ export function App() {
                         !!msg.turnId &&
                         msg.turnId === prev.turnId;
                       return (
-                        <MessageItem key={msg.id} msg={msg} agents={activeWs.agents} compact={compact} highlight={msg.id === highlightMsgId} onOpenDiff={openDiff} />
+                        <MessageItem
+                          key={msg.id}
+                          msg={msg}
+                          agents={activeWs.agents}
+                          compact={compact}
+                          highlight={msg.id === highlightMsgId}
+                          onOpenDiff={openDiff}
+                        />
                       );
                     })}
                   </>
@@ -738,6 +901,24 @@ export function App() {
             </div>
 
             <div className="input-area">
+              {cmdQuery !== null && filteredCmds.length > 0 && (
+                <div className="command-popup">
+                  {filteredCmds.map((cmd, i) => (
+                    <div
+                      key={cmd.name}
+                      className={`command-item ${i === cmdIdx ? "active" : ""}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        applyCommand(cmd.name);
+                      }}
+                    >
+                      <span className="command-icon">{cmd.icon}</span>
+                      <span className="command-name">/{cmd.name}</span>
+                      <span className="command-desc">{cmd.description}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {mentionQuery !== null && mentionAgents.length > 0 && (
                 <div className="mention-popup">
                   {mentionAgents.map((a, i) => (
@@ -766,8 +947,8 @@ export function App() {
                   onKeyDown={handleKeyDown}
                   placeholder={
                     activeWs.agents.length > 1
-                      ? "@name message, or send to default..."
-                      : "Send a message..."
+                      ? "Type / for commands, @ to mention an agent..."
+                      : "Type / for commands, or send a message..."
                   }
                   rows={1}
                   disabled={!hasAgents}
@@ -777,10 +958,7 @@ export function App() {
                     Stop
                   </button>
                 )}
-                <button
-                  onClick={handleSend}
-                  disabled={!input.trim() || !hasAgents}
-                >
+                <button onClick={handleSend} disabled={!input.trim() || !hasAgents}>
                   Send
                 </button>
               </div>

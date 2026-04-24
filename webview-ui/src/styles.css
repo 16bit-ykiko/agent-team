@@ -378,8 +378,12 @@ body {
   animation: highlight-fade 2s ease-out;
 }
 @keyframes highlight-fade {
-  0% { background: rgba(88, 166, 255, 0.25); }
-  100% { background: transparent; }
+  0% {
+    background: rgba(88, 166, 255, 0.25);
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 .message-compact {
@@ -800,6 +804,45 @@ body {
 }
 
 /* ---- @mention popup ---- */
+
+.command-popup {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.command-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.command-item:hover,
+.command-item.active {
+  background: var(--bg-hover);
+}
+.command-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+.command-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.command-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .mention-popup {
   background: var(--bg-tertiary);

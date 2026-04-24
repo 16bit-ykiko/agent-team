@@ -74,6 +74,15 @@ export interface ModelOption {
   label: string;
 }
 
+export interface SkillDef {
+  name: string;
+  icon: string;
+  description: string;
+  placeholder?: string;
+  target?: string;
+  template: string;
+}
+
 const SERVER_PORT = 9800;
 
 function resolveWsUrl(): string {
@@ -88,6 +97,7 @@ export function useServer() {
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [projects, setProjects] = useState<string[]>([]);
+  const [skills, setSkills] = useState<SkillDef[]>([]);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>();
@@ -100,10 +110,12 @@ export function useServer() {
           projects: Record<string, string>;
           presets: AgentPreset[];
           models: ModelOption[];
+          skills: SkillDef[];
         };
         setProjects(Object.keys(config.projects));
         setPresets(config.presets);
         setModels(config.models);
+        if (config.skills) setSkills(config.skills);
         setHostAvailable(Boolean(msg.hostAvailable));
         break;
       }
@@ -252,6 +264,7 @@ export function useServer() {
     presets,
     models,
     projects,
+    skills,
     systemStatus,
     callHostAction: useCallback(
       (action: string, args: unknown) => send({ type: "host_action", action, args }),

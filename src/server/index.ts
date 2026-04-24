@@ -8,6 +8,7 @@ import { Workspace, WorkspaceCallbacks } from "./task";
 import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } from "./state";
 import { loadConfig, AppConfig } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
+import { loadSkills, SkillDef } from "./skills";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -36,11 +37,13 @@ export class Server {
   private readonly isWSL: boolean;
   private windowsHost: { memTotal: number; memFree: number; osName: string } | null = null;
   private windowsHostUpdating = false;
+  private skills: SkillDef[] = [];
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
     this.webDir = webDir;
     this.config = loadConfig(baseDir);
+    this.skills = loadSkills(baseDir);
     this.isWSL = this.detectWSL();
 
     this.httpServer = http.createServer((req, res) => this.handleHttp(req, res));
@@ -87,7 +90,8 @@ export class Server {
 
   private initCpuBaseline(): void {
     const cpus = os.cpus();
-    let idle = 0, total = 0;
+    let idle = 0,
+      total = 0;
     for (const cpu of cpus) {
       idle += cpu.times.idle;
       total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.irq + cpu.times.idle;
@@ -98,7 +102,8 @@ export class Server {
 
   private getSystemStatus(): Record<string, unknown> {
     const cpus = os.cpus();
-    let idle = 0, total = 0;
+    let idle = 0,
+      total = 0;
     for (const cpu of cpus) {
       idle += cpu.times.idle;
       total += cpu.times.user + cpu.times.nice + cpu.times.sys + cpu.times.irq + cpu.times.idle;
@@ -198,6 +203,7 @@ export class Server {
         projects: this.config.projects,
         presets: AGENT_PRESETS,
         models: MODEL_OPTIONS,
+        skills: this.skills,
       },
       hostAvailable: this.hostClient !== null,
     });
@@ -262,11 +268,7 @@ export class Server {
         return;
 
       case "open_diff":
-        this.openDiff(
-          msg.filePath as string,
-          msg.oldString as string,
-          msg.newString as string,
-        );
+        this.openDiff(msg.filePath as string, msg.oldString as string, msg.newString as string);
         return;
 
       default:

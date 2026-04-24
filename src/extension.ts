@@ -94,10 +94,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("agent-team.open", async () => {
-      await vscode.commands.executeCommand(
-        "simpleBrowser.show",
-        "http://localhost:9800",
-      );
+      await vscode.commands.executeCommand("simpleBrowser.show", "http://localhost:9800");
     }),
     vscode.commands.registerCommand("agent-team.openExternal", () => {
       vscode.env.openExternal(vscode.Uri.parse("http://localhost:9800"));

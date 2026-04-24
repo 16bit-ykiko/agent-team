@@ -55,7 +55,8 @@ export const MOCK_WORKSPACES: Workspace[] = [
         events: [
           {
             kind: "thinking",
-            content: "The user wants me to fix a login bug. Let me:\n\n1. First read `auth.ts` to understand the current code\n2. Identify the issue\n3. Apply the fix\n\nI suspect the issue might be related to **token validation** or **session handling**.",
+            content:
+              "The user wants me to fix a login bug. Let me:\n\n1. First read `auth.ts` to understand the current code\n2. Identify the issue\n3. Apply the fix\n\nI suspect the issue might be related to **token validation** or **session handling**.",
           },
           {
             kind: "tool_use",
@@ -63,7 +64,8 @@ export const MOCK_WORKSPACES: Workspace[] = [
           },
           {
             kind: "tool_result",
-            content: "import jwt from 'jsonwebtoken';\n\nfunction validateToken(token: string): boolean {\n  const decoded = jwt.decode(token);\n  const now = Date.now(); // BUG: milliseconds vs seconds\n  return decoded.exp > now;\n}",
+            content:
+              "import jwt from 'jsonwebtoken';\n\nfunction validateToken(token: string): boolean {\n  const decoded = jwt.decode(token);\n  const now = Date.now(); // BUG: milliseconds vs seconds\n  return decoded.exp > now;\n}",
           },
         ],
       },
@@ -71,7 +73,8 @@ export const MOCK_WORKSPACES: Workspace[] = [
         id: "msg-3b",
         kind: "agent",
         agentId: "agent-1",
-        content: "Found it — `Date.now()` returns milliseconds but JWT `exp` is in seconds. Fixing now.",
+        content:
+          "Found it — `Date.now()` returns milliseconds but JWT `exp` is in seconds. Fixing now.",
         timestamp: Date.now() - 45000,
         status: "done",
         turnId: "turn-1",
@@ -90,7 +93,8 @@ export const MOCK_WORKSPACES: Workspace[] = [
         id: "msg-3c",
         kind: "agent",
         agentId: "agent-1",
-        content: "I found the issue in the `validateToken` function. The token expiry check was comparing timestamps in different units (seconds vs milliseconds). Here's the fix:\n\n```typescript\nfunction validateToken(token: string): boolean {\n  const decoded = jwt.decode(token);\n  const now = Math.floor(Date.now() / 1000); // seconds\n  return decoded.exp > now;\n}\n```\n\nAll tests pass.",
+        content:
+          "I found the issue in the `validateToken` function. The token expiry check was comparing timestamps in different units (seconds vs milliseconds). Here's the fix:\n\n```typescript\nfunction validateToken(token: string): boolean {\n  const decoded = jwt.decode(token);\n  const now = Math.floor(Date.now() / 1000); // seconds\n  return decoded.exp > now;\n}\n```\n\nAll tests pass.",
         timestamp: Date.now() - 42000,
         status: "done",
         turnId: "turn-1",
@@ -101,7 +105,8 @@ export const MOCK_WORKSPACES: Workspace[] = [
           },
           {
             kind: "tool_result",
-            content: "PASS src/auth.test.ts\n  ✓ validates valid token (3ms)\n  ✓ rejects expired token (1ms)\n  ✓ handles malformed token (2ms)\n\nTest Suites: 1 passed, 1 total\nTests:       3 passed, 3 total",
+            content:
+              "PASS src/auth.test.ts\n  ✓ validates valid token (3ms)\n  ✓ rejects expired token (1ms)\n  ✓ handles malformed token (2ms)\n\nTest Suites: 1 passed, 1 total\nTests:       3 passed, 3 total",
           },
         ],
       },

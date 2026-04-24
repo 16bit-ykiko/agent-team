@@ -189,11 +189,7 @@ function readJsonl<T>(file: string): T[] {
  * Splits by text events (same logic as Workspace.sendMessage).
  * Returns array of messages for this turn.
  */
-function buildTurnMessages(
-  events: StreamEntry[],
-  agentId: string,
-  turnId: string,
-): NewMessage[] {
+function buildTurnMessages(events: StreamEntry[], agentId: string, turnId: string): NewMessage[] {
   const messages: NewMessage[] = [];
   let currentMsg: NewMessage | null = null;
   let textFinalized = false;
@@ -452,7 +448,9 @@ function main(): void {
   const threadMeta = loadThreadMeta();
   const streamFiles = fs.readdirSync(STREAMS_DIR).filter((f) => f.endsWith(".jsonl"));
 
-  console.log(`Found ${streamFiles.length} stream files, ${threadMeta.size} thread metadata entries`);
+  console.log(
+    `Found ${streamFiles.length} stream files, ${threadMeta.size} thread metadata entries`,
+  );
   console.log(`Chat logs dir: ${fs.existsSync(CHATS_DIR) ? "found" : "NOT FOUND"}`);
 
   fs.mkdirSync(WS_OUT_DIR, { recursive: true });

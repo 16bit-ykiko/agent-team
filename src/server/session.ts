@@ -348,7 +348,13 @@ function formatToolUse(block: Record<string, unknown>): string {
     case "Edit": {
       const old_str = String(input.old_string ?? "");
       const new_str = String(input.new_string ?? "");
-      return `**Edit** \`${input.file_path}\`\n\`\`\`diff\n${old_str.split("\n").map((l) => "- " + l).join("\n")}\n${new_str.split("\n").map((l) => "+ " + l).join("\n")}\n\`\`\``;
+      return `**Edit** \`${input.file_path}\`\n\`\`\`diff\n${old_str
+        .split("\n")
+        .map((l) => "- " + l)
+        .join("\n")}\n${new_str
+        .split("\n")
+        .map((l) => "+ " + l)
+        .join("\n")}\n\`\`\``;
     }
 
     case "Grep":
