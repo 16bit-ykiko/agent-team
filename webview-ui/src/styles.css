@@ -105,6 +105,72 @@ body {
   text-transform: none;
 }
 
+.search-bar {
+  padding: 6px 10px;
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.search-bar input {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 4px 8px;
+  font-size: 12px;
+  outline: none;
+}
+.search-bar input:focus {
+  border-color: var(--accent);
+}
+.search-clear {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.search-results {
+  flex: 1;
+  overflow-y: auto;
+}
+.search-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.search-result-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.search-result-item:hover {
+  background: var(--bg-hover);
+}
+.search-result-ws {
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.search-result-snippet {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-result-time {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
 .task-list {
   flex: 1;
   overflow-y: auto;
@@ -306,6 +372,14 @@ body {
 
 .message + .message {
   border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+}
+
+.message-highlight {
+  animation: highlight-fade 2s ease-out;
+}
+@keyframes highlight-fade {
+  0% { background: rgba(88, 166, 255, 0.25); }
+  100% { background: transparent; }
 }
 
 .message-compact {
@@ -550,6 +624,25 @@ body {
   color: var(--text-secondary);
   text-transform: uppercase;
   margin-right: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-diff {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--accent);
+  cursor: pointer;
+  text-transform: none;
+  font-weight: 500;
+}
+.btn-diff:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 .event-content {

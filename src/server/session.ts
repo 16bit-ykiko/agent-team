@@ -2,10 +2,18 @@ import { spawn, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import * as readline from "readline";
 
+export interface ToolInput {
+  tool: string;
+  file_path?: string;
+  old_string?: string;
+  new_string?: string;
+}
+
 export interface StreamEvent {
   kind: "thinking" | "text" | "tool_use" | "tool_result" | "result" | "error";
   content: string;
   raw?: unknown;
+  toolInput?: ToolInput;
 }
 
 export interface UsageStats {
@@ -285,10 +293,12 @@ function parseAssistantEvent(obj: Record<string, unknown>): StreamEvent | null {
     }
 
     if (blockType === "tool_use") {
+      const toolInput = extractToolInput(b);
       return {
         kind: "tool_use",
         content: formatToolUse(b),
         raw: obj,
+        toolInput,
       };
     }
 
@@ -301,6 +311,22 @@ function parseAssistantEvent(obj: Record<string, unknown>): StreamEvent | null {
   }
 
   return null;
+}
+
+function extractToolInput(block: Record<string, unknown>): ToolInput | undefined {
+  const name = block.name as string;
+  const input = block.input as Record<string, unknown> | undefined;
+  if (!input) return undefined;
+
+  if (name === "Edit" || name === "Write") {
+    return {
+      tool: name,
+      file_path: input.file_path as string | undefined,
+      old_string: input.old_string as string | undefined,
+      new_string: input.new_string as string | undefined,
+    };
+  }
+  return undefined;
 }
 
 function formatToolUse(block: Record<string, unknown>): string {
@@ -319,8 +345,11 @@ function formatToolUse(block: Record<string, unknown>): string {
     case "Write":
       return `**Write** \`${input.file_path}\`\n\`\`\`\n${truncate(String(input.content ?? ""), 500)}\n\`\`\``;
 
-    case "Edit":
-      return `**Edit** \`${input.file_path}\``;
+    case "Edit": {
+      const old_str = String(input.old_string ?? "");
+      const new_str = String(input.new_string ?? "");
+      return `**Edit** \`${input.file_path}\`\n\`\`\`diff\n${old_str.split("\n").map((l) => "- " + l).join("\n")}\n${new_str.split("\n").map((l) => "+ " + l).join("\n")}\n\`\`\``;
+    }
 
     case "Grep":
       return `**Grep** \`${input.pattern}\`${input.path ? ` in \`${input.path}\`` : ""}`;

@@ -7,9 +7,17 @@ import {
   MOCK_PROJECTS,
 } from "./mockData";
 
+export interface ToolInput {
+  tool: string;
+  file_path?: string;
+  old_string?: string;
+  new_string?: string;
+}
+
 export interface StreamEvent {
   kind: string;
   content: string;
+  toolInput?: ToolInput;
 }
 
 export interface Message {
@@ -273,6 +281,11 @@ export function useServer() {
     ),
     abort: useCallback(
       (wsId: string, agentId?: string) => send({ type: "abort", workspaceId: wsId, agentId }),
+      [send],
+    ),
+    openDiff: useCallback(
+      (filePath: string, oldString: string, newString: string) =>
+        send({ type: "open_diff", filePath, oldString, newString }),
       [send],
     ),
   };

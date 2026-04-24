@@ -2,7 +2,7 @@ import * as http from "http";
 import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
-import { exec } from "child_process";
+import { exec, execSync } from "child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { Workspace, WorkspaceCallbacks } from "./task";
 import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } from "./state";
@@ -261,6 +261,14 @@ export class Server {
         this.abortAgent(msg.workspaceId as string, msg.agentId as string | undefined);
         return;
 
+      case "open_diff":
+        this.openDiff(
+          msg.filePath as string,
+          msg.oldString as string,
+          msg.newString as string,
+        );
+        return;
+
       default:
         this.sendJson(ws, { type: "error", message: `Unknown message type: ${msg.type}` });
     }
@@ -349,6 +357,21 @@ export class Server {
       workspace.abortAgent(agentId);
     } else {
       workspace.abortAll();
+    }
+  }
+
+  private openDiff(filePath: string, oldString: string, newString: string): void {
+    const ext = path.extname(filePath);
+    const baseName = path.basename(filePath, ext);
+    const tmpDir = os.tmpdir();
+    const oldFile = path.join(tmpDir, `${baseName}.old${ext}`);
+    const newFile = path.join(tmpDir, `${baseName}.new${ext}`);
+    fs.writeFileSync(oldFile, oldString);
+    fs.writeFileSync(newFile, newString);
+    try {
+      execSync(`code --diff "${oldFile}" "${newFile}"`, { timeout: 5000 });
+    } catch {
+      // VS Code might not be in PATH; ignore
     }
   }
 

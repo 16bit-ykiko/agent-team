@@ -15,10 +15,13 @@ export const AGENT_PRESETS: AgentPreset[] = [
   { name: "Emilia", avatar: "❄️", color: "#C0C0C0" },
   { name: "Tohka", avatar: "🌙", color: "#7B68EE" },
   { name: "Rin", avatar: "✨", color: "#E6B422" },
+  { name: "Nami", avatar: "🌊", color: "#1E90FF" },
+  { name: "Luffy", avatar: "🏴‍☠️", color: "#D32F2F" },
 ];
 
 export const MODEL_OPTIONS = [
   { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
   { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
   { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
 ];

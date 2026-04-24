@@ -183,7 +183,7 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
   );
 }
 
-const MessageItem = memo(function MessageItem({ msg, agents, compact }: { msg: Message; agents: AgentInfo[]; compact?: boolean }) {
+const MessageItem = memo(function MessageItem({ msg, agents, compact, highlight, onOpenDiff }: { msg: Message; agents: AgentInfo[]; compact?: boolean; highlight?: boolean; onOpenDiff?: (filePath: string, oldString: string, newString: string) => void }) {
   const [eventsOpen, setEventsOpen] = useState(msg.status === "streaming");
 
   if (msg.kind === "system") {
@@ -218,7 +218,7 @@ const MessageItem = memo(function MessageItem({ msg, agents, compact }: { msg: M
   });
 
   return (
-    <div className={`message ${compact ? "message-compact" : ""}`}>
+    <div id={`msg-${msg.id}`} className={`message ${compact ? "message-compact" : ""}${highlight ? " message-highlight" : ""}`}>
       <div className="message-gutter">
         {compact ? null : isUser ? (
           <div className="avatar-user">U</div>
@@ -259,7 +259,18 @@ const MessageItem = memo(function MessageItem({ msg, agents, compact }: { msg: M
               <div className="events-list">
                 {detailEvents.map((ev, i) => (
                   <div key={i} className={`event event-${ev.kind}`}>
-                    <span className="event-kind">{ev.kind}</span>
+                    <span className="event-kind">
+                      {ev.kind}
+                      {ev.toolInput?.tool === "Edit" && ev.toolInput.old_string != null && onOpenDiff && (
+                        <button
+                          className="btn-diff"
+                          title="Open diff in VS Code"
+                          onClick={() => onOpenDiff(ev.toolInput!.file_path!, ev.toolInput!.old_string!, ev.toolInput!.new_string!)}
+                        >
+                          Diff
+                        </button>
+                      )}
+                    </span>
                     <div className="event-content">
                       {(ev.kind === "tool_use" || ev.kind === "thinking") && ev.content ? (
                         <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{ev.content}</Markdown>
@@ -380,6 +391,7 @@ export function App() {
     removeAgent,
     sendMessage,
     abort,
+    openDiff,
   } = useServer();
 
   const [activeWsId, setActiveWsId] = useState<string | null>(null);
@@ -390,12 +402,58 @@ export function App() {
   const [mentionIdx, setMentionIdx] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [visibleCount, setVisibleCount] = useState(30);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draggingRef = useRef(false);
 
   const activeWs = workspaces.find((w) => w.id === activeWsId);
+
+  interface SearchResult {
+    wsId: string;
+    wsName: string;
+    msg: Message;
+    snippet: string;
+  }
+
+  const searchResults: SearchResult[] = (() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const results: SearchResult[] = [];
+    for (const ws of workspaces) {
+      for (const msg of ws.messages) {
+        if (msg.kind === "system") continue;
+        const text = msg.content.toLowerCase();
+        const idx = text.indexOf(q);
+        if (idx !== -1) {
+          const start = Math.max(0, idx - 20);
+          const end = Math.min(text.length, idx + q.length + 40);
+          const snippet = (start > 0 ? "..." : "") + msg.content.slice(start, end) + (end < text.length ? "..." : "");
+          results.push({ wsId: ws.id, wsName: ws.name, msg, snippet });
+        }
+        if (results.length >= 100) break;
+      }
+      if (results.length >= 100) break;
+    }
+    return results;
+  })();
+
+  const jumpToMessage = useCallback((wsId: string, msgId: string) => {
+    const ws = workspaces.find((w) => w.id === wsId);
+    if (ws) {
+      const msgIdx = ws.messages.findIndex((m) => m.id === msgId);
+      if (msgIdx >= 0) setVisibleCount(Math.max(30, ws.messages.length - msgIdx + 10));
+    }
+    setActiveWsId(wsId);
+    setHighlightMsgId(msgId);
+    setSearchQuery("");
+    setTimeout(() => {
+      document.getElementById(`msg-${msgId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setTimeout(() => setHighlightMsgId(null), 2000);
+    }, 100);
+  }, [workspaces]);
 
   useEffect(() => {
     if (!activeWsId && workspaces.length > 0) setActiveWsId(workspaces[0].id);
@@ -534,6 +592,34 @@ export function App() {
             +
           </button>
         </div>
+        <div className="search-bar">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search messages..."
+          />
+          {searchQuery && (
+            <button className="search-clear" onClick={() => setSearchQuery("")}>x</button>
+          )}
+        </div>
+        {searchQuery.trim() ? (
+          <div className="search-results">
+            {searchResults.length === 0 ? (
+              <div className="search-empty">No results</div>
+            ) : (
+              searchResults.map((r, i) => (
+                <div key={i} className="search-result-item" onClick={() => jumpToMessage(r.wsId, r.msg.id)}>
+                  <div className="search-result-ws">{r.wsName}</div>
+                  <div className="search-result-snippet">{r.snippet}</div>
+                  <div className="search-result-time">
+                    {new Date(r.msg.timestamp).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
         <div className="task-list">
           {workspaces.map((ws) => {
             const running = ws.messages.some((m) => m.status === "streaming");
@@ -563,6 +649,7 @@ export function App() {
             );
           })}
         </div>
+        )}
         {systemStatus && <SystemStatusPanel status={systemStatus} />}
       </div>
 
@@ -641,7 +728,7 @@ export function App() {
                         !!msg.turnId &&
                         msg.turnId === prev.turnId;
                       return (
-                        <MessageItem key={msg.id} msg={msg} agents={activeWs.agents} compact={compact} />
+                        <MessageItem key={msg.id} msg={msg} agents={activeWs.agents} compact={compact} highlight={msg.id === highlightMsgId} onOpenDiff={openDiff} />
                       );
                     })}
                   </>
