@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useServer, Workspace, Message, AgentInfo, AgentPreset, ModelOption } from "./useServer";
 
 function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
@@ -127,8 +129,36 @@ function CreateWorkspaceDialog({
   );
 }
 
-function MessageBubble({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
-  const isUser = msg.agentId === null;
+function renderMentionContent(content: string, agents: AgentInfo[]) {
+  const match = content.match(/^@(\S+)(\s+|$)/);
+  if (!match) {
+    return <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>;
+  }
+  const mentionName = match[1];
+  const rest = content.slice(match[0].length);
+  const mentioned = agents.find((a) => a.name === mentionName);
+  return (
+    <>
+      <span className="mention-pill" style={mentioned ? { background: mentioned.color } : undefined}>
+        @{mentionName}
+      </span>
+      {rest && <Markdown remarkPlugins={[remarkGfm]}>{rest}</Markdown>}
+    </>
+  );
+}
+
+function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
+  const [eventsOpen, setEventsOpen] = useState(true);
+
+  if (msg.kind === "system") {
+    return (
+      <div className="system-message">
+        <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+      </div>
+    );
+  }
+
+  const isUser = msg.kind === "user";
   const agent = !isUser ? agents.find((a) => a.id === msg.agentId) : null;
 
   const events = msg.events ?? [];
@@ -144,37 +174,73 @@ function MessageBubble({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
   if (errorCount > 0) summaryParts.push(`${errorCount} error(s)`);
   if (msg.status === "streaming" && summaryParts.length === 0) summaryParts.push("streaming...");
 
+  const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
   return (
-    <div className={`message ${isUser ? "user" : "agent"}`}>
-      {!isUser && agent && (
+    <div className="message">
+      <div className="message-gutter">
+        {isUser ? (
+          <div className="avatar-user">U</div>
+        ) : agent ? (
+          <AgentAvatar agent={agent} size={32} />
+        ) : (
+          <div className="avatar-user">?</div>
+        )}
+      </div>
+      <div className="message-body">
         <div className="message-header">
-          <AgentAvatar agent={agent} size={22} />
-          <span className="message-agent-name">{agent.name}</span>
-          <span className="message-model">{agent.model.replace("claude-", "").replace(/-/g, " ")}</span>
+          {isUser ? (
+            <span className="message-author user-author">You</span>
+          ) : agent ? (
+            <>
+              <span className="message-author" style={{ color: agent.color }}>{agent.name}</span>
+              <span className="message-model">{agent.model.replace("claude-", "").replace(/-/g, " ")}</span>
+            </>
+          ) : null}
+          <span className="message-time">{time}</span>
           {msg.status === "streaming" && <span className="streaming-dot" />}
         </div>
-      )}
-      {isUser && <div className="message-header"><span className="message-agent-name">You</span></div>}
 
-      {msg.status === "streaming" && !msg.content && (
-        <div className="working-indicator">Working...</div>
-      )}
-
-      {msg.content && <div className="message-content">{msg.content}</div>}
-
-      {hasDetails && (
-        <details className="message-events" open={msg.status === "streaming" && !msg.content}>
-          <summary>{summaryParts.join(" · ")}</summary>
-          <div className="events-list">
-            {detailEvents.map((ev, i) => (
-              <div key={i} className={`event event-${ev.kind}`}>
-                <span className="event-kind">{ev.kind}</span>
-                <pre>{ev.content}</pre>
+        {hasDetails && (
+          <div className="message-events">
+            <div
+              className="events-header"
+              onClick={() => setEventsOpen((v) => !v)}
+            >
+              <span className="events-toggle">{eventsOpen ? "▾" : "▸"}</span>
+              <span>{summaryParts.join(" · ")}</span>
+            </div>
+            {eventsOpen && (
+              <div className="events-list">
+                {detailEvents.map((ev, i) => (
+                  <div key={i} className={`event event-${ev.kind}`}>
+                    <span className="event-kind">{ev.kind}</span>
+                    <div className="event-content">
+                      {ev.kind === "tool_use" ? (
+                        <Markdown remarkPlugins={[remarkGfm]}>{ev.content}</Markdown>
+                      ) : (
+                        <pre>{ev.content}</pre>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        </details>
-      )}
+        )}
+
+        {msg.status === "streaming" && !msg.content && detailEvents.length === 0 && (
+          <div className="working-indicator">Working...</div>
+        )}
+
+        {msg.content && (
+          <div className="message-content">
+            {isUser ? renderMentionContent(msg.content, agents) : (
+              <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -366,7 +432,7 @@ export function App() {
                 </div>
               )}
               {activeWs.messages.map((msg) => (
-                <MessageBubble key={msg.id} msg={msg} agents={activeWs.agents} />
+                <MessageItem key={msg.id} msg={msg} agents={activeWs.agents} />
               ))}
               <div ref={messagesEndRef} />
             </div>

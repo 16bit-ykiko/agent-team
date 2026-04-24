@@ -7,6 +7,7 @@ export interface StreamEvent {
 
 export interface Message {
   id: string;
+  kind: "user" | "agent" | "system";
   agentId: string | null;
   content: string;
   timestamp: number;
