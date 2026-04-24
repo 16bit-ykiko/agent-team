@@ -258,7 +258,7 @@ export class Workspace {
         ...a.info,
         session: a.session.getState(),
       })),
-      messages: this.messages.map((m) => ({ ...m, events: undefined })),
+      messages: this.messages,
       createdAt: this.createdAt,
     };
   }
