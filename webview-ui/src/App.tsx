@@ -183,7 +183,7 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
   );
 }
 
-const MessageItem = memo(function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
+const MessageItem = memo(function MessageItem({ msg, agents, compact }: { msg: Message; agents: AgentInfo[]; compact?: boolean }) {
   const [eventsOpen, setEventsOpen] = useState(msg.status === "streaming");
 
   if (msg.kind === "system") {
@@ -218,9 +218,9 @@ const MessageItem = memo(function MessageItem({ msg, agents }: { msg: Message; a
   });
 
   return (
-    <div className="message">
+    <div className={`message ${compact ? "message-compact" : ""}`}>
       <div className="message-gutter">
-        {isUser ? (
+        {compact ? null : isUser ? (
           <div className="avatar-user">U</div>
         ) : agent ? (
           <AgentAvatar agent={agent} size={32} />
@@ -229,22 +229,25 @@ const MessageItem = memo(function MessageItem({ msg, agents }: { msg: Message; a
         )}
       </div>
       <div className="message-body">
-        <div className="message-header">
-          {isUser ? (
-            <span className="message-author user-author">You</span>
-          ) : agent ? (
-            <>
-              <span className="message-author" style={{ color: agent.color }}>
-                {agent.name}
-              </span>
-              <span className="message-model">
-                {agent.model.replace("claude-", "").replace(/-/g, " ")}
-              </span>
-            </>
-          ) : null}
-          <span className="message-time">{time}</span>
-          {msg.status === "streaming" && <span className="streaming-dot" />}
-        </div>
+        {!compact && (
+          <div className="message-header">
+            {isUser ? (
+              <span className="message-author user-author">You</span>
+            ) : agent ? (
+              <>
+                <span className="message-author" style={{ color: agent.color }}>
+                  {agent.name}
+                </span>
+                <span className="message-model">
+                  {agent.model.replace("claude-", "").replace(/-/g, " ")}
+                </span>
+              </>
+            ) : null}
+            <span className="message-time">{time}</span>
+            {msg.status === "streaming" && <span className="streaming-dot" />}
+          </div>
+        )}
+        {compact && msg.status === "streaming" && <span className="streaming-dot" />}
 
         {hasDetails && (
           <div className="message-events">
@@ -629,9 +632,18 @@ export function App() {
                     {startIdx > 0 && (
                       <div className="load-more-hint">{startIdx} earlier messages</div>
                     )}
-                    {visible.map((msg) => (
-                      <MessageItem key={msg.id} msg={msg} agents={activeWs.agents} />
-                    ))}
+                    {visible.map((msg, i) => {
+                      const prev = i > 0 ? visible[i - 1] : null;
+                      const compact =
+                        !!prev &&
+                        msg.kind === "agent" &&
+                        prev.kind === "agent" &&
+                        !!msg.turnId &&
+                        msg.turnId === prev.turnId;
+                      return (
+                        <MessageItem key={msg.id} msg={msg} agents={activeWs.agents} compact={compact} />
+                      );
+                    })}
                   </>
                 );
               })()}

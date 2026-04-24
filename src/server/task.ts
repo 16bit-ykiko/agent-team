@@ -12,6 +12,7 @@ export interface Message {
   timestamp: number;
   status: MessageStatus;
   events?: StreamEvent[];
+  turnId?: string;
 }
 
 export interface AgentInfo {
@@ -180,6 +181,8 @@ export class Workspace {
     this.messages.push(userMsg);
     this.cb?.onNewMessage(this.id, userMsg);
 
+    const turnId = genId("turn");
+
     const makeAgentMsg = (): Message => ({
       id: genId("msg"),
       kind: "agent",
@@ -188,6 +191,7 @@ export class Workspace {
       timestamp: Date.now(),
       status: "streaming",
       events: [],
+      turnId,
     });
 
     let currentMsg = makeAgentMsg();

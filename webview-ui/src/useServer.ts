@@ -20,6 +20,7 @@ export interface Message {
   timestamp: number;
   status: "streaming" | "done" | "error";
   events?: StreamEvent[];
+  turnId?: string;
 }
 
 export interface AgentInfo {

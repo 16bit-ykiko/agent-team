@@ -51,6 +51,7 @@ export const MOCK_WORKSPACES: Workspace[] = [
         content: "Let me look at the auth code to find the bug.",
         timestamp: Date.now() - 48000,
         status: "done",
+        turnId: "turn-1",
         events: [
           {
             kind: "thinking",
@@ -73,6 +74,7 @@ export const MOCK_WORKSPACES: Workspace[] = [
         content: "Found it — `Date.now()` returns milliseconds but JWT `exp` is in seconds. Fixing now.",
         timestamp: Date.now() - 45000,
         status: "done",
+        turnId: "turn-1",
         events: [
           {
             kind: "tool_use",
@@ -91,6 +93,7 @@ export const MOCK_WORKSPACES: Workspace[] = [
         content: "I found the issue in the `validateToken` function. The token expiry check was comparing timestamps in different units (seconds vs milliseconds). Here's the fix:\n\n```typescript\nfunction validateToken(token: string): boolean {\n  const decoded = jwt.decode(token);\n  const now = Math.floor(Date.now() / 1000); // seconds\n  return decoded.exp > now;\n}\n```\n\nAll tests pass.",
         timestamp: Date.now() - 42000,
         status: "done",
+        turnId: "turn-1",
         events: [
           {
             kind: "tool_use",
@@ -117,6 +120,7 @@ export const MOCK_WORKSPACES: Workspace[] = [
         content: "",
         timestamp: Date.now() - 25000,
         status: "streaming",
+        turnId: "turn-2",
         events: [
           {
             kind: "thinking",

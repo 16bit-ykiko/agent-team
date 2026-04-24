@@ -308,6 +308,16 @@ body {
   border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
 }
 
+.message-compact {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  border-top: none !important;
+}
+
+.message-compact + .message-compact {
+  border-top: none !important;
+}
+
 .message-gutter {
   flex-shrink: 0;
   width: 32px;
