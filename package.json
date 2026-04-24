@@ -17,6 +17,10 @@
       {
         "command": "agent-team.open",
         "title": "Agent Team: Open"
+      },
+      {
+        "command": "agent-team.openExternal",
+        "title": "Agent Team: Open in External Browser"
       }
     ]
   },
