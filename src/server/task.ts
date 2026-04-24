@@ -180,7 +180,7 @@ export class Workspace {
     this.messages.push(userMsg);
     this.cb?.onNewMessage(this.id, userMsg);
 
-    const agentMsg: Message = {
+    const makeAgentMsg = (): Message => ({
       id: genId("msg"),
       kind: "agent",
       agentId: agent.info.id,
@@ -188,28 +188,51 @@ export class Workspace {
       timestamp: Date.now(),
       status: "streaming",
       events: [],
-    };
-    this.messages.push(agentMsg);
-    this.cb?.onNewMessage(this.id, agentMsg);
+    });
+
+    let currentMsg = makeAgentMsg();
+    this.messages.push(currentMsg);
+    this.cb?.onNewMessage(this.id, currentMsg);
+
+    let textFinalized = false;
 
     const eventHandler = (event: StreamEvent) => {
-      agentMsg.events!.push(event);
       if (event.kind === "text") {
-        agentMsg.content = event.content;
+        currentMsg.content = event.content;
+        currentMsg.status = "done";
+        this.cb?.onMessageDone(this.id, currentMsg.id, "done", event.content);
+        textFinalized = true;
+      } else {
+        if (textFinalized) {
+          currentMsg = makeAgentMsg();
+          this.messages.push(currentMsg);
+          this.cb?.onNewMessage(this.id, currentMsg);
+          textFinalized = false;
+        }
+        currentMsg.events!.push(event);
+        this.cb?.onStreamEvent(this.id, currentMsg, event);
       }
-      this.cb?.onStreamEvent(this.id, agentMsg, event);
     };
 
     agent.session.on("event", eventHandler);
 
     try {
       await agent.session.send(cleanContent);
-      agentMsg.status = "done";
+      if (!textFinalized) currentMsg.status = "done";
     } catch {
-      agentMsg.status = "error";
+      if (textFinalized) {
+        currentMsg = makeAgentMsg();
+        currentMsg.status = "error";
+        this.messages.push(currentMsg);
+        this.cb?.onNewMessage(this.id, currentMsg);
+      } else {
+        currentMsg.status = "error";
+      }
     } finally {
       agent.session.off("event", eventHandler);
-      this.cb?.onMessageDone(this.id, agentMsg.id, agentMsg.status, agentMsg.content);
+      if (!textFinalized) {
+        this.cb?.onMessageDone(this.id, currentMsg.id, currentMsg.status, currentMsg.content);
+      }
     }
   }
 

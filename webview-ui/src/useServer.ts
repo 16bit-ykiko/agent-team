@@ -152,8 +152,7 @@ export function useServer() {
               messages: w.messages.map((m) => {
                 if (m.id !== messageId) return m;
                 const events = [...(m.events ?? []), event];
-                const content = event.kind === "text" ? event.content : m.content;
-                return { ...m, events, content };
+                return { ...m, events };
               }),
             };
           }),

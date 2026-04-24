@@ -48,8 +48,8 @@ export const MOCK_WORKSPACES: Workspace[] = [
         id: "msg-3",
         kind: "agent",
         agentId: "agent-1",
-        content: "I found the issue in the `validateToken` function. The token expiry check was comparing timestamps in different units (seconds vs milliseconds). Here's the fix:\n\n```typescript\nfunction validateToken(token: string): boolean {\n  const decoded = jwt.decode(token);\n  const now = Math.floor(Date.now() / 1000); // seconds\n  return decoded.exp > now;\n}\n```\n\nThe bug was that `Date.now()` returns milliseconds but JWT `exp` is in seconds.",
-        timestamp: Date.now() - 45000,
+        content: "Let me look at the auth code to find the bug.",
+        timestamp: Date.now() - 48000,
         status: "done",
         events: [
           {
@@ -64,6 +64,16 @@ export const MOCK_WORKSPACES: Workspace[] = [
             kind: "tool_result",
             content: "import jwt from 'jsonwebtoken';\n\nfunction validateToken(token: string): boolean {\n  const decoded = jwt.decode(token);\n  const now = Date.now(); // BUG: milliseconds vs seconds\n  return decoded.exp > now;\n}",
           },
+        ],
+      },
+      {
+        id: "msg-3b",
+        kind: "agent",
+        agentId: "agent-1",
+        content: "Found it — `Date.now()` returns milliseconds but JWT `exp` is in seconds. Fixing now.",
+        timestamp: Date.now() - 45000,
+        status: "done",
+        events: [
           {
             kind: "tool_use",
             content: "**Edit** `src/auth.ts`",
@@ -72,6 +82,16 @@ export const MOCK_WORKSPACES: Workspace[] = [
             kind: "tool_result",
             content: "File edited successfully.",
           },
+        ],
+      },
+      {
+        id: "msg-3c",
+        kind: "agent",
+        agentId: "agent-1",
+        content: "I found the issue in the `validateToken` function. The token expiry check was comparing timestamps in different units (seconds vs milliseconds). Here's the fix:\n\n```typescript\nfunction validateToken(token: string): boolean {\n  const decoded = jwt.decode(token);\n  const now = Math.floor(Date.now() / 1000); // seconds\n  return decoded.exp > now;\n}\n```\n\nAll tests pass.",
+        timestamp: Date.now() - 42000,
+        status: "done",
+        events: [
           {
             kind: "tool_use",
             content: "**Bash**\n```bash\nnpm test -- --filter auth\n```",
