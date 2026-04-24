@@ -5,10 +5,11 @@ import { WorkspaceState } from "./task";
 const DATA_DIR = ".agent-team";
 const CACHE_DIR = "cache";
 const LOGS_DIR = "logs";
-const STATE_FILE = "state.json";
+const INDEX_FILE = "index.json";
+const WS_DIR = "workspaces";
 
-export interface AppState {
-  workspaces: WorkspaceState[];
+interface StateIndex {
+  workspaceIds: string[];
 }
 
 function ensureDir(dir: string): void {
@@ -19,23 +20,78 @@ function dataRoot(baseDir: string): string {
   return path.join(baseDir, DATA_DIR);
 }
 
-export function saveState(baseDir: string, state: AppState): void {
-  const dir = path.join(dataRoot(baseDir), CACHE_DIR);
+function wsDir(baseDir: string): string {
+  return path.join(dataRoot(baseDir), CACHE_DIR, WS_DIR);
+}
+
+function indexPath(baseDir: string): string {
+  return path.join(dataRoot(baseDir), CACHE_DIR, INDEX_FILE);
+}
+
+function writeJson(file: string, data: unknown): void {
+  const dir = path.dirname(file);
   ensureDir(dir);
-  const file = path.join(dir, STATE_FILE);
   const tmp = file + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
   fs.renameSync(tmp, file);
 }
 
-export function loadState(baseDir: string): AppState | null {
-  const file = path.join(dataRoot(baseDir), CACHE_DIR, STATE_FILE);
+function readJson<T>(file: string): T | null {
   if (!fs.existsSync(file)) return null;
   try {
-    const raw = fs.readFileSync(file, "utf-8");
-    const data = JSON.parse(raw);
-    if (!data || !Array.isArray(data.workspaces)) return null;
-    return data as AppState;
+    return JSON.parse(fs.readFileSync(file, "utf-8")) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function saveWorkspace(baseDir: string, ws: WorkspaceState): void {
+  writeJson(path.join(wsDir(baseDir), `${ws.id}.json`), ws);
+}
+
+export function deleteWorkspaceState(baseDir: string, workspaceId: string): void {
+  const file = path.join(wsDir(baseDir), `${workspaceId}.json`);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+}
+
+export function saveIndex(baseDir: string, workspaceIds: string[]): void {
+  writeJson(indexPath(baseDir), { workspaceIds });
+}
+
+export function loadAll(baseDir: string): WorkspaceState[] {
+  const oldState = migrateIfNeeded(baseDir);
+  if (oldState) return oldState;
+
+  const index = readJson<StateIndex>(indexPath(baseDir));
+  if (!index) return [];
+
+  const results: WorkspaceState[] = [];
+  for (const id of index.workspaceIds) {
+    const ws = readJson<WorkspaceState>(path.join(wsDir(baseDir), `${id}.json`));
+    if (ws) results.push(ws);
+  }
+  return results;
+}
+
+function migrateIfNeeded(baseDir: string): WorkspaceState[] | null {
+  const oldFile = path.join(dataRoot(baseDir), CACHE_DIR, "state.json");
+  if (!fs.existsSync(oldFile)) return null;
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(oldFile, "utf-8"));
+    if (!raw || !Array.isArray(raw.workspaces)) return null;
+
+    const workspaces = raw.workspaces as WorkspaceState[];
+    const ids: string[] = [];
+
+    for (const ws of workspaces) {
+      saveWorkspace(baseDir, ws);
+      ids.push(ws.id);
+    }
+    saveIndex(baseDir, ids);
+    fs.unlinkSync(oldFile);
+    console.log(`Migrated ${workspaces.length} workspace(s) from state.json to per-file storage`);
+    return workspaces;
   } catch {
     return null;
   }

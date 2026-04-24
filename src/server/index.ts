@@ -4,7 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { WebSocketServer, WebSocket } from "ws";
 import { Workspace, WorkspaceCallbacks } from "./task";
-import { saveState, loadState, appendLog } from "./state";
+import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } from "./state";
 import { loadConfig, AppConfig } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
 
@@ -239,7 +239,8 @@ export class Server {
     const workspace = new Workspace(id, name, project, cwd, this.makeCallbacks());
 
     this.workspaces.set(id, workspace);
-    this.persistState();
+    this.persistWorkspace(id);
+    this.persistIndex();
     this.broadcastUI({ type: "workspace_created", workspace: workspace.getInfo() });
   }
 
@@ -248,7 +249,8 @@ export class Server {
     if (!ws) return;
     ws.abortAll();
     this.workspaces.delete(workspaceId);
-    this.persistState();
+    deleteWorkspaceState(this.baseDir, workspaceId);
+    this.persistIndex();
     this.broadcastUI({ type: "workspace_deleted", workspaceId });
   }
 
@@ -270,7 +272,7 @@ export class Server {
     const agent = workspace.addAgent(name, model, avatar, color, {
       permissionMode: permissionMode ?? "bypassPermissions",
     });
-    this.persistState();
+    this.persistWorkspace(workspaceId);
     this.broadcastUI({ type: "agent_added", workspaceId, agent });
   }
 
@@ -279,7 +281,7 @@ export class Server {
     if (!workspace) return;
 
     workspace.removeAgent(agentId);
-    this.persistState();
+    this.persistWorkspace(workspaceId);
     this.broadcastUI({ type: "agent_removed", workspaceId, agentId });
   }
 
@@ -299,7 +301,7 @@ export class Server {
       });
     }
 
-    this.persistState();
+    this.persistWorkspace(workspaceId);
   }
 
   private abortAgent(workspaceId: string, agentId?: string): void {
@@ -312,16 +314,27 @@ export class Server {
     }
   }
 
-  private persistState(): void {
-    const workspaces = [...this.workspaces.values()].map((w) => w.getState());
-    saveState(this.baseDir, { workspaces });
+  private persistWorkspace(workspaceId: string): void {
+    const ws = this.workspaces.get(workspaceId);
+    if (ws) saveWorkspace(this.baseDir, ws.getState());
+  }
+
+  private persistIndex(): void {
+    saveIndex(this.baseDir, [...this.workspaces.keys()]);
+  }
+
+  private persistAll(): void {
+    for (const ws of this.workspaces.values()) {
+      saveWorkspace(this.baseDir, ws.getState());
+    }
+    this.persistIndex();
   }
 
   private restoreState(): void {
-    const state = loadState(this.baseDir);
-    if (!state) return;
+    const states = loadAll(this.baseDir);
+    if (states.length === 0) return;
 
-    for (const wsState of state.workspaces) {
+    for (const wsState of states) {
       const workspace = Workspace.fromState(wsState, this.makeCallbacks());
       this.workspaces.set(workspace.id, workspace);
     }
@@ -351,14 +364,14 @@ export class Server {
           status,
           content,
         });
-        this.persistState();
+        this.persistWorkspace(wsId);
       },
     };
   }
 
   close(): void {
     if (this.statusTimer) clearInterval(this.statusTimer);
-    this.persistState();
+    this.persistAll();
     for (const ws of this.workspaces.values()) ws.abortAll();
     this.wss.close();
     this.httpServer.close();
