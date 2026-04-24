@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import "highlight.js/styles/github-dark.css";
 import { useServer, Workspace, Message, AgentInfo, AgentPreset, ModelOption, SystemStatus } from "./useServer";
 
 function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
@@ -163,7 +165,7 @@ function CreateWorkspaceDialog({
 function renderMentionContent(content: string, agents: AgentInfo[]) {
   const match = content.match(/^@(\S+)(\s+|$)/);
   if (!match) {
-    return <Markdown remarkPlugins={[remarkGfm]}>{content}</Markdown>;
+    return <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{content}</Markdown>;
   }
   const mentionName = match[1];
   const rest = content.slice(match[0].length);
@@ -176,7 +178,7 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
       >
         @{mentionName}
       </span>
-      {rest && <Markdown remarkPlugins={[remarkGfm]}>{rest}</Markdown>}
+      {rest && <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{rest}</Markdown>}
     </>
   );
 }
@@ -187,7 +189,7 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
   if (msg.kind === "system") {
     return (
       <div className="system-message">
-        <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{msg.content}</Markdown>
       </div>
     );
   }
@@ -257,7 +259,7 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
                     <span className="event-kind">{ev.kind}</span>
                     <div className="event-content">
                       {(ev.kind === "tool_use" || ev.kind === "thinking") && ev.content ? (
-                        <Markdown remarkPlugins={[remarkGfm]}>{ev.content}</Markdown>
+                        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{ev.content}</Markdown>
                       ) : ev.kind === "tool_result" ? (
                         <pre><code>{ev.content}</code></pre>
                       ) : (
@@ -280,7 +282,7 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
             {isUser ? (
               renderMentionContent(msg.content, agents)
             ) : (
-              <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+              <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>{msg.content}</Markdown>
             )}
           </div>
         )}
