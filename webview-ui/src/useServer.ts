@@ -1,4 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  MOCK_WORKSPACES,
+  MOCK_SYSTEM_STATUS,
+  MOCK_PRESETS,
+  MOCK_MODELS,
+  MOCK_PROJECTS,
+} from "./mockData";
 
 export interface StreamEvent {
   kind: string;
@@ -205,13 +212,24 @@ export function useServer() {
     ws.onmessage = (e) => handleServerMessage(JSON.parse(e.data));
   }, [handleServerMessage]);
 
+  const useMock = import.meta.env.DEV && new URLSearchParams(window.location.search).has("mock");
+
   useEffect(() => {
+    if (useMock) {
+      setWorkspaces(MOCK_WORKSPACES);
+      setPresets(MOCK_PRESETS);
+      setModels(MOCK_MODELS);
+      setProjects(MOCK_PROJECTS);
+      setSystemStatus(MOCK_SYSTEM_STATUS);
+      setConnected(true);
+      return;
+    }
     connect();
     return () => {
       clearTimeout(reconnectRef.current);
       wsRef.current?.close();
     };
-  }, [connect]);
+  }, [connect, useMock]);
 
   const send = useCallback((data: unknown) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

@@ -256,8 +256,10 @@ function MessageItem({ msg, agents }: { msg: Message; agents: AgentInfo[] }) {
                   <div key={i} className={`event event-${ev.kind}`}>
                     <span className="event-kind">{ev.kind}</span>
                     <div className="event-content">
-                      {ev.kind === "tool_use" ? (
+                      {(ev.kind === "tool_use" || ev.kind === "thinking") && ev.content ? (
                         <Markdown remarkPlugins={[remarkGfm]}>{ev.content}</Markdown>
+                      ) : ev.kind === "tool_result" ? (
+                        <pre><code>{ev.content}</code></pre>
                       ) : (
                         <pre>{ev.content}</pre>
                       )}
