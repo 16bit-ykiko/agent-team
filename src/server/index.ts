@@ -161,15 +161,8 @@ export class Server {
       return;
     }
 
-    let resolvedTarget = target;
-    const mentionMatch = content.match(/^@(\S+)\s/);
-    if (mentionMatch && !resolvedTarget) {
-      resolvedTarget = mentionMatch[1];
-      content = content.slice(mentionMatch[0].length);
-    }
-
     try {
-      await workspace.sendMessage(content, resolvedTarget);
+      await workspace.sendMessage(content, target);
     } catch (e) {
       this.broadcast({
         type: "error",

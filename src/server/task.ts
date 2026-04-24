@@ -1,10 +1,12 @@
 import { ClaudeSession, SessionConfig, StreamEvent, SessionState } from "./session";
 
 export type MessageStatus = "streaming" | "done" | "error";
+export type MessageKind = "user" | "agent" | "system";
 
 export interface Message {
   id: string;
-  agentId: string | null; // null = user
+  kind: MessageKind;
+  agentId: string | null;
   content: string;
   timestamp: number;
   status: MessageStatus;
@@ -81,6 +83,19 @@ export class Workspace {
     this.cb = cb;
   }
 
+  private pushSystemMessage(content: string): void {
+    const msg: Message = {
+      id: genId("msg"),
+      kind: "system",
+      agentId: null,
+      content,
+      timestamp: Date.now(),
+      status: "done",
+    };
+    this.messages.push(msg);
+    this.cb?.onNewMessage(this.id, msg);
+  }
+
   addAgent(name: string, model: string, avatar: string, color: string, config: Partial<SessionConfig>): AgentInfo {
     const id = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const isDefault = this.agents.size === 0;
@@ -93,6 +108,7 @@ export class Workspace {
     });
 
     this.agents.set(id, { info, session });
+    this.pushSystemMessage(`${avatar} **${name}** joined the team`);
     return info;
   }
 
@@ -108,6 +124,7 @@ export class Workspace {
       first.info.isDefault = true;
     }
 
+    this.pushSystemMessage(`${entry.info.avatar} **${entry.info.name}** left the team`);
     return true;
   }
 
@@ -137,12 +154,21 @@ export class Workspace {
   }
 
   async sendMessage(content: string, target?: string): Promise<void> {
-    const agent = this.resolveAgent(target);
-    if (!agent) throw new Error(target ? `Agent not found: ${target}` : "No default agent");
+    let resolvedTarget = target;
+    let cleanContent = content;
+    const mentionMatch = content.match(/^@(\S+)\s+/);
+    if (mentionMatch) {
+      if (!resolvedTarget) resolvedTarget = mentionMatch[1];
+      cleanContent = content.slice(mentionMatch[0].length);
+    }
+
+    const agent = this.resolveAgent(resolvedTarget);
+    if (!agent) throw new Error(resolvedTarget ? `Agent not found: ${resolvedTarget}` : "No default agent");
     if (agent.session.isRunning) throw new Error(`Agent ${agent.info.name} is busy`);
 
     const userMsg: Message = {
       id: genId("msg"),
+      kind: "user",
       agentId: null,
       content,
       timestamp: Date.now(),
@@ -153,6 +179,7 @@ export class Workspace {
 
     const agentMsg: Message = {
       id: genId("msg"),
+      kind: "agent",
       agentId: agent.info.id,
       content: "",
       timestamp: Date.now(),
@@ -173,7 +200,7 @@ export class Workspace {
     agent.session.on("event", eventHandler);
 
     try {
-      await agent.session.send(content);
+      await agent.session.send(cleanContent);
       agentMsg.status = "done";
     } catch {
       agentMsg.status = "error";
@@ -226,7 +253,10 @@ export class Workspace {
   ): Workspace {
     const ws = new Workspace(state.id, state.name, state.project, state.cwd, cb);
     ws.createdAt = state.createdAt;
-    ws.messages = state.messages;
+    ws.messages = state.messages.map((m) => ({
+      ...m,
+      kind: m.kind ?? (m.agentId === null ? "user" : "agent"),
+    }));
 
     for (const agentState of state.agents) {
       const session = ClaudeSession.fromState(agentState.session);
