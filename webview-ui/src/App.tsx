@@ -363,6 +363,64 @@ const MessageItem = memo(function MessageItem({
   );
 });
 
+function compressToBlob(file: File, maxDim = 1600, quality = 0.85): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const src = URL.createObjectURL(file);
+    img.onload = () => {
+      try {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => {
+            URL.revokeObjectURL(src);
+            blob ? resolve(blob) : reject(new Error("toBlob returned null"));
+          },
+          "image/jpeg",
+          quality,
+        );
+      } catch (e) {
+        URL.revokeObjectURL(src);
+        reject(e);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(src);
+      reject(new Error(`Failed to load image: ${file.name}`));
+    };
+    img.src = src;
+  });
+}
+
+async function uploadImage(file: File): Promise<{ name: string; url: string }> {
+  let blob: Blob;
+  try {
+    blob = await Promise.race([
+      compressToBlob(file),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Compression timeout")), 10000)),
+    ]);
+  } catch {
+    blob = file;
+  }
+  const contentType = blob instanceof File ? (blob.type || "image/jpeg") : "image/jpeg";
+  const res = await fetch("upload", {
+    method: "POST",
+    headers: { "Content-Type": contentType, "X-Filename": file.name },
+    credentials: "include",
+    body: blob,
+  });
+  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  return res.json();
+}
+
 function formatBytes(bytes: number): string {
   const gb = bytes / (1024 * 1024 * 1024);
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
@@ -475,6 +533,7 @@ export function App() {
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [pendingImages, setPendingImages] = useState<Array<{ file: File; preview: string }>>([]);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -672,20 +731,20 @@ export function App() {
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if ((!text && pendingImages.length === 0) || !activeWs) return;
+    if ((!text && pendingImages.length === 0) || !activeWs || uploading) return;
 
-    let images: Array<{ name: string; data: string }> | undefined;
+    let images: Array<{ name: string; url: string }> | undefined;
     if (pendingImages.length > 0) {
-      images = await Promise.all(
-        pendingImages.map(
-          ({ file }) =>
-            new Promise<{ name: string; data: string }>((resolve) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve({ name: file.name, data: reader.result as string });
-              reader.readAsDataURL(file);
-            }),
-        ),
-      );
+      setUploading(true);
+      try {
+        images = await Promise.all(pendingImages.map(({ file }) => uploadImage(file)));
+      } catch (e) {
+        console.error("Image upload failed:", e);
+        alert(`Image upload failed: ${e instanceof Error ? e.message : e}`);
+        setUploading(false);
+        return;
+      }
+      setUploading(false);
       pendingImages.forEach((img) => URL.revokeObjectURL(img.preview));
       setPendingImages([]);
     }
@@ -727,7 +786,7 @@ export function App() {
     setMentionQuery(null);
     setCmdQuery(null);
     if (textareaRef.current) textareaRef.current.style.height = "36px";
-  }, [input, activeWs, skills, sendMessage, pendingImages]);
+  }, [input, activeWs, skills, sendMessage, pendingImages, uploading]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (cmdQuery !== null && filteredCmds.length > 0) {
@@ -1115,9 +1174,9 @@ export function App() {
                 )}
                 <button
                   onClick={handleSend}
-                  disabled={(!input.trim() && pendingImages.length === 0) || !hasAgents}
+                  disabled={(!input.trim() && pendingImages.length === 0) || !hasAgents || uploading}
                 >
-                  Send
+                  {uploading ? "Uploading..." : "Send"}
                 </button>
               </div>
             </div>

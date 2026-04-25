@@ -9,7 +9,12 @@ export interface AgentConfig {
   permission_mode: string;
 }
 
+export interface ServerConfig {
+  remote_uploads_url?: string;
+}
+
 export interface AppConfig {
+  server: ServerConfig;
   projects: Record<string, string>;
   agents: Record<string, AgentConfig>;
 }
@@ -42,5 +47,10 @@ export function loadConfig(baseDir: string): AppConfig {
     }
   }
 
-  return { projects, agents };
+  const serverSection = parsed.server as Record<string, unknown> | undefined;
+  const server: ServerConfig = {
+    remote_uploads_url: (serverSection?.remote_uploads_url as string) || undefined,
+  };
+
+  return { server, projects, agents };
 }

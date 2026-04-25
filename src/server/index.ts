@@ -153,6 +153,24 @@ export class Server {
       const url = new URL(req.url ?? "/", "http://localhost");
       const pathname = decodeURIComponent(url.pathname);
 
+      if (req.method === "POST" && pathname === "/upload") {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk: Buffer) => chunks.push(chunk));
+        req.on("end", () => {
+          const buffer = Buffer.concat(chunks);
+          const rawName = (req.headers["x-filename"] as string) || "image.jpg";
+          const ext = path.extname(rawName) || ".jpg";
+          const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+          const filePath = path.join(this.uploadsDir, filename);
+          fs.writeFileSync(filePath, buffer);
+          console.log(`[upload] saved ${rawName} → ${filename} (${buffer.length} bytes)`);
+          res.setHeader("Content-Type", "application/json");
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          res.end(JSON.stringify({ url: `uploads/${filename}`, name: rawName }));
+        });
+        return;
+      }
+
       if (pathname.startsWith("/uploads/")) {
         const target = path.normalize(
           path.join(this.uploadsDir, pathname.slice("/uploads/".length)),
@@ -305,9 +323,15 @@ export class Server {
         return;
 
       case "send_message": {
-        const images = this.saveUploadedImages(
-          msg.images as Array<{ name: string; data: string }> | undefined,
-        );
+        const rawImages = msg.images as Array<{ name: string; url: string }> | undefined;
+        const images = rawImages?.length
+          ? rawImages.map((img) => ({
+              name: img.name,
+              url: img.url,
+              path: path.join(this.uploadsDir, path.basename(img.url)),
+            }))
+          : undefined;
+        if (images) this.ensureLocalImages(images);
         this.sendMessage(
           msg.workspaceId as string,
           msg.content as string,
@@ -391,17 +415,29 @@ export class Server {
     this.broadcastUI({ type: "agent_removed", workspaceId, agentId });
   }
 
-  private saveUploadedImages(
-    raw: Array<{ name: string; data: string }> | undefined,
-  ): Array<{ name: string; url: string; path: string }> | undefined {
-    if (!raw?.length) return undefined;
-    return raw.map((img) => {
-      const ext = path.extname(img.name) || ".png";
-      const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-      const filePath = path.join(this.uploadsDir, filename);
-      const base64Data = img.data.replace(/^data:image\/[^;]+;base64,/, "");
-      fs.writeFileSync(filePath, base64Data, "base64");
-      return { name: img.name, url: `uploads/${filename}`, path: filePath };
+  private ensureLocalImages(
+    images: Array<{ name: string; url: string; path: string }>,
+  ): void {
+    const remoteBase = this.config.server.remote_uploads_url;
+    if (!remoteBase) return;
+
+    for (const img of images) {
+      if (fs.existsSync(img.path)) continue;
+      const filename = path.basename(img.url);
+      const url = `${remoteBase}/${filename}`;
+      console.log(`[ensureLocalImages] downloading ${url} → ${img.path}`);
+      try {
+        this.downloadFile(url, img.path);
+        console.log(`[ensureLocalImages] saved ${fs.statSync(img.path).size} bytes`);
+      } catch (e) {
+        console.error(`[ensureLocalImages] failed to download ${url}:`, e);
+      }
+    }
+  }
+
+  private downloadFile(url: string, dest: string): void {
+    execSync(`curl -sfL --connect-timeout 10 --max-time 30 -o ${JSON.stringify(dest)} ${JSON.stringify(url)}`, {
+      timeout: 35000,
     });
   }
 

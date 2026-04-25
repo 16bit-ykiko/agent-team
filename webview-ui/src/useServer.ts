@@ -355,7 +355,7 @@ export function useServer() {
         wsId: string,
         content: string,
         target?: string,
-        images?: Array<{ name: string; data: string }>,
+        images?: Array<{ name: string; url: string }>,
       ) => send({ type: "send_message", workspaceId: wsId, content, target, images }),
       [send],
     ),
