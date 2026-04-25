@@ -337,6 +337,16 @@ const MessageItem = memo(function MessageItem({
           <div className="working-indicator">Working...</div>
         )}
 
+        {msg.images && msg.images.length > 0 && (
+          <div className="msg-images">
+            {msg.images.map((img, i) => (
+              <a key={i} href={img.url} target="_blank" rel="noopener noreferrer">
+                <img src={img.url} alt={img.name} />
+              </a>
+            ))}
+          </div>
+        )}
+
         {msg.content && (
           <div className="message-content">
             {isUser ? (
@@ -464,6 +474,8 @@ export function App() {
   const [cmdIdx, setCmdIdx] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingImages, setPendingImages] = useState<Array<{ file: File; preview: string }>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
@@ -529,9 +541,8 @@ export function App() {
   const jumpToMessage = useCallback(
     (wsId: string, msgId: string) => {
       const ws = workspaces.find((w) => w.id === wsId);
-      if (ws) {
-        const msgIdx = ws.messages.findIndex((m) => m.id === msgId);
-        if (msgIdx >= 0) setVisibleCount(Math.max(30, ws.messages.length - msgIdx + 10));
+      if (ws && !ws.messagesLoaded) {
+        loadMessages(ws.id);
       }
       setActiveWsId(wsId);
       setHighlightMsgId(msgId);
@@ -643,9 +654,41 @@ export function App() {
     [input],
   );
 
-  const handleSend = useCallback(() => {
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    const newImages = files
+      .filter((f) => f.type.startsWith("image/"))
+      .map((file) => ({ file, preview: URL.createObjectURL(file) }));
+    setPendingImages((prev) => [...prev, ...newImages]);
+    e.target.value = "";
+  }, []);
+
+  const removePendingImage = useCallback((index: number) => {
+    setPendingImages((prev) => {
+      URL.revokeObjectURL(prev[index].preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
+
+  const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || !activeWs) return;
+    if ((!text && pendingImages.length === 0) || !activeWs) return;
+
+    let images: Array<{ name: string; data: string }> | undefined;
+    if (pendingImages.length > 0) {
+      images = await Promise.all(
+        pendingImages.map(
+          ({ file }) =>
+            new Promise<{ name: string; data: string }>((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve({ name: file.name, data: reader.result as string });
+              reader.readAsDataURL(file);
+            }),
+        ),
+      );
+      pendingImages.forEach((img) => URL.revokeObjectURL(img.preview));
+      setPendingImages([]);
+    }
 
     const cmdMatch = text.match(/^\/(\w+)\s*([\s\S]*)/);
     if (cmdMatch) {
@@ -670,7 +713,7 @@ export function App() {
           }
         }
 
-        sendMessage(activeWs.id, content, target);
+        sendMessage(activeWs.id, content, target, images);
         setInput("");
         setCmdQuery(null);
         setMentionQuery(null);
@@ -679,12 +722,12 @@ export function App() {
       }
     }
 
-    sendMessage(activeWs.id, text);
+    sendMessage(activeWs.id, text, undefined, images);
     setInput("");
     setMentionQuery(null);
     setCmdQuery(null);
     if (textareaRef.current) textareaRef.current.style.height = "36px";
-  }, [input, activeWs, skills, sendMessage]);
+  }, [input, activeWs, skills, sendMessage, pendingImages]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (cmdQuery !== null && filteredCmds.length > 0) {
@@ -1020,7 +1063,38 @@ export function App() {
                   ))}
                 </div>
               )}
+              {pendingImages.length > 0 && (
+                <div className="image-preview-strip">
+                  {pendingImages.map((img, i) => (
+                    <div key={i} className="image-preview-item">
+                      <img src={img.preview} alt={img.file.name} />
+                      <button
+                        className="image-preview-remove"
+                        onClick={() => removePendingImage(i)}
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="input-row">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  hidden
+                  onChange={handleFileSelect}
+                />
+                <button
+                  className="btn-attach"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!hasAgents}
+                  title="Attach image"
+                >
+                  +
+                </button>
                 <textarea
                   ref={textareaRef}
                   value={input}
@@ -1039,7 +1113,10 @@ export function App() {
                     Stop
                   </button>
                 )}
-                <button onClick={handleSend} disabled={!input.trim() || !hasAgents}>
+                <button
+                  onClick={handleSend}
+                  disabled={(!input.trim() && pendingImages.length === 0) || !hasAgents}
+                >
                   Send
                 </button>
               </div>

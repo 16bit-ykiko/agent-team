@@ -4,6 +4,11 @@ import { ClaudeSession, SessionConfig, StreamEvent, SessionState } from "./sessi
 export type MessageStatus = "streaming" | "done" | "error";
 export type MessageKind = "user" | "agent" | "system";
 
+export interface MessageImage {
+  name: string;
+  url: string;
+}
+
 export interface Message {
   id: string;
   kind: MessageKind;
@@ -13,6 +18,7 @@ export interface Message {
   status: MessageStatus;
   events?: StreamEvent[];
   turnId?: string;
+  images?: MessageImage[];
 }
 
 export interface AgentInfo {
@@ -158,7 +164,11 @@ export class Workspace {
     return null;
   }
 
-  async sendMessage(content: string, target?: string): Promise<void> {
+  async sendMessage(
+    content: string,
+    target?: string,
+    images?: Array<{ name: string; url: string; path: string }>,
+  ): Promise<void> {
     let resolvedTarget = target;
     let cleanContent = content;
     const mentionMatch = content.match(/^@(\S+)\s+/);
@@ -172,6 +182,8 @@ export class Workspace {
       throw new Error(resolvedTarget ? `Agent not found: ${resolvedTarget}` : "No default agent");
     if (agent.session.isRunning) throw new Error(`Agent ${agent.info.name} is busy`);
 
+    const msgImages = images?.map(({ name, url }) => ({ name, url }));
+
     const userMsg: Message = {
       id: genId("msg"),
       kind: "user",
@@ -179,6 +191,7 @@ export class Workspace {
       content,
       timestamp: Date.now(),
       status: "done",
+      images: msgImages?.length ? msgImages : undefined,
     };
     this.messages.push(userMsg);
     this.cb?.onNewMessage(this.id, userMsg);
@@ -223,8 +236,14 @@ export class Workspace {
     agent.session.on("event", eventHandler);
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
 
+    let prompt = cleanContent;
+    if (images?.length) {
+      const refs = images.map((img) => img.path).join("\n");
+      prompt = `[User attached image(s). Use the Read tool to view:\n${refs}]\n\n${prompt || "Please look at the attached image(s)."}`;
+    }
+
     try {
-      await agent.session.send(cleanContent);
+      await agent.session.send(prompt);
       if (!textFinalized) currentMsg.status = "done";
     } catch {
       if (textFinalized) {

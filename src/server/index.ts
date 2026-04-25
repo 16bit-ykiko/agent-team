@@ -17,6 +17,10 @@ const MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
   ".ico": "image/x-icon",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
@@ -39,10 +43,13 @@ export class Server {
   private windowsHostUpdating = false;
   private skills: SkillDef[] = [];
   private persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private uploadsDir: string;
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
     this.webDir = webDir;
+    this.uploadsDir = path.join(baseDir, "uploads");
+    if (!fs.existsSync(this.uploadsDir)) fs.mkdirSync(this.uploadsDir, { recursive: true });
     this.config = loadConfig(baseDir);
     this.skills = loadSkills(baseDir);
     this.isWSL = this.detectWSL();
@@ -144,9 +151,32 @@ export class Server {
   private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
-      let pathname = decodeURIComponent(url.pathname);
-      if (pathname === "/") pathname = "/index.html";
-      const target = path.normalize(path.join(this.webDir, pathname));
+      const pathname = decodeURIComponent(url.pathname);
+
+      if (pathname.startsWith("/uploads/")) {
+        const target = path.normalize(
+          path.join(this.uploadsDir, pathname.slice("/uploads/".length)),
+        );
+        if (!target.startsWith(this.uploadsDir + path.sep) && target !== this.uploadsDir) {
+          res.statusCode = 403;
+          res.end("Forbidden");
+          return;
+        }
+        if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+          res.statusCode = 404;
+          res.end("Not found");
+          return;
+        }
+        const ext = path.extname(target);
+        res.setHeader("Content-Type", MIME[ext] ?? "application/octet-stream");
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        fs.createReadStream(target).pipe(res);
+        return;
+      }
+
+      let filePath = pathname;
+      if (filePath === "/") filePath = "/index.html";
+      const target = path.normalize(path.join(this.webDir, filePath));
       if (!target.startsWith(this.webDir + path.sep) && target !== this.webDir) {
         res.statusCode = 403;
         res.end("Forbidden");
@@ -274,13 +304,18 @@ export class Server {
         this.removeAgent(msg.workspaceId as string, msg.agentId as string);
         return;
 
-      case "send_message":
+      case "send_message": {
+        const images = this.saveUploadedImages(
+          msg.images as Array<{ name: string; data: string }> | undefined,
+        );
         this.sendMessage(
           msg.workspaceId as string,
           msg.content as string,
           msg.target as string | undefined,
+          images,
         );
         return;
+      }
 
       case "abort":
         this.abortAgent(msg.workspaceId as string, msg.agentId as string | undefined);
@@ -356,7 +391,26 @@ export class Server {
     this.broadcastUI({ type: "agent_removed", workspaceId, agentId });
   }
 
-  private async sendMessage(workspaceId: string, content: string, target?: string): Promise<void> {
+  private saveUploadedImages(
+    raw: Array<{ name: string; data: string }> | undefined,
+  ): Array<{ name: string; url: string; path: string }> | undefined {
+    if (!raw?.length) return undefined;
+    return raw.map((img) => {
+      const ext = path.extname(img.name) || ".png";
+      const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+      const filePath = path.join(this.uploadsDir, filename);
+      const base64Data = img.data.replace(/^data:image\/[^;]+;base64,/, "");
+      fs.writeFileSync(filePath, base64Data, "base64");
+      return { name: img.name, url: `uploads/${filename}`, path: filePath };
+    });
+  }
+
+  private async sendMessage(
+    workspaceId: string,
+    content: string,
+    target?: string,
+    images?: Array<{ name: string; url: string; path: string }>,
+  ): Promise<void> {
     const workspace = this.workspaces.get(workspaceId);
     if (!workspace) {
       this.broadcastUI({ type: "error", message: "Workspace not found" });
@@ -364,7 +418,7 @@ export class Server {
     }
 
     try {
-      await workspace.sendMessage(content, target);
+      await workspace.sendMessage(content, target, images);
     } catch (e) {
       this.broadcastUI({
         type: "error",

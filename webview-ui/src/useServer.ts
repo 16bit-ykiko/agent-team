@@ -20,6 +20,11 @@ export interface StreamEvent {
   toolInput?: ToolInput;
 }
 
+export interface MessageImage {
+  name: string;
+  url: string;
+}
+
 export interface Message {
   id: string;
   kind: "user" | "agent" | "system";
@@ -29,6 +34,7 @@ export interface Message {
   status: "streaming" | "done" | "error";
   events?: StreamEvent[];
   turnId?: string;
+  images?: MessageImage[];
 }
 
 export interface AgentInfo {
@@ -345,8 +351,12 @@ export function useServer() {
       [send],
     ),
     sendMessage: useCallback(
-      (wsId: string, content: string, target?: string) =>
-        send({ type: "send_message", workspaceId: wsId, content, target }),
+      (
+        wsId: string,
+        content: string,
+        target?: string,
+        images?: Array<{ name: string; data: string }>,
+      ) => send({ type: "send_message", workspaceId: wsId, content, target, images }),
       [send],
     ),
     abort: useCallback(
