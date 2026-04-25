@@ -643,8 +643,16 @@ export function App() {
     }
   }, [activeWs, loadMessages]);
 
+  const prevMsgCountRef = useRef(0);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const msgs = activeWs?.messages ?? [];
+    const prevCount = prevMsgCountRef.current;
+    prevMsgCountRef.current = msgs.length;
+    if (msgs.length > prevCount && prevCount > 0 && msgs[msgs.length - 1]?.timestamp > (msgs[prevCount - 1]?.timestamp ?? 0)) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    } else if (prevCount === 0) {
+      messagesEndRef.current?.scrollIntoView();
+    }
   }, [activeWs?.messages]);
 
   const isAnyRunning =

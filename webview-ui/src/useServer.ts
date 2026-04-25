@@ -116,7 +116,18 @@ export function useServer() {
   const handleServerMessage = useCallback((msg: Record<string, unknown>) => {
     switch (msg.type) {
       case "init": {
-        setWorkspaces(msg.workspaces as Workspace[]);
+        const incoming = msg.workspaces as Workspace[];
+        setWorkspaces((prev) => {
+          if (prev.length === 0) return incoming;
+          const prevMap = new Map(prev.map((w) => [w.id, w]));
+          return incoming.map((w) => {
+            const existing = prevMap.get(w.id);
+            if (existing?.messagesLoaded) {
+              return { ...w, messages: existing.messages, messagesLoaded: true, hasMore: existing.hasMore };
+            }
+            return w;
+          });
+        });
         const config = msg.config as {
           projects: Record<string, string>;
           presets: AgentPreset[];
