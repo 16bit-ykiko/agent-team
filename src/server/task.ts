@@ -266,7 +266,7 @@ export class Workspace {
     }
   }
 
-  getInfo(): WorkspaceInfo {
+  getInfo(includeMessages = true): WorkspaceInfo {
     return {
       id: this.id,
       name: this.name,
@@ -277,9 +277,13 @@ export class Workspace {
         ...a.info,
         busy: a.session.isRunning,
       })),
-      messages: this.messages,
+      messages: includeMessages ? this.messages : [],
       createdAt: this.createdAt,
     };
+  }
+
+  getMessages(): Message[] {
+    return this.messages;
   }
 
   getState(): WorkspaceState {

@@ -199,7 +199,7 @@ export class Server {
 
     this.sendJson(ws, {
       type: "init",
-      workspaces: [...this.workspaces.values()].map((w) => w.getInfo()),
+      workspaces: [...this.workspaces.values()].map((w) => w.getInfo(false)),
       config: {
         projects: this.config.projects,
         presets: AGENT_PRESETS,
@@ -231,6 +231,24 @@ export class Server {
           });
         }
         return;
+
+      case "load_messages": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        if (workspace) {
+          const before = (msg.before as number) ?? Infinity;
+          const limit = Math.min((msg.limit as number) ?? 50, 200);
+          const all = workspace.getMessages();
+          const filtered = before === Infinity ? all : all.filter((m) => m.timestamp < before);
+          const page = filtered.slice(-limit);
+          this.sendJson(ws, {
+            type: "workspace_messages",
+            workspaceId: workspace.id,
+            messages: page,
+            hasMore: filtered.length > limit,
+          });
+        }
+        return;
+      }
 
       case "create_workspace":
         this.createWorkspace(ws, msg.name as string, msg.project as string);

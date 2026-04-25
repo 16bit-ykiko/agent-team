@@ -451,6 +451,7 @@ export function App() {
     sendMessage,
     abort,
     openDiff,
+    loadMessages,
   } = useServer();
 
   const [activeWsId, setActiveWsId] = useState<string | null>(null);
@@ -462,7 +463,8 @@ export function App() {
   const [cmdQuery, setCmdQuery] = useState<string | null>(null);
   const [cmdIdx, setCmdIdx] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(260);
-  const [visibleCount, setVisibleCount] = useState(30);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
   const seenCountRef = useRef<Record<string, number>>({});
@@ -549,19 +551,27 @@ export function App() {
   }, [sortedWorkspaces, activeWsId]);
 
   useEffect(() => {
-    setVisibleCount(30);
+    if (activeWsId) loadMessages(activeWsId);
     requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView();
     });
-  }, [activeWsId]);
+  }, [activeWsId, loadMessages]);
 
+  const loadingMoreRef = useRef(false);
   const onMessagesScroll = useCallback(() => {
     const el = messagesContainerRef.current;
-    if (!el) return;
-    if (el.scrollTop < 80) {
-      setVisibleCount((v) => v + 30);
+    if (!el || !activeWs || loadingMoreRef.current) return;
+    if (el.scrollTop < 80 && activeWs.hasMore) {
+      const oldest = activeWs.messages[0];
+      if (oldest) {
+        loadingMoreRef.current = true;
+        loadMessages(activeWs.id, oldest.timestamp);
+        setTimeout(() => {
+          loadingMoreRef.current = false;
+        }, 500);
+      }
     }
-  }, []);
+  }, [activeWs, loadMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -756,7 +766,11 @@ export function App() {
 
   return (
     <div className="app">
-      <div className="sidebar" style={{ width: sidebarWidth }}>
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+      <div
+        className={`sidebar${sidebarOpen ? " sidebar-open" : ""}`}
+        style={{ width: sidebarWidth }}
+      >
         <div className="sidebar-header">
           <span>Workspaces {!connected && <span className="disconnected">(offline)</span>}</span>
           <button title="New workspace" onClick={() => setShowCreate(true)}>
@@ -817,7 +831,10 @@ export function App() {
                 <div
                   key={ws.id}
                   className={`task-item ${ws.id === activeWsId ? "active" : ""}${running ? " task-item-active" : ""}`}
-                  onClick={() => setActiveWsId(ws.id)}
+                  onClick={() => {
+                    setActiveWsId(ws.id);
+                    setSidebarOpen(false);
+                  }}
                 >
                   <div className={`task-status ${running ? "running" : "idle"}`} />
                   <div className="task-info">
@@ -868,6 +885,9 @@ export function App() {
           <>
             <div className="panel-header">
               <div className="panel-header-top">
+                <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>
+                  &#9776;
+                </button>
                 <span className="panel-title">
                   {activeWs.name} — {activeWs.project}
                 </span>
@@ -931,15 +951,13 @@ export function App() {
                     </div>
                   );
                 }
-                const startIdx = Math.max(0, total - visibleCount);
-                const visible = msgs.slice(startIdx);
                 return (
                   <>
-                    {startIdx > 0 && (
-                      <div className="load-more-hint">{startIdx} earlier messages</div>
+                    {activeWs.hasMore && (
+                      <div className="load-more-hint">Scroll up to load more</div>
                     )}
-                    {visible.map((msg, i) => {
-                      const prev = i > 0 ? visible[i - 1] : null;
+                    {msgs.map((msg, i) => {
+                      const prev = i > 0 ? msgs[i - 1] : null;
                       const compact =
                         !!prev &&
                         msg.kind === "agent" &&
@@ -1028,11 +1046,19 @@ export function App() {
             </div>
           </>
         ) : (
-          <div className="empty-state">
-            {workspaces.length === 0
-              ? "No workspaces yet. Click + to create one."
-              : "Select a workspace."}
-          </div>
+          <>
+            <div className="empty-header mobile-only">
+              <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>
+                &#9776;
+              </button>
+              <span>Agent Team</span>
+            </div>
+            <div className="empty-state">
+              {workspaces.length === 0
+                ? "No workspaces yet. Click + to create one."
+                : "Select a workspace."}
+            </div>
+          </>
         )}
       </div>
 

@@ -50,6 +50,8 @@ export interface Workspace {
   agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
+  hasMore?: boolean;
+  messagesLoaded?: boolean;
 }
 
 export interface SystemStatus {
@@ -84,11 +86,13 @@ export interface SkillDef {
   template: string;
 }
 
-const SERVER_PORT = 9800;
-
 function resolveWsUrl(): string {
-  const host = window.location.hostname || "localhost";
-  return `ws://${host}:${SERVER_PORT}`;
+  const loc = window.location;
+  if (loc.port === "5173" || loc.port === "9800") {
+    return `ws://${loc.hostname}:9800`;
+  }
+  const proto = loc.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${loc.host}${loc.pathname}`;
 }
 
 export function useServer() {
@@ -124,6 +128,24 @@ export function useServer() {
       case "host_state":
         setHostAvailable(Boolean(msg.available));
         break;
+
+      case "workspace_messages": {
+        const wsId = msg.workspaceId as string;
+        const incoming = msg.messages as Message[];
+        const hasMore = msg.hasMore as boolean;
+        setWorkspaces((prev) =>
+          prev.map((w) => {
+            if (w.id !== wsId) return w;
+            if (!w.messagesLoaded) {
+              return { ...w, messages: incoming, hasMore, messagesLoaded: true };
+            }
+            const existingIds = new Set(w.messages.map((m) => m.id));
+            const newMsgs = incoming.filter((m) => !existingIds.has(m.id));
+            return { ...w, messages: [...newMsgs, ...w.messages], hasMore };
+          }),
+        );
+        break;
+      }
 
       case "workspace_created":
         setWorkspaces((prev) => [...prev, msg.workspace as Workspace]);
@@ -298,6 +320,11 @@ export function useServer() {
     systemStatus,
     callHostAction: useCallback(
       (action: string, args: unknown) => send({ type: "host_action", action, args }),
+      [send],
+    ),
+    loadMessages: useCallback(
+      (wsId: string, before?: number) =>
+        send({ type: "load_messages", workspaceId: wsId, before, limit: 50 }),
       [send],
     ),
     createWorkspace: useCallback(
