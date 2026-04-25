@@ -2,7 +2,7 @@ import * as http from "http";
 import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
-import { exec, execSync } from "child_process";
+import { exec, execSync, spawn } from "child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { Workspace, WorkspaceCallbacks } from "./task";
 import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } from "./state";
@@ -290,6 +290,10 @@ export class Server {
         this.openDiff(msg.filePath as string, msg.oldString as string, msg.newString as string);
         return;
 
+      case "restart_server":
+        this.restartServer();
+        return;
+
       default:
         this.sendJson(ws, { type: "error", message: `Unknown message type: ${msg.type}` });
     }
@@ -394,6 +398,28 @@ export class Server {
     } catch {
       // VS Code might not be in PATH; ignore
     }
+  }
+
+  private restartServer(): void {
+    console.log("[restart] Persisting all state before restart...");
+    this.persistAll();
+    this.broadcastUI({ type: "error", message: "Server is restarting..." });
+
+    const script = `#!/bin/bash
+sleep 1
+systemctl --user restart agent-team-server
+`;
+    const tmpScript = path.join(os.tmpdir(), "agent-team-restart.sh");
+    fs.writeFileSync(tmpScript, script, { mode: 0o755 });
+
+    const child = spawn("bash", [tmpScript], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+
+    console.log("[restart] Detached restart script launched, shutting down...");
+    setTimeout(() => process.exit(0), 500);
   }
 
   private persistWorkspace(workspaceId: string): void {

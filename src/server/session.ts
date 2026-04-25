@@ -1,6 +1,23 @@
-import { spawn, ChildProcess } from "child_process";
+import { spawn, execSync, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import * as readline from "readline";
+
+let claudeBin: string | null = null;
+function getClaudeBin(): string {
+  if (claudeBin) return claudeBin;
+  try {
+    claudeBin = execSync("which claude", { encoding: "utf-8" }).trim();
+  } catch {
+    const candidates = [
+      process.env.CLAUDE_BIN,
+      `${process.env.HOME}/.pixi/envs/nodejs/bin/claude`,
+      `${process.env.HOME}/.local/bin/claude`,
+      "/usr/local/bin/claude",
+    ];
+    claudeBin = candidates.find((c) => c && require("fs").existsSync(c)) ?? "claude";
+  }
+  return claudeBin;
+}
 
 export interface ToolInput {
   tool: string;
@@ -146,7 +163,7 @@ export class ClaudeSession extends EventEmitter {
     return new Promise((resolve, reject) => {
       const args = this.buildArgs(message);
 
-      this.proc = spawn("claude", args, {
+      this.proc = spawn(getClaudeBin(), args, {
         cwd: this.config.cwd,
         env: {
           ...process.env,

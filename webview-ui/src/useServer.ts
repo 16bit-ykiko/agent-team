@@ -358,5 +358,6 @@ export function useServer() {
         send({ type: "open_diff", filePath, oldString, newString }),
       [send],
     ),
+    restartServer: useCallback(() => send({ type: "restart_server" }), [send]),
   };
 }
