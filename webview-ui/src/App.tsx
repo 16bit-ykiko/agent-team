@@ -405,12 +405,14 @@ async function uploadImage(file: File): Promise<{ name: string; url: string }> {
   try {
     blob = await Promise.race([
       compressToBlob(file),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Compression timeout")), 10000)),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Compression timeout")), 10000),
+      ),
     ]);
   } catch {
     blob = file;
   }
-  const contentType = blob instanceof File ? (blob.type || "image/jpeg") : "image/jpeg";
+  const contentType = blob instanceof File ? blob.type || "image/jpeg" : "image/jpeg";
   const res = await fetch("upload", {
     method: "POST",
     headers: { "Content-Type": contentType, "X-Filename": file.name },
@@ -523,7 +525,11 @@ export function App() {
   } = useServer();
 
   const [activeWsId, setActiveWsId] = useState<string | null>(() => {
-    try { return localStorage.getItem("activeWsId"); } catch { return null; }
+    try {
+      return localStorage.getItem("activeWsId");
+    } catch {
+      return null;
+    }
   });
   const [input, setInput] = useState("");
   const [showCreate, setShowCreate] = useState(false);
@@ -620,7 +626,9 @@ export function App() {
 
   useEffect(() => {
     if (activeWsId) {
-      try { localStorage.setItem("activeWsId", activeWsId); } catch {}
+      try {
+        localStorage.setItem("activeWsId", activeWsId);
+      } catch {}
     }
   }, [activeWsId]);
 
@@ -659,7 +667,11 @@ export function App() {
     const msgs = activeWs?.messages ?? [];
     const prevCount = prevMsgCountRef.current;
     prevMsgCountRef.current = msgs.length;
-    if (msgs.length > prevCount && prevCount > 0 && msgs[msgs.length - 1]?.timestamp > (msgs[prevCount - 1]?.timestamp ?? 0)) {
+    if (
+      msgs.length > prevCount &&
+      prevCount > 0 &&
+      msgs[msgs.length - 1]?.timestamp > (msgs[prevCount - 1]?.timestamp ?? 0)
+    ) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     } else if (prevCount === 0) {
       messagesEndRef.current?.scrollIntoView();
@@ -719,11 +731,14 @@ export function App() {
     if (textareaRef.current) textareaRef.current.innerText = text;
   }, []);
 
-  const applyCommand = useCallback((cmdName: string) => {
-    setDivText(`/${cmdName} `);
-    setCmdQuery(null);
-    textareaRef.current?.focus();
-  }, [setDivText]);
+  const applyCommand = useCallback(
+    (cmdName: string) => {
+      setDivText(`/${cmdName} `);
+      setCmdQuery(null);
+      textareaRef.current?.focus();
+    },
+    [setDivText],
+  );
 
   const applyMention = useCallback(
     (agentName: string) => {
@@ -800,7 +815,10 @@ export function App() {
         setInput("");
         setCmdQuery(null);
         setMentionQuery(null);
-        if (textareaRef.current) { textareaRef.current.innerText = ""; textareaRef.current.style.height = "36px"; }
+        if (textareaRef.current) {
+          textareaRef.current.innerText = "";
+          textareaRef.current.style.height = "36px";
+        }
         return;
       }
     }
@@ -809,7 +827,10 @@ export function App() {
     setInput("");
     setMentionQuery(null);
     setCmdQuery(null);
-    if (textareaRef.current) { textareaRef.current.innerText = ""; textareaRef.current.style.height = "36px"; }
+    if (textareaRef.current) {
+      textareaRef.current.innerText = "";
+      textareaRef.current.style.height = "36px";
+    }
   }, [input, activeWs, skills, sendMessage, pendingImages, uploading]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -884,7 +905,7 @@ export function App() {
           before = val.slice(0, offset + cursor);
           break;
         }
-        offset += (walker.currentNode.textContent?.length ?? 0);
+        offset += walker.currentNode.textContent?.length ?? 0;
       }
     }
 
@@ -1214,7 +1235,9 @@ export function App() {
                 )}
                 <button
                   onClick={handleSend}
-                  disabled={(!input.trim() && pendingImages.length === 0) || !hasAgents || uploading}
+                  disabled={
+                    (!input.trim() && pendingImages.length === 0) || !hasAgents || uploading
+                  }
                 >
                   {uploading ? "Uploading..." : "Send"}
                 </button>

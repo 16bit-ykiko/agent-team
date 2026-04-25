@@ -415,9 +415,7 @@ export class Server {
     this.broadcastUI({ type: "agent_removed", workspaceId, agentId });
   }
 
-  private ensureLocalImages(
-    images: Array<{ name: string; url: string; path: string }>,
-  ): void {
+  private ensureLocalImages(images: Array<{ name: string; url: string; path: string }>): void {
     const remoteBase = this.config.server.remote_uploads_url;
     if (!remoteBase) return;
 
@@ -436,9 +434,12 @@ export class Server {
   }
 
   private downloadFile(url: string, dest: string): void {
-    execSync(`curl -sfL --connect-timeout 10 --max-time 30 -o ${JSON.stringify(dest)} ${JSON.stringify(url)}`, {
-      timeout: 35000,
-    });
+    execSync(
+      `curl -sfL --connect-timeout 10 --max-time 30 -o ${JSON.stringify(dest)} ${JSON.stringify(url)}`,
+      {
+        timeout: 35000,
+      },
+    );
   }
 
   private async sendMessage(

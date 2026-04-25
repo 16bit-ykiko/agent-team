@@ -124,7 +124,12 @@ export function useServer() {
           return incoming.map((w) => {
             const existing = prevMap.get(w.id);
             if (existing?.messagesLoaded) {
-              return { ...w, messages: existing.messages, messagesLoaded: true, hasMore: existing.hasMore };
+              return {
+                ...w,
+                messages: existing.messages,
+                messagesLoaded: true,
+                hasMore: existing.hasMore,
+              };
             }
             return w;
           });
@@ -197,7 +202,11 @@ export function useServer() {
         const wsId = msg.workspaceId as string;
         const message = msg.message as Message;
         setWorkspaces((prev) =>
-          prev.map((w) => (w.id === wsId ? { ...w, messages: [...w.messages, message], lastMessageAt: message.timestamp } : w)),
+          prev.map((w) =>
+            w.id === wsId
+              ? { ...w, messages: [...w.messages, message], lastMessageAt: message.timestamp }
+              : w,
+          ),
         );
         break;
       }
