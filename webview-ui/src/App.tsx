@@ -522,7 +522,9 @@ export function App() {
     loadMessages,
   } = useServer();
 
-  const [activeWsId, setActiveWsId] = useState<string | null>(null);
+  const [activeWsId, setActiveWsId] = useState<string | null>(() => {
+    try { return localStorage.getItem("activeWsId"); } catch { return null; }
+  });
   const [input, setInput] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
@@ -545,8 +547,8 @@ export function App() {
   const draggingRef = useRef(false);
 
   const sortedWorkspaces = [...workspaces].sort((a, b) => {
-    const aTime = a.messages.length > 0 ? a.messages[a.messages.length - 1].timestamp : a.createdAt;
-    const bTime = b.messages.length > 0 ? b.messages[b.messages.length - 1].timestamp : b.createdAt;
+    const aTime = a.lastMessageAt ?? a.createdAt;
+    const bTime = b.lastMessageAt ?? b.createdAt;
     return bTime - aTime;
   });
   const activeWs = workspaces.find((w) => w.id === activeWsId);
@@ -617,15 +619,24 @@ export function App() {
   );
 
   useEffect(() => {
-    if (!activeWsId && sortedWorkspaces.length > 0) setActiveWsId(sortedWorkspaces[0].id);
-  }, [sortedWorkspaces, activeWsId]);
+    if (activeWsId) {
+      try { localStorage.setItem("activeWsId", activeWsId); } catch {}
+    }
+  }, [activeWsId]);
 
   useEffect(() => {
-    if (activeWsId) loadMessages(activeWsId);
+    if (!activeWsId && sortedWorkspaces.length > 0) setActiveWsId(sortedWorkspaces[0].id);
+    if (activeWsId && workspaces.length > 0 && !workspaces.find((w) => w.id === activeWsId)) {
+      setActiveWsId(sortedWorkspaces[0]?.id ?? null);
+    }
+  }, [sortedWorkspaces, activeWsId, workspaces]);
+
+  useEffect(() => {
+    if (activeWsId && connected) loadMessages(activeWsId);
     requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView();
     });
-  }, [activeWsId, loadMessages]);
+  }, [activeWsId, connected, loadMessages]);
 
   const loadingMoreRef = useRef(false);
   const onMessagesScroll = useCallback(() => {

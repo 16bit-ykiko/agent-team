@@ -43,6 +43,7 @@ export interface WorkspaceInfo {
   agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
+  lastMessageAt?: number;
 }
 
 export interface WorkspaceState {
@@ -286,6 +287,7 @@ export class Workspace {
   }
 
   getInfo(includeMessages = true): WorkspaceInfo {
+    const lastMsg = this.messages[this.messages.length - 1];
     return {
       id: this.id,
       name: this.name,
@@ -298,6 +300,7 @@ export class Workspace {
       })),
       messages: includeMessages ? this.messages : [],
       createdAt: this.createdAt,
+      lastMessageAt: lastMsg?.timestamp ?? this.createdAt,
     };
   }
 

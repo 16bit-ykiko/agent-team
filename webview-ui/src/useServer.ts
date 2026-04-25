@@ -56,6 +56,7 @@ export interface Workspace {
   agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
+  lastMessageAt?: number;
   hasMore?: boolean;
   messagesLoaded?: boolean;
 }
@@ -196,7 +197,7 @@ export function useServer() {
         const wsId = msg.workspaceId as string;
         const message = msg.message as Message;
         setWorkspaces((prev) =>
-          prev.map((w) => (w.id === wsId ? { ...w, messages: [...w.messages, message] } : w)),
+          prev.map((w) => (w.id === wsId ? { ...w, messages: [...w.messages, message], lastMessageAt: message.timestamp } : w)),
         );
         break;
       }
