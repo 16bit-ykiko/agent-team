@@ -12,6 +12,8 @@ import {
   ModelOption,
   SystemStatus,
   SkillDef,
+  HostInfo,
+  HostConfig,
 } from "./useServer";
 
 function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
@@ -112,25 +114,48 @@ function AddAgentDialog({
 
 function CreateWorkspaceDialog({
   projects,
+  hostConfigs,
+  hosts,
   onClose,
   onCreate,
 }: {
-  projects: string[];
+  projects: Record<string, Record<string, string>>;
+  hostConfigs: Record<string, HostConfig>;
+  hosts: HostInfo[];
   onClose: () => void;
-  onCreate: (name: string, project: string) => void;
+  onCreate: (name: string, project: string, hostId?: string) => void;
 }) {
+  const projectNames = Object.keys(projects);
   const [name, setName] = useState("");
-  const [project, setProject] = useState(projects[0] ?? "");
+  const [project, setProject] = useState(projectNames[0] ?? "");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const availableHosts = Object.entries(projects[project] ?? {})
+    .filter(([hId]) => {
+      const info = hosts.find((h) => h.id === hId);
+      return info
+        ? info.connected || hostConfigs[hId]?.type === "local"
+        : hostConfigs[hId]?.type === "local";
+    })
+    .map(([hId]) => ({ id: hId, label: hostConfigs[hId]?.label ?? hId }));
+
+  const [hostId, setHostId] = useState(availableHosts[0]?.id ?? "");
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
+  useEffect(() => {
+    const hosts = Object.keys(projects[project] ?? {});
+    if (hosts.length > 0 && !hosts.includes(hostId)) {
+      setHostId(hosts[0]);
+    }
+  }, [project, hostId, projects]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (name.trim() && project) {
-      onCreate(name.trim(), project);
+      onCreate(name.trim(), project, hostId || undefined);
       onClose();
     }
   };
@@ -151,13 +176,25 @@ function CreateWorkspaceDialog({
         <label className="dialog-field">
           <span>Project</span>
           <select value={project} onChange={(e) => setProject(e.target.value)}>
-            {projects.map((p) => (
+            {projectNames.map((p) => (
               <option key={p} value={p}>
                 {p}
               </option>
             ))}
           </select>
         </label>
+        {availableHosts.length > 1 && (
+          <label className="dialog-field">
+            <span>Host</span>
+            <select value={hostId} onChange={(e) => setHostId(e.target.value)}>
+              {availableHosts.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="dialog-actions">
           <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
@@ -513,6 +550,8 @@ export function App() {
     models,
     projects,
     skills,
+    hosts,
+    hostConfigs,
     systemStatus,
     createWorkspace,
     deleteWorkspace,
@@ -1264,6 +1303,8 @@ export function App() {
       {showCreate && (
         <CreateWorkspaceDialog
           projects={projects}
+          hostConfigs={hostConfigs}
+          hosts={hosts}
           onClose={() => setShowCreate(false)}
           onCreate={createWorkspace}
         />

@@ -9,6 +9,8 @@ import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } fr
 import { loadConfig, AppConfig } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
 import { loadSkills, SkillDef } from "./skills";
+import { HostRegistry, LocalHost } from "./host";
+import { RemoteHost } from "./host-remote";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -44,6 +46,7 @@ export class Server {
   private skills: SkillDef[] = [];
   private persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private uploadsDir: string;
+  private hostRegistry: HostRegistry;
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
@@ -52,6 +55,7 @@ export class Server {
     if (!fs.existsSync(this.uploadsDir)) fs.mkdirSync(this.uploadsDir, { recursive: true });
     this.config = loadConfig(baseDir);
     this.skills = loadSkills(baseDir);
+    this.hostRegistry = this.initHosts();
     this.isWSL = this.detectWSL();
 
     this.httpServer = http.createServer((req, res) => this.handleHttp(req, res));
@@ -75,6 +79,28 @@ export class Server {
     } catch {
       return false;
     }
+  }
+
+  private initHosts(): HostRegistry {
+    const registry = new HostRegistry();
+    for (const [id, cfg] of Object.entries(this.config.hosts)) {
+      if (cfg.type === "local") {
+        registry.register(new LocalHost(id, cfg.label));
+      } else {
+        registry.register(
+          new RemoteHost(id, cfg.label, cfg.token ?? "", () => {
+            this.broadcastUI({ type: "hosts_update", hosts: registry.getAllInfo() });
+          }),
+        );
+      }
+    }
+    console.log(
+      `Hosts: ${registry
+        .getAll()
+        .map((h) => `${h.id} (${h.type})`)
+        .join(", ")}`,
+    );
+    return registry;
   }
 
   private refreshWindowsHost(): void {
@@ -253,7 +279,9 @@ export class Server {
         presets: AGENT_PRESETS,
         models: MODEL_OPTIONS,
         skills: this.skills,
+        hosts: this.config.hosts,
       },
+      hosts: this.hostRegistry.getAllInfo(),
       hostAvailable: this.hostClient !== null,
     });
     this.sendJson(ws, this.getSystemStatus());
@@ -269,6 +297,28 @@ export class Server {
         this.uiClients.delete(ws);
         this.broadcastUI({ type: "host_state", available: true });
         return;
+
+      case "register_runner": {
+        const hostId = msg.hostId as string;
+        const token = msg.token as string;
+        const host = this.hostRegistry.get(hostId);
+        if (!host || host.type !== "remote") {
+          this.sendJson(ws, { type: "auth_fail", message: `Unknown remote host: ${hostId}` });
+          ws.close(1008, "unknown host");
+          return;
+        }
+        const remoteHost = host as RemoteHost;
+        if (remoteHost.token !== token) {
+          this.sendJson(ws, { type: "auth_fail", message: "Invalid token" });
+          ws.close(1008, "bad token");
+          return;
+        }
+        this.uiClients.delete(ws);
+        remoteHost.attach(ws);
+        this.sendJson(ws, { type: "auth_ok" });
+        console.log(`[runner] Host "${hostId}" connected`);
+        return;
+      }
 
       case "host_action":
         if (this.hostClient) {
@@ -299,7 +349,12 @@ export class Server {
       }
 
       case "create_workspace":
-        this.createWorkspace(ws, msg.name as string, msg.project as string);
+        this.createWorkspace(
+          ws,
+          msg.name as string,
+          msg.project as string,
+          msg.hostId as string | undefined,
+        );
         return;
 
       case "delete_workspace":
@@ -358,15 +413,32 @@ export class Server {
     }
   }
 
-  private createWorkspace(ws: WebSocket, name: string, project: string): void {
-    const cwd = this.config.projects[project];
-    if (!cwd) {
+  private createWorkspace(ws: WebSocket, name: string, project: string, hostId?: string): void {
+    const projectPaths = this.config.projects[project];
+    if (!projectPaths) {
       this.sendJson(ws, { type: "error", message: `Unknown project: ${project}` });
+      return;
+    }
+    const resolvedHostId = hostId || this.hostRegistry.getDefault()?.id || "local";
+    const cwd = projectPaths[resolvedHostId];
+    if (!cwd) {
+      this.sendJson(ws, {
+        type: "error",
+        message: `Project "${project}" has no path for host "${resolvedHostId}"`,
+      });
       return;
     }
 
     const id = genId("ws");
-    const workspace = new Workspace(id, name, project, cwd, this.makeCallbacks());
+    const workspace = new Workspace(
+      id,
+      name,
+      project,
+      resolvedHostId,
+      cwd,
+      this.hostRegistry,
+      this.makeCallbacks(),
+    );
 
     this.workspaces.set(id, workspace);
     this.persistWorkspaceNow(id);
@@ -399,11 +471,15 @@ export class Server {
       return;
     }
 
-    const agent = workspace.addAgent(name, model, avatar, color, {
-      permissionMode: permissionMode ?? "bypassPermissions",
-    });
-    this.persistWorkspaceNow(workspaceId);
-    this.broadcastUI({ type: "agent_added", workspaceId, agent });
+    try {
+      const agent = workspace.addAgent(name, model, avatar, color, {
+        permissionMode: permissionMode ?? "bypassPermissions",
+      });
+      this.persistWorkspaceNow(workspaceId);
+      this.broadcastUI({ type: "agent_added", workspaceId, agent });
+    } catch (e) {
+      this.sendJson(ws, { type: "error", message: `${e instanceof Error ? e.message : e}` });
+    }
   }
 
   private removeAgent(workspaceId: string, agentId: string): void {
@@ -553,7 +629,7 @@ systemctl --user restart agent-team-server
     if (states.length === 0) return;
 
     for (const wsState of states) {
-      const workspace = Workspace.fromState(wsState, this.makeCallbacks());
+      const workspace = Workspace.fromState(wsState, this.hostRegistry, this.makeCallbacks());
       this.workspaces.set(workspace.id, workspace);
     }
 

@@ -1,5 +1,6 @@
 import { execSync } from "child_process";
-import { ClaudeSession, SessionConfig, StreamEvent, SessionState } from "./session";
+import { SessionConfig, StreamEvent, SessionState } from "./session";
+import { HostSessionHandle, HostRegistry } from "./host";
 
 export type MessageStatus = "streaming" | "done" | "error";
 export type MessageKind = "user" | "agent" | "system";
@@ -38,6 +39,7 @@ export interface WorkspaceInfo {
   id: string;
   name: string;
   project: string;
+  hostId: string;
   cwd: string;
   gitBranch: string | null;
   agents: AgentInfo[];
@@ -50,6 +52,7 @@ export interface WorkspaceState {
   id: string;
   name: string;
   project: string;
+  hostId: string;
   cwd: string;
   agents: AgentState[];
   messages: Message[];
@@ -58,7 +61,7 @@ export interface WorkspaceState {
 
 export interface AgentEntry {
   info: AgentInfo;
-  session: ClaudeSession;
+  session: HostSessionHandle;
 }
 
 export interface WorkspaceCallbacks {
@@ -73,18 +76,30 @@ export class Workspace {
   id: string;
   name: string;
   project: string;
+  hostId: string;
   cwd: string;
   agents = new Map<string, AgentEntry>();
   messages: Message[] = [];
   createdAt: number;
 
   private cb?: WorkspaceCallbacks;
+  private hostRegistry: HostRegistry;
 
-  constructor(id: string, name: string, project: string, cwd: string, cb?: WorkspaceCallbacks) {
+  constructor(
+    id: string,
+    name: string,
+    project: string,
+    hostId: string,
+    cwd: string,
+    hostRegistry: HostRegistry,
+    cb?: WorkspaceCallbacks,
+  ) {
     this.id = id;
     this.name = name;
     this.project = project;
+    this.hostId = hostId;
     this.cwd = cwd;
+    this.hostRegistry = hostRegistry;
     this.createdAt = Date.now();
     this.cb = cb;
   }
@@ -109,15 +124,15 @@ export class Workspace {
     color: string,
     config: Partial<SessionConfig>,
   ): AgentInfo {
+    const host = this.hostRegistry.get(this.hostId);
+    if (!host) throw new Error(`Host not found: ${this.hostId}`);
+    if (!host.connected) throw new Error(`Host not connected: ${this.hostId}`);
+
     const id = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const isDefault = this.agents.size === 0;
 
     const info: AgentInfo = { id, name, model, avatar, color, isDefault };
-    const session = new ClaudeSession({
-      cwd: this.cwd,
-      model,
-      ...config,
-    });
+    const session = host.createSession(id, { cwd: this.cwd, model, ...config });
 
     this.agents.set(id, { info, session });
     this.pushSystemMessage(`${avatar} **${name}** joined the team`);
@@ -128,7 +143,9 @@ export class Workspace {
     const entry = this.agents.get(agentId);
     if (!entry) return false;
 
-    entry.session.abort();
+    const host = this.hostRegistry.get(this.hostId);
+    if (host) host.destroySession(agentId);
+    else entry.session.abort();
     this.agents.delete(agentId);
 
     if (entry.info.isDefault && this.agents.size > 0) {
@@ -292,6 +309,7 @@ export class Workspace {
       id: this.id,
       name: this.name,
       project: this.project,
+      hostId: this.hostId,
       cwd: this.cwd,
       gitBranch: this.getGitBranch(),
       agents: [...this.agents.values()].map((a) => ({
@@ -313,6 +331,7 @@ export class Workspace {
       id: this.id,
       name: this.name,
       project: this.project,
+      hostId: this.hostId,
       cwd: this.cwd,
       agents: [...this.agents.values()].map((a) => ({
         ...a.info,
@@ -323,8 +342,21 @@ export class Workspace {
     };
   }
 
-  static fromState(state: WorkspaceState, cb?: WorkspaceCallbacks): Workspace {
-    const ws = new Workspace(state.id, state.name, state.project, state.cwd, cb);
+  static fromState(
+    state: WorkspaceState,
+    hostRegistry: HostRegistry,
+    cb?: WorkspaceCallbacks,
+  ): Workspace {
+    const hostId = state.hostId || "local";
+    const ws = new Workspace(
+      state.id,
+      state.name,
+      state.project,
+      hostId,
+      state.cwd,
+      hostRegistry,
+      cb,
+    );
     ws.createdAt = state.createdAt;
     ws.messages = state.messages.map((m) => ({
       ...m,
@@ -332,8 +364,9 @@ export class Workspace {
       status: m.status === "streaming" ? "done" : m.status,
     }));
 
+    const host = hostRegistry.get(hostId) ?? hostRegistry.getDefault()!;
     for (const agentState of state.agents) {
-      const session = ClaudeSession.fromState(agentState.session);
+      const session = host.restoreSession(agentState.id, agentState.session);
       ws.agents.set(agentState.id, {
         info: {
           id: agentState.id,

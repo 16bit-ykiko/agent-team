@@ -24,6 +24,7 @@ export const MOCK_WORKSPACES: Workspace[] = [
     id: "ws-mock-1",
     name: "Demo Workspace",
     project: "my-project",
+    hostId: "local",
     cwd: "/home/user/projects/my-project",
     gitBranch: "feat/new-feature",
     agents: MOCK_AGENTS,
@@ -144,6 +145,7 @@ export const MOCK_WORKSPACES: Workspace[] = [
     id: "ws-mock-2",
     name: "Refactor Task",
     project: "api-server",
+    hostId: "local",
     cwd: "/home/user/projects/api-server",
     gitBranch: "main",
     agents: [],
@@ -175,4 +177,7 @@ export const MOCK_MODELS: ModelOption[] = [
   { id: "claude-opus-4-6", label: "Opus 4.6" },
 ];
 
-export const MOCK_PROJECTS = ["my-project", "api-server"];
+export const MOCK_PROJECTS: Record<string, Record<string, string>> = {
+  "my-project": { local: "/home/user/projects/my-project" },
+  "api-server": { local: "/home/user/projects/api-server" },
+};

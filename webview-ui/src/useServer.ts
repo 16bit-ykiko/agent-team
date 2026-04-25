@@ -47,10 +47,23 @@ export interface AgentInfo {
   busy?: boolean;
 }
 
+export interface HostInfo {
+  id: string;
+  label: string;
+  type: "local" | "remote";
+  connected: boolean;
+}
+
+export interface HostConfig {
+  label: string;
+  type: "local" | "remote";
+}
+
 export interface Workspace {
   id: string;
   name: string;
   project: string;
+  hostId: string;
   cwd: string;
   gitBranch: string | null;
   agents: AgentInfo[];
@@ -108,11 +121,13 @@ export function useServer() {
   const [hostAvailable, setHostAvailable] = useState(false);
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
-  const [projects, setProjects] = useState<string[]>([]);
+  const [projects, setProjects] = useState<Record<string, Record<string, string>>>({});
   const [skills, setSkills] = useState<SkillDef[]>([]);
+  const [hosts, setHosts] = useState<HostInfo[]>([]);
+  const [hostConfigs, setHostConfigs] = useState<Record<string, HostConfig>>({});
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectRef = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const handleServerMessage = useCallback((msg: Record<string, unknown>) => {
     switch (msg.type) {
@@ -135,21 +150,28 @@ export function useServer() {
           });
         });
         const config = msg.config as {
-          projects: Record<string, string>;
+          projects: Record<string, Record<string, string>>;
           presets: AgentPreset[];
           models: ModelOption[];
           skills: SkillDef[];
+          hosts: Record<string, HostConfig>;
         };
-        setProjects(Object.keys(config.projects));
+        setProjects(config.projects);
         setPresets(config.presets);
         setModels(config.models);
         if (config.skills) setSkills(config.skills);
+        if (config.hosts) setHostConfigs(config.hosts);
+        if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
         setHostAvailable(Boolean(msg.hostAvailable));
         break;
       }
 
       case "host_state":
         setHostAvailable(Boolean(msg.available));
+        break;
+
+      case "hosts_update":
+        setHosts(msg.hosts as HostInfo[]);
         break;
 
       case "workspace_messages": {
@@ -344,6 +366,8 @@ export function useServer() {
     models,
     projects,
     skills,
+    hosts,
+    hostConfigs,
     systemStatus,
     callHostAction: useCallback(
       (action: string, args: unknown) => send({ type: "host_action", action, args }),
@@ -355,7 +379,8 @@ export function useServer() {
       [send],
     ),
     createWorkspace: useCallback(
-      (name: string, project: string) => send({ type: "create_workspace", name, project }),
+      (name: string, project: string, hostId?: string) =>
+        send({ type: "create_workspace", name, project, hostId }),
       [send],
     ),
     deleteWorkspace: useCallback(

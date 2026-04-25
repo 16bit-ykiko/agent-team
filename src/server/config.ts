@@ -13,21 +13,36 @@ export interface ServerConfig {
   remote_uploads_url?: string;
 }
 
+export interface HostConfig {
+  label: string;
+  type: "local" | "remote";
+  token?: string;
+}
+
 export interface AppConfig {
   server: ServerConfig;
-  projects: Record<string, string>;
+  projects: Record<string, Record<string, string>>;
   agents: Record<string, AgentConfig>;
+  hosts: Record<string, HostConfig>;
 }
 
 export function loadConfig(baseDir: string): AppConfig {
   const raw = fs.readFileSync(path.join(baseDir, "config.toml"), "utf-8");
   const parsed = TOML.parse(raw) as Record<string, unknown>;
 
-  const projects: Record<string, string> = {};
+  const projects: Record<string, Record<string, string>> = {};
   const rawProjects = parsed.projects;
   if (rawProjects && typeof rawProjects === "object") {
-    for (const [key, value] of Object.entries(rawProjects)) {
-      if (typeof value === "string") projects[key] = value;
+    for (const [name, val] of Object.entries(rawProjects as Record<string, unknown>)) {
+      if (val && typeof val === "object") {
+        const paths: Record<string, string> = {};
+        for (const [hostId, p] of Object.entries(val as Record<string, unknown>)) {
+          if (typeof p === "string") paths[hostId] = p;
+        }
+        if (Object.keys(paths).length > 0) projects[name] = paths;
+      } else if (typeof val === "string") {
+        projects[name] = { local: val };
+      }
     }
   }
 
@@ -52,5 +67,24 @@ export function loadConfig(baseDir: string): AppConfig {
     remote_uploads_url: (serverSection?.remote_uploads_url as string) || undefined,
   };
 
-  return { server, projects, agents };
+  const hosts: Record<string, HostConfig> = {};
+  const rawHosts = parsed.hosts;
+  if (rawHosts && typeof rawHosts === "object") {
+    for (const [id, cfg] of Object.entries(rawHosts as Record<string, unknown>)) {
+      if (cfg && typeof cfg === "object") {
+        const c = cfg as Record<string, string>;
+        const hostType = c.type === "remote" ? "remote" : "local";
+        hosts[id] = {
+          label: c.label ?? id,
+          type: hostType,
+          token: hostType === "remote" ? c.token : undefined,
+        };
+      }
+    }
+  }
+  if (Object.keys(hosts).length === 0) {
+    hosts["local"] = { label: "Local", type: "local" };
+  }
+
+  return { server, projects, agents, hosts };
 }
