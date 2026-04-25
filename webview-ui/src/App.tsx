@@ -541,7 +541,7 @@ export function App() {
   const seenCountRef = useRef<Record<string, number>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
 
   const sortedWorkspaces = [...workspaces].sort((a, b) => {
@@ -695,22 +695,27 @@ export function App() {
     return c.name.toLowerCase().startsWith(cmdQuery.toLowerCase());
   });
 
+  const setDivText = useCallback((text: string) => {
+    setInput(text);
+    if (textareaRef.current) textareaRef.current.innerText = text;
+  }, []);
+
   const applyCommand = useCallback((cmdName: string) => {
-    setInput(`/${cmdName} `);
+    setDivText(`/${cmdName} `);
     setCmdQuery(null);
     textareaRef.current?.focus();
-  }, []);
+  }, [setDivText]);
 
   const applyMention = useCallback(
     (agentName: string) => {
       const atIdx = input.lastIndexOf("@");
       if (atIdx !== -1) {
-        setInput(input.slice(0, atIdx) + `@${agentName} `);
+        setDivText(input.slice(0, atIdx) + `@${agentName} `);
       }
       setMentionQuery(null);
       textareaRef.current?.focus();
     },
-    [input],
+    [input, setDivText],
   );
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -776,7 +781,7 @@ export function App() {
         setInput("");
         setCmdQuery(null);
         setMentionQuery(null);
-        if (textareaRef.current) textareaRef.current.style.height = "36px";
+        if (textareaRef.current) { textareaRef.current.innerText = ""; textareaRef.current.style.height = "36px"; }
         return;
       }
     }
@@ -785,7 +790,7 @@ export function App() {
     setInput("");
     setMentionQuery(null);
     setCmdQuery(null);
-    if (textareaRef.current) textareaRef.current.style.height = "36px";
+    if (textareaRef.current) { textareaRef.current.innerText = ""; textareaRef.current.style.height = "36px"; }
   }, [input, activeWs, skills, sendMessage, pendingImages, uploading]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -839,16 +844,31 @@ export function App() {
     }
   };
 
-  const handleTextareaInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value;
+  const handleDivInput = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const val = el.innerText;
     setInput(val);
 
-    const el = e.target;
     el.style.height = "36px";
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
 
-    const cursor = el.selectionStart ?? val.length;
-    const before = val.slice(0, cursor);
+    const sel = window.getSelection();
+    const cursor = sel?.focusOffset ?? val.length;
+    const node = sel?.focusNode;
+    let before = val.slice(0, cursor);
+    if (node && el.contains(node)) {
+      let offset = 0;
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        if (walker.currentNode === node) {
+          before = val.slice(0, offset + cursor);
+          break;
+        }
+        offset += (walker.currentNode.textContent?.length ?? 0);
+      }
+    }
+
     const atMatch = before.match(/@(\w*)$/);
     if (atMatch) {
       setMentionQuery(atMatch[1]);
@@ -885,6 +905,7 @@ export function App() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search messages..."
+            autoComplete="off"
           />
           {searchQuery && (
             <button className="search-clear" onClick={() => setSearchQuery("")}>
@@ -1154,18 +1175,18 @@ export function App() {
                 >
                   +
                 </button>
-                <textarea
+                <div
                   ref={textareaRef}
-                  value={input}
-                  onChange={handleTextareaInput}
+                  className={"chat-input" + (input ? "" : " empty")}
+                  contentEditable={hasAgents}
+                  onInput={handleDivInput}
                   onKeyDown={handleKeyDown}
-                  placeholder={
+                  data-placeholder={
                     activeWs.agents.length > 1
                       ? "Type / for commands, @ to mention an agent..."
                       : "Type / for commands, or send a message..."
                   }
-                  rows={1}
-                  disabled={!hasAgents}
+                  role="textbox"
                 />
                 {isAnyRunning && (
                   <button className="btn-abort" onClick={() => abort(activeWs.id)}>
