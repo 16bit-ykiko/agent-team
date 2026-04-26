@@ -686,6 +686,7 @@ systemctl --user restart agent-team-server
           type: "workspace_branch_update",
           workspaceId: ws.id,
           gitBranch: branch,
+          prUrl: ws.getPrUrl(branch),
         });
       }
     }

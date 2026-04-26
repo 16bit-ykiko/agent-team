@@ -66,8 +66,6 @@ const DISALLOWED_TOOLS = [
   "CronList",
 ];
 
-const TIMEOUT_MS = 600_000;
-
 export class ClaudeSession extends EventEmitter {
   sessionId: string | null = null;
   config: SessionConfig;
@@ -175,18 +173,6 @@ export class ClaudeSession extends EventEmitter {
       let stderr = "";
       let settled = false;
 
-      const timer = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          this.emit("event", {
-            kind: "error",
-            content: "[Timeout] Session exceeded time limit",
-          } as StreamEvent);
-          this.abort();
-          reject(new Error("Session timeout"));
-        }
-      }, TIMEOUT_MS);
-
       const rl = readline.createInterface({ input: this.proc.stdout! });
 
       rl.on("line", (line) => {
@@ -204,7 +190,6 @@ export class ClaudeSession extends EventEmitter {
       });
 
       this.proc.on("close", (code) => {
-        clearTimeout(timer);
         if (settled) return;
         settled = true;
 
@@ -221,7 +206,6 @@ export class ClaudeSession extends EventEmitter {
       });
 
       this.proc.on("error", (err) => {
-        clearTimeout(timer);
         if (settled) return;
         settled = true;
         this.emit("event", {

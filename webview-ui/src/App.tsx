@@ -16,27 +16,22 @@ import {
   HostConfig,
 } from "./useServer";
 
-function CodeBlock(props: ComponentProps<"pre">) {
+function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
   const [copied, setCopied] = useState(false);
-  const code =
-    props.children &&
-    typeof props.children === "object" &&
-    "props" in (props.children as React.ReactElement)
-      ? (((props.children as React.ReactElement).props as { children?: string }).children ?? "")
-      : "";
+  const preRef = useRef<HTMLPreElement>(null);
   return (
-    <pre {...props}>
+    <pre {...rest} ref={preRef}>
       <button
         className="copy-btn"
         onClick={() => {
-          navigator.clipboard.writeText(String(code));
+          navigator.clipboard.writeText(preRef.current?.querySelector("code")?.textContent ?? "");
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }}
       >
-        {copied ? "✓" : "⎘"}
+        {copied ? "Copied" : "Copy"}
       </button>
-      {props.children}
+      {children}
     </pre>
   );
 }
@@ -436,7 +431,13 @@ const MessageItem = memo(function MessageItem({
         )}
 
         {msg.content && (
-          <div className="message-content">
+          <div
+            className="message-content"
+            onCopy={(e) => {
+              e.preventDefault();
+              e.clipboardData.setData("text/plain", msg.content);
+            }}
+          >
             {isUser ? (
               renderMentionContent(msg.content, agents)
             ) : (
@@ -641,6 +642,8 @@ export function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
   const seenCountRef = useRef<Record<string, number>>({});
+  const prevRunningRef = useRef<Record<string, boolean>>({});
+  const [finishedStatus, setFinishedStatus] = useState<Record<string, "done" | "failed">>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLDivElement>(null);
@@ -664,8 +667,32 @@ export function App() {
   useEffect(() => {
     if (activeWsId && activeWs) {
       seenCountRef.current[activeWsId] = activeWs.messages.length;
+      setFinishedStatus((prev) => {
+        if (!(activeWsId in prev)) return prev;
+        const next = { ...prev };
+        delete next[activeWsId];
+        return next;
+      });
     }
   }, [activeWsId, activeWs?.messages.length]);
+
+  useEffect(() => {
+    const updates: Record<string, "done" | "failed"> = {};
+    for (const ws of workspaces) {
+      const isRunning = ws.agents.some(
+        (a) => a.busy || ws.messages.some((m) => m.status === "streaming" && m.agentId === a.id),
+      );
+      const wasRunning = prevRunningRef.current[ws.id];
+      if (wasRunning && !isRunning && ws.id !== activeWsId) {
+        const lastAgent = [...ws.messages].reverse().find((m) => m.kind === "agent");
+        updates[ws.id] = lastAgent?.status === "error" ? "failed" : "done";
+      }
+      prevRunningRef.current[ws.id] = isRunning;
+    }
+    if (Object.keys(updates).length > 0) {
+      setFinishedStatus((prev) => ({ ...prev, ...updates }));
+    }
+  }, [workspaces, activeWsId]);
 
   interface SearchResult {
     wsId: string;
@@ -1093,15 +1120,25 @@ export function App() {
                     setSidebarOpen(false);
                   }}
                 >
-                  <div className={`task-status ${running ? "running" : "idle"}`} />
+                  <div
+                    className={`task-status ${running ? "running" : (finishedStatus[ws.id] ?? "idle")}`}
+                  />
                   <div className="task-info">
                     <div className="task-name">
-                      {ws.name}
-                      {unread > 0 && ws.id !== activeWsId && (
-                        <span className="unread-badge">{unread}</span>
-                      )}
+                      <span className="task-name-text">
+                        {ws.name}
+                        {unread > 0 && ws.id !== activeWsId && (
+                          <span className="unread-badge">{unread}</span>
+                        )}
+                      </span>
+                      <span className="task-host">
+                        {hostConfigs[ws.hostId]?.label ?? ws.hostId}
+                      </span>
                     </div>
-                    <div className="task-project">{ws.project}</div>
+                    <div className="task-meta">
+                      <span>{ws.project}</span>
+                      {ws.gitBranch && <span className="task-branch">{ws.gitBranch}</span>}
+                    </div>
                     {activeAgents.length > 0 && (
                       <div className="task-active-agents">
                         {activeAgents.map((a) => (
@@ -1191,6 +1228,16 @@ export function App() {
                     <span className="ws-info-icon">&#9831;</span>
                     {activeWs.gitBranch}
                   </span>
+                )}
+                {activeWs.prUrl && (
+                  <a
+                    className="ws-info-item ws-info-pr"
+                    href={activeWs.prUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    PR
+                  </a>
                 )}
               </div>
             </div>

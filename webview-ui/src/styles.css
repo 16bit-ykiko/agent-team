@@ -235,12 +235,26 @@ body {
 
 .task-name {
   font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.task-name-text {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-host {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .unread-badge {
@@ -261,6 +275,23 @@ body {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 2px;
+}
+
+.task-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-meta span + span::before {
+  content: " · ";
+}
+
+.task-meta .task-branch {
+  color: var(--accent);
 }
 
 .task-item-active {
@@ -586,7 +617,6 @@ body {
 }
 
 .message-content pre {
-  position: relative;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -598,29 +628,28 @@ body {
   line-height: 1.5;
 }
 
-.message-content pre .copy-btn {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
+pre .copy-btn {
+  float: right;
+  position: sticky;
+  top: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 0 2px;
+  margin: -2px -4px 0 4px;
   opacity: 0;
   transition: opacity 0.15s;
 }
 
-.message-content pre:hover .copy-btn {
+pre:hover .copy-btn {
   opacity: 1;
 }
 
-.message-content pre .copy-btn:hover {
+pre .copy-btn:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
 }
 
 .message-content pre code {
@@ -743,19 +772,22 @@ body {
 }
 
 .btn-diff {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 3px;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--accent);
+  font-size: 11px;
+  padding: 0 2px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
   cursor: pointer;
   text-transform: none;
-  font-weight: 500;
+  font-family: inherit;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.event:hover .btn-diff {
+  opacity: 1;
 }
 .btn-diff:hover {
-  background: var(--accent);
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .event-content {
@@ -1271,6 +1303,17 @@ body {
 .ws-info-branch {
   color: var(--success);
   font-weight: 600;
+}
+
+.ws-info-pr {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  font-size: 11px;
+}
+
+.ws-info-pr:hover {
+  text-decoration: underline;
 }
 
 /* ---- System status panel ---- */

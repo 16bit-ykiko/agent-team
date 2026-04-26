@@ -42,6 +42,7 @@ export interface WorkspaceInfo {
   hostId: string;
   cwd: string;
   gitBranch: string | null;
+  prUrl: string | null;
   agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
@@ -303,6 +304,21 @@ export class Workspace {
     }
   }
 
+  getPrUrl(branch?: string | null): string | null {
+    const b = branch ?? this.getGitBranch();
+    if (!b || b === "main" || b === "master") return null;
+    try {
+      const out = execSync(`gh pr view "${b}" --json url -q .url 2>/dev/null`, {
+        cwd: this.cwd,
+        encoding: "utf-8",
+        timeout: 5000,
+      }).trim();
+      return out || null;
+    } catch {
+      return null;
+    }
+  }
+
   getInfo(includeMessages = true): WorkspaceInfo {
     const lastMsg = this.messages[this.messages.length - 1];
     return {
@@ -312,6 +328,7 @@ export class Workspace {
       hostId: this.hostId,
       cwd: this.cwd,
       gitBranch: this.getGitBranch(),
+      prUrl: this.getPrUrl(),
       agents: [...this.agents.values()].map((a) => ({
         ...a.info,
         busy: a.session.isRunning,

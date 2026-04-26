@@ -27,6 +27,7 @@ export const MOCK_WORKSPACES: Workspace[] = [
     hostId: "local",
     cwd: "/home/user/projects/my-project",
     gitBranch: "feat/new-feature",
+    prUrl: null,
     agents: MOCK_AGENTS,
     messages: [
       {
@@ -148,6 +149,7 @@ export const MOCK_WORKSPACES: Workspace[] = [
     hostId: "local",
     cwd: "/home/user/projects/api-server",
     gitBranch: "main",
+    prUrl: null,
     agents: [],
     messages: [],
     createdAt: Date.now() - 300000,
