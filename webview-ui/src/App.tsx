@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, memo } from "react";
+import { useState, useRef, useEffect, useCallback, memo, type ComponentProps } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -15,6 +15,41 @@ import {
   HostInfo,
   HostConfig,
 } from "./useServer";
+
+function CodeBlock(props: ComponentProps<"pre">) {
+  const [copied, setCopied] = useState(false);
+  const code =
+    props.children &&
+    typeof props.children === "object" &&
+    "props" in (props.children as React.ReactElement)
+      ? (((props.children as React.ReactElement).props as { children?: string }).children ?? "")
+      : "";
+  return (
+    <pre {...props}>
+      <button
+        className="copy-btn"
+        onClick={() => {
+          navigator.clipboard.writeText(String(code));
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }}
+      >
+        {copied ? "✓" : "⎘"}
+      </button>
+      {props.children}
+    </pre>
+  );
+}
+
+function ScrollTable(props: ComponentProps<"table">) {
+  return (
+    <div className="table-scroll-wrapper">
+      <table {...props} />
+    </div>
+  );
+}
+
+const mdComponents = { pre: CodeBlock, table: ScrollTable };
 
 function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
   return (
@@ -212,7 +247,11 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
   const match = content.match(/^@(\S+)(\s+|$)/);
   if (!match) {
     return (
-      <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        components={mdComponents}
+      >
         {content}
       </Markdown>
     );
@@ -229,7 +268,11 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
         @{mentionName}
       </span>
       {rest && (
-        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+          components={mdComponents}
+        >
           {rest}
         </Markdown>
       )}
@@ -255,7 +298,11 @@ const MessageItem = memo(function MessageItem({
   if (msg.kind === "system") {
     return (
       <div className="system-message">
-        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+        <Markdown
+          remarkPlugins={[remarkGfm]}
+          rehypePlugins={[rehypeHighlight]}
+          components={mdComponents}
+        >
           {msg.content}
         </Markdown>
       </div>
@@ -352,7 +399,11 @@ const MessageItem = memo(function MessageItem({
                     </span>
                     <div className="event-content">
                       {(ev.kind === "tool_use" || ev.kind === "thinking") && ev.content ? (
-                        <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+                        <Markdown
+                          remarkPlugins={[remarkGfm]}
+                          rehypePlugins={[rehypeHighlight]}
+                          components={mdComponents}
+                        >
                           {ev.content}
                         </Markdown>
                       ) : ev.kind === "tool_result" ? (
@@ -389,7 +440,11 @@ const MessageItem = memo(function MessageItem({
             {isUser ? (
               renderMentionContent(msg.content, agents)
             ) : (
-              <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={mdComponents}
+              >
                 {msg.content}
               </Markdown>
             )}

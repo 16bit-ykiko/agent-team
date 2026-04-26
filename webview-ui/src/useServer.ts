@@ -299,6 +299,13 @@ export function useServer() {
         break;
       }
 
+      case "workspace_branch_update": {
+        const wsId = msg.workspaceId as string;
+        const gitBranch = msg.gitBranch as string | null;
+        setWorkspaces((prev) => prev.map((w) => (w.id === wsId ? { ...w, gitBranch } : w)));
+        break;
+      }
+
       case "system_status":
         setSystemStatus({
           osName: msg.osName as string,

@@ -586,6 +586,7 @@ body {
 }
 
 .message-content pre {
+  position: relative;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -595,6 +596,31 @@ body {
   font-family: inherit;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.message-content pre .copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.message-content pre:hover .copy-btn {
+  opacity: 1;
+}
+
+.message-content pre .copy-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 .message-content pre code {
@@ -621,11 +647,16 @@ body {
   margin: 2px 0;
 }
 
+.message-content .table-scroll-wrapper {
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
 .message-content table {
   border-collapse: collapse;
-  margin: 6px 0;
-  width: 100%;
+  min-width: 100%;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .message-content th,

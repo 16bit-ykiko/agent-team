@@ -38,6 +38,8 @@ export class Server {
   private baseDir: string;
   private webDir: string;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
+  private branchTimer: ReturnType<typeof setInterval> | null = null;
+  private branchCache = new Map<string, string | null>();
   private prevCpuIdle = 0;
   private prevCpuTotal = 0;
   private readonly isWSL: boolean;
@@ -66,6 +68,7 @@ export class Server {
     this.initCpuBaseline();
     if (this.isWSL) this.refreshWindowsHost();
     this.statusTimer = setInterval(() => this.broadcastSystemStatus(), 3000);
+    this.branchTimer = setInterval(() => this.pollBranches(), 5000);
 
     this.httpServer.listen(port, "0.0.0.0", () => {
       console.log(`Agent Team server listening on http://0.0.0.0:${port}`);
@@ -669,8 +672,28 @@ systemctl --user restart agent-team-server
     };
   }
 
+  private pollBranches(): void {
+    const dayAgo = Date.now() - 86_400_000;
+    for (const ws of this.workspaces.values()) {
+      const lastMsg = ws.messages[ws.messages.length - 1];
+      if ((lastMsg?.timestamp ?? ws.createdAt) < dayAgo) continue;
+      const branch = ws.getGitBranch();
+      const prev = this.branchCache.get(ws.id);
+      if (prev !== undefined && prev === branch) continue;
+      this.branchCache.set(ws.id, branch);
+      if (prev !== undefined) {
+        this.broadcastUI({
+          type: "workspace_branch_update",
+          workspaceId: ws.id,
+          gitBranch: branch,
+        });
+      }
+    }
+  }
+
   close(): void {
     if (this.statusTimer) clearInterval(this.statusTimer);
+    if (this.branchTimer) clearInterval(this.branchTimer);
     this.persistAll();
     for (const ws of this.workspaces.values()) ws.abortAll();
     this.wss.close();
