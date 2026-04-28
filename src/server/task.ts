@@ -310,7 +310,7 @@ export class Workspace {
     const distro = this.getHostDistro();
     if (distro) {
       const inner = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && cd ${shellQuote(this.cwd)} && ${cmd}`;
-      return execSync(`${getWslBin()} -d ${distro} -- bash -c ${shellQuote(inner)}`, {
+      return execSync(`${getWslBin()} -d ${distro} -- bash -c ${shellQuote(inner)} 2>/dev/null`, {
         encoding: "utf-8",
         timeout: 10000,
       }).trim();
@@ -322,7 +322,7 @@ export class Workspace {
     const distro = this.getHostDistro();
     if (distro) {
       const inner = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && cd ${shellQuote(this.cwd)} && ${cmd}`;
-      const fullCmd = `${getWslBin()} -d ${distro} -- bash -c ${shellQuote(inner)}`;
+      const fullCmd = `${getWslBin()} -d ${distro} -- bash -c ${shellQuote(inner)} 2>/dev/null`;
       return new Promise((resolve) => {
         exec(fullCmd, { encoding: "utf-8", timeout: 15000 }, (err, stdout) => {
           resolve(err ? null : stdout.trim() || null);

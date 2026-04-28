@@ -446,12 +446,29 @@ export class Server {
     try {
       const agent = workspace.addAgent(name, model, avatar, color, {
         permissionMode: permissionMode ?? "bypassPermissions",
+        providerEnv: this.resolveProviderEnv(model),
       });
       this.persistWorkspaceNow(workspaceId);
       this.broadcastUI({ type: "agent_added", workspaceId, agent });
     } catch (e) {
       this.sendJson(ws, { type: "error", message: `${e instanceof Error ? e.message : e}` });
     }
+  }
+
+  private resolveProviderEnv(model: string): Record<string, string> | undefined {
+    for (const [name, cfg] of Object.entries(this.config.providers)) {
+      if (model.startsWith(name)) {
+        return {
+          ANTHROPIC_BASE_URL: cfg.base_url,
+          ANTHROPIC_AUTH_TOKEN: cfg.api_key,
+          ANTHROPIC_MODEL: model,
+          ANTHROPIC_DEFAULT_OPUS_MODEL: model,
+          ANTHROPIC_DEFAULT_SONNET_MODEL: model,
+          ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
+        };
+      }
+    }
+    return undefined;
   }
 
   private removeAgent(workspaceId: string, agentId: string): void {
@@ -601,6 +618,9 @@ systemctl --user restart agent-team-server
     if (states.length === 0) return;
 
     for (const wsState of states) {
+      for (const agent of wsState.agents) {
+        agent.session.config.providerEnv = this.resolveProviderEnv(agent.model);
+      }
       const workspace = Workspace.fromState(wsState, this.hostRegistry, this.makeCallbacks());
       this.workspaces.set(workspace.id, workspace);
     }

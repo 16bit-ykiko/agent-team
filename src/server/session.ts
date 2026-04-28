@@ -49,6 +49,7 @@ export interface SessionConfig {
   permissionMode?: string;
   systemPrompt?: string;
   distro?: string;
+  providerEnv?: Record<string, string>;
 }
 
 export interface SessionState {
@@ -162,9 +163,20 @@ export class ClaudeSession extends EventEmitter {
     return new Promise((resolve, reject) => {
       const args = this.buildArgs(message);
 
+      const extraEnv = this.config.providerEnv ?? {};
+      if (Object.keys(extraEnv).length > 0) {
+        console.log(`[session] Using provider env: ${Object.keys(extraEnv).join(", ")}`);
+      }
+
       if (this.config.distro) {
         const escaped = args.map(shellQuote).join(" ");
-        const cmd = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && cd ${shellQuote(this.config.cwd)} && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=true exec claude ${escaped}`;
+        const envExports = Object.entries({
+          ...extraEnv,
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "true",
+        })
+          .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
+          .join(" && ");
+        const cmd = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && ${envExports} && cd ${shellQuote(this.config.cwd)} && stdbuf -oL claude ${escaped}`;
         this.proc = spawn(getWslBin(), ["-d", this.config.distro, "--", "bash", "-c", cmd], {
           stdio: ["pipe", "pipe", "pipe"],
         });
@@ -173,6 +185,7 @@ export class ClaudeSession extends EventEmitter {
           cwd: this.config.cwd,
           env: {
             ...process.env,
+            ...extraEnv,
             CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "true",
           },
           stdio: ["pipe", "pipe", "pipe"],

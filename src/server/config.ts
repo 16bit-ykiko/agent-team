@@ -19,11 +19,17 @@ export interface HostConfig {
   distro?: string;
 }
 
+export interface ProviderConfig {
+  api_key: string;
+  base_url: string;
+}
+
 export interface AppConfig {
   server: ServerConfig;
   projects: Record<string, Record<string, string>>;
   agents: Record<string, AgentConfig>;
   hosts: Record<string, HostConfig>;
+  providers: Record<string, ProviderConfig>;
 }
 
 export function loadConfig(baseDir: string): AppConfig {
@@ -85,5 +91,18 @@ export function loadConfig(baseDir: string): AppConfig {
     hosts["local"] = { label: "Local", type: "local" };
   }
 
-  return { server, projects, agents, hosts };
+  const providers: Record<string, ProviderConfig> = {};
+  const rawProviders = parsed.providers;
+  if (rawProviders && typeof rawProviders === "object") {
+    for (const [name, cfg] of Object.entries(rawProviders as Record<string, unknown>)) {
+      if (cfg && typeof cfg === "object") {
+        const c = cfg as Record<string, string>;
+        if (c.api_key && c.base_url) {
+          providers[name] = { api_key: c.api_key, base_url: c.base_url };
+        }
+      }
+    }
+  }
+
+  return { server, projects, agents, hosts, providers };
 }
