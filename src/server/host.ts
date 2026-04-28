@@ -21,6 +21,7 @@ export interface Host {
   readonly label: string;
   readonly type: "local" | "remote";
   readonly connected: boolean;
+  readonly distro?: string;
   getInfo(): HostInfo;
   createSession(agentId: string, config: SessionConfig): HostSessionHandle;
   destroySession(agentId: string): void;
@@ -32,11 +33,13 @@ export class LocalHost implements Host {
   readonly label: string;
   readonly type = "local" as const;
   readonly connected = true;
+  readonly distro?: string;
   private sessions = new Map<string, ClaudeSession>();
 
-  constructor(id: string, label: string) {
+  constructor(id: string, label: string, distro?: string) {
     this.id = id;
     this.label = label;
+    this.distro = distro;
   }
 
   getInfo(): HostInfo {
@@ -44,7 +47,7 @@ export class LocalHost implements Host {
   }
 
   createSession(agentId: string, config: SessionConfig): HostSessionHandle {
-    const session = new ClaudeSession(config);
+    const session = new ClaudeSession({ ...config, distro: this.distro });
     this.sessions.set(agentId, session);
     return session;
   }
@@ -58,7 +61,10 @@ export class LocalHost implements Host {
   }
 
   restoreSession(agentId: string, state: SessionState): HostSessionHandle {
-    const session = ClaudeSession.fromState(state);
+    const session = ClaudeSession.fromState({
+      ...state,
+      config: { ...state.config, distro: this.distro },
+    });
     this.sessions.set(agentId, session);
     return session;
   }

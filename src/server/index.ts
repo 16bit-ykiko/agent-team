@@ -10,7 +10,6 @@ import { loadConfig, AppConfig } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
 import { loadSkills, SkillDef } from "./skills";
 import { HostRegistry, LocalHost } from "./host";
-import { RemoteHost } from "./host-remote";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -87,20 +86,12 @@ export class Server {
   private initHosts(): HostRegistry {
     const registry = new HostRegistry();
     for (const [id, cfg] of Object.entries(this.config.hosts)) {
-      if (cfg.type === "local") {
-        registry.register(new LocalHost(id, cfg.label));
-      } else {
-        registry.register(
-          new RemoteHost(id, cfg.label, cfg.token ?? "", () => {
-            this.broadcastUI({ type: "hosts_update", hosts: registry.getAllInfo() });
-          }),
-        );
-      }
+      registry.register(new LocalHost(id, cfg.label, cfg.distro));
     }
     console.log(
       `Hosts: ${registry
         .getAll()
-        .map((h) => `${h.id} (${h.type})`)
+        .map((h) => `${h.id} (${h.type}${h.distro ? `, distro=${h.distro}` : ""})`)
         .join(", ")}`,
     );
     return registry;
@@ -300,28 +291,6 @@ export class Server {
         this.uiClients.delete(ws);
         this.broadcastUI({ type: "host_state", available: true });
         return;
-
-      case "register_runner": {
-        const hostId = msg.hostId as string;
-        const token = msg.token as string;
-        const host = this.hostRegistry.get(hostId);
-        if (!host || host.type !== "remote") {
-          this.sendJson(ws, { type: "auth_fail", message: `Unknown remote host: ${hostId}` });
-          ws.close(1008, "unknown host");
-          return;
-        }
-        const remoteHost = host as RemoteHost;
-        if (remoteHost.token !== token) {
-          this.sendJson(ws, { type: "auth_fail", message: "Invalid token" });
-          ws.close(1008, "bad token");
-          return;
-        }
-        this.uiClients.delete(ws);
-        remoteHost.attach(ws);
-        this.sendJson(ws, { type: "auth_ok" });
-        console.log(`[runner] Host "${hostId}" connected`);
-        return;
-      }
 
       case "host_action":
         if (this.hostClient) {
@@ -677,19 +646,27 @@ systemctl --user restart agent-team-server
     for (const ws of this.workspaces.values()) {
       const lastMsg = ws.messages[ws.messages.length - 1];
       if ((lastMsg?.timestamp ?? ws.createdAt) < dayAgo) continue;
-      const branch = ws.getGitBranch();
-      const prev = this.branchCache.get(ws.id);
-      if (prev !== undefined && prev === branch) continue;
-      this.branchCache.set(ws.id, branch);
-      if (prev !== undefined) {
-        this.broadcastUI({
-          type: "workspace_branch_update",
-          workspaceId: ws.id,
-          gitBranch: branch,
-          prUrl: ws.getPrUrl(branch),
-        });
-      }
+      this.pollBranch(ws);
     }
+  }
+
+  private pollBranch(ws: Workspace): void {
+    const branch = ws.getGitBranch();
+    if (branch === null) return;
+    const prev = this.branchCache.get(ws.id);
+    if (prev === branch) return;
+    this.branchCache.set(ws.id, branch);
+    ws.getPrInfo(branch).then((pr) => {
+      ws.cachedPrUrl = pr?.url ?? null;
+      ws.cachedPrTitle = pr?.title ?? null;
+      this.broadcastUI({
+        type: "workspace_branch_update",
+        workspaceId: ws.id,
+        gitBranch: branch,
+        prUrl: ws.cachedPrUrl,
+        prTitle: ws.cachedPrTitle,
+      });
+    });
   }
 
   close(): void {

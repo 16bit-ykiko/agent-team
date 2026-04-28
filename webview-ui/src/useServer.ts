@@ -67,6 +67,7 @@ export interface Workspace {
   cwd: string;
   gitBranch: string | null;
   prUrl: string | null;
+  prTitle: string | null;
   agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
@@ -304,7 +305,10 @@ export function useServer() {
         const wsId = msg.workspaceId as string;
         const gitBranch = msg.gitBranch as string | null;
         const prUrl = (msg.prUrl as string | null) ?? null;
-        setWorkspaces((prev) => prev.map((w) => (w.id === wsId ? { ...w, gitBranch, prUrl } : w)));
+        const prTitle = (msg.prTitle as string | null) ?? null;
+        setWorkspaces((prev) =>
+          prev.map((w) => (w.id === wsId ? { ...w, gitBranch, prUrl, prTitle } : w)),
+        );
         break;
       }
 

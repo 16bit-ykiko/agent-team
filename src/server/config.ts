@@ -15,8 +15,8 @@ export interface ServerConfig {
 
 export interface HostConfig {
   label: string;
-  type: "local" | "remote";
-  token?: string;
+  type: "local";
+  distro?: string;
 }
 
 export interface AppConfig {
@@ -73,11 +73,10 @@ export function loadConfig(baseDir: string): AppConfig {
     for (const [id, cfg] of Object.entries(rawHosts as Record<string, unknown>)) {
       if (cfg && typeof cfg === "object") {
         const c = cfg as Record<string, string>;
-        const hostType = c.type === "remote" ? "remote" : "local";
         hosts[id] = {
           label: c.label ?? id,
-          type: hostType,
-          token: hostType === "remote" ? c.token : undefined,
+          type: "local",
+          distro: c.distro || undefined,
         };
       }
     }

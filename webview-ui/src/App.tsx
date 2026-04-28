@@ -3,6 +3,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
+import TurndownService from "turndown";
 import {
   useServer,
   Workspace,
@@ -15,6 +16,25 @@ import {
   HostInfo,
   HostConfig,
 } from "./useServer";
+
+const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
+turndown.addRule("fencedCodeBlock", {
+  filter: (node) => node.nodeName === "PRE" && !!node.querySelector("code"),
+  replacement: (_content, node) => {
+    const code = (node as HTMLElement).querySelector("code")!;
+    const lang = [...code.classList].find((c) => c.startsWith("language-"))?.slice(9) ?? "";
+    return `\n\`\`\`${lang}\n${code.textContent}\n\`\`\`\n`;
+  },
+});
+
+function getSelectionHtml(): string | null {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed) return null;
+  const frag = sel.getRangeAt(0).cloneContents();
+  const div = document.createElement("div");
+  div.appendChild(frag);
+  return div.innerHTML;
+}
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
   const [copied, setCopied] = useState(false);
@@ -434,8 +454,11 @@ const MessageItem = memo(function MessageItem({
           <div
             className="message-content"
             onCopy={(e) => {
+              const html = getSelectionHtml();
+              if (!html) return;
               e.preventDefault();
-              e.clipboardData.setData("text/plain", msg.content);
+              const md = turndown.turndown(html);
+              e.clipboardData.setData("text/plain", md);
             }}
           >
             {isUser ? (
@@ -627,6 +650,8 @@ export function App() {
     }
   });
   const [input, setInput] = useState("");
+  const inputMapRef = useRef(new Map<string, string>());
+  const prevWsIdRef = useRef<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -761,7 +786,22 @@ export function App() {
   }, [sortedWorkspaces, activeWsId, workspaces]);
 
   useEffect(() => {
+    if (prevWsIdRef.current && prevWsIdRef.current !== activeWsId) {
+      inputMapRef.current.set(prevWsIdRef.current, input);
+    }
+    prevWsIdRef.current = activeWsId;
+    const restored = activeWsId ? (inputMapRef.current.get(activeWsId) ?? "") : "";
+    setInput(restored);
+    if (textareaRef.current) {
+      textareaRef.current.innerText = restored;
+      textareaRef.current.style.height = "36px";
+      if (restored) {
+        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + "px";
+      }
+    }
     if (activeWsId && connected) loadMessages(activeWsId);
+    userScrolledUpRef.current = false;
+    prevMsgCountRef.current = 0;
     requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView();
     });
@@ -784,20 +824,26 @@ export function App() {
   }, [activeWs, loadMessages]);
 
   const prevMsgCountRef = useRef(0);
+  const userScrolledUpRef = useRef(false);
+
+  const onMessagesScrollTrack = useCallback(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    userScrolledUpRef.current = distFromBottom > 150;
+    onMessagesScroll();
+  }, [onMessagesScroll]);
+
   useEffect(() => {
     const msgs = activeWs?.messages ?? [];
     const prevCount = prevMsgCountRef.current;
     prevMsgCountRef.current = msgs.length;
-    if (
-      msgs.length > prevCount &&
-      prevCount > 0 &&
-      msgs[msgs.length - 1]?.timestamp > (msgs[prevCount - 1]?.timestamp ?? 0)
-    ) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    } else if (prevCount === 0) {
+    if (prevCount === 0 && msgs.length > 0) {
       messagesEndRef.current?.scrollIntoView();
+    } else if (msgs.length > prevCount && !userScrolledUpRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [activeWs?.messages]);
+  }, [activeWs?.messages?.length]);
 
   const isAnyRunning =
     activeWs?.agents.some((a) => a.busy) ||
@@ -847,10 +893,24 @@ export function App() {
     return c.name.toLowerCase().startsWith(cmdQuery.toLowerCase());
   });
 
-  const setDivText = useCallback((text: string) => {
-    setInput(text);
-    if (textareaRef.current) textareaRef.current.innerText = text;
-  }, []);
+  const setDivText = useCallback(
+    (text: string) => {
+      setInput(text);
+      if (activeWsId) inputMapRef.current.set(activeWsId, text);
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const sel = window.getSelection();
+      if (sel) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      document.execCommand("insertText", false, text);
+    },
+    [activeWsId],
+  );
 
   const applyCommand = useCallback(
     (cmdName: string) => {
@@ -934,6 +994,7 @@ export function App() {
 
         sendMessage(activeWs.id, content, target, images);
         setInput("");
+        if (activeWsId) inputMapRef.current.set(activeWsId, "");
         setCmdQuery(null);
         setMentionQuery(null);
         if (textareaRef.current) {
@@ -946,6 +1007,7 @@ export function App() {
 
     sendMessage(activeWs.id, text, undefined, images);
     setInput("");
+    if (activeWsId) inputMapRef.current.set(activeWsId, "");
     setMentionQuery(null);
     setCmdQuery(null);
     if (textareaRef.current) {
@@ -1010,6 +1072,7 @@ export function App() {
     if (!el) return;
     const val = el.innerText;
     setInput(val);
+    if (activeWsId) inputMapRef.current.set(activeWsId, val);
 
     el.style.height = "36px";
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
@@ -1230,19 +1293,16 @@ export function App() {
                   </span>
                 )}
                 {activeWs.prUrl && (
-                  <a
-                    className="ws-info-item ws-info-pr"
-                    href={activeWs.prUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    PR
+                  <a className="pr-card" href={activeWs.prUrl} target="_blank" rel="noreferrer">
+                    <span className="pr-icon">&#9741;</span>
+                    <span className="pr-number">#{activeWs.prUrl.split("/").pop()}</span>
+                    {activeWs.prTitle && <span className="pr-title">{activeWs.prTitle}</span>}
                   </a>
                 )}
               </div>
             </div>
 
-            <div className="messages" ref={messagesContainerRef} onScroll={onMessagesScroll}>
+            <div className="messages" ref={messagesContainerRef} onScroll={onMessagesScrollTrack}>
               {(() => {
                 const msgs = activeWs.messages;
                 const total = msgs.length;

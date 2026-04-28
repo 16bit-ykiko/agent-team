@@ -1,5 +1,12 @@
-import { execSync } from "child_process";
-import { SessionConfig, StreamEvent, SessionState } from "./session";
+import { execSync, exec } from "child_process";
+import {
+  SessionConfig,
+  StreamEvent,
+  SessionState,
+  shellQuote,
+  DISTRO_PATH_PREFIX,
+  getWslBin,
+} from "./session";
 import { HostSessionHandle, HostRegistry } from "./host";
 
 export type MessageStatus = "streaming" | "done" | "error";
@@ -43,6 +50,7 @@ export interface WorkspaceInfo {
   cwd: string;
   gitBranch: string | null;
   prUrl: string | null;
+  prTitle: string | null;
   agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
@@ -82,6 +90,8 @@ export class Workspace {
   agents = new Map<string, AgentEntry>();
   messages: Message[] = [];
   createdAt: number;
+  cachedPrUrl: string | null = null;
+  cachedPrTitle: string | null = null;
 
   private cb?: WorkspaceCallbacks;
   private hostRegistry: HostRegistry;
@@ -292,31 +302,61 @@ export class Workspace {
     }
   }
 
+  private getHostDistro(): string | undefined {
+    return this.hostRegistry.get(this.hostId)?.distro;
+  }
+
+  private wslExec(cmd: string): string {
+    const distro = this.getHostDistro();
+    if (distro) {
+      const inner = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && cd ${shellQuote(this.cwd)} && ${cmd}`;
+      return execSync(`${getWslBin()} -d ${distro} -- bash -c ${shellQuote(inner)}`, {
+        encoding: "utf-8",
+        timeout: 10000,
+      }).trim();
+    }
+    return execSync(cmd, { cwd: this.cwd, encoding: "utf-8", timeout: 5000 }).trim();
+  }
+
+  private wslExecAsync(cmd: string): Promise<string | null> {
+    const distro = this.getHostDistro();
+    if (distro) {
+      const inner = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && cd ${shellQuote(this.cwd)} && ${cmd}`;
+      const fullCmd = `${getWslBin()} -d ${distro} -- bash -c ${shellQuote(inner)}`;
+      return new Promise((resolve) => {
+        exec(fullCmd, { encoding: "utf-8", timeout: 15000 }, (err, stdout) => {
+          resolve(err ? null : stdout.trim() || null);
+        });
+      });
+    }
+    return new Promise((resolve) => {
+      exec(cmd, { cwd: this.cwd, encoding: "utf-8", timeout: 10000 }, (err, stdout) => {
+        resolve(err ? null : stdout.trim() || null);
+      });
+    });
+  }
+
   getGitBranch(): string | null {
     try {
-      return execSync("git rev-parse --abbrev-ref HEAD", {
-        cwd: this.cwd,
-        encoding: "utf-8",
-        timeout: 3000,
-      }).trim();
+      return this.wslExec("git rev-parse --abbrev-ref HEAD");
     } catch {
       return null;
     }
   }
 
-  getPrUrl(branch?: string | null): string | null {
-    const b = branch ?? this.getGitBranch();
-    if (!b || b === "main" || b === "master") return null;
-    try {
-      const out = execSync(`gh pr view "${b}" --json url -q .url 2>/dev/null`, {
-        cwd: this.cwd,
-        encoding: "utf-8",
-        timeout: 5000,
-      }).trim();
-      return out || null;
-    } catch {
-      return null;
-    }
+  getPrInfo(branch: string | null): Promise<{ url: string; title: string } | null> {
+    if (!branch || branch === "main" || branch === "master") return Promise.resolve(null);
+    return this.wslExecAsync(`gh pr view ${shellQuote(branch)} --json url,title 2>/dev/null`).then(
+      (stdout) => {
+        if (!stdout) return null;
+        try {
+          const data = JSON.parse(stdout);
+          return data.url ? { url: data.url, title: data.title || "" } : null;
+        } catch {
+          return null;
+        }
+      },
+    );
   }
 
   getInfo(includeMessages = true): WorkspaceInfo {
@@ -328,7 +368,8 @@ export class Workspace {
       hostId: this.hostId,
       cwd: this.cwd,
       gitBranch: this.getGitBranch(),
-      prUrl: this.getPrUrl(),
+      prUrl: this.cachedPrUrl,
+      prTitle: this.cachedPrTitle,
       agents: [...this.agents.values()].map((a) => ({
         ...a.info,
         busy: a.session.isRunning,

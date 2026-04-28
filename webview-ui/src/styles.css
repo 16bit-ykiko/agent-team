@@ -1305,15 +1305,45 @@ pre .copy-btn:hover {
   font-weight: 600;
 }
 
-.ws-info-pr {
-  color: var(--accent);
-  font-weight: 600;
+.pr-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
   text-decoration: none;
-  font-size: 11px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  transition: border-color 0.15s;
+  max-width: 50%;
+  overflow: hidden;
+  flex-shrink: 1;
+  min-width: 0;
 }
 
-.ws-info-pr:hover {
-  text-decoration: underline;
+.pr-card:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.pr-icon {
+  color: var(--success);
+  font-size: 14px;
+}
+
+.pr-number {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pr-title {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- System status panel ---- */

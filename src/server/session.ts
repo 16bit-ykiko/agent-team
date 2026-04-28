@@ -48,6 +48,7 @@ export interface SessionConfig {
   effort?: string;
   permissionMode?: string;
   systemPrompt?: string;
+  distro?: string;
 }
 
 export interface SessionState {
@@ -161,14 +162,22 @@ export class ClaudeSession extends EventEmitter {
     return new Promise((resolve, reject) => {
       const args = this.buildArgs(message);
 
-      this.proc = spawn(getClaudeBin(), args, {
-        cwd: this.config.cwd,
-        env: {
-          ...process.env,
-          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "true",
-        },
-        stdio: ["pipe", "pipe", "pipe"],
-      });
+      if (this.config.distro) {
+        const escaped = args.map(shellQuote).join(" ");
+        const cmd = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && cd ${shellQuote(this.config.cwd)} && CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=true exec claude ${escaped}`;
+        this.proc = spawn(getWslBin(), ["-d", this.config.distro, "--", "bash", "-c", cmd], {
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      } else {
+        this.proc = spawn(getClaudeBin(), args, {
+          cwd: this.config.cwd,
+          env: {
+            ...process.env,
+            CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "true",
+          },
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      }
 
       let stderr = "";
       let settled = false;
@@ -243,6 +252,32 @@ export class ClaudeSession extends EventEmitter {
     this.usage.cache_read_tokens += usage.cache_read_tokens ?? 0;
     this.usage.cache_creation_tokens += usage.cache_creation_tokens ?? 0;
   }
+}
+
+export function shellQuote(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+export const DISTRO_PATH_PREFIX =
+  "$HOME/.pixi/envs/nodejs/bin:$HOME/.pixi/envs/default/bin:$HOME/.pixi/bin:$HOME/.local/bin:$HOME/.cargo/bin";
+
+let wslBin: string | null = null;
+export function getWslBin(): string {
+  if (wslBin) return wslBin;
+  try {
+    wslBin = execSync("which wsl.exe", { encoding: "utf-8" }).trim();
+  } catch {
+    const candidates = ["/mnt/c/Windows/System32/wsl.exe", "/mnt/c/WINDOWS/system32/wsl.exe"];
+    wslBin =
+      candidates.find((c) => {
+        try {
+          return require("fs").existsSync(c);
+        } catch {
+          return false;
+        }
+      }) ?? "wsl.exe";
+  }
+  return wslBin;
 }
 
 function parseStreamEvent(obj: Record<string, unknown>): StreamEvent | null {

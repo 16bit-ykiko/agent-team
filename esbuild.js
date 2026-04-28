@@ -24,11 +24,6 @@ const builds = [
     entryPoints: ["src/server/index.ts"],
     outfile: "dist/server.js",
   },
-  {
-    ...common,
-    entryPoints: ["src/runner/index.ts"],
-    outfile: "dist/runner.js",
-  },
 ];
 
 if (watch) {
