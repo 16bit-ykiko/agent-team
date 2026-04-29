@@ -1,4 +1,12 @@
-import { useState, useRef, useEffect, useCallback, memo, type ComponentProps } from "react";
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+  memo,
+  type ComponentProps,
+} from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -301,12 +309,14 @@ const MessageItem = memo(function MessageItem({
   compact,
   highlight,
   onOpenDiff,
+  onQuote,
 }: {
   msg: Message;
   agents: AgentInfo[];
   compact?: boolean;
   highlight?: boolean;
   onOpenDiff?: (filePath: string, oldString: string, newString: string) => void;
+  onQuote?: (msg: Message) => void;
 }) {
   const [eventsOpen, setEventsOpen] = useState(false);
 
@@ -381,6 +391,16 @@ const MessageItem = memo(function MessageItem({
           </div>
         )}
         {compact && msg.status === "streaming" && <span className="streaming-dot" />}
+
+        {msg.forwardRef && (
+          <div className="forward-ref">
+            <span className="forward-ref-icon">↩</span>
+            <span className="forward-ref-agent">
+              {msg.forwardRef.fromAvatar} {msg.forwardRef.fromAgent}
+            </span>
+            <span className="forward-ref-preview">{msg.forwardRef.preview}</span>
+          </div>
+        )}
 
         {hasDetails && (
           <div className="message-events">
@@ -461,6 +481,11 @@ const MessageItem = memo(function MessageItem({
               e.clipboardData.setData("text/plain", md);
             }}
           >
+            {!isUser && msg.content && msg.status === "done" && onQuote && (
+              <button className="btn-quote" title="Quote this message" onClick={() => onQuote(msg)}>
+                ↩
+              </button>
+            )}
             {isUser ? (
               renderMentionContent(msg.content, agents)
             ) : (
@@ -664,6 +689,16 @@ export function App() {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [quotedMsg, setQuotedMsg] = useState<{
+    id: string;
+    agentId: string | null;
+    content: string;
+  } | null>(null);
+
+  const handleQuote = useCallback((msg: Message) => {
+    setQuotedMsg({ id: msg.id, agentId: msg.agentId, content: msg.content });
+  }, []);
+
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
   const seenCountRef = useRef<Record<string, number>>({});
@@ -674,12 +709,18 @@ export function App() {
   const textareaRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
 
-  const sortedWorkspaces = [...workspaces].sort((a, b) => {
-    const aTime = a.lastMessageAt ?? a.createdAt;
-    const bTime = b.lastMessageAt ?? b.createdAt;
-    return bTime - aTime;
-  });
+  const sortedWorkspaces = useMemo(
+    () =>
+      [...workspaces].sort((a, b) => {
+        const aTime = a.lastMessageAt ?? a.createdAt;
+        const bTime = b.lastMessageAt ?? b.createdAt;
+        return bTime - aTime;
+      }),
+    [workspaces],
+  );
   const activeWs = workspaces.find((w) => w.id === activeWsId);
+  const activeWsRef = useRef(activeWs);
+  activeWsRef.current = activeWs;
 
   useEffect(() => {
     for (const ws of workspaces) {
@@ -701,12 +742,16 @@ export function App() {
     }
   }, [activeWsId, activeWs?.messages.length]);
 
+  const runningSnapshot = useMemo(
+    () =>
+      Object.fromEntries(workspaces.map((ws) => [ws.id, ws.agents.some((a) => a.busy)] as const)),
+    [workspaces],
+  );
+
   useEffect(() => {
     const updates: Record<string, "done" | "failed"> = {};
     for (const ws of workspaces) {
-      const isRunning = ws.agents.some(
-        (a) => a.busy || ws.messages.some((m) => m.status === "streaming" && m.agentId === a.id),
-      );
+      const isRunning = runningSnapshot[ws.id];
       const wasRunning = prevRunningRef.current[ws.id];
       if (wasRunning && !isRunning && ws.id !== activeWsId) {
         const lastAgent = [...ws.messages].reverse().find((m) => m.kind === "agent");
@@ -717,7 +762,7 @@ export function App() {
     if (Object.keys(updates).length > 0) {
       setFinishedStatus((prev) => ({ ...prev, ...updates }));
     }
-  }, [workspaces, activeWsId]);
+  }, [runningSnapshot, activeWsId, workspaces]);
 
   interface SearchResult {
     wsId: string;
@@ -726,7 +771,7 @@ export function App() {
     snippet: string;
   }
 
-  const searchResults: SearchResult[] = (() => {
+  const searchResults: SearchResult[] = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return [];
     const results: SearchResult[] = [];
@@ -749,7 +794,7 @@ export function App() {
       if (results.length >= 100) break;
     }
     return results;
-  })();
+  }, [searchQuery, workspaces]);
 
   const jumpToMessage = useCallback(
     (wsId: string, msgId: string) => {
@@ -845,10 +890,7 @@ export function App() {
     }
   }, [activeWs?.messages?.length]);
 
-  const isAnyRunning =
-    activeWs?.agents.some((a) => a.busy) ||
-    activeWs?.messages.some((m) => m.status === "streaming") ||
-    false;
+  const isAnyRunning = activeWs?.agents.some((a) => a.busy) ?? false;
   const hasAgents = (activeWs?.agents.length ?? 0) > 0;
 
   const onResizeStart = useCallback(
@@ -951,7 +993,8 @@ export function App() {
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if ((!text && pendingImages.length === 0) || !activeWs || uploading) return;
+    const ws = activeWsRef.current;
+    if ((!text && pendingImages.length === 0) || !ws || uploading) return;
 
     let images: Array<{ name: string; url: string }> | undefined;
     if (pendingImages.length > 0) {
@@ -978,13 +1021,11 @@ export function App() {
         let target: string | undefined;
 
         if (skill.target === "reviewer") {
-          target = activeWs.agents.find((a) => a.name.toLowerCase().includes("review"))?.name;
+          target = ws.agents.find((a) => a.name.toLowerCase().includes("review"))?.name;
         } else if (skill.target === "first_arg") {
           const parts = args.match(/^(\S+)\s+([\s\S]+)/);
           if (parts) {
-            const agent = activeWs.agents.find(
-              (a) => a.name.toLowerCase() === parts[1].toLowerCase(),
-            );
+            const agent = ws.agents.find((a) => a.name.toLowerCase() === parts[1].toLowerCase());
             if (agent) {
               target = agent.name;
               content = skill.template.replace(/\{args\}/g, parts[2]).trim();
@@ -992,11 +1033,20 @@ export function App() {
           }
         }
 
-        sendMessage(activeWs.id, content, target, images);
+        sendMessage(
+          ws.id,
+          content,
+          target,
+          images,
+          quotedMsg
+            ? { messageId: quotedMsg.id, agentId: quotedMsg.agentId, content: quotedMsg.content }
+            : undefined,
+        );
         setInput("");
         if (activeWsId) inputMapRef.current.set(activeWsId, "");
         setCmdQuery(null);
         setMentionQuery(null);
+        setQuotedMsg(null);
         if (textareaRef.current) {
           textareaRef.current.innerText = "";
           textareaRef.current.style.height = "36px";
@@ -1005,16 +1055,25 @@ export function App() {
       }
     }
 
-    sendMessage(activeWs.id, text, undefined, images);
+    sendMessage(
+      ws.id,
+      text,
+      undefined,
+      images,
+      quotedMsg
+        ? { messageId: quotedMsg.id, agentId: quotedMsg.agentId, content: quotedMsg.content }
+        : undefined,
+    );
     setInput("");
     if (activeWsId) inputMapRef.current.set(activeWsId, "");
     setMentionQuery(null);
     setCmdQuery(null);
+    setQuotedMsg(null);
     if (textareaRef.current) {
       textareaRef.current.innerText = "";
       textareaRef.current.style.height = "36px";
     }
-  }, [input, activeWs, skills, sendMessage, pendingImages, uploading]);
+  }, [input, activeWsId, skills, sendMessage, pendingImages, uploading, quotedMsg]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (cmdQuery !== null && filteredCmds.length > 0) {
@@ -1165,13 +1224,7 @@ export function App() {
         ) : (
           <div className="task-list">
             {sortedWorkspaces.map((ws) => {
-              const streamingAgentIds = new Set(
-                ws.messages
-                  .filter((m) => m.status === "streaming")
-                  .map((m) => m.agentId)
-                  .filter(Boolean),
-              );
-              const activeAgents = ws.agents.filter((a) => a.busy || streamingAgentIds.has(a.id));
+              const activeAgents = ws.agents.filter((a) => a.busy);
               const running = activeAgents.length > 0;
               const unread = ws.messages.length - (seenCountRef.current[ws.id] ?? 0);
               return (
@@ -1250,11 +1303,7 @@ export function App() {
                 </span>
                 <div className="panel-agents">
                   {activeWs.agents.map((agent) => {
-                    const hasStreaming = activeWs.messages.some(
-                      (m) => m.agentId === agent.id && m.status === "streaming",
-                    );
-                    const status =
-                      agent.busy || hasStreaming ? "busy" : connected ? "online" : "offline";
+                    const status = agent.busy ? "busy" : connected ? "online" : "offline";
                     return (
                       <div
                         key={agent.id}
@@ -1336,6 +1385,7 @@ export function App() {
                           compact={compact}
                           highlight={msg.id === highlightMsgId}
                           onOpenDiff={openDiff}
+                          onQuote={handleQuote}
                         />
                       );
                     })}
@@ -1346,6 +1396,26 @@ export function App() {
             </div>
 
             <div className="input-area">
+              {quotedMsg &&
+                (() => {
+                  const qa = activeWs.agents.find((a) => a.id === quotedMsg.agentId);
+                  return (
+                    <div className="quote-bar">
+                      <div className="quote-bar-content">
+                        <span className="quote-bar-agent">
+                          {qa?.avatar ?? "👤"} {qa?.name ?? "User"}
+                        </span>
+                        <span className="quote-bar-preview">
+                          {quotedMsg.content.slice(0, 100)}
+                          {quotedMsg.content.length > 100 ? "..." : ""}
+                        </span>
+                      </div>
+                      <button className="quote-bar-close" onClick={() => setQuotedMsg(null)}>
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })()}
               {cmdQuery !== null && filteredCmds.length > 0 && (
                 <div className="command-popup">
                   {filteredCmds.map((cmd, i) => (

@@ -359,17 +359,29 @@ export class Server {
             }))
           : undefined;
         if (images) this.ensureLocalImages(images);
+        const quote = msg.quote as
+          | { messageId: string; agentId: string | null; content: string }
+          | undefined;
         this.sendMessage(
           msg.workspaceId as string,
           msg.content as string,
           msg.target as string | undefined,
           images,
+          quote,
         );
         return;
       }
 
       case "abort":
         this.abortAgent(msg.workspaceId as string, msg.agentId as string | undefined);
+        return;
+
+      case "forward_message":
+        this.forwardMessage(
+          msg.workspaceId as string,
+          msg.messageId as string,
+          msg.targetAgentId as string,
+        );
         return;
 
       case "open_diff":
@@ -512,6 +524,7 @@ export class Server {
     content: string,
     target?: string,
     images?: Array<{ name: string; url: string; path: string }>,
+    quote?: { messageId: string; agentId: string | null; content: string },
   ): Promise<void> {
     const workspace = this.workspaces.get(workspaceId);
     if (!workspace) {
@@ -520,7 +533,7 @@ export class Server {
     }
 
     try {
-      await workspace.sendMessage(content, target, images);
+      await workspace.sendMessage(content, target, images, quote);
     } catch (e) {
       this.broadcastUI({
         type: "error",
@@ -528,6 +541,21 @@ export class Server {
       });
     }
 
+    this.persistWorkspace(workspaceId);
+  }
+
+  private async forwardMessage(
+    workspaceId: string,
+    messageId: string,
+    targetAgentId: string,
+  ): Promise<void> {
+    const workspace = this.workspaces.get(workspaceId);
+    if (!workspace) return;
+    try {
+      await workspace.forwardMessage(messageId, targetAgentId);
+    } catch (e) {
+      this.broadcastUI({ type: "error", message: `${e instanceof Error ? e.message : e}` });
+    }
     this.persistWorkspace(workspaceId);
   }
 

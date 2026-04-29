@@ -1556,3 +1556,106 @@ pre .copy-btn:hover {
     height: 60px;
   }
 }
+
+/* Quote button */
+.message-content {
+  position: relative;
+}
+.btn-quote {
+  position: absolute;
+  top: 0;
+  right: 0;
+  font-size: 12px;
+  padding: 2px 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 1;
+}
+.message:hover .btn-quote {
+  opacity: 1;
+}
+.btn-quote:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Quote reference (reply-style) in message */
+.forward-ref {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin-bottom: 4px;
+  border-left: 2px solid var(--text-muted);
+  border-radius: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+.forward-ref-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.forward-ref-agent {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.forward-ref-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quote bar above input */
+.quote-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-left: 3px solid var(--accent);
+}
+.quote-bar-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.quote-bar-agent {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.quote-bar-preview {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quote-bar-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.quote-bar-close:hover {
+  color: var(--text-primary);
+}

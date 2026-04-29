@@ -17,6 +17,13 @@ export interface MessageImage {
   url: string;
 }
 
+export interface ForwardRef {
+  messageId: string;
+  fromAgent: string;
+  fromAvatar: string;
+  preview: string;
+}
+
 export interface Message {
   id: string;
   kind: MessageKind;
@@ -27,6 +34,7 @@ export interface Message {
   events?: StreamEvent[];
   turnId?: string;
   images?: MessageImage[];
+  forwardRef?: ForwardRef;
 }
 
 export interface AgentInfo {
@@ -197,13 +205,14 @@ export class Workspace {
     content: string,
     target?: string,
     images?: Array<{ name: string; url: string; path: string }>,
+    quote?: { messageId: string; agentId: string | null; content: string },
   ): Promise<void> {
     let resolvedTarget = target;
     let cleanContent = content;
-    const mentionMatch = content.match(/^@(\S+)\s+/);
+    const mentionMatch = content.match(/(?:^|\s)@(\S+)/);
     if (mentionMatch) {
       if (!resolvedTarget) resolvedTarget = mentionMatch[1];
-      cleanContent = content.slice(mentionMatch[0].length);
+      cleanContent = content.replace(/(?:^|\s)@\S+\s*/, " ").trim();
     }
 
     const agent = this.resolveAgent(resolvedTarget);
@@ -213,6 +222,20 @@ export class Workspace {
 
     const msgImages = images?.map(({ name, url }) => ({ name, url }));
 
+    let forwardRef: ForwardRef | undefined;
+    if (quote) {
+      const fromEntry = quote.agentId
+        ? [...this.agents.values()].find((a) => a.info.id === quote.agentId)
+        : null;
+      const preview = quote.content.slice(0, 120) + (quote.content.length > 120 ? "..." : "");
+      forwardRef = {
+        messageId: quote.messageId,
+        fromAgent: fromEntry?.info.name ?? "User",
+        fromAvatar: fromEntry?.info.avatar ?? "👤",
+        preview,
+      };
+    }
+
     const userMsg: Message = {
       id: genId("msg"),
       kind: "user",
@@ -221,6 +244,7 @@ export class Workspace {
       timestamp: Date.now(),
       status: "done",
       images: msgImages?.length ? msgImages : undefined,
+      forwardRef,
     };
     this.messages.push(userMsg);
     this.cb?.onNewMessage(this.id, userMsg);
@@ -266,10 +290,107 @@ export class Workspace {
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
 
     let prompt = cleanContent;
+    if (quote) {
+      const quotedFrom = forwardRef?.fromAgent ?? "Unknown";
+      prompt = `[Quoted from ${quotedFrom}]:\n${quote.content}\n\n${prompt}`;
+    }
     if (images?.length) {
       const refs = images.map((img) => img.path).join("\n");
       prompt = `[User attached image(s). Use the Read tool to view:\n${refs}]\n\n${prompt || "Please look at the attached image(s)."}`;
     }
+
+    try {
+      await agent.session.send(prompt);
+      if (!textFinalized) currentMsg.status = "done";
+    } catch {
+      if (textFinalized) {
+        currentMsg = makeAgentMsg();
+        currentMsg.status = "error";
+        this.messages.push(currentMsg);
+        this.cb?.onNewMessage(this.id, currentMsg);
+      } else {
+        currentMsg.status = "error";
+      }
+    } finally {
+      agent.session.off("event", eventHandler);
+      this.cb?.onAgentIdle?.(this.id, agent.info.id);
+      if (!textFinalized) {
+        this.cb?.onMessageDone(this.id, currentMsg.id, currentMsg.status, currentMsg.content);
+      }
+    }
+  }
+
+  async forwardMessage(messageId: string, targetAgentId: string): Promise<void> {
+    const original = this.messages.find((m) => m.id === messageId);
+    if (!original || !original.content) throw new Error("Message not found");
+
+    const fromAgent = original.agentId
+      ? [...this.agents.values()].find((a) => a.info.id === original.agentId)
+      : null;
+
+    const agent = this.resolveAgent(targetAgentId);
+    if (!agent) throw new Error("Target agent not found");
+    if (agent.session.isRunning) throw new Error(`Agent ${agent.info.name} is busy`);
+
+    const preview = original.content.slice(0, 120) + (original.content.length > 120 ? "..." : "");
+    const forwardRef: ForwardRef = {
+      messageId,
+      fromAgent: fromAgent?.info.name ?? "User",
+      fromAvatar: fromAgent?.info.avatar ?? "👤",
+      preview,
+    };
+
+    const userMsg: Message = {
+      id: genId("msg"),
+      kind: "user",
+      agentId: null,
+      content: "",
+      timestamp: Date.now(),
+      status: "done",
+      forwardRef,
+    };
+    this.messages.push(userMsg);
+    this.cb?.onNewMessage(this.id, userMsg);
+
+    const turnId = genId("turn");
+    const makeAgentMsg = (): Message => ({
+      id: genId("msg"),
+      kind: "agent",
+      agentId: agent.info.id,
+      content: "",
+      timestamp: Date.now(),
+      status: "streaming",
+      events: [],
+      turnId,
+    });
+
+    let currentMsg = makeAgentMsg();
+    this.messages.push(currentMsg);
+    this.cb?.onNewMessage(this.id, currentMsg);
+
+    let textFinalized = false;
+    const eventHandler = (event: StreamEvent) => {
+      if (event.kind === "text") {
+        currentMsg.content = event.content;
+        currentMsg.status = "done";
+        this.cb?.onMessageDone(this.id, currentMsg.id, "done", event.content);
+        textFinalized = true;
+      } else {
+        if (textFinalized) {
+          currentMsg = makeAgentMsg();
+          this.messages.push(currentMsg);
+          this.cb?.onNewMessage(this.id, currentMsg);
+          textFinalized = false;
+        }
+        currentMsg.events!.push(event);
+        this.cb?.onStreamEvent(this.id, currentMsg, event);
+      }
+    };
+
+    agent.session.on("event", eventHandler);
+    this.cb?.onAgentBusy?.(this.id, agent.info.id);
+
+    const prompt = `[Forwarded message from ${fromAgent?.info.name ?? "User"}]:\n\n${original.content}`;
 
     try {
       await agent.session.send(prompt);

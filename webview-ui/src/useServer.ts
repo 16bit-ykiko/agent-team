@@ -25,6 +25,13 @@ export interface MessageImage {
   url: string;
 }
 
+export interface ForwardRef {
+  messageId: string;
+  fromAgent: string;
+  fromAvatar: string;
+  preview: string;
+}
+
 export interface Message {
   id: string;
   kind: "user" | "agent" | "system";
@@ -35,6 +42,7 @@ export interface Message {
   events?: StreamEvent[];
   turnId?: string;
   images?: MessageImage[];
+  forwardRef?: ForwardRef;
 }
 
 export interface AgentInfo {
@@ -131,206 +139,232 @@ export function useServer() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const handleServerMessage = useCallback((msg: Record<string, unknown>) => {
-    switch (msg.type) {
-      case "init": {
-        const incoming = msg.workspaces as Workspace[];
-        setWorkspaces((prev) => {
-          if (prev.length === 0) return incoming;
-          const prevMap = new Map(prev.map((w) => [w.id, w]));
-          return incoming.map((w) => {
-            const existing = prevMap.get(w.id);
-            if (existing?.messagesLoaded) {
+  const pendingEventsRef = useRef<Array<{ wsId: string; messageId: string; event: StreamEvent }>>(
+    [],
+  );
+  const rafRef = useRef<number>(0);
+
+  const flushStreamEvents = useCallback(() => {
+    rafRef.current = 0;
+    const batch = pendingEventsRef.current;
+    if (batch.length === 0) return;
+    pendingEventsRef.current = [];
+    setWorkspaces((prev) =>
+      prev.map((w) => {
+        const relevant = batch.filter((e) => e.wsId === w.id);
+        if (relevant.length === 0) return w;
+        return {
+          ...w,
+          messages: w.messages.map((m) => {
+            const evts = relevant.filter((e) => e.messageId === m.id);
+            if (evts.length === 0) return m;
+            return { ...m, events: [...(m.events ?? []), ...evts.map((e) => e.event)] };
+          }),
+        };
+      }),
+    );
+  }, []);
+
+  const handleServerMessage = useCallback(
+    (msg: Record<string, unknown>) => {
+      switch (msg.type) {
+        case "init": {
+          const incoming = msg.workspaces as Workspace[];
+          setWorkspaces((prev) => {
+            if (prev.length === 0) return incoming;
+            const prevMap = new Map(prev.map((w) => [w.id, w]));
+            return incoming.map((w) => {
+              const existing = prevMap.get(w.id);
+              if (existing?.messagesLoaded) {
+                return {
+                  ...w,
+                  messages: existing.messages,
+                  messagesLoaded: true,
+                  hasMore: existing.hasMore,
+                };
+              }
+              return w;
+            });
+          });
+          const config = msg.config as {
+            projects: Record<string, Record<string, string>>;
+            presets: AgentPreset[];
+            models: ModelOption[];
+            skills: SkillDef[];
+            hosts: Record<string, HostConfig>;
+          };
+          setProjects(config.projects);
+          setPresets(config.presets);
+          setModels(config.models);
+          if (config.skills) setSkills(config.skills);
+          if (config.hosts) setHostConfigs(config.hosts);
+          if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
+          setHostAvailable(Boolean(msg.hostAvailable));
+          break;
+        }
+
+        case "host_state":
+          setHostAvailable(Boolean(msg.available));
+          break;
+
+        case "hosts_update":
+          setHosts(msg.hosts as HostInfo[]);
+          break;
+
+        case "workspace_messages": {
+          const wsId = msg.workspaceId as string;
+          const incoming = msg.messages as Message[];
+          const hasMore = msg.hasMore as boolean;
+          setWorkspaces((prev) =>
+            prev.map((w) => {
+              if (w.id !== wsId) return w;
+              if (!w.messagesLoaded) {
+                return { ...w, messages: incoming, hasMore, messagesLoaded: true };
+              }
+              const existingIds = new Set(w.messages.map((m) => m.id));
+              const newMsgs = incoming.filter((m) => !existingIds.has(m.id));
+              return { ...w, messages: [...newMsgs, ...w.messages], hasMore };
+            }),
+          );
+          break;
+        }
+
+        case "workspace_created":
+          setWorkspaces((prev) => [...prev, msg.workspace as Workspace]);
+          break;
+
+        case "workspace_deleted":
+          setWorkspaces((prev) => prev.filter((w) => w.id !== msg.workspaceId));
+          break;
+
+        case "agent_added": {
+          const wsId = msg.workspaceId as string;
+          const agent = msg.agent as AgentInfo;
+          setWorkspaces((prev) =>
+            prev.map((w) => (w.id === wsId ? { ...w, agents: [...w.agents, agent] } : w)),
+          );
+          break;
+        }
+
+        case "agent_removed": {
+          const wsId = msg.workspaceId as string;
+          const agentId = msg.agentId as string;
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === wsId ? { ...w, agents: w.agents.filter((a) => a.id !== agentId) } : w,
+            ),
+          );
+          break;
+        }
+
+        case "new_message": {
+          const wsId = msg.workspaceId as string;
+          const message = msg.message as Message;
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === wsId
+                ? { ...w, messages: [...w.messages, message], lastMessageAt: message.timestamp }
+                : w,
+            ),
+          );
+          break;
+        }
+
+        case "stream_event": {
+          pendingEventsRef.current.push({
+            wsId: msg.workspaceId as string,
+            messageId: msg.messageId as string,
+            event: msg.event as StreamEvent,
+          });
+          if (!rafRef.current) {
+            rafRef.current = requestAnimationFrame(flushStreamEvents);
+          }
+          break;
+        }
+
+        case "message_done": {
+          const wsId = msg.workspaceId as string;
+          const messageId = msg.messageId as string;
+          const status = msg.status as Message["status"];
+          const content = msg.content as string;
+          setWorkspaces((prev) =>
+            prev.map((w) => {
+              if (w.id !== wsId) return w;
               return {
                 ...w,
-                messages: existing.messages,
-                messagesLoaded: true,
-                hasMore: existing.hasMore,
+                messages: w.messages.map((m) =>
+                  m.id === messageId ? { ...m, status, content } : m,
+                ),
               };
-            }
-            return w;
+            }),
+          );
+          break;
+        }
+
+        case "agent_busy": {
+          const wsId = msg.workspaceId as string;
+          const agentId = msg.agentId as string;
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === wsId
+                ? {
+                    ...w,
+                    agents: w.agents.map((a) => (a.id === agentId ? { ...a, busy: true } : a)),
+                  }
+                : w,
+            ),
+          );
+          break;
+        }
+
+        case "agent_idle": {
+          const wsId = msg.workspaceId as string;
+          const agentId = msg.agentId as string;
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === wsId
+                ? {
+                    ...w,
+                    agents: w.agents.map((a) => (a.id === agentId ? { ...a, busy: false } : a)),
+                  }
+                : w,
+            ),
+          );
+          break;
+        }
+
+        case "workspace_branch_update": {
+          const wsId = msg.workspaceId as string;
+          const gitBranch = msg.gitBranch as string | null;
+          const prUrl = (msg.prUrl as string | null) ?? null;
+          const prTitle = (msg.prTitle as string | null) ?? null;
+          setWorkspaces((prev) =>
+            prev.map((w) => (w.id === wsId ? { ...w, gitBranch, prUrl, prTitle } : w)),
+          );
+          break;
+        }
+
+        case "system_status":
+          setSystemStatus({
+            osName: msg.osName as string,
+            osArch: msg.osArch as string,
+            cpuModel: msg.cpuModel as string,
+            cpuCores: msg.cpuCores as number,
+            cpuUsage: msg.cpuUsage as number,
+            memTotal: msg.memTotal as number,
+            memUsed: msg.memUsed as number,
+            uptime: msg.uptime as number,
+            hostname: msg.hostname as string,
           });
-        });
-        const config = msg.config as {
-          projects: Record<string, Record<string, string>>;
-          presets: AgentPreset[];
-          models: ModelOption[];
-          skills: SkillDef[];
-          hosts: Record<string, HostConfig>;
-        };
-        setProjects(config.projects);
-        setPresets(config.presets);
-        setModels(config.models);
-        if (config.skills) setSkills(config.skills);
-        if (config.hosts) setHostConfigs(config.hosts);
-        if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
-        setHostAvailable(Boolean(msg.hostAvailable));
-        break;
+          break;
+
+        case "error":
+          console.error("[server]", msg.message);
+          break;
       }
-
-      case "host_state":
-        setHostAvailable(Boolean(msg.available));
-        break;
-
-      case "hosts_update":
-        setHosts(msg.hosts as HostInfo[]);
-        break;
-
-      case "workspace_messages": {
-        const wsId = msg.workspaceId as string;
-        const incoming = msg.messages as Message[];
-        const hasMore = msg.hasMore as boolean;
-        setWorkspaces((prev) =>
-          prev.map((w) => {
-            if (w.id !== wsId) return w;
-            if (!w.messagesLoaded) {
-              return { ...w, messages: incoming, hasMore, messagesLoaded: true };
-            }
-            const existingIds = new Set(w.messages.map((m) => m.id));
-            const newMsgs = incoming.filter((m) => !existingIds.has(m.id));
-            return { ...w, messages: [...newMsgs, ...w.messages], hasMore };
-          }),
-        );
-        break;
-      }
-
-      case "workspace_created":
-        setWorkspaces((prev) => [...prev, msg.workspace as Workspace]);
-        break;
-
-      case "workspace_deleted":
-        setWorkspaces((prev) => prev.filter((w) => w.id !== msg.workspaceId));
-        break;
-
-      case "agent_added": {
-        const wsId = msg.workspaceId as string;
-        const agent = msg.agent as AgentInfo;
-        setWorkspaces((prev) =>
-          prev.map((w) => (w.id === wsId ? { ...w, agents: [...w.agents, agent] } : w)),
-        );
-        break;
-      }
-
-      case "agent_removed": {
-        const wsId = msg.workspaceId as string;
-        const agentId = msg.agentId as string;
-        setWorkspaces((prev) =>
-          prev.map((w) =>
-            w.id === wsId ? { ...w, agents: w.agents.filter((a) => a.id !== agentId) } : w,
-          ),
-        );
-        break;
-      }
-
-      case "new_message": {
-        const wsId = msg.workspaceId as string;
-        const message = msg.message as Message;
-        setWorkspaces((prev) =>
-          prev.map((w) =>
-            w.id === wsId
-              ? { ...w, messages: [...w.messages, message], lastMessageAt: message.timestamp }
-              : w,
-          ),
-        );
-        break;
-      }
-
-      case "stream_event": {
-        const wsId = msg.workspaceId as string;
-        const messageId = msg.messageId as string;
-        const event = msg.event as StreamEvent;
-        setWorkspaces((prev) =>
-          prev.map((w) => {
-            if (w.id !== wsId) return w;
-            return {
-              ...w,
-              messages: w.messages.map((m) => {
-                if (m.id !== messageId) return m;
-                const events = [...(m.events ?? []), event];
-                return { ...m, events };
-              }),
-            };
-          }),
-        );
-        break;
-      }
-
-      case "message_done": {
-        const wsId = msg.workspaceId as string;
-        const messageId = msg.messageId as string;
-        const status = msg.status as Message["status"];
-        const content = msg.content as string;
-        setWorkspaces((prev) =>
-          prev.map((w) => {
-            if (w.id !== wsId) return w;
-            return {
-              ...w,
-              messages: w.messages.map((m) => (m.id === messageId ? { ...m, status, content } : m)),
-            };
-          }),
-        );
-        break;
-      }
-
-      case "agent_busy": {
-        const wsId = msg.workspaceId as string;
-        const agentId = msg.agentId as string;
-        setWorkspaces((prev) =>
-          prev.map((w) =>
-            w.id === wsId
-              ? { ...w, agents: w.agents.map((a) => (a.id === agentId ? { ...a, busy: true } : a)) }
-              : w,
-          ),
-        );
-        break;
-      }
-
-      case "agent_idle": {
-        const wsId = msg.workspaceId as string;
-        const agentId = msg.agentId as string;
-        setWorkspaces((prev) =>
-          prev.map((w) =>
-            w.id === wsId
-              ? {
-                  ...w,
-                  agents: w.agents.map((a) => (a.id === agentId ? { ...a, busy: false } : a)),
-                }
-              : w,
-          ),
-        );
-        break;
-      }
-
-      case "workspace_branch_update": {
-        const wsId = msg.workspaceId as string;
-        const gitBranch = msg.gitBranch as string | null;
-        const prUrl = (msg.prUrl as string | null) ?? null;
-        const prTitle = (msg.prTitle as string | null) ?? null;
-        setWorkspaces((prev) =>
-          prev.map((w) => (w.id === wsId ? { ...w, gitBranch, prUrl, prTitle } : w)),
-        );
-        break;
-      }
-
-      case "system_status":
-        setSystemStatus({
-          osName: msg.osName as string,
-          osArch: msg.osArch as string,
-          cpuModel: msg.cpuModel as string,
-          cpuCores: msg.cpuCores as number,
-          cpuUsage: msg.cpuUsage as number,
-          memTotal: msg.memTotal as number,
-          memUsed: msg.memUsed as number,
-          uptime: msg.uptime as number,
-          hostname: msg.hostname as string,
-        });
-        break;
-
-      case "error":
-        console.error("[server]", msg.message);
-        break;
-    }
-  }, []);
+    },
+    [flushStreamEvents],
+  );
 
   const connect = useCallback(() => {
     const ws = new WebSocket(resolveWsUrl());
@@ -415,7 +449,13 @@ export function useServer() {
         content: string,
         target?: string,
         images?: Array<{ name: string; url: string }>,
-      ) => send({ type: "send_message", workspaceId: wsId, content, target, images }),
+        quote?: { messageId: string; agentId: string | null; content: string },
+      ) => send({ type: "send_message", workspaceId: wsId, content, target, images, quote }),
+      [send],
+    ),
+    forwardMessage: useCallback(
+      (wsId: string, messageId: string, targetAgentId: string) =>
+        send({ type: "forward_message", workspaceId: wsId, messageId, targetAgentId }),
       [send],
     ),
     abort: useCallback(
