@@ -430,8 +430,8 @@ export class Workspace {
   private wslExec(cmd: string): string {
     const distro = this.getHostDistro();
     if (distro) {
-      const inner = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && cd ${shellQuote(this.cwd)} && ${cmd}`;
-      return execSync(`${getWslBin()} -d ${distro} -- bash -c ${shellQuote(inner)} 2>/dev/null`, {
+      const inner = `cd ${shellQuote(this.cwd)} && ${cmd}`;
+      return execSync(`${getWslBin()} -d ${distro} -- bash -ic ${shellQuote(inner)} 2>/dev/null`, {
         encoding: "utf-8",
         timeout: 10000,
       }).trim();
@@ -442,8 +442,8 @@ export class Workspace {
   private wslExecAsync(cmd: string): Promise<string | null> {
     const distro = this.getHostDistro();
     if (distro) {
-      const inner = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && cd ${shellQuote(this.cwd)} && ${cmd}`;
-      const fullCmd = `${getWslBin()} -d ${distro} -- bash -c ${shellQuote(inner)} 2>/dev/null`;
+      const inner = `cd ${shellQuote(this.cwd)} && ${cmd}`;
+      const fullCmd = `${getWslBin()} -d ${distro} -- bash -ic ${shellQuote(inner)} 2>/dev/null`;
       return new Promise((resolve) => {
         exec(fullCmd, { encoding: "utf-8", timeout: 15000 }, (err, stdout) => {
           resolve(err ? null : stdout.trim() || null);

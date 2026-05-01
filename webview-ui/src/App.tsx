@@ -1012,7 +1012,7 @@ export function App() {
       setPendingImages([]);
     }
 
-    const cmdMatch = text.match(/^\/(\w+)\s*([\s\S]*)/);
+    const cmdMatch = text.match(/^\/([\w-]+)\s*([\s\S]*)/);
     if (cmdMatch) {
       const skill = skills.find((c) => c.name === cmdMatch[1]);
       if (skill) {
@@ -1160,7 +1160,7 @@ export function App() {
       setMentionQuery(null);
     }
 
-    const cmdMatch = val.match(/^\/(\w*)$/);
+    const cmdMatch = val.match(/^\/([\w-]*)$/);
     if (cmdMatch) {
       setCmdQuery(cmdMatch[1]);
       setCmdIdx(0);

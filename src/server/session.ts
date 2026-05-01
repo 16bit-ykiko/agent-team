@@ -134,8 +134,8 @@ export class ClaudeSession extends EventEmitter {
     return session;
   }
 
-  private buildArgs(message: string): string[] {
-    const args = ["-p", message, "--output-format", "stream-json", "--verbose"];
+  private buildArgs(): string[] {
+    const args = ["-p", "--output-format", "stream-json", "--verbose"];
 
     if (this.sessionId) {
       args.push("--resume", this.sessionId);
@@ -161,7 +161,7 @@ export class ClaudeSession extends EventEmitter {
 
   private run(message: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const args = this.buildArgs(message);
+      const args = this.buildArgs();
 
       const extraEnv = this.config.providerEnv ?? {};
       if (Object.keys(extraEnv).length > 0) {
@@ -176,8 +176,8 @@ export class ClaudeSession extends EventEmitter {
         })
           .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
           .join(" && ");
-        const cmd = `export PATH="${DISTRO_PATH_PREFIX}:$PATH" && ${envExports} && cd ${shellQuote(this.config.cwd)} && stdbuf -oL claude ${escaped}`;
-        this.proc = spawn(getWslBin(), ["-d", this.config.distro, "--", "bash", "-c", cmd], {
+        const cmd = `${envExports} && cd ${shellQuote(this.config.cwd)} && claude ${escaped}`;
+        this.proc = spawn(getWslBin(), ["-d", this.config.distro, "--", "bash", "-ic", cmd], {
           stdio: ["pipe", "pipe", "pipe"],
         });
       } else {
@@ -191,6 +191,9 @@ export class ClaudeSession extends EventEmitter {
           stdio: ["pipe", "pipe", "pipe"],
         });
       }
+
+      this.proc.stdin!.write(message);
+      this.proc.stdin!.end();
 
       let stderr = "";
       let settled = false;
