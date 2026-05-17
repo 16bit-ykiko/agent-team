@@ -13,6 +13,13 @@ export interface ServerConfig {
   remote_uploads_url?: string;
 }
 
+export interface AuthConfig {
+  username: string;
+  password: string;
+  session_secret: string;
+  max_age_days: number;
+}
+
 export interface HostConfig {
   label: string;
   type: "local";
@@ -26,6 +33,7 @@ export interface ProviderConfig {
 
 export interface AppConfig {
   server: ServerConfig;
+  auth: AuthConfig | null;
   projects: Record<string, Record<string, string>>;
   agents: Record<string, AgentConfig>;
   hosts: Record<string, HostConfig>;
@@ -104,5 +112,16 @@ export function loadConfig(baseDir: string): AppConfig {
     }
   }
 
-  return { server, projects, agents, hosts, providers };
+  let auth: AuthConfig | null = null;
+  const rawAuth = parsed.auth as Record<string, unknown> | undefined;
+  if (rawAuth?.username && rawAuth?.password && rawAuth?.session_secret) {
+    auth = {
+      username: rawAuth.username as string,
+      password: rawAuth.password as string,
+      session_secret: rawAuth.session_secret as string,
+      max_age_days: (rawAuth.max_age_days as number) ?? 30,
+    };
+  }
+
+  return { server, auth, projects, agents, hosts, providers };
 }

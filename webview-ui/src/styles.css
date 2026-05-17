@@ -377,6 +377,7 @@ body {
   font-size: 12px;
 }
 
+.agent-clear,
 .agent-remove {
   background: none;
   border: none;
@@ -388,8 +389,12 @@ body {
   opacity: 0;
 }
 
+.panel-agent:hover .agent-clear,
 .panel-agent:hover .agent-remove {
   opacity: 1;
+}
+.agent-clear:hover {
+  color: var(--accent);
 }
 .agent-remove:hover {
   color: var(--error);
@@ -923,16 +928,15 @@ pre .copy-btn:hover {
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
+  resize: none;
 }
 
 .input-row .chat-input:focus {
   border-color: var(--accent);
 }
 
-.input-row .chat-input.empty::before {
-  content: attr(data-placeholder);
+.input-row .chat-input::placeholder {
   color: var(--text-muted);
-  pointer-events: none;
 }
 
 .input-row button {
@@ -1351,16 +1355,7 @@ pre .copy-btn:hover {
 .system-status-panel {
   flex-shrink: 0;
   border-top: 1px solid var(--border);
-  padding: 10px 16px 12px;
-}
-
-.system-status-title {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-secondary);
-  margin-bottom: 8px;
+  padding: 8px 16px 10px;
 }
 
 .system-status-grid {
@@ -1380,8 +1375,9 @@ pre .copy-btn:hover {
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  width: 40px;
+  width: 52px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .status-value {
@@ -1537,7 +1533,7 @@ pre .copy-btn:hover {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
 
-  .input-row .chat-input.empty::before {
+  .input-row .chat-input::placeholder {
     font-size: 14px;
     opacity: 0.6;
   }

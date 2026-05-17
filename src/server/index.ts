@@ -1,4 +1,6 @@
 import * as http from "http";
+import * as https from "https";
+import * as crypto from "crypto";
 import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
@@ -6,10 +8,23 @@ import { exec, execSync, spawn } from "child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { Workspace, WorkspaceCallbacks } from "./task";
 import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } from "./state";
-import { loadConfig, AppConfig } from "./config";
+import { loadConfig, AppConfig, AuthConfig } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
 import { loadSkills, SkillDef } from "./skills";
 import { HostRegistry, LocalHost } from "./host";
+import { getWslBin } from "./session";
+
+interface QuotaWindow {
+  utilization: number;
+  resetsAt: number;
+}
+
+interface QuotaEntry {
+  label: string;
+  fiveHour: QuotaWindow | null;
+  sevenDay: QuotaWindow | null;
+  fetchedAt: number;
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -48,6 +63,8 @@ export class Server {
   private persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private uploadsDir: string;
   private hostRegistry: HostRegistry;
+  private quotaEntries: QuotaEntry[] = [];
+  private quotaTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
@@ -60,7 +77,10 @@ export class Server {
     this.isWSL = this.detectWSL();
 
     this.httpServer = http.createServer((req, res) => this.handleHttp(req, res));
-    this.wss = new WebSocketServer({ server: this.httpServer });
+    this.wss = new WebSocketServer({
+      server: this.httpServer,
+      verifyClient: (info: { req: http.IncomingMessage }) => this.isAuthenticated(info.req),
+    });
     this.wss.on("connection", (ws) => this.onConnect(ws));
 
     this.restoreState();
@@ -68,11 +88,99 @@ export class Server {
     if (this.isWSL) this.refreshWindowsHost();
     this.statusTimer = setInterval(() => this.broadcastSystemStatus(), 3000);
     this.branchTimer = setInterval(() => this.pollBranches(), 5000);
+    this.refreshQuota();
+    this.quotaTimer = setInterval(() => this.refreshQuota(), 60000);
 
     this.httpServer.listen(port, "0.0.0.0", () => {
       console.log(`Agent Team server listening on http://0.0.0.0:${port}`);
       if (this.isWSL) console.log("WSL detected — reporting Windows host memory");
     });
+  }
+
+  private signToken(payload: string): string {
+    if (!this.config.auth) return "";
+    return crypto
+      .createHmac("sha256", this.config.auth.session_secret)
+      .update(payload)
+      .digest("hex");
+  }
+
+  private makeSessionCookie(): string {
+    const auth = this.config.auth!;
+    const expires = Date.now() + auth.max_age_days * 86400_000;
+    const payload = `${auth.username}:${expires}`;
+    const sig = this.signToken(payload);
+    return `${payload}:${sig}`;
+  }
+
+  private validateSessionCookie(cookie: string): boolean {
+    if (!this.config.auth) return true;
+    const parts = cookie.split(":");
+    if (parts.length !== 3) return false;
+    const [user, expiresStr, sig] = parts;
+    const expires = parseInt(expiresStr);
+    if (isNaN(expires) || Date.now() > expires) return false;
+    const expected = this.signToken(`${user}:${expiresStr}`);
+    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  }
+
+  private parseCookies(header: string | undefined): Record<string, string> {
+    const result: Record<string, string> = {};
+    if (!header) return result;
+    for (const pair of header.split(";")) {
+      const eq = pair.indexOf("=");
+      if (eq < 0) continue;
+      result[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+    }
+    return result;
+  }
+
+  private isAuthenticated(req: http.IncomingMessage): boolean {
+    if (!this.config.auth) return true;
+    const cookies = this.parseCookies(req.headers.cookie);
+    const token = cookies["agent_team_session"];
+    return !!token && this.validateSessionCookie(token);
+  }
+
+  private handleLogin(req: http.IncomingMessage, res: http.ServerResponse): void {
+    if (req.method === "GET") {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(LOGIN_PAGE);
+      return;
+    }
+
+    if (req.method === "POST") {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        const body = Buffer.concat(chunks).toString();
+        const params = new URLSearchParams(body);
+        const auth = this.config.auth!;
+        if (params.get("username") === auth.username && params.get("password") === auth.password) {
+          const cookie = this.makeSessionCookie();
+          const maxAge = auth.max_age_days * 86400;
+          res.setHeader(
+            "Set-Cookie",
+            `agent_team_session=${cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`,
+          );
+          res.statusCode = 302;
+          res.setHeader("Location", "/");
+          res.end();
+        } else {
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+          res.end(
+            LOGIN_PAGE.replace(
+              "<!--ERROR-->",
+              '<p style="color:#ff6b6b;margin:0 0 16px">用户名或密码错误</p>',
+            ),
+          );
+        }
+      });
+      return;
+    }
+
+    res.statusCode = 405;
+    res.end();
   }
 
   private detectWSL(): boolean {
@@ -114,6 +222,145 @@ export class Server {
         }
       },
     );
+  }
+
+  private refreshQuota(): void {
+    const sources: { label: string; token: string }[] = [];
+    const seen = new Set<string>();
+
+    const localCredPath = path.join(os.homedir(), ".claude", ".credentials.json");
+    try {
+      const creds = JSON.parse(fs.readFileSync(localCredPath, "utf-8"));
+      const token = creds?.claudeAiOauth?.accessToken;
+      if (token) {
+        sources.push({ label: "local", token });
+        seen.add(token);
+      }
+    } catch {}
+
+    for (const host of this.hostRegistry.getAll()) {
+      if (!host.distro) continue;
+      try {
+        const out = execSync(
+          `${getWslBin()} -d ${host.distro} -- cat /home/ykiko/.claude/.credentials.json 2>/dev/null`,
+          { encoding: "utf-8", timeout: 5000 },
+        );
+        const creds = JSON.parse(out);
+        const token = creds?.claudeAiOauth?.accessToken;
+        if (token && !seen.has(token)) {
+          sources.push({ label: host.distro, token });
+          seen.add(token);
+        }
+      } catch {}
+    }
+
+    if (sources.length === 0) return;
+
+    const body = JSON.stringify({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1,
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    const pending = sources.length;
+    const results: QuotaEntry[] = [];
+    let done = 0;
+
+    for (const src of sources) {
+      this.fetchQuotaForToken(src.token, body, (entry) => {
+        if (entry) {
+          entry.label = src.label;
+          results.push(entry);
+        }
+        done++;
+        if (done === pending) {
+          this.quotaEntries = results;
+        }
+      });
+    }
+  }
+
+  private fetchQuotaForToken(
+    token: string,
+    body: string,
+    cb: (entry: QuotaEntry | null) => void,
+  ): void {
+    const apiHeaders = {
+      "x-api-key": token,
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+    };
+
+    const handleResponse = (res: http.IncomingMessage) => {
+      res.resume();
+      const h5 = res.headers["anthropic-ratelimit-unified-5h-utilization"];
+      const h5reset = res.headers["anthropic-ratelimit-unified-5h-reset"];
+      const d7 = res.headers["anthropic-ratelimit-unified-7d-utilization"];
+      const d7reset = res.headers["anthropic-ratelimit-unified-7d-reset"];
+
+      cb({
+        label: "",
+        fiveHour: h5 ? { utilization: parseFloat(h5 as string), resetsAt: Number(h5reset) } : null,
+        sevenDay: d7 ? { utilization: parseFloat(d7 as string), resetsAt: Number(d7reset) } : null,
+        fetchedAt: Date.now(),
+      });
+    };
+
+    const proxy =
+      process.env.https_proxy ||
+      process.env.HTTPS_PROXY ||
+      process.env.http_proxy ||
+      process.env.HTTP_PROXY;
+
+    if (proxy) {
+      try {
+        const proxyUrl = new URL(proxy);
+        const proxyReq = http.request({
+          hostname: proxyUrl.hostname,
+          port: proxyUrl.port,
+          method: "CONNECT",
+          path: "api.anthropic.com:443",
+          timeout: 10000,
+        });
+        proxyReq.on("connect", (_res, socket) => {
+          const req = https.request(
+            {
+              hostname: "api.anthropic.com",
+              path: "/v1/messages",
+              method: "POST",
+              headers: apiHeaders,
+              socket: socket,
+              agent: false as unknown as http.Agent,
+            },
+            handleResponse,
+          );
+          req.on("error", () => cb(null));
+          req.write(body);
+          req.end();
+        });
+        proxyReq.on("error", () => cb(null));
+        proxyReq.on("timeout", () => {
+          proxyReq.destroy();
+          cb(null);
+        });
+        proxyReq.end();
+      } catch {
+        cb(null);
+      }
+    } else {
+      const req = https.request(
+        "https://api.anthropic.com/v1/messages",
+        { method: "POST", headers: apiHeaders, timeout: 10000 },
+        handleResponse,
+      );
+      req.on("error", () => cb(null));
+      req.on("timeout", () => {
+        req.destroy();
+        cb(null);
+      });
+      req.write(body);
+      req.end();
+    }
   }
 
   private initCpuBaseline(): void {
@@ -160,6 +407,7 @@ export class Server {
       memUsed,
       uptime: os.uptime(),
       hostname: os.hostname(),
+      quota: this.quotaEntries,
     };
   }
 
@@ -172,6 +420,19 @@ export class Server {
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
       const pathname = decodeURIComponent(url.pathname);
+
+      if (this.config.auth) {
+        if (pathname === "/login") {
+          this.handleLogin(req, res);
+          return;
+        }
+        if (!this.isAuthenticated(req)) {
+          res.statusCode = 302;
+          res.setHeader("Location", "/login");
+          res.end();
+          return;
+        }
+      }
 
       if (req.method === "POST" && pathname === "/upload") {
         const chunks: Buffer[] = [];
@@ -375,6 +636,15 @@ export class Server {
       case "abort":
         this.abortAgent(msg.workspaceId as string, msg.agentId as string | undefined);
         return;
+
+      case "clear_context": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        if (workspace) {
+          workspace.clearContext(msg.agentId as string);
+          this.debouncedSaveWorkspace(workspace);
+        }
+        return;
+      }
 
       case "forward_message":
         this.forwardMessage(
@@ -730,6 +1000,31 @@ systemctl --user restart agent-team-server
 function genId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+const LOGIN_PAGE = `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login — Agent Team</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+form{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;width:320px}
+h2{text-align:center;margin-bottom:24px;font-size:20px;color:#e6edf3}
+label{display:block;font-size:13px;margin-bottom:6px;color:#8b949e}
+input{width:100%;padding:10px 12px;border:1px solid #30363d;border-radius:6px;background:#0d1117;color:#c9d1d9;font-size:15px;margin-bottom:16px;outline:none}
+input:focus{border-color:#58a6ff}
+button{width:100%;padding:10px;border:none;border-radius:6px;background:#238636;color:#fff;font-size:15px;font-weight:600;cursor:pointer}
+button:active{background:#2ea043}
+</style>
+</head><body>
+<form method="POST" action="login">
+<h2>Agent Team</h2>
+<!--ERROR-->
+<label>Username</label><input name="username" autocomplete="username" required>
+<label>Password</label><input name="password" type="password" autocomplete="current-password" required>
+<button type="submit">Login</button>
+</form>
+</body></html>`;
 
 const port = parseInt(process.env.AGENT_TEAM_PORT ?? "9800", 10);
 const baseDir = process.env.AGENT_TEAM_BASE_DIR ?? process.cwd();

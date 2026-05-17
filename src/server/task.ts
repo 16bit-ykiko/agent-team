@@ -1,5 +1,6 @@
 import { execSync, exec } from "child_process";
 import {
+  ClaudeSession,
   SessionConfig,
   StreamEvent,
   SessionState,
@@ -198,7 +199,8 @@ export class Workspace {
     for (const entry of this.agents.values()) {
       if (entry.info.isDefault) return entry;
     }
-    return null;
+    const first = this.agents.values().next();
+    return first.done ? null : first.value;
   }
 
   async sendMessage(
@@ -421,6 +423,23 @@ export class Workspace {
     for (const entry of this.agents.values()) {
       entry.session.abort();
     }
+  }
+
+  clearContext(agentId: string): boolean {
+    const entry = this.agents.get(agentId);
+    if (!entry) return false;
+    if (entry.session.isRunning) return false;
+    (entry.session as ClaudeSession).sessionId = null;
+    (entry.session as ClaudeSession).usage = {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      turns: 0,
+      duration_ms: 0,
+    };
+    this.pushSystemMessage(`${entry.info.avatar} **${entry.info.name}** context cleared`);
+    return true;
   }
 
   private getHostDistro(): string | undefined {

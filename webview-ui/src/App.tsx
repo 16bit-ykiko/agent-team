@@ -578,69 +578,78 @@ function formatUptime(seconds: number): string {
   return `${m}m`;
 }
 
+function formatResetTime(resetsAt: number): string {
+  const delta = resetsAt * 1000 - Date.now();
+  if (delta <= 0) return "now";
+  const mins = Math.floor(delta / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return remMins > 0 ? `${hours}h${remMins}m` : `${hours}h`;
+}
+
+function quotaBarColor(pct: number): string {
+  if (pct >= 80) return "var(--error)";
+  if (pct >= 50) return "var(--warning)";
+  return "var(--accent)";
+}
+
+function StatusBar({ label, pct, extra }: { label: string; pct: number; extra?: string }) {
+  return (
+    <div className="status-item">
+      <span className="status-label">{label}</span>
+      <span className="status-value">
+        <span className="status-bar">
+          <span
+            className="status-bar-fill"
+            style={{ width: `${pct}%`, background: quotaBarColor(pct) }}
+          />
+        </span>
+        <span className="status-pct">{extra ?? `${pct}%`}</span>
+      </span>
+    </div>
+  );
+}
+
 function SystemStatusPanel({ status }: { status: SystemStatus }) {
   const memPct = Math.round((status.memUsed / status.memTotal) * 100);
 
   return (
     <div className="system-status-panel">
-      <div className="system-status-title">System</div>
       <div className="system-status-grid">
-        <div className="status-item">
-          <span className="status-label">OS</span>
-          <span className="status-value" title={status.osName}>
-            {status.osName}
-          </span>
-        </div>
-        <div className="status-item">
-          <span className="status-label">Host</span>
-          <span className="status-value">{status.hostname}</span>
-        </div>
-        <div className="status-item">
-          <span className="status-label">CPU</span>
-          <span className="status-value">
-            <span className="status-bar">
-              <span
-                className="status-bar-fill"
-                style={{
-                  width: `${status.cpuUsage}%`,
-                  background:
-                    status.cpuUsage > 80
-                      ? "var(--error)"
-                      : status.cpuUsage > 50
-                        ? "var(--warning)"
-                        : "var(--accent)",
-                }}
-              />
-            </span>
-            <span className="status-pct">{status.cpuUsage}%</span>
-          </span>
-        </div>
-        <div className="status-item">
-          <span className="status-label">Mem</span>
-          <span className="status-value">
-            <span className="status-bar">
-              <span
-                className="status-bar-fill"
-                style={{
-                  width: `${memPct}%`,
-                  background:
-                    memPct > 80 ? "var(--error)" : memPct > 50 ? "var(--warning)" : "var(--accent)",
-                }}
-              />
-            </span>
-            <span className="status-pct">
-              {formatBytes(status.memUsed)} / {formatBytes(status.memTotal)}
-            </span>
-          </span>
-        </div>
-        <div className="status-item">
-          <span className="status-label">Arch</span>
-          <span className="status-value">{status.osArch}</span>
-        </div>
-        <div className="status-item">
-          <span className="status-label">Uptime</span>
-          <span className="status-value">{formatUptime(status.uptime)}</span>
-        </div>
+        <StatusBar label="CPU" pct={status.cpuUsage} />
+        <StatusBar
+          label="Mem"
+          pct={memPct}
+          extra={`${formatBytes(status.memUsed)} / ${formatBytes(status.memTotal)}`}
+        />
+        {status.quota.flatMap((q) => {
+          const tag = status.quota.length > 1 ? q.label : "Opus";
+          const items = [];
+          if (q.fiveHour) {
+            const pct = Math.round(q.fiveHour.utilization * 100);
+            items.push(
+              <StatusBar
+                key={`${q.label}-5h`}
+                label={`${tag} 5h`}
+                pct={pct}
+                extra={`${pct}% · ${formatResetTime(q.fiveHour.resetsAt)}`}
+              />,
+            );
+          }
+          if (q.sevenDay) {
+            const pct = Math.round(q.sevenDay.utilization * 100);
+            items.push(
+              <StatusBar
+                key={`${q.label}-7d`}
+                label={`${tag} 7d`}
+                pct={pct}
+                extra={`${pct}% · ${formatResetTime(q.sevenDay.resetsAt)}`}
+              />,
+            );
+          }
+          return items;
+        })}
       </div>
     </div>
   );
@@ -663,6 +672,7 @@ export function App() {
     removeAgent,
     sendMessage,
     abort,
+    clearContext,
     openDiff,
     loadMessages,
   } = useServer();
@@ -674,7 +684,7 @@ export function App() {
       return null;
     }
   });
-  const [input, setInput] = useState("");
+  const [hasInput, setHasInput] = useState(false);
   const inputMapRef = useRef(new Map<string, string>());
   const prevWsIdRef = useRef<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -706,7 +716,7 @@ export function App() {
   const [finishedStatus, setFinishedStatus] = useState<Record<string, "done" | "failed">>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draggingRef = useRef(false);
 
   const sortedWorkspaces = useMemo(
@@ -832,18 +842,17 @@ export function App() {
 
   useEffect(() => {
     if (prevWsIdRef.current && prevWsIdRef.current !== activeWsId) {
-      inputMapRef.current.set(prevWsIdRef.current, input);
+      inputMapRef.current.set(prevWsIdRef.current, textareaRef.current?.value ?? "");
     }
     prevWsIdRef.current = activeWsId;
     const restored = activeWsId ? (inputMapRef.current.get(activeWsId) ?? "") : "";
-    setInput(restored);
-    if (textareaRef.current) {
-      textareaRef.current.innerText = restored;
-      textareaRef.current.style.height = "36px";
-      if (restored) {
-        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + "px";
-      }
+    const el = textareaRef.current;
+    if (el) {
+      el.value = restored;
+      el.style.height = "36px";
+      el.style.height = Math.min(el.scrollHeight, 120) + "px";
     }
+    setHasInput(restored.trim().length > 0);
     if (activeWsId && connected) loadMessages(activeWsId);
     userScrolledUpRef.current = false;
     prevMsgCountRef.current = 0;
@@ -937,19 +946,16 @@ export function App() {
 
   const setDivText = useCallback(
     (text: string) => {
-      setInput(text);
       if (activeWsId) inputMapRef.current.set(activeWsId, text);
       const el = textareaRef.current;
-      if (!el) return;
-      el.focus();
-      const sel = window.getSelection();
-      if (sel) {
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        sel.removeAllRanges();
-        sel.addRange(range);
+      if (el) {
+        el.value = text;
+        el.focus();
+        el.selectionStart = el.selectionEnd = text.length;
+        el.style.height = "36px";
+        el.style.height = Math.min(el.scrollHeight, 120) + "px";
       }
-      document.execCommand("insertText", false, text);
+      setHasInput(text.trim().length > 0);
     },
     [activeWsId],
   );
@@ -965,14 +971,15 @@ export function App() {
 
   const applyMention = useCallback(
     (agentName: string) => {
-      const atIdx = input.lastIndexOf("@");
+      const val = textareaRef.current?.value ?? "";
+      const atIdx = val.lastIndexOf("@");
       if (atIdx !== -1) {
-        setDivText(input.slice(0, atIdx) + `@${agentName} `);
+        setDivText(val.slice(0, atIdx) + `@${agentName} `);
       }
       setMentionQuery(null);
       textareaRef.current?.focus();
     },
-    [input, setDivText],
+    [setDivText],
   );
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -992,7 +999,7 @@ export function App() {
   }, []);
 
   const handleSend = useCallback(async () => {
-    const text = input.trim();
+    const text = (textareaRef.current?.value ?? "").trim();
     const ws = activeWsRef.current;
     if ((!text && pendingImages.length === 0) || !ws || uploading) return;
 
@@ -1042,15 +1049,15 @@ export function App() {
             ? { messageId: quotedMsg.id, agentId: quotedMsg.agentId, content: quotedMsg.content }
             : undefined,
         );
-        setInput("");
         if (activeWsId) inputMapRef.current.set(activeWsId, "");
         setCmdQuery(null);
         setMentionQuery(null);
         setQuotedMsg(null);
         if (textareaRef.current) {
-          textareaRef.current.innerText = "";
+          textareaRef.current.value = "";
           textareaRef.current.style.height = "36px";
         }
+        setHasInput(false);
         return;
       }
     }
@@ -1064,16 +1071,16 @@ export function App() {
         ? { messageId: quotedMsg.id, agentId: quotedMsg.agentId, content: quotedMsg.content }
         : undefined,
     );
-    setInput("");
     if (activeWsId) inputMapRef.current.set(activeWsId, "");
     setMentionQuery(null);
     setCmdQuery(null);
     setQuotedMsg(null);
     if (textareaRef.current) {
-      textareaRef.current.innerText = "";
+      textareaRef.current.value = "";
       textareaRef.current.style.height = "36px";
     }
-  }, [input, activeWsId, skills, sendMessage, pendingImages, uploading, quotedMsg]);
+    setHasInput(false);
+  }, [activeWsId, skills, sendMessage, pendingImages, uploading, quotedMsg]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (cmdQuery !== null && filteredCmds.length > 0) {
@@ -1126,31 +1133,17 @@ export function App() {
     }
   };
 
-  const handleDivInput = () => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const val = el.innerText;
-    setInput(val);
+  const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const el = e.target;
+    const val = el.value;
+    const has = val.trim().length > 0;
+    if (has !== hasInput) setHasInput(has);
     if (activeWsId) inputMapRef.current.set(activeWsId, val);
 
     el.style.height = "36px";
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
 
-    const sel = window.getSelection();
-    const cursor = sel?.focusOffset ?? val.length;
-    const node = sel?.focusNode;
-    let before = val.slice(0, cursor);
-    if (node && el.contains(node)) {
-      let offset = 0;
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-      while (walker.nextNode()) {
-        if (walker.currentNode === node) {
-          before = val.slice(0, offset + cursor);
-          break;
-        }
-        offset += walker.currentNode.textContent?.length ?? 0;
-      }
-    }
+    const before = val.slice(0, el.selectionStart);
 
     const atMatch = before.match(/@(\w*)$/);
     if (atMatch) {
@@ -1316,6 +1309,13 @@ export function App() {
                         <span className={`agent-status-label agent-status-${status}`}>
                           {status === "busy" ? "working" : status}
                         </span>
+                        <button
+                          className="agent-clear"
+                          title="Clear context"
+                          onClick={() => clearContext(activeWs.id, agent.id)}
+                        >
+                          &#8635;
+                        </button>
                         <button
                           className="agent-remove"
                           onClick={() => removeAgent(activeWs.id, agent.id)}
@@ -1486,18 +1486,18 @@ export function App() {
                 >
                   +
                 </button>
-                <div
+                <textarea
                   ref={textareaRef}
-                  className={"chat-input" + (input ? "" : " empty")}
-                  contentEditable={hasAgents}
-                  onInput={handleDivInput}
+                  className="chat-input"
+                  onChange={handleTextareaChange}
                   onKeyDown={handleKeyDown}
-                  data-placeholder={
+                  disabled={!hasAgents}
+                  placeholder={
                     activeWs.agents.length > 1
                       ? "Type / for commands, @ to mention an agent..."
                       : "Type / for commands, or send a message..."
                   }
-                  role="textbox"
+                  rows={1}
                 />
                 {isAnyRunning && (
                   <button className="btn-abort" onClick={() => abort(activeWs.id)}>
@@ -1506,9 +1506,7 @@ export function App() {
                 )}
                 <button
                   onClick={handleSend}
-                  disabled={
-                    (!input.trim() && pendingImages.length === 0) || !hasAgents || uploading
-                  }
+                  disabled={(!hasInput && pendingImages.length === 0) || !hasAgents || uploading}
                 >
                   {uploading ? "Uploading..." : "Send"}
                 </button>

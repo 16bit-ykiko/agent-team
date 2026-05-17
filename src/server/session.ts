@@ -310,9 +310,7 @@ function parseStreamEvent(obj: Record<string, unknown>): StreamEvent | null {
   }
 
   if (type === "rate_limit_event") {
-    const info = obj.rate_limit_info as Record<string, unknown> | undefined;
-    if (info?.status === "allowed") return null;
-    return { kind: "error", content: `Rate limited: resets at ${info?.resetsAt}`, raw: obj };
+    return null;
   }
 
   if (type === "error") {

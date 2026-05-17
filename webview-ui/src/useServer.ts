@@ -84,6 +84,18 @@ export interface Workspace {
   messagesLoaded?: boolean;
 }
 
+export interface QuotaWindow {
+  utilization: number;
+  resetsAt: number;
+}
+
+export interface QuotaEntry {
+  label: string;
+  fiveHour: QuotaWindow | null;
+  sevenDay: QuotaWindow | null;
+  fetchedAt: number;
+}
+
 export interface SystemStatus {
   osName: string;
   osArch: string;
@@ -94,6 +106,7 @@ export interface SystemStatus {
   memUsed: number;
   uptime: number;
   hostname: string;
+  quota: QuotaEntry[];
 }
 
 export interface AgentPreset {
@@ -355,6 +368,7 @@ export function useServer() {
             memUsed: msg.memUsed as number,
             uptime: msg.uptime as number,
             hostname: msg.hostname as string,
+            quota: (msg.quota as QuotaEntry[]) ?? [],
           });
           break;
 
@@ -460,6 +474,11 @@ export function useServer() {
     ),
     abort: useCallback(
       (wsId: string, agentId?: string) => send({ type: "abort", workspaceId: wsId, agentId }),
+      [send],
+    ),
+    clearContext: useCallback(
+      (wsId: string, agentId: string) =>
+        send({ type: "clear_context", workspaceId: wsId, agentId }),
       [send],
     ),
     openDiff: useCallback(
