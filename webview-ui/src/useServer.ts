@@ -23,6 +23,7 @@ export interface SubAgentInfo {
   lastTool?: string;
   usage?: { totalTokens: number; toolUses: number; durationMs: number };
   summary?: string;
+  eventCount?: number;
   events?: StreamEvent[];
 }
 
@@ -221,7 +222,7 @@ export function useServer() {
                 }
               }
               if (ev.kind === "subagent_progress" && ev.subagent?.taskId) {
-                const innerEv = (ev.subagent as Record<string, unknown>)?._innerEvent as StreamEvent | undefined;
+                const innerEv = (ev.subagent as unknown as Record<string, unknown>)?._innerEvent as StreamEvent | undefined;
                 if (innerEv) {
                   const startIdx = events.findIndex(
                     (e) => e.kind === "subagent_start" && e.subagent?.taskId === ev.subagent?.taskId,
@@ -404,11 +405,23 @@ export function useServer() {
               if (w.id !== wsId) return w;
               return {
                 ...w,
-                messages: w.messages.map((m) =>
-                  m.id === messageId
-                    ? { ...m, status, content, ...(events ? { events } : {}) }
-                    : m,
-                ),
+                messages: w.messages.map((m) => {
+                  if (m.id !== messageId) return m;
+                  let merged = events;
+                  if (events && m.events) {
+                    merged = events.map((serverEv) => {
+                      if (!serverEv.subagent?.taskId) return serverEv;
+                      const clientEv = m.events!.find(
+                        (e) => e.subagent?.taskId === serverEv.subagent!.taskId,
+                      );
+                      if (clientEv?.subagent?.events?.length) {
+                        return { ...serverEv, subagent: { ...serverEv.subagent, events: clientEv.subagent.events } };
+                      }
+                      return serverEv;
+                    });
+                  }
+                  return { ...m, status, content, ...(merged ? { events: merged } : {}) };
+                }),
               };
             }),
           );
@@ -443,6 +456,32 @@ export function useServer() {
                   }
                 : w,
             ),
+          );
+          break;
+        }
+
+        case "subagent_events": {
+          const wsId = msg.workspaceId as string;
+          const messageId = msg.messageId as string;
+          const taskId = msg.taskId as string;
+          const saEvents = msg.events as StreamEvent[];
+          setWorkspaces((prev) =>
+            prev.map((w) => {
+              if (w.id !== wsId) return w;
+              return {
+                ...w,
+                messages: w.messages.map((m) => {
+                  if (m.id !== messageId || !m.events) return m;
+                  return {
+                    ...m,
+                    events: m.events.map((e) => {
+                      if (e.subagent?.taskId !== taskId) return e;
+                      return { ...e, subagent: { ...e.subagent, events: saEvents } };
+                    }),
+                  };
+                }),
+              };
+            }),
           );
           break;
         }
@@ -538,6 +577,11 @@ export function useServer() {
     loadMessages: useCallback(
       (wsId: string, before?: number) =>
         send({ type: "load_messages", workspaceId: wsId, before, limit: 50 }),
+      [send],
+    ),
+    loadSubagentEvents: useCallback(
+      (wsId: string, messageId: string, taskId: string) =>
+        send({ type: "load_subagent_events", workspaceId: wsId, messageId, taskId }),
       [send],
     ),
     createWorkspace: useCallback(

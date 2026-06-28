@@ -195,6 +195,11 @@ export class Workspace {
       } else if (event.kind === "error") {
         const msg = this.ensureAgentMsg(entry);
         msg.status = "error";
+        if (!msg.content) {
+          msg.content = event.content;
+        } else {
+          msg.content += "\n\n" + event.content;
+        }
         msg.events!.push(event);
         this.cb?.onStreamEvent(this.id, msg, event);
         this.cb?.onMessageDone(this.id, msg.id, "error", msg.content, msg.events);
@@ -679,11 +684,21 @@ export class Workspace {
       cb,
     );
     ws.createdAt = state.createdAt;
-    ws.messages = state.messages.map((m) => ({
-      ...m,
-      kind: m.kind ?? (m.agentId === null ? "user" : "agent"),
-      status: m.status === "streaming" ? "done" : m.status,
-    }));
+    ws.messages = state.messages.map((m) => {
+      const msg = {
+        ...m,
+        kind: m.kind ?? (m.agentId === null ? "user" : "agent"),
+        status: m.status === "streaming" ? ("done" as MessageStatus) : m.status,
+      };
+      if (msg.events) {
+        for (const ev of msg.events) {
+          if (ev.subagent?.status === "running") {
+            ev.subagent.status = "stopped";
+          }
+        }
+      }
+      return msg;
+    });
 
     const host = hostRegistry.get(hostId) ?? hostRegistry.getDefault()!;
     for (const agentState of state.agents) {

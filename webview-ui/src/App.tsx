@@ -75,14 +75,23 @@ function ScrollTable(props: ComponentProps<"table">) {
 
 const mdComponents = { pre: CodeBlock, table: ScrollTable };
 
+function isImageAvatar(avatar: string): boolean {
+  return avatar.includes("/") || avatar.endsWith(".jpg") || avatar.endsWith(".png") || avatar.endsWith(".webp");
+}
+
 function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
+  const isImg = isImageAvatar(agent.avatar);
   return (
     <div
       className="agent-avatar"
-      style={{ width: size, height: size, background: agent.color, fontSize: size * 0.5 }}
+      style={{ width: size, height: size, background: isImg ? "transparent" : agent.color, fontSize: size * 0.5 }}
       title={`${agent.name} (${agent.model})`}
     >
-      {agent.avatar}
+      {isImg ? (
+        <img src={agent.avatar} alt={agent.name} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }} />
+      ) : (
+        agent.avatar
+      )}
     </div>
   );
 }
@@ -122,9 +131,13 @@ function AddAgentDialog({
             >
               <div
                 className="agent-avatar"
-                style={{ width: 36, height: 36, background: p.color, fontSize: 18 }}
+                style={{ width: 36, height: 36, background: isImageAvatar(p.avatar) ? "transparent" : p.color, fontSize: 18 }}
               >
-                {p.avatar}
+                {isImageAvatar(p.avatar) ? (
+                  <img src={p.avatar} alt={p.name} style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover" }} />
+                ) : (
+                  p.avatar
+                )}
               </div>
               <span>{p.name}</span>
             </div>
@@ -440,9 +453,11 @@ function EventItem({
 function SubAgentItem({
   ev,
   onOpenDiff,
+  onLoadEvents,
 }: {
   ev: StreamEvent;
   onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
+  onLoadEvents?: (taskId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const sa = ev.subagent;
@@ -455,9 +470,19 @@ function SubAgentItem({
   const statusCls = isRunning ? "running" : sa.status === "completed" ? "completed" : "failed";
 
   const innerEvents = sa.events ?? [];
+  const needsLoad = innerEvents.length === 0 && (sa.eventCount ?? 0) > 0;
+  const totalCount = innerEvents.length || sa.eventCount || 0;
   const thinkingEvts = innerEvents.filter((e) => e.kind === "thinking");
   const toolEvts = innerEvents.filter((e) => e.kind === "tool_use");
   const textEvts = innerEvents.filter((e) => e.kind === "text");
+
+  const handleToggle = () => {
+    const willOpen = !open;
+    setOpen(willOpen);
+    if (willOpen && needsLoad && onLoadEvents && sa.taskId) {
+      onLoadEvents(sa.taskId);
+    }
+  };
 
   const usageStr = sa.usage
     ? `${Math.round(sa.usage.totalTokens / 1000)}k tokens · ${sa.usage.toolUses} tools · ${(sa.usage.durationMs / 1000).toFixed(1)}s`
@@ -469,18 +494,20 @@ function SubAgentItem({
 
   return (
     <div className={`subagent-item subagent-${statusCls}`}>
-      <div className="subagent-header" onClick={() => setOpen((v) => !v)}>
+      <div className="subagent-header" onClick={handleToggle}>
         <span className="events-toggle">{open ? "▾" : "▸"}</span>
         <span className={`subagent-status-icon subagent-icon-${statusCls}`}>{statusIcon}</span>
         <span className="subagent-label">{label}</span>
         {headerParts.length > 0 && <span className="subagent-desc">{headerParts.join(" · ")}</span>}
-        {innerEvents.length > 0 && (
+        {totalCount > 0 && (
           <span className="subagent-counts">
-            {[
-              thinkingEvts.length > 0 ? `${thinkingEvts.length} thinking` : null,
-              toolEvts.length > 0 ? `${toolEvts.length} tool(s)` : null,
-              textEvts.length > 0 ? `${textEvts.length} text` : null,
-            ].filter(Boolean).join(" · ")}
+            {innerEvents.length > 0
+              ? [
+                  thinkingEvts.length > 0 ? `${thinkingEvts.length} thinking` : null,
+                  toolEvts.length > 0 ? `${toolEvts.length} tool(s)` : null,
+                  textEvts.length > 0 ? `${textEvts.length} text` : null,
+                ].filter(Boolean).join(" · ")
+              : `${totalCount} event(s)`}
           </span>
         )}
         {isRunning && <span className="streaming-dot" />}
@@ -498,6 +525,7 @@ function SubAgentItem({
               </Markdown>
             </div>
           )}
+          {needsLoad && <div className="subagent-loading">Loading events...</div>}
           {innerEvents.length > 0 && (
             <div className="subagent-events">
               {innerEvents.map((ie, i) => (
@@ -526,9 +554,11 @@ function SubAgentItem({
 function StepGroup({
   group,
   onOpenDiff,
+  onLoadEvents,
 }: {
   group: { step: number; events: StreamEvent[] };
   onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
+  onLoadEvents?: (taskId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const regularEvents = group.events.filter(
@@ -572,7 +602,7 @@ function StepGroup({
         </div>
       )}
       {subagents.map((ev) => (
-        <SubAgentItem key={ev.subagent!.taskId} ev={ev} onOpenDiff={onOpenDiff} />
+        <SubAgentItem key={ev.subagent!.taskId} ev={ev} onOpenDiff={onOpenDiff} onLoadEvents={onLoadEvents} />
       ))}
     </div>
   );
@@ -585,6 +615,7 @@ const MessageItem = memo(function MessageItem({
   highlight,
   onOpenDiff,
   onQuote,
+  onLoadSubagentEvents,
 }: {
   msg: Message;
   agents: AgentInfo[];
@@ -592,8 +623,13 @@ const MessageItem = memo(function MessageItem({
   highlight?: boolean;
   onOpenDiff?: (filePath: string, oldString: string, newString: string) => void;
   onQuote?: (msg: Message) => void;
+  onLoadSubagentEvents?: (messageId: string, taskId: string) => void;
 }) {
   const [eventsOpen, setEventsOpen] = useState(false);
+  const handleLoadEvents = useCallback(
+    (taskId: string) => onLoadSubagentEvents?.(msg.id, taskId),
+    [msg.id, onLoadSubagentEvents],
+  );
 
   if (msg.kind === "system") {
     return (
@@ -658,7 +694,7 @@ const MessageItem = memo(function MessageItem({
     >
       <div className="message-gutter">
         {compact ? null : isUser ? (
-          <div className="avatar-user">U</div>
+          <div className="avatar-user"><img src="avatars/ykiko.jpg" alt="You" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /></div>
         ) : agent ? (
           <AgentAvatar agent={agent} size={32} />
         ) : (
@@ -738,7 +774,7 @@ const MessageItem = memo(function MessageItem({
                   </Markdown>
                 )}
                 {seg.events.length > 0 && (
-                  <StepGroup group={{ step: si, events: seg.events }} onOpenDiff={onOpenDiff} />
+                  <StepGroup group={{ step: si, events: seg.events }} onOpenDiff={onOpenDiff} onLoadEvents={handleLoadEvents} />
                 )}
               </div>
             ))}
@@ -784,7 +820,7 @@ const MessageItem = memo(function MessageItem({
                     </div>
                   )}
                   {saList.map((ev) => (
-                    <SubAgentItem key={ev.subagent!.taskId} ev={ev} onOpenDiff={onOpenDiff} />
+                    <SubAgentItem key={ev.subagent!.taskId} ev={ev} onOpenDiff={onOpenDiff} onLoadEvents={handleLoadEvents} />
                   ))}
                 </div>
               );
@@ -997,6 +1033,7 @@ export function App() {
     clearContext,
     openDiff,
     loadMessages,
+    loadSubagentEvents,
   } = useServer();
 
   const [activeWsId, setActiveWsId] = useState<string | null>(() => {
@@ -1665,6 +1702,9 @@ export function App() {
                           highlight={msg.id === highlightMsgId}
                           onOpenDiff={openDiff}
                           onQuote={handleQuote}
+                          onLoadSubagentEvents={(messageId, taskId) =>
+                            loadSubagentEvents(activeWs.id, messageId, taskId)
+                          }
                         />
                       );
                     })}

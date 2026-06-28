@@ -12,7 +12,25 @@ import { loadConfig, AppConfig, AuthConfig } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
 import { CommandInfo } from "./session";
 import { HostRegistry, LocalHost } from "./host";
-import { getWslBin } from "./session";
+import { getWslBin, StreamEvent } from "./session";
+import type { Message } from "./task";
+
+function stripEventsInnerEvents(events: StreamEvent[]): StreamEvent[] {
+  return events.map((e) => {
+    if (!e.subagent?.events?.length) return e;
+    return {
+      ...e,
+      subagent: { ...e.subagent, eventCount: e.subagent.events.length, events: undefined },
+    } as StreamEvent;
+  });
+}
+
+function stripMessageSubagentEvents(messages: Message[]): Message[] {
+  return messages.map((m) => {
+    if (!m.events?.some((e) => e.subagent?.events?.length)) return m;
+    return { ...m, events: stripEventsInnerEvents(m.events!) };
+  });
+}
 
 interface QuotaWindow {
   utilization: number;
@@ -328,9 +346,9 @@ export class Server {
               path: "/v1/messages",
               method: "POST",
               headers: apiHeaders,
-              socket: socket,
-              agent: false as unknown as http.Agent,
-            },
+              socket,
+              agent: false,
+            } as https.RequestOptions,
             handleResponse,
           );
           req.on("error", () => cb(null));
@@ -573,8 +591,24 @@ export class Server {
           this.sendJson(ws, {
             type: "workspace_messages",
             workspaceId: workspace.id,
-            messages: page,
+            messages: stripMessageSubagentEvents(page),
             hasMore: filtered.length > limit,
+          });
+        }
+        return;
+      }
+
+      case "load_subagent_events": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        if (workspace) {
+          const message = workspace.getMessages().find((m) => m.id === msg.messageId);
+          const ev = message?.events?.find((e) => e.subagent?.taskId === msg.taskId);
+          this.sendJson(ws, {
+            type: "subagent_events",
+            workspaceId: msg.workspaceId,
+            messageId: msg.messageId,
+            taskId: msg.taskId,
+            events: ev?.subagent?.events ?? [],
           });
         }
         return;
@@ -641,7 +675,7 @@ export class Server {
         const workspace = this.workspaces.get(msg.workspaceId as string);
         if (workspace) {
           workspace.clearContext(msg.agentId as string);
-          this.debouncedSaveWorkspace(workspace);
+          this.persistWorkspace(workspace.id);
         }
         return;
       }
@@ -968,7 +1002,7 @@ systemctl --user restart agent-team-server
           messageId: msgId,
           status,
           content,
-          events,
+          events: events ? stripEventsInnerEvents(events) : undefined,
         });
         this.persistWorkspace(wsId);
       },

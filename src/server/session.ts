@@ -61,6 +61,7 @@ export interface SubAgentInfo {
   lastTool?: string;
   usage?: { totalTokens: number; toolUses: number; durationMs: number };
   summary?: string;
+  eventCount?: number;
   events?: StreamEvent[];
   _innerEvent?: StreamEvent;
 }
@@ -176,6 +177,8 @@ export class ClaudeSession extends EventEmitter {
   private turnStartTime = 0;
   private stepCounter = 0;
   private subagentToolMap = new Map<string, string>();
+  private toolNameMap = new Map<string, string>();
+  private agentTaskIds = new Set<string>();
 
   constructor(config: SessionConfig) {
     super();
@@ -250,6 +253,9 @@ export class ClaudeSession extends EventEmitter {
         this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` } as StreamEvent);
       } finally {
         if (this.queryInstance === thisQuery) {
+          if (this.processing) {
+            this.emit("event", { kind: "result", content: "" } as StreamEvent);
+          }
           this.iterating = false;
           this.processing = false;
           this.queryInstance = null;
@@ -304,7 +310,12 @@ export class ClaudeSession extends EventEmitter {
         } else if (sys.subtype === "task_started") {
           const taskId = sys.task_id as string;
           const toolUseId = sys.tool_use_id as string | undefined;
-          if (toolUseId) this.subagentToolMap.set(toolUseId, taskId);
+          if (toolUseId) {
+            const toolName = this.toolNameMap.get(toolUseId);
+            if (toolName && toolName !== "Agent") break;
+            this.subagentToolMap.set(toolUseId, taskId);
+          }
+          this.agentTaskIds.add(taskId);
           this.emit("event", {
             kind: "subagent_start",
             content: (sys.description as string) ?? "",
@@ -320,6 +331,7 @@ export class ClaudeSession extends EventEmitter {
             },
           } as StreamEvent);
         } else if (sys.subtype === "task_progress") {
+          if (!this.agentTaskIds.has(sys.task_id as string)) break;
           this.emit("event", {
             kind: "subagent_progress",
             content: (sys.summary as string) ?? "",
@@ -340,6 +352,7 @@ export class ClaudeSession extends EventEmitter {
             },
           } as StreamEvent);
         } else if (sys.subtype === "task_notification") {
+          if (!this.agentTaskIds.has(sys.task_id as string)) break;
           this.emit("event", {
             kind: "subagent_done",
             content: (sys.summary as string) ?? "",
@@ -386,7 +399,7 @@ export class ClaudeSession extends EventEmitter {
       const taskId = this.subagentToolMap.get(parentToolUseId);
       if (!taskId) return;
       for (const block of content) {
-        const b = block as Record<string, unknown>;
+        const b = block as unknown as Record<string, unknown>;
         const blockType = b.type as string;
         let ev: StreamEvent | null = null;
         if (blockType === "thinking") {
@@ -417,7 +430,7 @@ export class ClaudeSession extends EventEmitter {
     const step = this.stepCounter;
 
     for (const block of content) {
-      const b = block as Record<string, unknown>;
+      const b = block as unknown as Record<string, unknown>;
       const blockType = b.type as string;
 
       if (blockType === "thinking") {
@@ -431,13 +444,16 @@ export class ClaudeSession extends EventEmitter {
           this.emit("event", { kind: "text", content: text, raw: msg, step } as StreamEvent);
         }
       } else if (blockType === "tool_use") {
+        const toolId = b.id as string;
+        const toolName = b.name as string;
+        if (toolId && toolName) this.toolNameMap.set(toolId, toolName);
         const toolInput = extractToolInput(b);
         this.emit("event", {
           kind: "tool_use",
           content: formatToolUse(b),
           raw: msg,
           toolInput,
-          toolUseId: b.id as string,
+          toolUseId: toolId,
           step,
         } as StreamEvent);
       } else if (blockType === "tool_result") {
@@ -504,10 +520,10 @@ export class ClaudeSession extends EventEmitter {
 
     if (msg.parent_tool_use_id) return;
 
-    const eventType = (event as Record<string, unknown>).type as string;
+    const eventType = (event as unknown as Record<string, unknown>).type as string;
 
     if (eventType === "content_block_delta") {
-      const delta = (event as Record<string, unknown>).delta as
+      const delta = (event as unknown as Record<string, unknown>).delta as
         | Record<string, unknown>
         | undefined;
       if (!delta) return;
@@ -538,10 +554,8 @@ export class ClaudeSession extends EventEmitter {
         this.usage.cache_creation_tokens += usage.cache_creation_input_tokens ?? 0;
       }
 
-      const text = (result.result as string)?.trim();
-      if (text) {
-        this.emit("event", { kind: "result", content: text, raw: msg } as StreamEvent);
-      }
+      const text = (result.result as string)?.trim() ?? "";
+      this.emit("event", { kind: "result", content: text, raw: msg } as StreamEvent);
     } else {
       const errResult = msg as Record<string, unknown>;
       const errMsg = (errResult.error as string) ?? "Unknown error";
@@ -568,7 +582,7 @@ export class ClaudeSession extends EventEmitter {
   async getUsageInfo(): Promise<Record<string, unknown> | null> {
     if (!this.queryInstance) return null;
     try {
-      const q = this.queryInstance as Record<string, unknown>;
+      const q = this.queryInstance as unknown as Record<string, unknown>;
       const fn = q["usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET"] as
         | (() => Promise<unknown>)
         | undefined;

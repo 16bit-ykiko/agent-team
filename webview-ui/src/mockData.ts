@@ -168,6 +168,7 @@ export const MOCK_SYSTEM_STATUS: SystemStatus = {
   memUsed: 18253611008,
   uptime: 86400 + 3600 * 3 + 60 * 42,
   hostname: "dev-machine",
+  quota: [],
 };
 
 export const MOCK_PRESETS: AgentPreset[] = [
