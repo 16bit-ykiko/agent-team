@@ -177,8 +177,9 @@ export const MOCK_PRESETS: AgentPreset[] = [
 ];
 
 export const MOCK_MODELS: ModelOption[] = [
-  { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
-  { id: "claude-opus-4-6", label: "Opus 4.6" },
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6", backend: "claude" },
+  { id: "claude-opus-4-6", label: "Opus 4.6", backend: "claude" },
+  { id: "gpt-5.5", label: "GPT-5.5", backend: "codex" },
 ];
 
 export const MOCK_PROJECTS: Record<string, Record<string, string>> = {

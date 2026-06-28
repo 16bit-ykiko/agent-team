@@ -142,11 +142,28 @@ function AddAgentDialog({
         <label className="dialog-field">
           <span>Model</span>
           <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
+            {(() => {
+              const claude = models.filter((m) => m.backend === "claude");
+              const codex = models.filter((m) => m.backend === "codex");
+              return (
+                <>
+                  {claude.length > 0 && (
+                    <optgroup label="Claude">
+                      {claude.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {codex.length > 0 && (
+                    <optgroup label="Codex">
+                      {codex.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </>
+              );
+            })()}
           </select>
         </label>
 
@@ -181,12 +198,15 @@ function CreateWorkspaceDialog({
   hostConfigs: Record<string, HostConfig>;
   hosts: HostInfo[];
   onClose: () => void;
-  onCreate: (name: string, project: string, hostId?: string) => void;
+  onCreate: (name: string, project: string, hostId?: string, customPath?: string) => void;
 }) {
   const projectNames = Object.keys(projects);
+  const CUSTOM = "__custom__";
   const [name, setName] = useState("");
   const [project, setProject] = useState(projectNames[0] ?? "");
+  const [customPath, setCustomPath] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const isCustom = project === CUSTOM;
 
   const availableHosts = Object.entries(projects[project] ?? {})
     .filter(([hId]) => {
@@ -210,12 +230,19 @@ function CreateWorkspaceDialog({
     }
   }, [project, hostId, projects]);
 
+  const canSubmit = name.trim() && (isCustom ? customPath.trim() : project);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim() && project) {
+    if (!canSubmit) return;
+    if (isCustom) {
+      const p = customPath.trim();
+      const label = p.split("/").filter(Boolean).pop() || "custom";
+      onCreate(name.trim(), label, hostId || undefined, p);
+    } else {
       onCreate(name.trim(), project, hostId || undefined);
-      onClose();
     }
+    onClose();
   };
 
   return (
@@ -239,9 +266,20 @@ function CreateWorkspaceDialog({
                 {p}
               </option>
             ))}
+            <option value={CUSTOM}>Custom Path...</option>
           </select>
         </label>
-        {availableHosts.length > 1 && (
+        {isCustom && (
+          <label className="dialog-field">
+            <span>Path</span>
+            <input
+              value={customPath}
+              onChange={(e) => setCustomPath(e.target.value)}
+              placeholder="/home/user/projects/..."
+            />
+          </label>
+        )}
+        {!isCustom && availableHosts.length > 1 && (
           <label className="dialog-field">
             <span>Host</span>
             <select value={hostId} onChange={(e) => setHostId(e.target.value)}>
@@ -257,7 +295,7 @@ function CreateWorkspaceDialog({
           <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="btn-primary" disabled={!name.trim()}>
+          <button type="submit" className="btn-primary" disabled={!canSubmit}>
             Create
           </button>
         </div>

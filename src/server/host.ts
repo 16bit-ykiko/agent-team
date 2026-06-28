@@ -1,8 +1,10 @@
 import { EventEmitter } from "events";
-import { ClaudeSession, SessionConfig, SessionState, StreamEvent } from "./session";
+import { ClaudeSession, SessionConfig, SessionState, StreamEvent, UsageStats } from "./session";
+import { CodexSession } from "./codex-session";
 
 export interface HostSessionHandle extends EventEmitter {
   sessionId: string | null;
+  usage: UsageStats;
   readonly isRunning: boolean;
   send(message: string): Promise<void>;
   abort(): void;
@@ -34,7 +36,7 @@ export class LocalHost implements Host {
   readonly type = "local" as const;
   readonly connected = true;
   readonly distro?: string;
-  private sessions = new Map<string, ClaudeSession>();
+  private sessions = new Map<string, ClaudeSession | CodexSession>();
 
   constructor(id: string, label: string, distro?: string) {
     this.id = id;
@@ -47,7 +49,11 @@ export class LocalHost implements Host {
   }
 
   createSession(agentId: string, config: SessionConfig): HostSessionHandle {
-    const session = new ClaudeSession({ ...config, distro: this.distro });
+    const fullConfig = { ...config, distro: this.distro };
+    const session =
+      fullConfig.backend === "codex"
+        ? new CodexSession(fullConfig)
+        : new ClaudeSession(fullConfig);
     this.sessions.set(agentId, session);
     return session;
   }
@@ -61,10 +67,14 @@ export class LocalHost implements Host {
   }
 
   restoreSession(agentId: string, state: SessionState): HostSessionHandle {
-    const session = ClaudeSession.fromState({
+    const restoredState = {
       ...state,
       config: { ...state.config, distro: this.distro },
-    });
+    };
+    const session =
+      state.config.backend === "codex"
+        ? CodexSession.fromState(restoredState)
+        : ClaudeSession.fromState(restoredState);
     this.sessions.set(agentId, session);
     return session;
   }

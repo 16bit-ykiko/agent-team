@@ -118,6 +118,7 @@ export interface AgentPreset {
 export interface ModelOption {
   id: string;
   label: string;
+  backend: "claude" | "codex";
 }
 
 export interface SkillDef {
@@ -440,8 +441,8 @@ export function useServer() {
       [send],
     ),
     createWorkspace: useCallback(
-      (name: string, project: string, hostId?: string) =>
-        send({ type: "create_workspace", name, project, hostId }),
+      (name: string, project: string, hostId?: string, customPath?: string) =>
+        send({ type: "create_workspace", name, project, hostId, customPath }),
       [send],
     ),
     deleteWorkspace: useCallback(

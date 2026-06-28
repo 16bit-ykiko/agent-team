@@ -44,6 +44,7 @@ export interface UsageStats {
 
 export interface SessionConfig {
   cwd: string;
+  backend?: "claude" | "codex";
   model?: string;
   effort?: string;
   permissionMode?: string;

@@ -587,6 +587,7 @@ export class Server {
           msg.name as string,
           msg.project as string,
           msg.hostId as string | undefined,
+          msg.customPath as string | undefined,
         );
         return;
 
@@ -667,20 +668,36 @@ export class Server {
     }
   }
 
-  private createWorkspace(ws: WebSocket, name: string, project: string, hostId?: string): void {
-    const projectPaths = this.config.projects[project];
-    if (!projectPaths) {
-      this.sendJson(ws, { type: "error", message: `Unknown project: ${project}` });
-      return;
-    }
+  private createWorkspace(
+    ws: WebSocket,
+    name: string,
+    project: string,
+    hostId?: string,
+    customPath?: string,
+  ): void {
     const resolvedHostId = hostId || this.hostRegistry.getDefault()?.id || "local";
-    const cwd = projectPaths[resolvedHostId];
-    if (!cwd) {
-      this.sendJson(ws, {
-        type: "error",
-        message: `Project "${project}" has no path for host "${resolvedHostId}"`,
-      });
-      return;
+    let cwd: string;
+
+    if (customPath) {
+      cwd = customPath;
+      if (!fs.existsSync(cwd)) {
+        this.sendJson(ws, { type: "error", message: `Path does not exist: ${cwd}` });
+        return;
+      }
+    } else {
+      const projectPaths = this.config.projects[project];
+      if (!projectPaths) {
+        this.sendJson(ws, { type: "error", message: `Unknown project: ${project}` });
+        return;
+      }
+      cwd = projectPaths[resolvedHostId];
+      if (!cwd) {
+        this.sendJson(ws, {
+          type: "error",
+          message: `Project "${project}" has no path for host "${resolvedHostId}"`,
+        });
+        return;
+      }
     }
 
     const id = genId("ws");
@@ -725,9 +742,14 @@ export class Server {
       return;
     }
 
+    const preset = MODEL_OPTIONS.find((m) => m.id === model);
+    const backend = preset?.backend ?? (model.startsWith("gpt-") ? "codex" : "claude");
+
     try {
       const agent = workspace.addAgent(name, model, avatar, color, {
-        permissionMode: permissionMode ?? "bypassPermissions",
+        backend,
+        effort: preset?.effort,
+        permissionMode: backend === "codex" ? undefined : (permissionMode ?? "bypassPermissions"),
         providerEnv: this.resolveProviderEnv(model),
       });
       this.persistWorkspaceNow(workspaceId);

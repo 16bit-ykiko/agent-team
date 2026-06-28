@@ -1,6 +1,5 @@
 import { execSync, exec } from "child_process";
 import {
-  ClaudeSession,
   SessionConfig,
   StreamEvent,
   SessionState,
@@ -429,8 +428,8 @@ export class Workspace {
     const entry = this.agents.get(agentId);
     if (!entry) return false;
     if (entry.session.isRunning) return false;
-    (entry.session as ClaudeSession).sessionId = null;
-    (entry.session as ClaudeSession).usage = {
+    entry.session.sessionId = null;
+    entry.session.usage = {
       input_tokens: 0,
       output_tokens: 0,
       cache_read_tokens: 0,
