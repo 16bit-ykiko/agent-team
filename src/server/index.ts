@@ -10,7 +10,7 @@ import { Workspace, WorkspaceCallbacks } from "./task";
 import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } from "./state";
 import { loadConfig, AppConfig, AuthConfig } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
-import { loadSkills, SkillDef } from "./skills";
+import { CommandInfo } from "./session";
 import { HostRegistry, LocalHost } from "./host";
 import { getWslBin } from "./session";
 
@@ -59,7 +59,7 @@ export class Server {
   private readonly isWSL: boolean;
   private windowsHost: { memTotal: number; memFree: number; osName: string } | null = null;
   private windowsHostUpdating = false;
-  private skills: SkillDef[] = [];
+  private commands: CommandInfo[] = [];
   private persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private uploadsDir: string;
   private hostRegistry: HostRegistry;
@@ -72,7 +72,6 @@ export class Server {
     this.uploadsDir = path.join(baseDir, "uploads");
     if (!fs.existsSync(this.uploadsDir)) fs.mkdirSync(this.uploadsDir, { recursive: true });
     this.config = loadConfig(baseDir);
-    this.skills = loadSkills(baseDir);
     this.hostRegistry = this.initHosts();
     this.isWSL = this.detectWSL();
 
@@ -533,7 +532,7 @@ export class Server {
         projects: this.config.projects,
         presets: AGENT_PRESETS,
         models: MODEL_OPTIONS,
-        skills: this.skills,
+        commands: this.commands,
         hosts: this.config.hosts,
       },
       hosts: this.hostRegistry.getAllInfo(),
@@ -962,13 +961,14 @@ systemctl --user restart agent-team-server
           event,
         });
       },
-      onMessageDone: (wsId, msgId, status, content) => {
+      onMessageDone: (wsId, msgId, status, content, events) => {
         this.broadcastUI({
           type: "message_done",
           workspaceId: wsId,
           messageId: msgId,
           status,
           content,
+          events,
         });
         this.persistWorkspace(wsId);
       },
@@ -977,6 +977,10 @@ systemctl --user restart agent-team-server
       },
       onAgentIdle: (wsId, agentId) => {
         this.broadcastUI({ type: "agent_idle", workspaceId: wsId, agentId });
+      },
+      onCommandsChanged: (_wsId, commands) => {
+        this.commands = commands;
+        this.broadcastUI({ type: "commands_update", commands });
       },
     };
   }

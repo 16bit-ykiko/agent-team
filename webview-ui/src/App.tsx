@@ -20,7 +20,8 @@ import {
   AgentPreset,
   ModelOption,
   SystemStatus,
-  SkillDef,
+  StreamEvent,
+  CommandInfo,
   HostInfo,
   HostConfig,
 } from "./useServer";
@@ -341,6 +342,242 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
   );
 }
 
+function EventItem({
+  ev,
+  onOpenDiff,
+}: {
+  ev: StreamEvent;
+  onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
+}) {
+  const [resultOpen, setResultOpen] = useState(false);
+  const isResult = ev.kind === "tool_result";
+  const isToolUse = ev.kind === "tool_use";
+  const isCompact = ev.kind === "compact";
+  const hasResult = isToolUse && ev.toolResult != null;
+
+  if (isCompact) {
+    return <div className="event event-compact"><span className="compact-text">{ev.content}</span></div>;
+  }
+
+  const resultLen = isResult ? ev.content.length : (ev.toolResult?.length ?? 0);
+  const resultLabel = resultLen > 1000 ? `${Math.round(resultLen / 1000)}k chars` : `${resultLen} chars`;
+
+  return (
+    <div className={`event event-${ev.kind}`}>
+      <span className="event-kind">
+        {ev.kind}
+        {ev.toolInput?.tool === "Edit" &&
+          ev.toolInput.old_string != null &&
+          onOpenDiff && (
+            <button
+              className="btn-diff"
+              title="Open diff in VS Code"
+              onClick={() =>
+                onOpenDiff(
+                  ev.toolInput!.file_path!,
+                  ev.toolInput!.old_string!,
+                  ev.toolInput!.new_string!,
+                )
+              }
+            >
+              Diff
+            </button>
+          )}
+        {(isResult || hasResult) && (
+          <button className="btn-diff" onClick={() => setResultOpen((v) => !v)}>
+            {resultOpen ? "Hide" : "Result"} ({resultLabel})
+          </button>
+        )}
+      </span>
+      {isResult ? (
+        resultOpen && (
+          <div className="event-content">
+            {ev.isMarkdown ? (
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={mdComponents}
+              >
+                {ev.content}
+              </Markdown>
+            ) : (
+              <pre><code>{ev.content}</code></pre>
+            )}
+          </div>
+        )
+      ) : (
+        <>
+          <div className="event-content">
+            <Markdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={mdComponents}
+            >
+              {ev.content}
+            </Markdown>
+          </div>
+          {hasResult && resultOpen && (
+            <div className="event-content">
+              {ev.toolResultIsMarkdown ? (
+                <Markdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeHighlight]}
+                  components={mdComponents}
+                >
+                  {ev.toolResult!}
+                </Markdown>
+              ) : (
+                <pre><code>{ev.toolResult}</code></pre>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function SubAgentItem({
+  ev,
+  onOpenDiff,
+}: {
+  ev: StreamEvent;
+  onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const sa = ev.subagent;
+  if (!sa) return null;
+
+  const isDone = ev.kind === "subagent_done" || sa.status === "completed" || sa.status === "failed" || sa.status === "stopped";
+  const isRunning = !isDone;
+  const label = sa.agentType || "Agent";
+  const statusIcon = isRunning ? "↻" : sa.status === "completed" ? "✓" : "✗";
+  const statusCls = isRunning ? "running" : sa.status === "completed" ? "completed" : "failed";
+
+  const innerEvents = sa.events ?? [];
+  const thinkingEvts = innerEvents.filter((e) => e.kind === "thinking");
+  const toolEvts = innerEvents.filter((e) => e.kind === "tool_use");
+  const textEvts = innerEvents.filter((e) => e.kind === "text");
+
+  const usageStr = sa.usage
+    ? `${Math.round(sa.usage.totalTokens / 1000)}k tokens · ${sa.usage.toolUses} tools · ${(sa.usage.durationMs / 1000).toFixed(1)}s`
+    : null;
+
+  const headerParts: string[] = [];
+  if (sa.description) headerParts.push(sa.description);
+  if (!sa.description && isRunning && sa.lastTool) headerParts.push(`using ${sa.lastTool}`);
+
+  return (
+    <div className={`subagent-item subagent-${statusCls}`}>
+      <div className="subagent-header" onClick={() => setOpen((v) => !v)}>
+        <span className="events-toggle">{open ? "▾" : "▸"}</span>
+        <span className={`subagent-status-icon subagent-icon-${statusCls}`}>{statusIcon}</span>
+        <span className="subagent-label">{label}</span>
+        {headerParts.length > 0 && <span className="subagent-desc">{headerParts.join(" · ")}</span>}
+        {innerEvents.length > 0 && (
+          <span className="subagent-counts">
+            {[
+              thinkingEvts.length > 0 ? `${thinkingEvts.length} thinking` : null,
+              toolEvts.length > 0 ? `${toolEvts.length} tool(s)` : null,
+              textEvts.length > 0 ? `${textEvts.length} text` : null,
+            ].filter(Boolean).join(" · ")}
+          </span>
+        )}
+        {isRunning && <span className="streaming-dot" />}
+      </div>
+      {open && (
+        <div className="subagent-details">
+          {sa.prompt && (
+            <div className="subagent-prompt">
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={mdComponents}
+              >
+                {sa.prompt}
+              </Markdown>
+            </div>
+          )}
+          {innerEvents.length > 0 && (
+            <div className="subagent-events">
+              {innerEvents.map((ie, i) => (
+                <EventItem key={i} ev={ie} onOpenDiff={onOpenDiff} />
+              ))}
+            </div>
+          )}
+          {sa.summary && (
+            <div className="subagent-summary">
+              <Markdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeHighlight]}
+                components={mdComponents}
+              >
+                {sa.summary}
+              </Markdown>
+            </div>
+          )}
+          {usageStr && <div className="subagent-usage">{usageStr}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StepGroup({
+  group,
+  onOpenDiff,
+}: {
+  group: { step: number; events: StreamEvent[] };
+  onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const regularEvents = group.events.filter(
+    (e) => e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done",
+  );
+
+  const subagentMap = new Map<string, StreamEvent>();
+  for (const e of group.events) {
+    if (!e.subagent?.taskId) continue;
+    if (e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done") continue;
+    const existing = subagentMap.get(e.subagent.taskId);
+    if (!existing || e.kind === "subagent_done" || (e.kind === "subagent_progress" && existing.kind === "subagent_start")) {
+      const mergedEvents = existing?.subagent?.events ?? e.subagent.events;
+      const merged = { ...e, subagent: { ...(existing?.subagent ?? {}), ...e.subagent, description: existing?.subagent?.description || e.subagent.description, events: mergedEvents } };
+      subagentMap.set(e.subagent.taskId, merged);
+    }
+  }
+  const subagents = [...subagentMap.values()];
+
+  const thinkingCount = regularEvents.filter((e) => e.kind === "thinking").length;
+  const toolCount = regularEvents.filter(
+    (e) => e.kind === "tool_use",
+  ).length;
+  const parts: string[] = [];
+  if (thinkingCount > 0) parts.push(`${thinkingCount} thinking`);
+  if (toolCount > 0) parts.push(`${toolCount} tool call(s)`);
+  if (subagents.length > 0) parts.push(`${subagents.length} subagent(s)`);
+  if (parts.length === 0) parts.push(`${group.events.length} event(s)`);
+
+  return (
+    <div className="step-group">
+      <div className="step-header" onClick={() => setOpen((v) => !v)}>
+        <span className="events-toggle">{open ? "▾" : "▸"}</span>
+        <span className="step-summary">{parts.join(" · ")}</span>
+      </div>
+      {open && (
+        <div className="events-list">
+          {regularEvents.map((ev, i) => (
+            <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
+          ))}
+        </div>
+      )}
+      {subagents.map((ev) => (
+        <SubAgentItem key={ev.subagent!.taskId} ev={ev} onOpenDiff={onOpenDiff} />
+      ))}
+    </div>
+  );
+}
+
 const MessageItem = memo(function MessageItem({
   msg,
   agents,
@@ -376,19 +613,38 @@ const MessageItem = memo(function MessageItem({
   const agent = !isUser ? agents.find((a) => a.id === msg.agentId) : null;
 
   const events = msg.events ?? [];
-  const detailEvents = events.filter((e) => e.kind !== "text");
-  const thinkingCount = detailEvents.filter((e) => e.kind === "thinking").length;
-  const toolCount = detailEvents.filter(
-    (e) => e.kind === "tool_use" || e.kind === "tool_result",
-  ).length;
-  const errorCount = detailEvents.filter((e) => e.kind === "error").length;
+  const detailEvents = events.filter(
+    (e) =>
+      e.kind !== "text" &&
+      e.kind !== "text_delta" &&
+      e.kind !== "thinking_delta",
+  );
   const hasDetails = detailEvents.length > 0 || msg.status === "streaming";
 
-  const summaryParts: string[] = [];
-  if (thinkingCount > 0) summaryParts.push(`${thinkingCount} thinking`);
-  if (toolCount > 0) summaryParts.push(`${toolCount} tool call(s)`);
-  if (errorCount > 0) summaryParts.push(`${errorCount} error(s)`);
-  if (msg.status === "streaming" && summaryParts.length === 0) summaryParts.push("streaming...");
+  // Build interleaved segments using contentOffset to split msg.content
+  type Segment = { text: string; events: StreamEvent[]; streaming?: boolean };
+  const segments: Segment[] = [];
+  if (detailEvents.length > 0 && msg.content) {
+    const offsets = detailEvents
+      .map((e) => e.contentOffset)
+      .filter((o): o is number => o != null);
+    const uniqueOffsets = [...new Set(offsets)].sort((a, b) => a - b);
+
+    if (uniqueOffsets.length > 0) {
+      let prevOff = 0;
+      for (const off of uniqueOffsets) {
+        const text = msg.content.substring(prevOff, off).trim();
+        const evtsAtOff = detailEvents.filter((e) => e.contentOffset === off);
+        segments.push({ text, events: evtsAtOff });
+        prevOff = off;
+      }
+      const trailing = msg.content.substring(prevOff).trim();
+      if (trailing || msg.status === "streaming") {
+        segments.push({ text: trailing, events: [], streaming: msg.status === "streaming" });
+      }
+    }
+  }
+  const isInterleaved = segments.length > 1 || (segments.length === 1 && segments[0].text !== "");
 
   const time = new Date(msg.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -440,60 +696,6 @@ const MessageItem = memo(function MessageItem({
           </div>
         )}
 
-        {hasDetails && (
-          <div className="message-events">
-            <div className="events-header" onClick={() => setEventsOpen((v) => !v)}>
-              <span className="events-toggle">{eventsOpen ? "▾" : "▸"}</span>
-              <span>{summaryParts.join(" · ")}</span>
-            </div>
-            {eventsOpen && (
-              <div className="events-list">
-                {detailEvents.map((ev, i) => (
-                  <div key={i} className={`event event-${ev.kind}`}>
-                    <span className="event-kind">
-                      {ev.kind}
-                      {ev.toolInput?.tool === "Edit" &&
-                        ev.toolInput.old_string != null &&
-                        onOpenDiff && (
-                          <button
-                            className="btn-diff"
-                            title="Open diff in VS Code"
-                            onClick={() =>
-                              onOpenDiff(
-                                ev.toolInput!.file_path!,
-                                ev.toolInput!.old_string!,
-                                ev.toolInput!.new_string!,
-                              )
-                            }
-                          >
-                            Diff
-                          </button>
-                        )}
-                    </span>
-                    <div className="event-content">
-                      {(ev.kind === "tool_use" || ev.kind === "thinking") && ev.content ? (
-                        <Markdown
-                          remarkPlugins={[remarkGfm]}
-                          rehypePlugins={[rehypeHighlight]}
-                          components={mdComponents}
-                        >
-                          {ev.content}
-                        </Markdown>
-                      ) : ev.kind === "tool_result" ? (
-                        <pre>
-                          <code>{ev.content}</code>
-                        </pre>
-                      ) : (
-                        <pre>{ev.content}</pre>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         {msg.status === "streaming" && !msg.content && detailEvents.length === 0 && (
           <div className="working-indicator">Working...</div>
         )}
@@ -508,7 +710,7 @@ const MessageItem = memo(function MessageItem({
           </div>
         )}
 
-        {msg.content && (
+        {isInterleaved ? (
           <div
             className="message-content"
             onCopy={(e) => {
@@ -519,23 +721,105 @@ const MessageItem = memo(function MessageItem({
               e.clipboardData.setData("text/plain", md);
             }}
           >
-            {!isUser && msg.content && msg.status === "done" && onQuote && (
+            {!isUser && onQuote && (
               <button className="btn-quote" title="Quote this message" onClick={() => onQuote(msg)}>
                 ↩
               </button>
             )}
-            {isUser ? (
-              renderMentionContent(msg.content, agents)
-            ) : (
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-                components={mdComponents}
-              >
-                {msg.content}
-              </Markdown>
-            )}
+            {segments.map((seg, si) => (
+              <div key={si}>
+                {seg.text && (
+                  <Markdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeHighlight]}
+                    components={mdComponents}
+                  >
+                    {seg.text}
+                  </Markdown>
+                )}
+                {seg.events.length > 0 && (
+                  <StepGroup group={{ step: si, events: seg.events }} onOpenDiff={onOpenDiff} />
+                )}
+              </div>
+            ))}
           </div>
+        ) : (
+          <>
+            {hasDetails && (() => {
+              const regEvts = detailEvents.filter(
+                (e) => e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done",
+              );
+              const saMap = new Map<string, StreamEvent>();
+              for (const e of detailEvents) {
+                if (!e.subagent?.taskId) continue;
+                if (e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done") continue;
+                const ex = saMap.get(e.subagent.taskId);
+                if (!ex || e.kind === "subagent_done" || (e.kind === "subagent_progress" && ex.kind === "subagent_start")) {
+                  const mergedEvents = ex?.subagent?.events ?? e.subagent.events;
+                  saMap.set(e.subagent.taskId, { ...e, subagent: { ...(ex?.subagent ?? {}), ...e.subagent, description: ex?.subagent?.description || e.subagent.description, events: mergedEvents } });
+                }
+              }
+              const saList = [...saMap.values()];
+              return (
+                <div className="message-events">
+                  <div className="events-header" onClick={() => setEventsOpen((v) => !v)}>
+                    <span className="events-toggle">{eventsOpen ? "▾" : "▸"}</span>
+                    <span>
+                      {(() => {
+                        const parts: string[] = [];
+                        const tc = regEvts.filter((e) => e.kind === "thinking").length;
+                        const tl = regEvts.filter((e) => e.kind === "tool_use").length;
+                        if (tc > 0) parts.push(`${tc} thinking`);
+                        if (tl > 0) parts.push(`${tl} tool call(s)`);
+                        if (saList.length > 0) parts.push(`${saList.length} subagent(s)`);
+                        return parts.length > 0 ? parts.join(" · ") : "streaming...";
+                      })()}
+                    </span>
+                  </div>
+                  {eventsOpen && (
+                    <div className="events-list">
+                      {regEvts.map((ev, i) => (
+                        <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
+                      ))}
+                    </div>
+                  )}
+                  {saList.map((ev) => (
+                    <SubAgentItem key={ev.subagent!.taskId} ev={ev} onOpenDiff={onOpenDiff} />
+                  ))}
+                </div>
+              );
+            })()}
+
+            {msg.content && (
+              <div
+                className="message-content"
+                onCopy={(e) => {
+                  const html = getSelectionHtml();
+                  if (!html) return;
+                  e.preventDefault();
+                  const md = turndown.turndown(html);
+                  e.clipboardData.setData("text/plain", md);
+                }}
+              >
+                {!isUser && msg.content && msg.status === "done" && onQuote && (
+                  <button className="btn-quote" title="Quote this message" onClick={() => onQuote(msg)}>
+                    ↩
+                  </button>
+                )}
+                {isUser ? (
+                  renderMentionContent(msg.content, agents)
+                ) : (
+                  <Markdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeHighlight]}
+                    components={mdComponents}
+                  >
+                    {msg.content}
+                  </Markdown>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -700,7 +984,7 @@ export function App() {
     presets,
     models,
     projects,
-    skills,
+    commands,
     hosts,
     hostConfigs,
     systemStatus,
@@ -976,7 +1260,7 @@ export function App() {
       return a.name.toLowerCase().startsWith(mentionQuery.toLowerCase());
     }) ?? [];
 
-  const filteredCmds = skills.filter((c) => {
+  const filteredCmds = commands.filter((c) => {
     if (cmdQuery === null) return false;
     if (cmdQuery === "") return true;
     return c.name.toLowerCase().startsWith(cmdQuery.toLowerCase());
@@ -1057,49 +1341,6 @@ export function App() {
       setPendingImages([]);
     }
 
-    const cmdMatch = text.match(/^\/([\w-]+)\s*([\s\S]*)/);
-    if (cmdMatch) {
-      const skill = skills.find((c) => c.name === cmdMatch[1]);
-      if (skill) {
-        const args = cmdMatch[2].trim();
-        let content = skill.template.replace(/\{args\}/g, args).trim();
-        let target: string | undefined;
-
-        if (skill.target === "reviewer") {
-          target = ws.agents.find((a) => a.name.toLowerCase().includes("review"))?.name;
-        } else if (skill.target === "first_arg") {
-          const parts = args.match(/^(\S+)\s+([\s\S]+)/);
-          if (parts) {
-            const agent = ws.agents.find((a) => a.name.toLowerCase() === parts[1].toLowerCase());
-            if (agent) {
-              target = agent.name;
-              content = skill.template.replace(/\{args\}/g, parts[2]).trim();
-            }
-          }
-        }
-
-        sendMessage(
-          ws.id,
-          content,
-          target,
-          images,
-          quotedMsg
-            ? { messageId: quotedMsg.id, agentId: quotedMsg.agentId, content: quotedMsg.content }
-            : undefined,
-        );
-        if (activeWsId) inputMapRef.current.set(activeWsId, "");
-        setCmdQuery(null);
-        setMentionQuery(null);
-        setQuotedMsg(null);
-        if (textareaRef.current) {
-          textareaRef.current.value = "";
-          textareaRef.current.style.height = "36px";
-        }
-        setHasInput(false);
-        return;
-      }
-    }
-
     sendMessage(
       ws.id,
       text,
@@ -1118,7 +1359,7 @@ export function App() {
       textareaRef.current.style.height = "36px";
     }
     setHasInput(false);
-  }, [activeWsId, skills, sendMessage, pendingImages, uploading, quotedMsg]);
+  }, [activeWsId, sendMessage, pendingImages, uploading, quotedMsg]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (cmdQuery !== null && filteredCmds.length > 0) {
@@ -1465,8 +1706,10 @@ export function App() {
                         applyCommand(cmd.name);
                       }}
                     >
-                      <span className="command-icon">{cmd.icon}</span>
                       <span className="command-name">/{cmd.name}</span>
+                      {cmd.argumentHint && (
+                        <span className="command-hint">{cmd.argumentHint}</span>
+                      )}
                       <span className="command-desc">{cmd.description}</span>
                     </div>
                   ))}

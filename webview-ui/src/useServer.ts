@@ -14,10 +14,29 @@ export interface ToolInput {
   new_string?: string;
 }
 
+export interface SubAgentInfo {
+  taskId: string;
+  description: string;
+  prompt?: string;
+  agentType?: string;
+  status?: "running" | "completed" | "failed" | "stopped";
+  lastTool?: string;
+  usage?: { totalTokens: number; toolUses: number; durationMs: number };
+  summary?: string;
+  events?: StreamEvent[];
+}
+
 export interface StreamEvent {
   kind: string;
   content: string;
   toolInput?: ToolInput;
+  step?: number;
+  contentOffset?: number;
+  toolUseId?: string;
+  isMarkdown?: boolean;
+  toolResult?: string;
+  toolResultIsMarkdown?: boolean;
+  subagent?: SubAgentInfo;
 }
 
 export interface MessageImage {
@@ -121,13 +140,11 @@ export interface ModelOption {
   backend: "claude" | "codex";
 }
 
-export interface SkillDef {
+export interface CommandInfo {
   name: string;
-  icon: string;
   description: string;
-  placeholder?: string;
-  target?: string;
-  template: string;
+  argumentHint: string;
+  aliases?: string[];
 }
 
 function resolveWsUrl(): string {
@@ -146,7 +163,7 @@ export function useServer() {
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [projects, setProjects] = useState<Record<string, Record<string, string>>>({});
-  const [skills, setSkills] = useState<SkillDef[]>([]);
+  const [commands, setCommands] = useState<CommandInfo[]>([]);
   const [hosts, setHosts] = useState<HostInfo[]>([]);
   const [hostConfigs, setHostConfigs] = useState<Record<string, HostConfig>>({});
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
@@ -172,7 +189,80 @@ export function useServer() {
           messages: w.messages.map((m) => {
             const evts = relevant.filter((e) => e.messageId === m.id);
             if (evts.length === 0) return m;
-            return { ...m, events: [...(m.events ?? []), ...evts.map((e) => e.event)] };
+            const deltas = evts.filter(
+              (e) => e.event.kind === "text_delta" || e.event.kind === "thinking_delta",
+            );
+            const regular = evts.filter(
+              (e) => e.event.kind !== "text_delta" && e.event.kind !== "thinking_delta",
+            );
+            let content = m.content;
+            if (deltas.length > 0) {
+              const textDelta = deltas
+                .filter((e) => e.event.kind === "text_delta")
+                .map((e) => e.event.content)
+                .join("");
+              if (textDelta) content = (content || "") + textDelta;
+            }
+            if (regular.length === 0 && deltas.length > 0) {
+              return { ...m, content };
+            }
+            let events = [...(m.events ?? []).map((e) =>
+              e.subagent ? { ...e, subagent: { ...e.subagent, events: e.subagent.events ? [...e.subagent.events] : undefined } } : e,
+            )];
+            for (const r of regular) {
+              const ev = r.event;
+              if (ev.kind === "tool_result" && ev.toolUseId) {
+                const matchIdx = events.findIndex(
+                  (e) => e.kind === "tool_use" && e.toolUseId === ev.toolUseId,
+                );
+                if (matchIdx >= 0) {
+                  events[matchIdx] = { ...events[matchIdx], toolResult: ev.content, ...(ev.isMarkdown && { toolResultIsMarkdown: true }) };
+                  continue;
+                }
+              }
+              if (ev.kind === "subagent_progress" && ev.subagent?.taskId) {
+                const innerEv = (ev.subagent as Record<string, unknown>)?._innerEvent as StreamEvent | undefined;
+                if (innerEv) {
+                  const startIdx = events.findIndex(
+                    (e) => e.kind === "subagent_start" && e.subagent?.taskId === ev.subagent?.taskId,
+                  );
+                  if (startIdx >= 0) {
+                    const sa = events[startIdx].subagent!;
+                    if (!sa.events) sa.events = [];
+                    if (innerEv.kind === "tool_result" && innerEv.toolUseId) {
+                      const innerMatchIdx = sa.events.findIndex(
+                        (e) => e.kind === "tool_use" && e.toolUseId === innerEv.toolUseId,
+                      );
+                      if (innerMatchIdx >= 0) {
+                        sa.events[innerMatchIdx] = { ...sa.events[innerMatchIdx], toolResult: innerEv.content };
+                      } else {
+                        sa.events.push(innerEv);
+                      }
+                    } else {
+                      sa.events.push(innerEv);
+                    }
+                  }
+                  continue;
+                }
+                const idx = events.findIndex(
+                  (e) => e.kind === "subagent_progress" && e.subagent?.taskId === ev.subagent?.taskId,
+                );
+                if (idx >= 0) { events[idx] = ev; continue; }
+              } else if (ev.kind === "subagent_done" && ev.subagent?.taskId) {
+                events = events.filter(
+                  (e) => !(e.kind === "subagent_progress" && e.subagent?.taskId === ev.subagent?.taskId),
+                );
+                const startIdx = events.findIndex(
+                  (e) => e.kind === "subagent_start" && e.subagent?.taskId === ev.subagent?.taskId,
+                );
+                if (startIdx >= 0 && ev.subagent) {
+                  const existingEvents = events[startIdx].subagent?.events;
+                  events[startIdx] = { ...events[startIdx], subagent: { ...events[startIdx].subagent!, ...ev.subagent, events: existingEvents } };
+                }
+              }
+              events.push(ev);
+            }
+            return { ...m, content, events };
           }),
         };
       }),
@@ -204,13 +294,13 @@ export function useServer() {
             projects: Record<string, Record<string, string>>;
             presets: AgentPreset[];
             models: ModelOption[];
-            skills: SkillDef[];
+            commands: CommandInfo[];
             hosts: Record<string, HostConfig>;
           };
           setProjects(config.projects);
           setPresets(config.presets);
           setModels(config.models);
-          if (config.skills) setSkills(config.skills);
+          if (config.commands) setCommands(config.commands);
           if (config.hosts) setHostConfigs(config.hosts);
           if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
           setHostAvailable(Boolean(msg.hostAvailable));
@@ -223,6 +313,10 @@ export function useServer() {
 
         case "hosts_update":
           setHosts(msg.hosts as HostInfo[]);
+          break;
+
+        case "commands_update":
+          setCommands(msg.commands as CommandInfo[]);
           break;
 
         case "workspace_messages": {
@@ -301,13 +395,19 @@ export function useServer() {
           const messageId = msg.messageId as string;
           const status = msg.status as Message["status"];
           const content = msg.content as string;
+          const events = msg.events as StreamEvent[] | undefined;
+          pendingEventsRef.current = pendingEventsRef.current.filter(
+            (e) => !(e.wsId === wsId && e.messageId === messageId),
+          );
           setWorkspaces((prev) =>
             prev.map((w) => {
               if (w.id !== wsId) return w;
               return {
                 ...w,
                 messages: w.messages.map((m) =>
-                  m.id === messageId ? { ...m, status, content } : m,
+                  m.id === messageId
+                    ? { ...m, status, content, ...(events ? { events } : {}) }
+                    : m,
                 ),
               };
             }),
@@ -427,7 +527,7 @@ export function useServer() {
     presets,
     models,
     projects,
-    skills,
+    commands,
     hosts,
     hostConfigs,
     systemStatus,

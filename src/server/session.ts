@@ -1,22 +1,22 @@
-import { spawn, execSync, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
-import * as readline from "readline";
+import { execSync } from "child_process";
+import type {
+  Query,
+  SDKMessage,
+  SDKUserMessage,
+  SDKAssistantMessage,
+  SDKPartialAssistantMessage,
+  SDKResultMessage,
+  Options,
+  EffortLevel,
+  PermissionMode,
+} from "@anthropic-ai/claude-agent-sdk";
 
-let claudeBin: string | null = null;
-function getClaudeBin(): string {
-  if (claudeBin) return claudeBin;
-  try {
-    claudeBin = execSync("which claude", { encoding: "utf-8" }).trim();
-  } catch {
-    const candidates = [
-      process.env.CLAUDE_BIN,
-      `${process.env.HOME}/.pixi/envs/nodejs/bin/claude`,
-      `${process.env.HOME}/.local/bin/claude`,
-      "/usr/local/bin/claude",
-    ];
-    claudeBin = candidates.find((c) => c && require("fs").existsSync(c)) ?? "claude";
-  }
-  return claudeBin;
+export interface CommandInfo {
+  name: string;
+  description: string;
+  argumentHint: string;
+  aliases?: string[];
 }
 
 export interface ToolInput {
@@ -27,10 +27,42 @@ export interface ToolInput {
 }
 
 export interface StreamEvent {
-  kind: "thinking" | "text" | "tool_use" | "tool_result" | "result" | "error";
+  kind:
+    | "thinking"
+    | "thinking_delta"
+    | "text"
+    | "text_delta"
+    | "tool_use"
+    | "tool_result"
+    | "result"
+    | "error"
+    | "subagent_start"
+    | "subagent_progress"
+    | "subagent_done"
+    | "compact";
   content: string;
   raw?: unknown;
   toolInput?: ToolInput;
+  step?: number;
+  contentOffset?: number;
+  toolUseId?: string;
+  isMarkdown?: boolean;
+  toolResult?: string;
+  toolResultIsMarkdown?: boolean;
+  subagent?: SubAgentInfo;
+}
+
+export interface SubAgentInfo {
+  taskId: string;
+  description: string;
+  prompt?: string;
+  agentType?: string;
+  status?: "running" | "completed" | "failed" | "stopped";
+  lastTool?: string;
+  usage?: { totalTokens: number; toolUses: number; durationMs: number };
+  summary?: string;
+  events?: StreamEvent[];
+  _innerEvent?: StreamEvent;
 }
 
 export interface UsageStats {
@@ -69,6 +101,61 @@ const DISALLOWED_TOOLS = [
   "CronList",
 ];
 
+type InputController = {
+  push(msg: SDKUserMessage): void;
+  end(): void;
+};
+
+function createInputStream(): {
+  iterable: AsyncIterable<SDKUserMessage>;
+  controller: InputController;
+} {
+  let resolve: ((value: IteratorResult<SDKUserMessage>) => void) | null = null;
+  const buffer: SDKUserMessage[] = [];
+  let done = false;
+
+  const iterable: AsyncIterable<SDKUserMessage> = {
+    [Symbol.asyncIterator]() {
+      return {
+        next(): Promise<IteratorResult<SDKUserMessage>> {
+          if (buffer.length > 0) {
+            return Promise.resolve({ value: buffer.shift()!, done: false });
+          }
+          if (done) {
+            return Promise.resolve({ value: undefined as unknown as SDKUserMessage, done: true });
+          }
+          return new Promise((r) => {
+            resolve = r;
+          });
+        },
+      };
+    },
+  };
+
+  const controller: InputController = {
+    push(msg) {
+      if (done) return;
+      if (resolve) {
+        const r = resolve;
+        resolve = null;
+        r({ value: msg, done: false });
+      } else {
+        buffer.push(msg);
+      }
+    },
+    end() {
+      done = true;
+      if (resolve) {
+        const r = resolve;
+        resolve = null;
+        r({ value: undefined as unknown as SDKUserMessage, done: true });
+      }
+    },
+  };
+
+  return { iterable, controller };
+}
+
 export class ClaudeSession extends EventEmitter {
   sessionId: string | null = null;
   config: SessionConfig;
@@ -81,8 +168,14 @@ export class ClaudeSession extends EventEmitter {
     duration_ms: 0,
   };
 
-  private proc: ChildProcess | null = null;
-  private busy = false;
+  private queryInstance: Query | null = null;
+  private inputController: InputController | null = null;
+  private abortController: AbortController | null = null;
+  private iterating = false;
+  private processing = false;
+  private turnStartTime = 0;
+  private stepCounter = 0;
+  private subagentToolMap = new Map<string, string>();
 
   constructor(config: SessionConfig) {
     super();
@@ -90,34 +183,416 @@ export class ClaudeSession extends EventEmitter {
   }
 
   get isRunning(): boolean {
-    return this.busy;
+    return this.processing;
   }
 
   async send(message: string): Promise<void> {
-    if (this.busy) {
-      throw new Error("Session is busy");
+    if (!this.queryInstance) {
+      await this.startQuery(message);
+    } else {
+      this.pushMessage(message);
     }
-    this.busy = true;
-    const startTime = Date.now();
+  }
 
+  private async startQuery(message: string): Promise<void> {
+    const { query } = await import("@anthropic-ai/claude-agent-sdk");
+
+    const { iterable, controller } = createInputStream();
+    this.inputController = controller;
+    this.abortController = new AbortController();
+
+    const options = this.buildOptions();
+
+    this.queryInstance = query({
+      prompt: iterable,
+      options,
+    });
+
+    this.startIterating();
+    this.pushMessage(message);
+
+    this.queryInstance!.supportedCommands().then((cmds) => {
+      const commands: CommandInfo[] = cmds.map((c) => ({
+        name: c.name,
+        description: c.description,
+        argumentHint: c.argumentHint,
+        aliases: c.aliases,
+      }));
+      this.emit("commands", commands);
+    }).catch(() => {});
+  }
+
+  private pushMessage(message: string): void {
+    const userMsg: SDKUserMessage = {
+      type: "user",
+      message: { role: "user", content: message },
+      parent_tool_use_id: null,
+    };
+    this.inputController!.push(userMsg);
+    this.processing = true;
+    this.turnStartTime = Date.now();
+    this.stepCounter = 0;
+  }
+
+  private startIterating(): void {
+    if (this.iterating) return;
+    this.iterating = true;
+
+    const thisQuery = this.queryInstance;
+
+    (async () => {
+      try {
+        for await (const msg of thisQuery!) {
+          this.handleSDKMessage(msg);
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` } as StreamEvent);
+      } finally {
+        if (this.queryInstance === thisQuery) {
+          this.iterating = false;
+          this.processing = false;
+          this.queryInstance = null;
+          this.inputController = null;
+          this.abortController = null;
+        }
+      }
+    })();
+  }
+
+  private setProcessing(): void {
+    if (!this.processing) {
+      this.processing = true;
+      this.turnStartTime = Date.now();
+    }
+  }
+
+  private handleSDKMessage(msg: SDKMessage): void {
+    if ("session_id" in msg && msg.session_id) {
+      this.sessionId = msg.session_id;
+    }
+
+    switch (msg.type) {
+      case "assistant":
+        this.setProcessing();
+        this.handleAssistantMessage(msg as SDKAssistantMessage);
+        break;
+
+      case "user":
+        this.handleUserMessage(msg as Record<string, unknown>);
+        break;
+
+      case "stream_event":
+        this.setProcessing();
+        this.handlePartialMessage(msg as SDKPartialAssistantMessage);
+        break;
+
+      case "result":
+        this.handleResult(msg as SDKResultMessage);
+        break;
+
+      case "system": {
+        const sys = msg as Record<string, unknown>;
+        if (sys.subtype === "commands_changed" && Array.isArray(sys.commands)) {
+          const commands: CommandInfo[] = (sys.commands as Array<Record<string, unknown>>).map((c) => ({
+            name: c.name as string,
+            description: c.description as string,
+            argumentHint: c.argumentHint as string,
+            aliases: c.aliases as string[] | undefined,
+          }));
+          this.emit("commands", commands);
+        } else if (sys.subtype === "task_started") {
+          const taskId = sys.task_id as string;
+          const toolUseId = sys.tool_use_id as string | undefined;
+          if (toolUseId) this.subagentToolMap.set(toolUseId, taskId);
+          this.emit("event", {
+            kind: "subagent_start",
+            content: (sys.description as string) ?? "",
+            raw: msg,
+            toolUseId,
+            subagent: {
+              taskId,
+              description: (sys.description as string) ?? "",
+              prompt: sys.prompt as string | undefined,
+              agentType: sys.subagent_type as string | undefined,
+              status: "running",
+              events: [],
+            },
+          } as StreamEvent);
+        } else if (sys.subtype === "task_progress") {
+          this.emit("event", {
+            kind: "subagent_progress",
+            content: (sys.summary as string) ?? "",
+            raw: msg,
+            toolUseId: sys.tool_use_id as string | undefined,
+            subagent: {
+              taskId: sys.task_id as string,
+              description: (sys.description as string) ?? "",
+              agentType: sys.subagent_type as string | undefined,
+              status: "running",
+              lastTool: sys.last_tool_name as string | undefined,
+              usage: sys.usage ? {
+                totalTokens: (sys.usage as Record<string, number>).total_tokens ?? 0,
+                toolUses: (sys.usage as Record<string, number>).tool_uses ?? 0,
+                durationMs: (sys.usage as Record<string, number>).duration_ms ?? 0,
+              } : undefined,
+              summary: sys.summary as string | undefined,
+            },
+          } as StreamEvent);
+        } else if (sys.subtype === "task_notification") {
+          this.emit("event", {
+            kind: "subagent_done",
+            content: (sys.summary as string) ?? "",
+            raw: msg,
+            toolUseId: sys.tool_use_id as string | undefined,
+            subagent: {
+              taskId: sys.task_id as string,
+              description: "",
+              status: sys.status as SubAgentInfo["status"],
+              usage: sys.usage ? {
+                totalTokens: (sys.usage as Record<string, number>).total_tokens ?? 0,
+                toolUses: (sys.usage as Record<string, number>).tool_uses ?? 0,
+                durationMs: (sys.usage as Record<string, number>).duration_ms ?? 0,
+              } : undefined,
+              summary: sys.summary as string | undefined,
+            },
+          } as StreamEvent);
+        } else if (sys.subtype === "compact_boundary") {
+          const meta = sys.compact_metadata as Record<string, unknown> | undefined;
+          const pre = (meta?.pre_tokens as number) ?? 0;
+          const post = (meta?.post_tokens as number) ?? 0;
+          const dur = (meta?.duration_ms as number) ?? 0;
+          const trigger = (meta?.trigger as string) ?? "auto";
+          this.emit("event", {
+            kind: "compact",
+            content: `Context compacted (${trigger}): ${pre} → ${post} tokens, ${(dur / 1000).toFixed(1)}s`,
+          } as StreamEvent);
+        }
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  private handleAssistantMessage(msg: SDKAssistantMessage): void {
+    const content = msg.message?.content;
+    if (!content || !Array.isArray(content)) return;
+
+    const parentToolUseId = msg.parent_tool_use_id ?? undefined;
+
+    if (parentToolUseId) {
+      const taskId = this.subagentToolMap.get(parentToolUseId);
+      if (!taskId) return;
+      for (const block of content) {
+        const b = block as Record<string, unknown>;
+        const blockType = b.type as string;
+        let ev: StreamEvent | null = null;
+        if (blockType === "thinking") {
+          const text = b.thinking as string;
+          if (text) ev = { kind: "thinking", content: text } as StreamEvent;
+        } else if (blockType === "text") {
+          const text = (b.text as string)?.trim();
+          if (text) ev = { kind: "text", content: text } as StreamEvent;
+        } else if (blockType === "tool_use") {
+          ev = { kind: "tool_use", content: formatToolUse(b), toolUseId: b.id as string, toolInput: extractToolInput(b) } as StreamEvent;
+        } else if (blockType === "tool_result") {
+          const rc = b.content as string;
+          if (rc) ev = { kind: "tool_result", content: rc } as StreamEvent;
+        }
+        if (ev) {
+          this.emit("event", {
+            kind: "subagent_progress",
+            content: "",
+            toolUseId: parentToolUseId,
+            subagent: { taskId, description: "", _innerEvent: ev },
+          } as StreamEvent);
+        }
+      }
+      return;
+    }
+
+    this.stepCounter++;
+    const step = this.stepCounter;
+
+    for (const block of content) {
+      const b = block as Record<string, unknown>;
+      const blockType = b.type as string;
+
+      if (blockType === "thinking") {
+        const text = b.thinking as string;
+        if (text) {
+          this.emit("event", { kind: "thinking", content: text, raw: msg, step } as StreamEvent);
+        }
+      } else if (blockType === "text") {
+        const text = (b.text as string)?.trim();
+        if (text) {
+          this.emit("event", { kind: "text", content: text, raw: msg, step } as StreamEvent);
+        }
+      } else if (blockType === "tool_use") {
+        const toolInput = extractToolInput(b);
+        this.emit("event", {
+          kind: "tool_use",
+          content: formatToolUse(b),
+          raw: msg,
+          toolInput,
+          toolUseId: b.id as string,
+          step,
+        } as StreamEvent);
+      } else if (blockType === "tool_result") {
+        const resultContent = b.content as string;
+        if (resultContent) {
+          this.emit("event", {
+            kind: "tool_result",
+            content: resultContent,
+            raw: msg,
+            step,
+          } as StreamEvent);
+        }
+      }
+    }
+  }
+
+  private handleUserMessage(msg: Record<string, unknown>): void {
+    const parentToolUseId = msg.parent_tool_use_id as string | undefined;
+    const message = msg.message as Record<string, unknown> | undefined;
+    if (!message) return;
+    const content = message.content;
+    if (!Array.isArray(content)) return;
+
+    for (const block of content) {
+      const b = block as Record<string, unknown>;
+      if (b.type !== "tool_result") continue;
+      const toolUseId = b.tool_use_id as string | undefined;
+      let text = "";
+      if (typeof b.content === "string") {
+        text = b.content;
+      } else if (Array.isArray(b.content)) {
+        text = (b.content as Array<Record<string, unknown>>)
+          .filter((c) => c.type === "text")
+          .map((c) => c.text as string)
+          .join("\n");
+      }
+      if (!text) continue;
+
+      if (parentToolUseId) {
+        const taskId = this.subagentToolMap.get(parentToolUseId);
+        if (taskId) {
+          this.emit("event", {
+            kind: "subagent_progress",
+            content: "",
+            toolUseId: parentToolUseId,
+            subagent: { taskId, description: "", _innerEvent: { kind: "tool_result", content: text, toolUseId } as StreamEvent },
+          } as StreamEvent);
+        }
+      } else {
+        const isSubagentResult = toolUseId ? this.subagentToolMap.has(toolUseId) : false;
+        this.emit("event", {
+          kind: "tool_result",
+          content: text,
+          toolUseId,
+          ...(isSubagentResult && { isMarkdown: true }),
+        } as StreamEvent);
+      }
+    }
+  }
+
+  private handlePartialMessage(msg: SDKPartialAssistantMessage): void {
+    const event = msg.event;
+    if (!event) return;
+
+    if (msg.parent_tool_use_id) return;
+
+    const eventType = (event as Record<string, unknown>).type as string;
+
+    if (eventType === "content_block_delta") {
+      const delta = (event as Record<string, unknown>).delta as
+        | Record<string, unknown>
+        | undefined;
+      if (!delta) return;
+
+      const deltaType = delta.type as string;
+      if (deltaType === "thinking_delta") {
+        const text = delta.thinking as string;
+        if (text) {
+          this.emit("event", { kind: "thinking_delta", content: text, raw: msg } as StreamEvent);
+        }
+      } else if (deltaType === "text_delta") {
+        const text = delta.text as string;
+        if (text) {
+          this.emit("event", { kind: "text_delta", content: text, raw: msg } as StreamEvent);
+        }
+      }
+    }
+  }
+
+  private handleResult(msg: SDKResultMessage): void {
+    if (msg.subtype === "success") {
+      const result = msg as Record<string, unknown>;
+      const usage = result.usage as Record<string, number> | undefined;
+      if (usage) {
+        this.usage.input_tokens += usage.input_tokens ?? 0;
+        this.usage.output_tokens += usage.output_tokens ?? 0;
+        this.usage.cache_read_tokens += usage.cache_read_input_tokens ?? 0;
+        this.usage.cache_creation_tokens += usage.cache_creation_input_tokens ?? 0;
+      }
+
+      const text = (result.result as string)?.trim();
+      if (text) {
+        this.emit("event", { kind: "result", content: text, raw: msg } as StreamEvent);
+      }
+    } else {
+      const errResult = msg as Record<string, unknown>;
+      const errMsg = (errResult.error as string) ?? "Unknown error";
+      this.emit("event", { kind: "error", content: errMsg, raw: msg } as StreamEvent);
+    }
+
+    this.usage.turns++;
+    if (this.turnStartTime) {
+      this.usage.duration_ms += Date.now() - this.turnStartTime;
+      this.turnStartTime = 0;
+    }
+    this.processing = false;
+  }
+
+  async getContextUsage(): Promise<Record<string, unknown> | null> {
+    if (!this.queryInstance) return null;
     try {
-      await this.run(message);
-    } finally {
-      this.usage.turns++;
-      this.usage.duration_ms += Date.now() - startTime;
-      this.busy = false;
+      return (await this.queryInstance.getContextUsage()) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  async getUsageInfo(): Promise<Record<string, unknown> | null> {
+    if (!this.queryInstance) return null;
+    try {
+      const q = this.queryInstance as Record<string, unknown>;
+      const fn = q["usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET"] as
+        | (() => Promise<unknown>)
+        | undefined;
+      if (!fn) return null;
+      return (await fn.call(this.queryInstance)) as Record<string, unknown>;
+    } catch {
+      return null;
     }
   }
 
   abort(): void {
-    if (this.proc && this.proc.exitCode === null) {
-      this.proc.kill("SIGTERM");
-      setTimeout(() => {
-        if (this.proc && this.proc.exitCode === null) {
-          this.proc.kill("SIGKILL");
-        }
-      }, 3000);
+    if (this.abortController) {
+      this.abortController.abort();
     }
+    if (this.queryInstance) {
+      this.queryInstance.close();
+      this.queryInstance = null;
+    }
+    if (this.inputController) {
+      this.inputController.end();
+      this.inputController = null;
+    }
+    this.iterating = false;
+    this.processing = false;
   }
 
   getState(): SessionState {
@@ -135,148 +610,50 @@ export class ClaudeSession extends EventEmitter {
     return session;
   }
 
-  private buildArgs(): string[] {
-    const args = ["-p", "--output-format", "stream-json", "--verbose"];
+  private buildOptions(): Options {
+    const opts: Options = {
+      cwd: this.config.cwd,
+      abortController: this.abortController ?? undefined,
+      systemPrompt: this.config.systemPrompt
+        ? {
+            type: "preset" as const,
+            preset: "claude_code" as const,
+            append: this.config.systemPrompt,
+          }
+        : { type: "preset" as const, preset: "claude_code" as const },
+      skills: "all",
+      includePartialMessages: true,
+      forwardSubagentText: true,
+      settingSources: ["user", "project", "local"],
+      disallowedTools: DISALLOWED_TOOLS,
+    };
 
     if (this.sessionId) {
-      args.push("--resume", this.sessionId);
+      opts.resume = this.sessionId;
     }
-
     if (this.config.model) {
-      args.push("--model", this.config.model);
+      opts.model = this.config.model;
     }
     if (this.config.effort) {
-      args.push("--effort", this.config.effort);
+      opts.effort = this.config.effort as EffortLevel;
     }
     if (this.config.permissionMode) {
-      args.push("--permission-mode", this.config.permissionMode);
-    }
-    if (this.config.systemPrompt) {
-      args.push("--append-system-prompt", this.config.systemPrompt);
-    }
-
-    args.push("--disallowed-tools", DISALLOWED_TOOLS.join(","));
-
-    return args;
-  }
-
-  private run(message: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const args = this.buildArgs();
-
-      const extraEnv = this.config.providerEnv ?? {};
-      if (Object.keys(extraEnv).length > 0) {
-        console.log(`[session] Using provider env: ${Object.keys(extraEnv).join(", ")}`);
+      opts.permissionMode = this.config.permissionMode as PermissionMode;
+      if (this.config.permissionMode === "bypassPermissions") {
+        opts.allowDangerouslySkipPermissions = true;
       }
-
-      if (this.config.distro) {
-        const escaped = args.map(shellQuote).join(" ");
-        const envExports = Object.entries({
-          ...extraEnv,
-          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "true",
-        })
-          .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
-          .join(" && ");
-        const cmd = `${envExports} && cd ${shellQuote(this.config.cwd)} && claude ${escaped}`;
-        this.proc = spawn(getWslBin(), ["-d", this.config.distro, "--", "bash", "-ic", cmd], {
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      } else {
-        this.proc = spawn(getClaudeBin(), args, {
-          cwd: this.config.cwd,
-          env: {
-            ...process.env,
-            ...extraEnv,
-            CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "true",
-          },
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      }
-
-      this.proc.stdin!.write(message);
-      this.proc.stdin!.end();
-
-      let stderr = "";
-      let settled = false;
-
-      const rl = readline.createInterface({ input: this.proc.stdout! });
-
-      rl.on("line", (line) => {
-        if (!line.trim()) return;
-        try {
-          const data = JSON.parse(line);
-          this.handleStreamData(data);
-        } catch {
-          // ignore malformed lines
-        }
-      });
-
-      this.proc.stderr!.on("data", (chunk) => {
-        stderr += chunk.toString();
-      });
-
-      this.proc.on("close", (code) => {
-        if (settled) return;
-        settled = true;
-
-        if (code !== 0 && code !== null) {
-          const msg = stderr.trim() || `Process exited with code ${code}`;
-          this.emit("event", {
-            kind: "error",
-            content: `[Claude error] ${msg}`,
-          } as StreamEvent);
-          reject(new Error(msg));
-        } else {
-          resolve();
-        }
-      });
-
-      this.proc.on("error", (err) => {
-        if (settled) return;
-        settled = true;
-        this.emit("event", {
-          kind: "error",
-          content: `[Claude error] ${err.message}`,
-        } as StreamEvent);
-        reject(err);
-      });
-    });
-  }
-
-  private handleStreamData(data: unknown): void {
-    if (!data || typeof data !== "object") return;
-    const obj = data as Record<string, unknown>;
-
-    if (obj.session_id && typeof obj.session_id === "string") {
-      this.sessionId = obj.session_id;
+    }
+    if (this.config.providerEnv) {
+      opts.env = { ...process.env, ...this.config.providerEnv };
     }
 
-    const event = parseStreamEvent(obj);
-    if (event) {
-      this.emit("event", event);
-    }
-
-    if (obj.type === "result") {
-      this.updateUsage(obj);
-    }
-  }
-
-  private updateUsage(result: Record<string, unknown>): void {
-    const usage = result.usage as Record<string, number> | undefined;
-    if (!usage) return;
-    this.usage.input_tokens += usage.input_tokens ?? 0;
-    this.usage.output_tokens += usage.output_tokens ?? 0;
-    this.usage.cache_read_tokens += usage.cache_read_tokens ?? 0;
-    this.usage.cache_creation_tokens += usage.cache_creation_tokens ?? 0;
+    return opts;
   }
 }
 
 export function shellQuote(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
-
-export const DISTRO_PATH_PREFIX =
-  "$HOME/.pixi/envs/nodejs/bin:$HOME/.pixi/envs/default/bin:$HOME/.pixi/bin:$HOME/.local/bin:$HOME/.cargo/bin";
 
 let wslBin: string | null = null;
 export function getWslBin(): string {
@@ -295,74 +672,6 @@ export function getWslBin(): string {
       }) ?? "wsl.exe";
   }
   return wslBin;
-}
-
-function parseStreamEvent(obj: Record<string, unknown>): StreamEvent | null {
-  const type = obj.type as string | undefined;
-
-  if (type === "assistant") {
-    return parseAssistantEvent(obj);
-  }
-
-  if (type === "result") {
-    const text = (obj.result as string)?.trim();
-    if (text) return { kind: "text", content: text, raw: obj };
-    return null;
-  }
-
-  if (type === "rate_limit_event") {
-    return null;
-  }
-
-  if (type === "error") {
-    const msg =
-      (obj.error as Record<string, unknown>)?.message ?? obj.message ?? JSON.stringify(obj);
-    return { kind: "error", content: String(msg), raw: obj };
-  }
-
-  return null;
-}
-
-function parseAssistantEvent(obj: Record<string, unknown>): StreamEvent | null {
-  const message = obj.message as Record<string, unknown> | undefined;
-  if (!message) return null;
-
-  const content = message.content;
-  if (!content || !Array.isArray(content)) return null;
-
-  for (const block of content) {
-    const b = block as Record<string, unknown>;
-    const blockType = b.type as string;
-
-    if (blockType === "thinking") {
-      const text = b.thinking as string;
-      if (text) return { kind: "thinking", content: text, raw: obj };
-    }
-
-    if (blockType === "text") {
-      const text = (b.text as string)?.trim();
-      if (text) return { kind: "text", content: text, raw: obj };
-    }
-
-    if (blockType === "tool_use") {
-      const toolInput = extractToolInput(b);
-      return {
-        kind: "tool_use",
-        content: formatToolUse(b),
-        raw: obj,
-        toolInput,
-      };
-    }
-
-    if (blockType === "tool_result") {
-      const resultContent = b.content as string;
-      if (resultContent) {
-        return { kind: "tool_result", content: resultContent, raw: obj };
-      }
-    }
-  }
-
-  return null;
 }
 
 function extractToolInput(block: Record<string, unknown>): ToolInput | undefined {

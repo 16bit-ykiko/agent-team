@@ -1,7 +1,7 @@
 import { spawn, execSync, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import * as readline from "readline";
-import { StreamEvent, UsageStats, SessionConfig, SessionState, shellQuote, DISTRO_PATH_PREFIX, getWslBin } from "./session";
+import { StreamEvent, UsageStats, SessionConfig, SessionState, shellQuote, getWslBin } from "./session";
 
 let codexBin: string | null = null;
 function getCodexBin(): string {

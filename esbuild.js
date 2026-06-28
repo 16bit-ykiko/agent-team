@@ -23,6 +23,7 @@ const builds = [
     ...common,
     entryPoints: ["src/server/index.ts"],
     outfile: "dist/server.js",
+    external: ["@anthropic-ai/claude-agent-sdk"],
   },
 ];
 

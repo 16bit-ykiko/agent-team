@@ -9,6 +9,8 @@ export interface HostSessionHandle extends EventEmitter {
   send(message: string): Promise<void>;
   abort(): void;
   getState(): SessionState;
+  getContextUsage?(): Promise<Record<string, unknown> | null>;
+  getUsageInfo?(): Promise<Record<string, unknown> | null>;
 }
 
 export interface HostInfo {

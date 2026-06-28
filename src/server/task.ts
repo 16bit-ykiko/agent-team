@@ -3,8 +3,8 @@ import {
   SessionConfig,
   StreamEvent,
   SessionState,
+  CommandInfo,
   shellQuote,
-  DISTRO_PATH_PREFIX,
   getWslBin,
 } from "./session";
 import { HostSessionHandle, HostRegistry } from "./host";
@@ -79,14 +79,17 @@ export interface WorkspaceState {
 export interface AgentEntry {
   info: AgentInfo;
   session: HostSessionHandle;
+  handler: (event: StreamEvent) => void;
+  currentMsg: Message | null;
 }
 
 export interface WorkspaceCallbacks {
   onNewMessage: (wsId: string, msg: Message) => void;
   onStreamEvent: (wsId: string, msg: Message, event: StreamEvent) => void;
-  onMessageDone: (wsId: string, msgId: string, status: MessageStatus, content: string) => void;
+  onMessageDone: (wsId: string, msgId: string, status: MessageStatus, content: string, events?: StreamEvent[]) => void;
   onAgentBusy?: (wsId: string, agentId: string) => void;
   onAgentIdle?: (wsId: string, agentId: string) => void;
+  onCommandsChanged?: (wsId: string, commands: CommandInfo[]) => void;
 }
 
 export class Workspace {
@@ -136,6 +139,151 @@ export class Workspace {
     this.cb?.onNewMessage(this.id, msg);
   }
 
+  private makeAgentMsg(agentId: string): Message {
+    return {
+      id: genId("msg"),
+      kind: "agent",
+      agentId,
+      content: "",
+      timestamp: Date.now(),
+      status: "streaming",
+      events: [],
+      turnId: genId("turn"),
+    };
+  }
+
+  private ensureAgentMsg(entry: AgentEntry): Message {
+    if (!entry.currentMsg) {
+      entry.currentMsg = this.makeAgentMsg(entry.info.id);
+      this.messages.push(entry.currentMsg);
+      this.cb?.onNewMessage(this.id, entry.currentMsg);
+    }
+    return entry.currentMsg;
+  }
+
+  private createEventHandler(agentId: string): (event: StreamEvent) => void {
+    return (event: StreamEvent) => {
+      const entry = this.agents.get(agentId);
+      if (!entry) return;
+
+      if (!entry.currentMsg && event.kind !== "result" && event.kind !== "error" && event.kind !== "compact") {
+        this.cb?.onAgentBusy?.(this.id, agentId);
+      }
+
+      if (event.kind === "text_delta") {
+        const msg = this.ensureAgentMsg(entry);
+        msg.content += event.content;
+        this.cb?.onStreamEvent(this.id, msg, event);
+      } else if (event.kind === "thinking_delta") {
+        const msg = this.ensureAgentMsg(entry);
+        this.cb?.onStreamEvent(this.id, msg, event);
+      } else if (event.kind === "text") {
+        // text comes via text_delta streaming; finalized text event is redundant
+      } else if (event.kind === "result") {
+        if (entry.currentMsg) {
+          entry.currentMsg.status = "done";
+          this.cb?.onMessageDone(
+            this.id,
+            entry.currentMsg.id,
+            "done",
+            entry.currentMsg.content,
+            entry.currentMsg.events,
+          );
+        }
+        entry.currentMsg = null;
+        this.cb?.onAgentIdle?.(this.id, agentId);
+      } else if (event.kind === "error") {
+        const msg = this.ensureAgentMsg(entry);
+        msg.status = "error";
+        msg.events!.push(event);
+        this.cb?.onStreamEvent(this.id, msg, event);
+        this.cb?.onMessageDone(this.id, msg.id, "error", msg.content, msg.events);
+        entry.currentMsg = null;
+        this.cb?.onAgentIdle?.(this.id, agentId);
+      } else if (event.kind === "subagent_progress") {
+        const msg = this.ensureAgentMsg(entry);
+        const taskId = event.subagent?.taskId;
+        const innerEvent = event.subagent?._innerEvent;
+
+        const startIdx = msg.events!.findIndex(
+          (e) => e.kind === "subagent_start" && e.subagent?.taskId === taskId,
+        );
+
+        if (innerEvent && startIdx >= 0) {
+          const startEvt = msg.events![startIdx];
+          if (!startEvt.subagent!.events) startEvt.subagent!.events = [];
+          if (innerEvent.kind === "tool_result" && innerEvent.toolUseId) {
+            const matchIdx = startEvt.subagent!.events.findIndex(
+              (e) => e.kind === "tool_use" && e.toolUseId === innerEvent.toolUseId,
+            );
+            if (matchIdx >= 0) {
+              startEvt.subagent!.events[matchIdx].toolResult = innerEvent.content;
+              this.cb?.onStreamEvent(this.id, msg, event);
+              return;
+            }
+          }
+          startEvt.subagent!.events.push(innerEvent);
+          this.cb?.onStreamEvent(this.id, msg, event);
+          return;
+        }
+        delete event.subagent?._innerEvent;
+
+        if (startIdx >= 0) {
+          event.contentOffset = msg.events![startIdx].contentOffset;
+        } else {
+          event.contentOffset = msg.content.length;
+        }
+        const prevProgress = msg.events!.findIndex(
+          (e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId,
+        );
+        if (prevProgress >= 0) {
+          msg.events![prevProgress] = event;
+        } else {
+          msg.events!.push(event);
+        }
+        this.cb?.onStreamEvent(this.id, msg, event);
+      } else if (event.kind === "subagent_done") {
+        const msg = this.ensureAgentMsg(entry);
+        const taskId = event.subagent?.taskId;
+        const startIdx = msg.events!.findIndex(
+          (e) => e.kind === "subagent_start" && e.subagent?.taskId === taskId,
+        );
+        if (startIdx >= 0) {
+          event.contentOffset = msg.events![startIdx].contentOffset;
+          msg.events![startIdx].subagent!.status = event.subagent?.status;
+          msg.events![startIdx].subagent!.summary = event.subagent?.summary;
+          msg.events![startIdx].subagent!.usage = event.subagent?.usage;
+        } else {
+          event.contentOffset = msg.content.length;
+        }
+        const progressIdx = msg.events!.findIndex(
+          (e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId,
+        );
+        if (progressIdx >= 0) msg.events!.splice(progressIdx, 1);
+        msg.events!.push(event);
+        this.cb?.onStreamEvent(this.id, msg, event);
+      } else if (event.kind === "tool_result" && event.toolUseId) {
+        const msg = this.ensureAgentMsg(entry);
+        const matchIdx = msg.events!.findIndex(
+          (e) => e.kind === "tool_use" && e.toolUseId === event.toolUseId,
+        );
+        if (matchIdx >= 0) {
+          msg.events![matchIdx].toolResult = event.content;
+          if (event.isMarkdown) msg.events![matchIdx].toolResultIsMarkdown = true;
+        } else {
+          event.contentOffset = msg.content.length;
+          msg.events!.push(event);
+        }
+        this.cb?.onStreamEvent(this.id, msg, event);
+      } else {
+        const msg = this.ensureAgentMsg(entry);
+        event.contentOffset = msg.content.length;
+        msg.events!.push(event);
+        this.cb?.onStreamEvent(this.id, msg, event);
+      }
+    };
+  }
+
   addAgent(
     name: string,
     model: string,
@@ -152,8 +300,14 @@ export class Workspace {
 
     const info: AgentInfo = { id, name, model, avatar, color, isDefault };
     const session = host.createSession(id, { cwd: this.cwd, model, ...config });
+    const handler = this.createEventHandler(id);
 
-    this.agents.set(id, { info, session });
+    session.on("event", handler);
+    session.on("commands", (cmds: CommandInfo[]) => {
+      this.cb?.onCommandsChanged?.(this.id, cmds);
+    });
+
+    this.agents.set(id, { info, session, handler, currentMsg: null });
     this.pushSystemMessage(`${avatar} **${name}** joined the team`);
     return info;
   }
@@ -161,6 +315,8 @@ export class Workspace {
   removeAgent(agentId: string): boolean {
     const entry = this.agents.get(agentId);
     if (!entry) return false;
+
+    entry.session.off("event", entry.handler);
 
     const host = this.hostRegistry.get(this.hostId);
     if (host) host.destroySession(agentId);
@@ -202,6 +358,20 @@ export class Workspace {
     return first.done ? null : first.value;
   }
 
+  private async tryHandleCommand(text: string, agent: AgentEntry): Promise<string | null> {
+    if (text === "/usage" || text === "/cost") {
+      const data = await agent.session.getUsageInfo?.();
+      if (!data) return "No active session — send a message first to start a session.";
+      return formatUsageInfo(data);
+    }
+    if (text === "/context") {
+      const data = await agent.session.getContextUsage?.();
+      if (!data) return "No active session — send a message first to start a session.";
+      return formatContextUsage(data);
+    }
+    return null;
+  }
+
   async sendMessage(
     content: string,
     target?: string,
@@ -220,6 +390,28 @@ export class Workspace {
     if (!agent)
       throw new Error(resolvedTarget ? `Agent not found: ${resolvedTarget}` : "No default agent");
     if (agent.session.isRunning) throw new Error(`Agent ${agent.info.name} is busy`);
+
+    const cmdResult = await this.tryHandleCommand(cleanContent.trim(), agent);
+    if (cmdResult !== null) {
+      const userMsg: Message = {
+        id: genId("msg"),
+        kind: "user",
+        agentId: null,
+        content,
+        timestamp: Date.now(),
+        status: "done",
+      };
+      this.messages.push(userMsg);
+      this.cb?.onNewMessage(this.id, userMsg);
+
+      const agentMsg = this.makeAgentMsg(agent.info.id);
+      agentMsg.content = cmdResult;
+      agentMsg.status = "done";
+      this.messages.push(agentMsg);
+      this.cb?.onNewMessage(this.id, agentMsg);
+      this.cb?.onMessageDone(this.id, agentMsg.id, "done", cmdResult);
+      return;
+    }
 
     const msgImages = images?.map(({ name, url }) => ({ name, url }));
 
@@ -250,45 +442,11 @@ export class Workspace {
     this.messages.push(userMsg);
     this.cb?.onNewMessage(this.id, userMsg);
 
-    const turnId = genId("turn");
-
-    const makeAgentMsg = (): Message => ({
-      id: genId("msg"),
-      kind: "agent",
-      agentId: agent.info.id,
-      content: "",
-      timestamp: Date.now(),
-      status: "streaming",
-      events: [],
-      turnId,
-    });
-
-    let currentMsg = makeAgentMsg();
-    this.messages.push(currentMsg);
-    this.cb?.onNewMessage(this.id, currentMsg);
-
-    let textFinalized = false;
-
-    const eventHandler = (event: StreamEvent) => {
-      if (event.kind === "text") {
-        currentMsg.content = event.content;
-        currentMsg.status = "done";
-        this.cb?.onMessageDone(this.id, currentMsg.id, "done", event.content);
-        textFinalized = true;
-      } else {
-        if (textFinalized) {
-          currentMsg = makeAgentMsg();
-          this.messages.push(currentMsg);
-          this.cb?.onNewMessage(this.id, currentMsg);
-          textFinalized = false;
-        }
-        currentMsg.events!.push(event);
-        this.cb?.onStreamEvent(this.id, currentMsg, event);
-      }
-    };
-
-    agent.session.on("event", eventHandler);
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
+
+    agent.currentMsg = this.makeAgentMsg(agent.info.id);
+    this.messages.push(agent.currentMsg);
+    this.cb?.onNewMessage(this.id, agent.currentMsg);
 
     let prompt = cleanContent;
     if (quote) {
@@ -302,22 +460,8 @@ export class Workspace {
 
     try {
       await agent.session.send(prompt);
-      if (!textFinalized) currentMsg.status = "done";
-    } catch {
-      if (textFinalized) {
-        currentMsg = makeAgentMsg();
-        currentMsg.status = "error";
-        this.messages.push(currentMsg);
-        this.cb?.onNewMessage(this.id, currentMsg);
-      } else {
-        currentMsg.status = "error";
-      }
-    } finally {
-      agent.session.off("event", eventHandler);
-      this.cb?.onAgentIdle?.(this.id, agent.info.id);
-      if (!textFinalized) {
-        this.cb?.onMessageDone(this.id, currentMsg.id, currentMsg.status, currentMsg.content);
-      }
+    } catch (err) {
+      console.error("[sendMessage]", err);
     }
   }
 
@@ -353,81 +497,60 @@ export class Workspace {
     this.messages.push(userMsg);
     this.cb?.onNewMessage(this.id, userMsg);
 
-    const turnId = genId("turn");
-    const makeAgentMsg = (): Message => ({
-      id: genId("msg"),
-      kind: "agent",
-      agentId: agent.info.id,
-      content: "",
-      timestamp: Date.now(),
-      status: "streaming",
-      events: [],
-      turnId,
-    });
-
-    let currentMsg = makeAgentMsg();
-    this.messages.push(currentMsg);
-    this.cb?.onNewMessage(this.id, currentMsg);
-
-    let textFinalized = false;
-    const eventHandler = (event: StreamEvent) => {
-      if (event.kind === "text") {
-        currentMsg.content = event.content;
-        currentMsg.status = "done";
-        this.cb?.onMessageDone(this.id, currentMsg.id, "done", event.content);
-        textFinalized = true;
-      } else {
-        if (textFinalized) {
-          currentMsg = makeAgentMsg();
-          this.messages.push(currentMsg);
-          this.cb?.onNewMessage(this.id, currentMsg);
-          textFinalized = false;
-        }
-        currentMsg.events!.push(event);
-        this.cb?.onStreamEvent(this.id, currentMsg, event);
-      }
-    };
-
-    agent.session.on("event", eventHandler);
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
+
+    agent.currentMsg = this.makeAgentMsg(agent.info.id);
+    this.messages.push(agent.currentMsg);
+    this.cb?.onNewMessage(this.id, agent.currentMsg);
 
     const prompt = `[Forwarded message from ${fromAgent?.info.name ?? "User"}]:\n\n${original.content}`;
 
     try {
       await agent.session.send(prompt);
-      if (!textFinalized) currentMsg.status = "done";
-    } catch {
-      if (textFinalized) {
-        currentMsg = makeAgentMsg();
-        currentMsg.status = "error";
-        this.messages.push(currentMsg);
-        this.cb?.onNewMessage(this.id, currentMsg);
-      } else {
-        currentMsg.status = "error";
-      }
-    } finally {
-      agent.session.off("event", eventHandler);
-      this.cb?.onAgentIdle?.(this.id, agent.info.id);
-      if (!textFinalized) {
-        this.cb?.onMessageDone(this.id, currentMsg.id, currentMsg.status, currentMsg.content);
-      }
+    } catch (err) {
+      console.error("[forwardMessage]", err);
     }
   }
 
   abortAgent(agentId: string): void {
-    this.agents.get(agentId)?.session.abort();
+    const entry = this.agents.get(agentId);
+    if (!entry) return;
+    entry.session.abort();
+    this.finalizeAbort(entry);
   }
 
   abortAll(): void {
     for (const entry of this.agents.values()) {
       entry.session.abort();
+      this.finalizeAbort(entry);
     }
+  }
+
+  private finalizeAbort(entry: AgentEntry): void {
+    if (entry.currentMsg && entry.currentMsg.status === "streaming") {
+      if (entry.currentMsg.content) {
+        entry.currentMsg.content += "\n\n*\\[interrupted\\]*";
+      } else {
+        entry.currentMsg.content = "*\\[interrupted\\]*";
+      }
+      entry.currentMsg.status = "done";
+      this.cb?.onMessageDone(
+        this.id,
+        entry.currentMsg.id,
+        "done",
+        entry.currentMsg.content,
+        entry.currentMsg.events,
+      );
+    }
+    entry.currentMsg = null;
+    this.cb?.onAgentIdle?.(this.id, entry.info.id);
   }
 
   clearContext(agentId: string): boolean {
     const entry = this.agents.get(agentId);
     if (!entry) return false;
     if (entry.session.isRunning) return false;
+    entry.session.abort();
     entry.session.sessionId = null;
     entry.session.usage = {
       input_tokens: 0,
@@ -437,6 +560,7 @@ export class Workspace {
       turns: 0,
       duration_ms: 0,
     };
+    entry.currentMsg = null;
     this.pushSystemMessage(`${entry.info.avatar} **${entry.info.name}** context cleared`);
     return true;
   }
@@ -564,6 +688,11 @@ export class Workspace {
     const host = hostRegistry.get(hostId) ?? hostRegistry.getDefault()!;
     for (const agentState of state.agents) {
       const session = host.restoreSession(agentState.id, agentState.session);
+      const handler = ws.createEventHandler(agentState.id);
+      session.on("event", handler);
+      session.on("commands", (cmds: CommandInfo[]) => {
+        ws.cb?.onCommandsChanged?.(ws.id, cmds);
+      });
       ws.agents.set(agentState.id, {
         info: {
           id: agentState.id,
@@ -574,6 +703,8 @@ export class Workspace {
           isDefault: agentState.isDefault,
         },
         session,
+        handler,
+        currentMsg: null,
       });
     }
 
@@ -583,4 +714,85 @@ export class Workspace {
 
 function genId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatUsageInfo(data: Record<string, unknown>): string {
+  const lines: string[] = ["## Session Usage"];
+
+  const session = data.session as Record<string, unknown> | undefined;
+  if (session) {
+    const cost = session.total_cost_usd as number | undefined;
+    if (cost != null) lines.push(`**Session cost:** $${cost.toFixed(4)}`);
+    const dur = session.total_duration_ms as number | undefined;
+    if (dur != null) lines.push(`**Duration:** ${Math.round(dur / 1000)}s`);
+    const added = session.total_lines_added as number | undefined;
+    const removed = session.total_lines_removed as number | undefined;
+    if (added != null || removed != null)
+      lines.push(`**Lines:** +${added ?? 0} / -${removed ?? 0}`);
+  }
+
+  const sub = data.subscription_type as string | undefined;
+  if (sub) lines.push(`**Plan:** ${sub}`);
+
+  const rl = data.rate_limits as Record<string, unknown> | undefined;
+  if (rl) {
+    lines.push("", "### Rate Limits");
+    for (const key of ["five_hour", "seven_day"] as const) {
+      const w = rl[key] as Record<string, unknown> | undefined;
+      if (!w) continue;
+      const util = w.utilization as number;
+      const resets = w.resets_at as string | undefined;
+      const label = key === "five_hour" ? "5-hour" : "7-day";
+      const bar = renderBar(util);
+      const resetStr = resets ? ` (resets ${new Date(resets).toLocaleTimeString()})` : "";
+      lines.push(`**${label}:** ${bar} ${util.toFixed(1)}%${resetStr}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function formatContextUsage(data: Record<string, unknown>): string {
+  const total = data.totalTokens as number | undefined;
+  const max = data.maxTokens as number | undefined;
+  const pct = data.percentage as number | undefined;
+  const model = data.model as string | undefined;
+  const categories = data.categories as Array<Record<string, unknown>> | undefined;
+
+  const lines: string[] = ["## Context Usage"];
+  if (model) lines.push(`**Model:** ${model}`);
+  if (total != null && max != null) {
+    const bar = renderBar(pct ?? (total / max) * 100);
+    lines.push(
+      `**Tokens:** ${(total / 1000).toFixed(1)}k / ${(max / 1000).toFixed(1)}k ${bar} ${(pct ?? 0).toFixed(1)}%`,
+    );
+  }
+
+  if (categories?.length) {
+    lines.push("", "| Category | Tokens | % |", "|---|---:|---:|");
+    for (const c of categories) {
+      const name = c.name as string;
+      const tokens = c.tokens as number;
+      const share = max ? ((tokens / max) * 100).toFixed(1) : "—";
+      lines.push(`| ${name} | ${(tokens / 1000).toFixed(1)}k | ${share}% |`);
+    }
+  }
+
+  const api = data.apiUsage as Record<string, number> | undefined;
+  if (api) {
+    lines.push("", "### API Usage (this session)");
+    lines.push(`- **Input:** ${(api.input_tokens / 1000).toFixed(1)}k`);
+    lines.push(`- **Output:** ${(api.output_tokens / 1000).toFixed(1)}k`);
+    if (api.cache_read_input_tokens)
+      lines.push(`- **Cache read:** ${(api.cache_read_input_tokens / 1000).toFixed(1)}k`);
+    if (api.cache_creation_input_tokens)
+      lines.push(`- **Cache write:** ${(api.cache_creation_input_tokens / 1000).toFixed(1)}k`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderBar(pct: number): string {
+  const filled = Math.round(pct / 5);
+  return "█".repeat(filled) + "░".repeat(20 - filled);
 }

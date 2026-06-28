@@ -271,11 +271,7 @@ body {
   text-align: center;
 }
 
-.task-project {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
+
 
 .task-meta {
   font-size: 11px;
@@ -759,10 +755,147 @@ pre .copy-btn:hover {
   margin-top: 4px;
 }
 
+.step-group {
+  margin-top: 2px;
+}
+.step-group .events-list {
+  margin-top: 2px;
+  max-height: none;
+}
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+  user-select: none;
+  padding: 2px 0;
+}
+.step-header:hover {
+  color: var(--text-secondary);
+}
+.step-summary {
+  color: var(--text-muted);
+}
+
+.subagent-item {
+  margin-top: 4px;
+  border-left: 2px solid #a78bfa;
+  padding: 2px 8px;
+  border-radius: 2px;
+}
+.subagent-item.subagent-completed {
+  border-left-color: #3fb950;
+}
+.subagent-item.subagent-failed {
+  border-left-color: #f85149;
+}
+.subagent-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+  padding: 3px 0;
+}
+.subagent-header:hover {
+  opacity: 0.85;
+}
+.subagent-status-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.subagent-icon-running {
+  color: #a78bfa;
+  animation: spin 1.2s linear infinite;
+}
+.subagent-icon-completed {
+  color: #3fb950;
+}
+.subagent-icon-failed {
+  color: #f85149;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.subagent-label {
+  font-weight: 600;
+  color: #a78bfa;
+}
+.subagent-desc {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 400px;
+}
+.subagent-tool {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+.subagent-counts {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.subagent-details {
+  padding: 4px 0 4px 18px;
+  font-size: 12px;
+}
+.subagent-events {
+  margin-bottom: 6px;
+}
+.subagent-summary {
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-left: 2px solid #3fb950;
+  background: rgba(63, 185, 80, 0.06);
+  border-radius: 2px;
+}
+.subagent-summary p {
+  margin: 2px 0;
+}
+.subagent-usage {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.subagent-prompt {
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  border-left: 2px solid #c4b5fd;
+  background: rgba(167, 139, 250, 0.06);
+  border-radius: 2px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.subagent-prompt p {
+  margin: 2px 0;
+}
+
 .event {
   padding: 4px 8px;
   border-left: 2px solid var(--border);
   margin-top: 2px;
+}
+.event-tool_result {
+  border-left-color: #8b949e;
+  background: rgba(139, 148, 158, 0.05);
+}
+.event-compact {
+  padding: 4px 8px;
+  margin-top: 4px;
+  border-left: 2px solid #d29922;
+  background: rgba(210, 153, 34, 0.08);
+  border-radius: 2px;
+}
+.compact-text {
+  font-size: 11px;
+  color: #d29922;
+  font-style: italic;
 }
 
 .event-kind {
@@ -1079,16 +1212,15 @@ pre .copy-btn:hover {
 .command-item.active {
   background: var(--bg-hover);
 }
-.command-icon {
-  font-size: 14px;
-  flex-shrink: 0;
-  width: 20px;
-  text-align: center;
-}
 .command-name {
   font-size: 13px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+.command-hint {
+  font-size: 11px;
+  color: var(--accent-hover);
   flex-shrink: 0;
 }
 .command-desc {
@@ -1097,6 +1229,7 @@ pre .copy-btn:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-left: auto;
 }
 
 .mention-popup {
