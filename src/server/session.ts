@@ -719,9 +719,8 @@ export class ClaudeSession extends EventEmitter {
       forwardSubagentText: true,
       settingSources: ["user", "project", "local"],
       disallowedTools: DISALLOWED_TOOLS,
-      // Disable implicit model fallback — if the model is overloaded, fail
-      // rather than silently downgrading. Fallback events are surfaced as errors.
-      fallbackModel: [],
+      // No fallbackModel: if the model is overloaded, fail rather than
+      // silently downgrading.
     };
 
     if (this.sessionId) {
