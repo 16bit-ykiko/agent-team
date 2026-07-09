@@ -87,7 +87,7 @@ function subagentInner(
   });
 }
 
-function buildFrames(): Frame[] {
+export function buildFrames(): Frame[] {
   const frames: Frame[] = [];
   const now = Date.now();
 

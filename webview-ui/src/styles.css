@@ -1,18 +1,18 @@
 :root {
-  --bg-primary: var(--vscode-editor-background, #282c34);
-  --bg-secondary: var(--vscode-sideBar-background, #21252b);
-  --bg-tertiary: var(--vscode-input-background, #1d1f23);
-  --bg-hover: var(--vscode-list-hoverBackground, #2c313a);
-  --bg-active: var(--vscode-list-activeSelectionBackground, #2c313a);
-  --text-primary: var(--vscode-editor-foreground, #abb2bf);
-  --text-secondary: var(--vscode-descriptionForeground, #7f848e);
-  --text-muted: var(--vscode-disabledForeground, #5c6370);
-  --border: var(--vscode-panel-border, #181a1f);
-  --accent: var(--vscode-button-background, #528bff);
-  --accent-hover: var(--vscode-button-hoverBackground, #6da0ff);
-  --success: var(--vscode-testing-iconPassed, #98c379);
-  --warning: var(--vscode-editorWarning-foreground, #e5c07b);
-  --error: var(--vscode-editorError-foreground, #e06c75);
+  --bg-primary: #282c34;
+  --bg-secondary: #21252b;
+  --bg-tertiary: #1d1f23;
+  --bg-hover: #2c313a;
+  --bg-active: #2c313a;
+  --text-primary: #abb2bf;
+  --text-secondary: #7f848e;
+  --text-muted: #5c6370;
+  --border: #181a1f;
+  --accent: #528bff;
+  --accent-hover: #6da0ff;
+  --success: #98c379;
+  --warning: #e5c07b;
+  --error: #e06c75;
   --radius: 6px;
 }
 
@@ -23,8 +23,8 @@
 }
 
 body {
-  font-family: var(--vscode-editor-font-family, "Cascadia Code", Consolas, monospace);
-  font-size: var(--vscode-editor-font-size, 14px);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 14px;
   color: var(--text-primary);
   background: var(--bg-primary);
   height: 100vh;
@@ -478,7 +478,7 @@ body {
   height: 32px;
   border-radius: 50%;
   background: var(--accent);
-  color: var(--vscode-button-foreground, #fff);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1117,7 +1117,7 @@ pre .copy-btn:hover {
 
 .input-row button {
   background: var(--accent);
-  color: var(--vscode-button-foreground, #fff);
+  color: #fff;
   border: none;
   border-radius: var(--radius);
   padding: 8px 16px;
@@ -1428,7 +1428,7 @@ pre .copy-btn:hover {
 
 .btn-primary {
   background: var(--accent);
-  color: var(--vscode-button-foreground, #fff);
+  color: #fff;
   border: none;
   border-radius: var(--radius);
   padding: 6px 16px;

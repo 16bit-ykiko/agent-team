@@ -119,6 +119,32 @@ describe("MessageItem", () => {
     expect(container.querySelector(".message-events")).toBeTruthy();
   });
 
+  it("interleaves text segments and event groups by contentOffset", () => {
+    const part1 = "Let me read the file first.";
+    const part2 = "Done — the bug is in the parser.";
+    const events: StreamEvent[] = [
+      {
+        kind: "tool_use",
+        content: "Read /a",
+        toolUseId: "t1",
+        contentOffset: part1.length,
+      } as StreamEvent,
+      { ...sa({ status: "completed" }), contentOffset: part1.length },
+    ];
+    const { container, getByText } = render(
+      <MessageItem msg={msg({ content: part1 + part2, events })} agents={agents} />,
+    );
+
+    // Both text segments render, split around the event group.
+    expect(getByText(part1)).toBeTruthy();
+    expect(getByText(part2)).toBeTruthy();
+    // The subagent renders as a standalone block outside the step box.
+    const item = container.querySelector(".subagent-item")!;
+    expect(item).toBeTruthy();
+    expect(item.closest(".step-group")).toBeNull();
+    expect(container.querySelector(".step-group")).toBeTruthy();
+  });
+
   it("wires cancel through to the owning agent", () => {
     const onCancelSubagent = vi.fn();
     const events: StreamEvent[] = [sa({ status: "running" })];
