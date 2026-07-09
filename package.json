@@ -1,45 +1,14 @@
 {
   "name": "agent-team",
-  "displayName": "Agent Team",
-  "description": "Multi-agent orchestration panel for VSCode",
+  "description": "Multi-agent orchestration panel",
   "version": "0.1.0",
-  "publisher": "ykiko",
-  "engines": {
-    "vscode": "^1.100.0"
-  },
-  "categories": [
-    "Other"
-  ],
-  "activationEvents": [],
-  "main": "./dist/extension.js",
-  "contributes": {
-    "commands": [
-      {
-        "command": "agent-team.open",
-        "title": "Agent Team: Open"
-      },
-      {
-        "command": "agent-team.openExternal",
-        "title": "Agent Team: Open in External Browser"
-      }
-    ],
-    "configuration": {
-      "title": "Agent Team",
-      "properties": {
-        "agent-team.port": {
-          "type": "number",
-          "default": 9800,
-          "description": "Port of the Agent Team server"
-        }
-      }
-    }
-  },
+  "private": true,
   "scripts": {
     "postinstall": "cd webview-ui && npm install",
-    "build:ext": "node esbuild.js",
+    "build:server": "node esbuild.js",
     "build:webview": "cd webview-ui && npm run build",
-    "build": "npm run build:webview && npm run build:ext",
-    "watch:ext": "node esbuild.js --watch",
+    "build": "npm run build:webview && npm run build:server",
+    "watch:server": "node esbuild.js --watch",
     "test": "vitest run && npm --prefix webview-ui run test",
     "test:watch": "vitest",
     "fmt": "prettier --write .",
@@ -47,8 +16,6 @@
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
-    "@types/vscode": "^1.100.0",
-    "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.25.0",
     "prettier": "^3.3.0",
     "typescript": "^5.8.0",

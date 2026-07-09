@@ -160,7 +160,6 @@ function resolveWsUrl(): string {
 export function useServer() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [connected, setConnected] = useState(false);
-  const [hostAvailable, setHostAvailable] = useState(false);
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [projects, setProjects] = useState<Record<string, Record<string, string>>>({});
@@ -168,6 +167,7 @@ export function useServer() {
   const [hosts, setHosts] = useState<HostInfo[]>([]);
   const [hostConfigs, setHostConfigs] = useState<Record<string, HostConfig>>({});
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -366,13 +366,8 @@ export function useServer() {
           if (config.commands) setCommands(config.commands);
           if (config.hosts) setHostConfigs(config.hosts);
           if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
-          setHostAvailable(Boolean(msg.hostAvailable));
           break;
         }
-
-        case "host_state":
-          setHostAvailable(Boolean(msg.available));
-          break;
 
         case "hosts_update":
           setHosts(msg.hosts as HostInfo[]);
@@ -579,6 +574,7 @@ export function useServer() {
 
         case "error":
           console.error("[server]", msg.message);
+          setLastError(String(msg.message));
           break;
       }
     },
@@ -636,7 +632,6 @@ export function useServer() {
   return {
     workspaces,
     connected,
-    hostAvailable,
     presets,
     models,
     projects,
@@ -644,10 +639,8 @@ export function useServer() {
     hosts,
     hostConfigs,
     systemStatus,
-    callHostAction: useCallback(
-      (action: string, args: unknown) => send({ type: "host_action", action, args }),
-      [send],
-    ),
+    lastError,
+    clearError: useCallback(() => setLastError(null), []),
     loadMessages: useCallback(
       (wsId: string, before?: number) =>
         send({ type: "load_messages", workspaceId: wsId, before, limit: 50 }),
@@ -663,6 +656,14 @@ export function useServer() {
         send({ type: "cancel_subagent", workspaceId: wsId, agentId, taskId }),
       [send],
     ),
+    // Plays the synthetic rendering-review fixture through the same dispatch
+    // path as live server frames. Returns the demo workspace id.
+    startReplayDemo: useCallback(() => {
+      import("./replayFixture").then(({ startDemoReplay }) =>
+        startDemoReplay(handleServerMessage).catch((e) => console.error("[replay-demo]", e)),
+      );
+      return "replay-demo";
+    }, [handleServerMessage]),
     createWorkspace: useCallback(
       (name: string, project: string, hostId?: string, customPath?: string) =>
         send({ type: "create_workspace", name, project, hostId, customPath }),
@@ -703,11 +704,6 @@ export function useServer() {
     clearContext: useCallback(
       (wsId: string, agentId: string) =>
         send({ type: "clear_context", workspaceId: wsId, agentId }),
-      [send],
-    ),
-    openDiff: useCallback(
-      (filePath: string, oldString: string, newString: string) =>
-        send({ type: "open_diff", filePath, oldString, newString }),
       [send],
     ),
     restartServer: useCallback(() => send({ type: "restart_server" }), [send]),

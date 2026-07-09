@@ -1133,6 +1133,32 @@ pre .copy-btn:hover {
   opacity: 0.8;
 }
 
+/* Fixed-width primary slot so Send ↔ Stop morphing causes no layout shift. */
+.btn-primary-slot {
+  min-width: 84px;
+}
+
+.btn-abort-others {
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.error-toast {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 1000;
+  max-width: 420px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--error);
+  background: var(--bg-secondary);
+  color: var(--error);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
 .btn-attach {
   background: var(--bg-tertiary) !important;
   color: var(--text-secondary) !important;

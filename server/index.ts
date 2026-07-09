@@ -79,7 +79,6 @@ export class Server {
   private wss: WebSocketServer;
   private workspaces = new Map<string, Workspace>();
   private uiClients = new Set<WebSocket>();
-  private hostClient: WebSocket | null = null;
   private config: AppConfig;
   private baseDir: string;
   private webDir: string;
@@ -503,10 +502,6 @@ export class Server {
 
     ws.on("close", () => {
       this.uiClients.delete(ws);
-      if (this.hostClient === ws) {
-        this.hostClient = null;
-        this.broadcastUI({ type: "host_state", available: false });
-      }
     });
 
     this.sendJson(ws, {
@@ -520,32 +515,12 @@ export class Server {
         hosts: this.config.hosts,
       },
       hosts: this.hostRegistry.getAllInfo(),
-      hostAvailable: this.hostClient !== null,
     });
     this.sendJson(ws, this.getSystemStatus());
   }
 
   private handleMessage(ws: WebSocket, msg: Record<string, unknown>): void {
     switch (msg.type) {
-      case "register_host":
-        if (this.hostClient && this.hostClient !== ws) {
-          this.hostClient.close(1000, "replaced by new host");
-        }
-        this.hostClient = ws;
-        this.uiClients.delete(ws);
-        this.broadcastUI({ type: "host_state", available: true });
-        return;
-
-      case "host_action":
-        if (this.hostClient) {
-          this.sendJson(this.hostClient, {
-            type: "host_action",
-            action: msg.action,
-            args: msg.args,
-          });
-        }
-        return;
-
       case "load_messages": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
         if (workspace) {
@@ -663,10 +638,6 @@ export class Server {
           msg.messageId as string,
           msg.targetAgentId as string,
         );
-        return;
-
-      case "open_diff":
-        this.openDiff(msg.filePath as string, msg.oldString as string, msg.newString as string);
         return;
 
       case "restart_server":
@@ -868,21 +839,6 @@ export class Server {
       workspace.abortAgent(agentId);
     } else {
       workspace.abortAll();
-    }
-  }
-
-  private openDiff(filePath: string, oldString: string, newString: string): void {
-    const ext = path.extname(path.basename(filePath));
-    const rand = Math.random().toString(36).slice(2, 8);
-    const tmpDir = os.tmpdir();
-    const oldFile = path.join(tmpDir, `diff-${rand}.old${ext}`);
-    const newFile = path.join(tmpDir, `diff-${rand}.new${ext}`);
-    fs.writeFileSync(oldFile, oldString);
-    fs.writeFileSync(newFile, newString);
-    try {
-      execSync(`code --diff "${oldFile}" "${newFile}"`, { timeout: 5000 });
-    } catch {
-      // VS Code might not be in PATH; ignore
     }
   }
 

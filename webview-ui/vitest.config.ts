@@ -7,6 +7,6 @@ export default defineConfig({
     environment: "jsdom",
     // Required for @testing-library/react's automatic DOM cleanup between tests.
     globals: true,
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["tests/**/*.test.{ts,tsx}"],
   },
 });

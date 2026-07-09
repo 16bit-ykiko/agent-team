@@ -384,13 +384,7 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
   );
 }
 
-export const EventItem = memo(function EventItem({
-  ev,
-  onOpenDiff,
-}: {
-  ev: StreamEvent;
-  onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
-}) {
+export const EventItem = memo(function EventItem({ ev }: { ev: StreamEvent }) {
   const [resultOpen, setResultOpen] = useState(false);
   const isResult = ev.kind === "tool_result";
   const isToolUse = ev.kind === "tool_use";
@@ -413,21 +407,6 @@ export const EventItem = memo(function EventItem({
     <div className={`event event-${ev.kind}`}>
       <span className="event-kind">
         {ev.kind}
-        {ev.toolInput?.tool === "Edit" && ev.toolInput.old_string != null && onOpenDiff && (
-          <button
-            className="btn-diff"
-            title="Open diff in VS Code"
-            onClick={() =>
-              onOpenDiff(
-                ev.toolInput!.file_path!,
-                ev.toolInput!.old_string!,
-                ev.toolInput!.new_string!,
-              )
-            }
-          >
-            Diff
-          </button>
-        )}
         {(isResult || hasResult) && (
           <button className="btn-diff" onClick={() => setResultOpen((v) => !v)}>
             {resultOpen ? "Hide" : "Result"} ({resultLabel})
@@ -470,12 +449,10 @@ export const EventItem = memo(function EventItem({
 
 export const SubAgentItem = memo(function SubAgentItem({
   ev,
-  onOpenDiff,
   onLoadEvents,
   onCancel,
 }: {
   ev: StreamEvent;
-  onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
   onLoadEvents?: (taskId: string) => void;
   onCancel?: (taskId: string) => void;
 }) {
@@ -571,7 +548,7 @@ export const SubAgentItem = memo(function SubAgentItem({
           {innerEvents.length > 0 && (
             <div className="subagent-events">
               {innerEvents.map((ie, i) => (
-                <EventItem key={i} ev={ie} onOpenDiff={onOpenDiff} />
+                <EventItem key={i} ev={ie} />
               ))}
             </div>
           )}
@@ -579,7 +556,6 @@ export const SubAgentItem = memo(function SubAgentItem({
             <SubAgentItem
               key={ne.subagent!.taskId}
               ev={ne}
-              onOpenDiff={onOpenDiff}
               onLoadEvents={onLoadEvents}
               onCancel={onCancel}
             />
@@ -598,12 +574,10 @@ export const SubAgentItem = memo(function SubAgentItem({
 
 export function StepGroup({
   group,
-  onOpenDiff,
   onLoadEvents,
   onCancelSubagent,
 }: {
   group: { step: number; events: StreamEvent[] };
-  onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
   onLoadEvents?: (taskId: string) => void;
   onCancelSubagent?: (taskId: string) => void;
 }) {
@@ -630,7 +604,7 @@ export function StepGroup({
           {open && (
             <div className="events-list">
               {regularEvents.map((ev, i) => (
-                <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
+                <EventItem key={i} ev={ev} />
               ))}
             </div>
           )}
@@ -640,7 +614,6 @@ export function StepGroup({
         <SubAgentItem
           key={ev.subagent!.taskId}
           ev={ev}
-          onOpenDiff={onOpenDiff}
           onLoadEvents={onLoadEvents}
           onCancel={onCancelSubagent}
         />
@@ -654,7 +627,6 @@ export const MessageItem = memo(function MessageItem({
   agents,
   compact,
   highlight,
-  onOpenDiff,
   onQuote,
   onLoadSubagentEvents,
   onCancelSubagent,
@@ -663,7 +635,6 @@ export const MessageItem = memo(function MessageItem({
   agents: AgentInfo[];
   compact?: boolean;
   highlight?: boolean;
-  onOpenDiff?: (filePath: string, oldString: string, newString: string) => void;
   onQuote?: (msg: Message) => void;
   onLoadSubagentEvents?: (messageId: string, taskId: string) => void;
   onCancelSubagent?: (agentId: string, taskId: string) => void;
@@ -814,7 +785,6 @@ export const MessageItem = memo(function MessageItem({
                 {seg.events.length > 0 && (
                   <StepGroup
                     group={{ step: si, events: seg.events }}
-                    onOpenDiff={onOpenDiff}
                     onLoadEvents={handleLoadEvents}
                     onCancelSubagent={handleCancelSubagent}
                   />
@@ -847,7 +817,7 @@ export const MessageItem = memo(function MessageItem({
                         {eventsOpen && (
                           <div className="events-list">
                             {regEvts.map((ev, i) => (
-                              <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
+                              <EventItem key={i} ev={ev} />
                             ))}
                           </div>
                         )}
@@ -857,7 +827,6 @@ export const MessageItem = memo(function MessageItem({
                       <SubAgentItem
                         key={ev.subagent!.taskId}
                         ev={ev}
-                        onOpenDiff={onOpenDiff}
                         onLoadEvents={handleLoadEvents}
                         onCancel={handleCancelSubagent}
                       />
@@ -1069,11 +1038,21 @@ export function App() {
     sendMessage,
     abort,
     clearContext,
-    openDiff,
     loadMessages,
     loadSubagentEvents,
     cancelSubagent,
+    startReplayDemo,
+    lastError,
+    clearError,
   } = useServer();
+
+  // Server errors (busy agent, cancel failures...) were previously only
+  // logged to the console; surface them as a dismissible toast.
+  useEffect(() => {
+    if (!lastError) return;
+    const t = setTimeout(clearError, 6000);
+    return () => clearTimeout(t);
+  }, [lastError, clearError]);
 
   const [activeWsId, setActiveWsId] = useState<string | null>(() => {
     try {
@@ -1251,6 +1230,7 @@ export function App() {
       el.style.height = Math.min(el.scrollHeight, 120) + "px";
     }
     setHasInput(restored.trim().length > 0);
+    setMentionTarget(restored.match(/(?:^|\s)@(\S+)/)?.[1] ?? null);
     if (activeWsId && connected) loadMessages(activeWsId);
     userScrolledUpRef.current = false;
     prevMsgCountRef.current = 0;
@@ -1299,6 +1279,20 @@ export function App() {
 
   const isAnyRunning = activeWs?.agents.some((a) => a.busy) ?? false;
   const hasAgents = (activeWs?.agents.length ?? 0) > 0;
+
+  // The agent a Send would go to: first @mention in the draft, else the
+  // default agent. The primary button morphs to Stop while it is busy.
+  const [mentionTarget, setMentionTarget] = useState<string | null>(null);
+  const targetAgent = useMemo(() => {
+    if (!activeWs || activeWs.agents.length === 0) return null;
+    if (mentionTarget) {
+      const hit = activeWs.agents.find((a) => a.name === mentionTarget);
+      if (hit) return hit;
+    }
+    return activeWs.agents.find((a) => a.isDefault) ?? activeWs.agents[0];
+  }, [activeWs, mentionTarget]);
+  const targetBusy = !!targetAgent?.busy;
+  const othersRunning = activeWs?.agents.some((a) => a.busy && a.id !== targetAgent?.id) ?? false;
 
   const onResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -1400,6 +1394,9 @@ export function App() {
     const text = (textareaRef.current?.value ?? "").trim();
     const ws = activeWsRef.current;
     if ((!text && pendingImages.length === 0) || !ws || uploading) return;
+    // The target agent can't accept messages while running (the server would
+    // reject with "Agent is busy"); the primary button shows Stop instead.
+    if (targetBusy) return;
 
     let images: Array<{ name: string; url: string }> | undefined;
     if (pendingImages.length > 0) {
@@ -1435,7 +1432,7 @@ export function App() {
       textareaRef.current.style.height = "36px";
     }
     setHasInput(false);
-  }, [activeWsId, sendMessage, pendingImages, uploading, quotedMsg]);
+  }, [activeWsId, sendMessage, pendingImages, uploading, quotedMsg, targetBusy]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (cmdQuery !== null && filteredCmds.length > 0) {
@@ -1494,6 +1491,7 @@ export function App() {
     const has = val.trim().length > 0;
     if (has !== hasInput) setHasInput(has);
     if (activeWsId) inputMapRef.current.set(activeWsId, val);
+    setMentionTarget(val.match(/(?:^|\s)@(\S+)/)?.[1] ?? null);
 
     el.style.height = "36px";
     el.style.height = Math.min(el.scrollHeight, 120) + "px";
@@ -1519,6 +1517,11 @@ export function App() {
 
   return (
     <div className="app">
+      {lastError && (
+        <div className="error-toast" onClick={clearError} title="Dismiss">
+          ⚠ {lastError}
+        </div>
+      )}
       {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
       <div
         className={`sidebar${sidebarOpen ? " sidebar-open" : ""}`}
@@ -1526,9 +1529,21 @@ export function App() {
       >
         <div className="sidebar-header">
           <span>Workspaces {!connected && <span className="disconnected">(offline)</span>}</span>
-          <button title="New workspace" onClick={() => setShowCreate(true)}>
-            +
-          </button>
+          <span>
+            <button
+              title="Replay rendering demo (synthetic events for visual review)"
+              onClick={() => {
+                const wsId = startReplayDemo();
+                setActiveWsId(wsId);
+                setSidebarOpen(false);
+              }}
+            >
+              🎬
+            </button>
+            <button title="New workspace" onClick={() => setShowCreate(true)}>
+              +
+            </button>
+          </span>
         </div>
         <div className="search-bar">
           <input
@@ -1739,7 +1754,6 @@ export function App() {
                           agents={activeWs.agents}
                           compact={compact}
                           highlight={msg.id === highlightMsgId}
-                          onOpenDiff={openDiff}
                           onQuote={handleQuote}
                           onLoadSubagentEvents={(messageId, taskId) =>
                             loadSubagentEvents(activeWs.id, messageId, taskId)
@@ -1860,17 +1874,37 @@ export function App() {
                   }
                   rows={1}
                 />
-                {isAnyRunning && (
-                  <button className="btn-abort" onClick={() => abort(activeWs.id)}>
-                    Stop
+                {othersRunning && (
+                  <button
+                    className="btn-abort btn-abort-others"
+                    title="Stop all running agents"
+                    onClick={() => abort(activeWs.id)}
+                  >
+                    Stop all
                   </button>
                 )}
-                <button
-                  onClick={handleSend}
-                  disabled={(!hasInput && pendingImages.length === 0) || !hasAgents || uploading}
-                >
-                  {uploading ? "Uploading..." : "Send"}
-                </button>
+                {targetBusy ? (
+                  <button
+                    className="btn-abort btn-primary-slot"
+                    title={`Stop ${targetAgent!.name}`}
+                    onClick={() => abort(activeWs.id, targetAgent!.id)}
+                  >
+                    ◼ Stop
+                  </button>
+                ) : (
+                  <button
+                    className="btn-primary-slot"
+                    onClick={handleSend}
+                    disabled={(!hasInput && pendingImages.length === 0) || !hasAgents || uploading}
+                    title={
+                      targetAgent && activeWs.agents.length > 1
+                        ? `Send to ${targetAgent.name}`
+                        : "Send"
+                    }
+                  >
+                    {uploading ? "Uploading..." : "Send"}
+                  </button>
+                )}
               </div>
             </div>
           </>

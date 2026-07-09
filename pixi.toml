@@ -12,18 +12,17 @@ nodejs = ">=22"
 dev-webview = { cmd = "npm run dev", cwd = "webview-ui" }
 build-webview = { cmd = "npm run build", cwd = "webview-ui" }
 
-# Extension + server bundle
-build-ext = "node esbuild.js"
+# Server bundle
+build-server = "node esbuild.js"
 
 # Build everything (server needs dist/webview to serve)
-build = { depends-on = ["build-webview", "build-ext"] }
+build = { depends-on = ["build-webview", "build-server"] }
 
 # Run the server (serves HTTP + WS on :9800)
 serve = { cmd = "node dist/server.js", depends-on = ["build"] }
 
-# Package / install VSCode extension (thin host client)
-package = { cmd = "npx @vscode/vsce package --no-dependencies --allow-missing-repository", depends-on = ["build-ext"] }
-install = { cmd = "code --install-extension agent-team-0.1.0.vsix --force", depends-on = ["package"] }
+# Tests (server + webview)
+test = "npm test"
 
 # Formatting
 fmt = "npm run fmt"

@@ -2,37 +2,24 @@ const esbuild = require("esbuild");
 
 const watch = process.argv.includes("--watch");
 
-const common = {
+/** @type {import('esbuild').BuildOptions} */
+const build = {
   bundle: true,
   format: "cjs",
   platform: "node",
   target: "node22",
   sourcemap: true,
   minify: false,
+  entryPoints: ["server/index.ts"],
+  outfile: "dist/server.js",
+  external: ["@anthropic-ai/claude-agent-sdk"],
 };
 
-/** @type {import('esbuild').BuildOptions[]} */
-const builds = [
-  {
-    ...common,
-    entryPoints: ["src/extension.ts"],
-    outfile: "dist/extension.js",
-    external: ["vscode"],
-  },
-  {
-    ...common,
-    entryPoints: ["src/server/index.ts"],
-    outfile: "dist/server.js",
-    external: ["@anthropic-ai/claude-agent-sdk"],
-  },
-];
-
 if (watch) {
-  Promise.all(builds.map((b) => esbuild.context(b).then((ctx) => ctx.watch()))).then(() =>
-    console.log("Watching for changes..."),
-  );
+  esbuild.context(build).then((ctx) => {
+    ctx.watch();
+    console.log("Watching for changes...");
+  });
 } else {
-  Promise.all(builds.map((b) => esbuild.build(b))).then(() =>
-    console.log("Extension + server built."),
-  );
+  esbuild.build(build).then(() => console.log("Server built."));
 }

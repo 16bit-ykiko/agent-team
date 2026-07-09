@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { splitEvents } from "./events";
-import { StreamEvent } from "./useServer";
+import { splitEvents } from "../src/events";
+import { StreamEvent } from "../src/useServer";
 
 const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent =>
   ({ kind, content: "", ...over }) as StreamEvent;
