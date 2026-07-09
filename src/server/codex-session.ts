@@ -1,7 +1,7 @@
 import { spawn, execSync, ChildProcess } from "child_process";
 import { EventEmitter } from "events";
 import * as readline from "readline";
-import { StreamEvent, UsageStats, SessionConfig, SessionState, shellQuote, getWslBin } from "./session";
+import { StreamEvent, UsageStats, SessionConfig, SessionState } from "./session";
 
 let codexBin: string | null = null;
 function getCodexBin(): string {
@@ -58,6 +58,12 @@ export class CodexSession extends EventEmitter {
       this.usage.duration_ms += Date.now() - startTime;
       this.busy = false;
     }
+  }
+
+  setEffort(level: string): void {
+    // Codex spawns a fresh process per message, so the new level is picked
+    // up by the next buildArgs() call.
+    this.config.effort = level;
   }
 
   abort(): void {
@@ -123,26 +129,14 @@ export class CodexSession extends EventEmitter {
         if (baseUrl) extraEnv["OPENAI_BASE_URL"] = baseUrl;
       }
 
-      if (this.config.distro) {
-        const escaped = args.map(shellQuote).join(" ");
-        const envExports = Object.entries(extraEnv)
-          .map(([k, v]) => `export ${k}=${shellQuote(v)}`)
-          .join(" && ");
-        const prefix = envExports ? `${envExports} && ` : "";
-        const cmd = `${prefix}cd ${shellQuote(this.config.cwd)} && codex ${escaped}`;
-        this.proc = spawn(getWslBin(), ["-d", this.config.distro, "--", "bash", "-ic", cmd], {
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      } else {
-        this.proc = spawn(getCodexBin(), args, {
-          cwd: this.config.cwd,
-          env: {
-            ...process.env,
-            ...extraEnv,
-          },
-          stdio: ["pipe", "pipe", "pipe"],
-        });
-      }
+      this.proc = spawn(getCodexBin(), args, {
+        cwd: this.config.cwd,
+        env: {
+          ...process.env,
+          ...extraEnv,
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
 
       this.proc.stdin!.write(message);
       this.proc.stdin!.end();

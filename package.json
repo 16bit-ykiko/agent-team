@@ -22,9 +22,20 @@
         "command": "agent-team.openExternal",
         "title": "Agent Team: Open in External Browser"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Agent Team",
+      "properties": {
+        "agent-team.port": {
+          "type": "number",
+          "default": 9800,
+          "description": "Port of the Agent Team server"
+        }
+      }
+    }
   },
   "scripts": {
+    "postinstall": "cd webview-ui && npm install",
     "build:ext": "node esbuild.js",
     "build:webview": "cd webview-ui && npm run build",
     "build": "npm run build:webview && npm run build:ext",

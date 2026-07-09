@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { execSync } from "child_process";
+import { supportsAdaptiveThinking } from "./presets";
 import type {
   Query,
   SDKMessage,
@@ -82,7 +82,6 @@ export interface SessionConfig {
   effort?: string;
   permissionMode?: string;
   systemPrompt?: string;
-  distro?: string;
   providerEnv?: Record<string, string>;
 }
 
@@ -176,8 +175,12 @@ export class ClaudeSession extends EventEmitter {
   private processing = false;
   private turnStartTime = 0;
   private stepCounter = 0;
-  private subagentToolMap = new Map<string, string>();
-  private toolNameMap = new Map<string, string>();
+  // Subagent parent-child tracking: SDK only gives us flat task events, so we
+  // reconstruct the hierarchy from tool_use IDs to route nested events correctly.
+  private subagentToolMap = new Map<string, string>(); // toolUseId → taskId
+  private nestedToolUseToParent = new Map<string, string>(); // inner toolUseId → parentTaskId
+  private nestedTaskToParent = new Map<string, string>(); // nested taskId → parentTaskId
+  private taskToToolUse = new Map<string, string>(); // taskId → toolUseId (reverse lookup)
   private agentTaskIds = new Set<string>();
 
   constructor(config: SessionConfig) {
@@ -273,6 +276,35 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
+  private cleanupTask(taskId: string): void {
+    this.agentTaskIds.delete(taskId);
+    this.nestedTaskToParent.delete(taskId);
+    const toolUseId = this.taskToToolUse.get(taskId);
+    if (toolUseId) {
+      this.taskToToolUse.delete(taskId);
+      this.subagentToolMap.delete(toolUseId);
+      this.nestedToolUseToParent.delete(toolUseId);
+    }
+  }
+
+  private clearTrackingState(): void {
+    this.subagentToolMap.clear();
+    this.nestedToolUseToParent.clear();
+    this.nestedTaskToParent.clear();
+    this.taskToToolUse.clear();
+    this.agentTaskIds.clear();
+  }
+
+  private emitNestedEvent(parentTaskId: string, innerEvent: StreamEvent): void {
+    const parentToolUseId = this.taskToToolUse.get(parentTaskId);
+    this.emit("event", {
+      kind: "subagent_progress",
+      content: "",
+      toolUseId: parentToolUseId,
+      subagent: { taskId: parentTaskId, description: "", _innerEvent: innerEvent },
+    } as StreamEvent);
+  }
+
   private handleSDKMessage(msg: SDKMessage): void {
     if ("session_id" in msg && msg.session_id) {
       this.sessionId = msg.session_id;
@@ -310,13 +342,14 @@ export class ClaudeSession extends EventEmitter {
         } else if (sys.subtype === "task_started") {
           const taskId = sys.task_id as string;
           const toolUseId = sys.tool_use_id as string | undefined;
+          const parentTaskId = toolUseId ? this.nestedToolUseToParent.get(toolUseId) : undefined;
           if (toolUseId) {
-            const toolName = this.toolNameMap.get(toolUseId);
-            if (toolName && toolName !== "Agent") break;
             this.subagentToolMap.set(toolUseId, taskId);
+            this.taskToToolUse.set(taskId, toolUseId);
           }
           this.agentTaskIds.add(taskId);
-          this.emit("event", {
+          if (parentTaskId) this.nestedTaskToParent.set(taskId, parentTaskId);
+          const startEvent = {
             kind: "subagent_start",
             content: (sys.description as string) ?? "",
             raw: msg,
@@ -329,16 +362,23 @@ export class ClaudeSession extends EventEmitter {
               status: "running",
               events: [],
             },
-          } as StreamEvent);
+          } as StreamEvent;
+          if (parentTaskId) {
+            this.emitNestedEvent(parentTaskId, startEvent);
+          } else {
+            this.emit("event", startEvent);
+          }
         } else if (sys.subtype === "task_progress") {
-          if (!this.agentTaskIds.has(sys.task_id as string)) break;
-          this.emit("event", {
+          const taskId = sys.task_id as string;
+          if (!this.agentTaskIds.has(taskId)) break;
+          const parentTaskId = this.nestedTaskToParent.get(taskId);
+          const progressEvent = {
             kind: "subagent_progress",
             content: (sys.summary as string) ?? "",
             raw: msg,
             toolUseId: sys.tool_use_id as string | undefined,
             subagent: {
-              taskId: sys.task_id as string,
+              taskId,
               description: (sys.description as string) ?? "",
               agentType: sys.subagent_type as string | undefined,
               status: "running",
@@ -350,16 +390,23 @@ export class ClaudeSession extends EventEmitter {
               } : undefined,
               summary: sys.summary as string | undefined,
             },
-          } as StreamEvent);
+          } as StreamEvent;
+          if (parentTaskId) {
+            this.emitNestedEvent(parentTaskId, progressEvent);
+          } else {
+            this.emit("event", progressEvent);
+          }
         } else if (sys.subtype === "task_notification") {
-          if (!this.agentTaskIds.has(sys.task_id as string)) break;
-          this.emit("event", {
+          const taskId = sys.task_id as string;
+          if (!this.agentTaskIds.has(taskId)) break;
+          const parentTaskId = this.nestedTaskToParent.get(taskId);
+          const doneEvent = {
             kind: "subagent_done",
             content: (sys.summary as string) ?? "",
             raw: msg,
             toolUseId: sys.tool_use_id as string | undefined,
             subagent: {
-              taskId: sys.task_id as string,
+              taskId,
               description: "",
               status: sys.status as SubAgentInfo["status"],
               usage: sys.usage ? {
@@ -369,6 +416,25 @@ export class ClaudeSession extends EventEmitter {
               } : undefined,
               summary: sys.summary as string | undefined,
             },
+          } as StreamEvent;
+          if (parentTaskId) {
+            this.emitNestedEvent(parentTaskId, doneEvent);
+          } else {
+            this.emit("event", doneEvent);
+          }
+          this.cleanupTask(taskId);
+        } else if (sys.subtype === "model_refusal_fallback") {
+          const from = sys.original_model as string ?? "unknown";
+          const to = sys.fallback_model as string ?? "unknown";
+          this.emit("event", {
+            kind: "error",
+            content: `Model refused and fell back: ${from} → ${to}`,
+          } as StreamEvent);
+        } else if (sys.subtype === "model_refusal_no_fallback") {
+          const category = sys.category as string ?? "";
+          this.emit("event", {
+            kind: "error",
+            content: `Model refused${category ? ` (${category})` : ""} — no fallback configured`,
           } as StreamEvent);
         } else if (sys.subtype === "compact_boundary") {
           const meta = sys.compact_metadata as Record<string, unknown> | undefined;
@@ -409,7 +475,11 @@ export class ClaudeSession extends EventEmitter {
           const text = (b.text as string)?.trim();
           if (text) ev = { kind: "text", content: text } as StreamEvent;
         } else if (blockType === "tool_use") {
-          ev = { kind: "tool_use", content: formatToolUse(b), toolUseId: b.id as string, toolInput: extractToolInput(b) } as StreamEvent;
+          const innerToolId = b.id as string;
+          // Mark this tool_use as belonging to a subagent so task_started
+          // for it gets routed as a nested event, not a top-level subagent.
+          this.nestedToolUseToParent.set(innerToolId, taskId);
+          ev = { kind: "tool_use", content: formatToolUse(b), toolUseId: innerToolId, toolInput: extractToolInput(b) } as StreamEvent;
         } else if (blockType === "tool_result") {
           const rc = b.content as string;
           if (rc) ev = { kind: "tool_result", content: rc } as StreamEvent;
@@ -445,8 +515,6 @@ export class ClaudeSession extends EventEmitter {
         }
       } else if (blockType === "tool_use") {
         const toolId = b.id as string;
-        const toolName = b.name as string;
-        if (toolId && toolName) this.toolNameMap.set(toolId, toolName);
         const toolInput = extractToolInput(b);
         this.emit("event", {
           kind: "tool_use",
@@ -593,6 +661,16 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
+  setEffort(level: string): void {
+    this.config.effort = level;
+    // Effort is passed as a CLI flag when the query starts, so close the
+    // current query; the next send() restarts it with the new level and
+    // resumes the conversation by session ID.
+    if (this.queryInstance) {
+      this.abort();
+    }
+  }
+
   abort(): void {
     if (this.abortController) {
       this.abortController.abort();
@@ -607,6 +685,7 @@ export class ClaudeSession extends EventEmitter {
     }
     this.iterating = false;
     this.processing = false;
+    this.clearTrackingState();
   }
 
   getState(): SessionState {
@@ -640,6 +719,9 @@ export class ClaudeSession extends EventEmitter {
       forwardSubagentText: true,
       settingSources: ["user", "project", "local"],
       disallowedTools: DISALLOWED_TOOLS,
+      // Disable implicit model fallback — if the model is overloaded, fail
+      // rather than silently downgrading. Fallback events are surfaced as errors.
+      fallbackModel: [],
     };
 
     if (this.sessionId) {
@@ -647,6 +729,12 @@ export class ClaudeSession extends EventEmitter {
     }
     if (this.config.model) {
       opts.model = this.config.model;
+      // Fable 5 / Opus 4.7+ omit thinking text by default, so a long think
+      // (minutes at high effort) looks like a hang. Request summarized
+      // thinking so the UI can stream reasoning progress.
+      if (supportsAdaptiveThinking(this.config.model)) {
+        opts.thinking = { type: "adaptive", display: "summarized" };
+      }
     }
     if (this.config.effort) {
       opts.effort = this.config.effort as EffortLevel;
@@ -663,29 +751,6 @@ export class ClaudeSession extends EventEmitter {
 
     return opts;
   }
-}
-
-export function shellQuote(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'";
-}
-
-let wslBin: string | null = null;
-export function getWslBin(): string {
-  if (wslBin) return wslBin;
-  try {
-    wslBin = execSync("which wsl.exe", { encoding: "utf-8" }).trim();
-  } catch {
-    const candidates = ["/mnt/c/Windows/System32/wsl.exe", "/mnt/c/WINDOWS/system32/wsl.exe"];
-    wslBin =
-      candidates.find((c) => {
-        try {
-          return require("fs").existsSync(c);
-        } catch {
-          return false;
-        }
-      }) ?? "wsl.exe";
-  }
-  return wslBin;
 }
 
 function extractToolInput(block: Record<string, unknown>): ToolInput | undefined {

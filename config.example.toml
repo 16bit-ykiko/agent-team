@@ -1,0 +1,54 @@
+# Agent Team Configuration
+# Copy this file to config.toml and fill in your values:
+#   cp config.example.toml config.toml
+
+# Server settings
+[server]
+# URL for remote image/file uploads (optional)
+# remote_uploads_url = "http://your-server/uploads"
+
+# Authentication (optional — remove this section to disable auth)
+[auth]
+username = "agent"
+# Plain-text password checked against the form input.
+# For production, consider hashing; the server compares raw values.
+password = "changeme"
+# Random hex string used to sign session cookies. Generate with:
+#   openssl rand -hex 32
+session_secret = "generate-a-random-hex-string"
+max_age_days = 30
+
+# Hosts — currently only "local" type is supported
+[hosts.local]
+label = "Local"
+type = "local"
+
+# Projects — map project names to local paths
+# Each key under a project is a host ID (e.g. "local").
+# [projects.my-project]
+# local = "/path/to/your/project"
+
+# External LLM providers (optional)
+# The provider name must be a prefix of the model ID you want to route.
+# [providers.deepseek]
+# api_key = "your-api-key"
+# base_url = "https://api.deepseek.com/anthropic"
+
+# Agent presets — define default agent configurations
+[agents.planner]
+backend = "claude"
+model = "claude-opus-4-6"
+effort = "max"
+permission_mode = "bypassPermissions"
+
+[agents.coder]
+backend = "claude"
+model = "claude-sonnet-4-6"
+effort = "high"
+permission_mode = "bypassPermissions"
+
+[agents.reviewer]
+backend = "claude"
+model = "claude-opus-4-6"
+effort = "max"
+permission_mode = "bypassPermissions"

@@ -23,7 +23,6 @@ export interface AuthConfig {
 export interface HostConfig {
   label: string;
   type: "local";
-  distro?: string;
 }
 
 export interface ProviderConfig {
@@ -41,7 +40,13 @@ export interface AppConfig {
 }
 
 export function loadConfig(baseDir: string): AppConfig {
-  const raw = fs.readFileSync(path.join(baseDir, "config.toml"), "utf-8");
+  const configPath = path.join(baseDir, "config.toml");
+  if (!fs.existsSync(configPath)) {
+    throw new Error(
+      `Config file not found: ${configPath}\nCopy config.example.toml to config.toml to get started.`,
+    );
+  }
+  const raw = fs.readFileSync(configPath, "utf-8");
   const parsed = TOML.parse(raw) as Record<string, unknown>;
 
   const projects: Record<string, Record<string, string>> = {};
@@ -90,7 +95,6 @@ export function loadConfig(baseDir: string): AppConfig {
         hosts[id] = {
           label: c.label ?? id,
           type: "local",
-          distro: c.distro || undefined,
         };
       }
     }

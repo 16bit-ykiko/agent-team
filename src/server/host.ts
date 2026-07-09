@@ -8,6 +8,7 @@ export interface HostSessionHandle extends EventEmitter {
   readonly isRunning: boolean;
   send(message: string): Promise<void>;
   abort(): void;
+  setEffort?(level: string): void;
   getState(): SessionState;
   getContextUsage?(): Promise<Record<string, unknown> | null>;
   getUsageInfo?(): Promise<Record<string, unknown> | null>;
@@ -25,7 +26,6 @@ export interface Host {
   readonly label: string;
   readonly type: "local" | "remote";
   readonly connected: boolean;
-  readonly distro?: string;
   getInfo(): HostInfo;
   createSession(agentId: string, config: SessionConfig): HostSessionHandle;
   destroySession(agentId: string): void;
@@ -37,13 +37,11 @@ export class LocalHost implements Host {
   readonly label: string;
   readonly type = "local" as const;
   readonly connected = true;
-  readonly distro?: string;
   private sessions = new Map<string, ClaudeSession | CodexSession>();
 
-  constructor(id: string, label: string, distro?: string) {
+  constructor(id: string, label: string) {
     this.id = id;
     this.label = label;
-    this.distro = distro;
   }
 
   getInfo(): HostInfo {
@@ -51,11 +49,10 @@ export class LocalHost implements Host {
   }
 
   createSession(agentId: string, config: SessionConfig): HostSessionHandle {
-    const fullConfig = { ...config, distro: this.distro };
     const session =
-      fullConfig.backend === "codex"
-        ? new CodexSession(fullConfig)
-        : new ClaudeSession(fullConfig);
+      config.backend === "codex"
+        ? new CodexSession(config)
+        : new ClaudeSession(config);
     this.sessions.set(agentId, session);
     return session;
   }
@@ -69,14 +66,10 @@ export class LocalHost implements Host {
   }
 
   restoreSession(agentId: string, state: SessionState): HostSessionHandle {
-    const restoredState = {
-      ...state,
-      config: { ...state.config, distro: this.distro },
-    };
     const session =
       state.config.backend === "codex"
-        ? CodexSession.fromState(restoredState)
-        : ClaudeSession.fromState(restoredState);
+        ? CodexSession.fromState(state)
+        : ClaudeSession.fromState(state);
     this.sessions.set(agentId, session);
     return session;
   }

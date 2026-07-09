@@ -1,13 +1,12 @@
-import { execSync, exec } from "child_process";
+import { execSync } from "child_process";
 import {
   SessionConfig,
   StreamEvent,
   SessionState,
   CommandInfo,
-  shellQuote,
-  getWslBin,
 } from "./session";
 import { HostSessionHandle, HostRegistry } from "./host";
+import { effortLevelsForModel } from "./presets";
 
 export type MessageStatus = "streaming" | "done" | "error";
 export type MessageKind = "user" | "agent" | "system";
@@ -161,10 +160,92 @@ export class Workspace {
     return entry.currentMsg;
   }
 
+  // Process subagent progress/done on a specific message (may differ from currentMsg
+  // when events arrive after the originating message was finalized by a result event).
+  private handleSubagentOnMsg(msg: Message, event: StreamEvent): void {
+    if (!msg.events) msg.events = [];
+    const taskId = event.subagent?.taskId;
+
+    if (event.kind === "subagent_progress") {
+      const innerEvent = event.subagent?._innerEvent;
+      const startIdx = msg.events.findIndex(
+        (e) => e.kind === "subagent_start" && e.subagent?.taskId === taskId,
+      );
+
+      if (innerEvent && startIdx >= 0) {
+        const saEvents = msg.events[startIdx].subagent!.events ??= [];
+        if (innerEvent.kind === "tool_result" && innerEvent.toolUseId) {
+          const i = saEvents.findIndex((e) => e.kind === "tool_use" && e.toolUseId === innerEvent.toolUseId);
+          if (i >= 0) { saEvents[i].toolResult = innerEvent.content; this.cb?.onStreamEvent(this.id, msg, event); return; }
+        }
+        if (innerEvent.kind === "subagent_progress" && innerEvent.subagent?.taskId) {
+          const i = saEvents.findIndex((e) => e.kind === "subagent_progress" && e.subagent?.taskId === innerEvent.subagent?.taskId);
+          if (i >= 0) { saEvents[i] = innerEvent; this.cb?.onStreamEvent(this.id, msg, event); return; }
+        }
+        if (innerEvent.kind === "subagent_done" && innerEvent.subagent?.taskId) {
+          const nid = innerEvent.subagent.taskId;
+          const pi = saEvents.findIndex((e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid);
+          if (pi >= 0) saEvents.splice(pi, 1);
+          const si = saEvents.findIndex((e) => e.kind === "subagent_start" && e.subagent?.taskId === nid);
+          if (si >= 0) { saEvents[si].subagent!.status = innerEvent.subagent.status; saEvents[si].subagent!.summary = innerEvent.subagent.summary; saEvents[si].subagent!.usage = innerEvent.subagent.usage; }
+        }
+        saEvents.push(innerEvent);
+        this.cb?.onStreamEvent(this.id, msg, event);
+        return;
+      }
+      delete event.subagent?._innerEvent;
+
+      if (startIdx >= 0) event.contentOffset = msg.events[startIdx].contentOffset;
+      const prev = msg.events.findIndex((e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId);
+      if (prev >= 0) msg.events[prev] = event;
+      else msg.events.push(event);
+    } else if (event.kind === "subagent_done") {
+      const startIdx = msg.events.findIndex(
+        (e) => e.kind === "subagent_start" && e.subagent?.taskId === taskId,
+      );
+      if (startIdx >= 0) {
+        event.contentOffset = msg.events[startIdx].contentOffset;
+        msg.events[startIdx].subagent!.status = event.subagent?.status;
+        msg.events[startIdx].subagent!.summary = event.subagent?.summary;
+        msg.events[startIdx].subagent!.usage = event.subagent?.usage;
+      }
+      const progIdx = msg.events.findIndex((e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId);
+      if (progIdx >= 0) msg.events.splice(progIdx, 1);
+      msg.events.push(event);
+    }
+    this.cb?.onStreamEvent(this.id, msg, event);
+  }
+
+  // Subagent events can arrive after the message containing subagent_start is
+  // finalized. Search backwards to find the message that owns this subagent.
+  private findSubagentOwner(taskId: string): Message | null {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i];
+      if (m.events?.some((e) => e.kind === "subagent_start" && e.subagent?.taskId === taskId)) {
+        return m;
+      }
+    }
+    return null;
+  }
+
   private createEventHandler(agentId: string): (event: StreamEvent) => void {
     return (event: StreamEvent) => {
       const entry = this.agents.get(agentId);
       if (!entry) return;
+
+      // Route subagent events to the message containing their subagent_start,
+      // even if that message was already finalized. This prevents orphaned
+      // subagent entries from appearing in a new message bubble.
+      if (event.kind === "subagent_progress" || event.kind === "subagent_done") {
+        const taskId = event.subagent?.taskId;
+        if (taskId) {
+          const ownerMsg = this.findSubagentOwner(taskId);
+          if (ownerMsg && ownerMsg !== entry.currentMsg) {
+            this.handleSubagentOnMsg(ownerMsg, event);
+            return;
+          }
+        }
+      }
 
       if (!entry.currentMsg && event.kind !== "result" && event.kind !== "error" && event.kind !== "compact") {
         this.cb?.onAgentBusy?.(this.id, agentId);
@@ -205,68 +286,9 @@ export class Workspace {
         this.cb?.onMessageDone(this.id, msg.id, "error", msg.content, msg.events);
         entry.currentMsg = null;
         this.cb?.onAgentIdle?.(this.id, agentId);
-      } else if (event.kind === "subagent_progress") {
+      } else if (event.kind === "subagent_progress" || event.kind === "subagent_done") {
         const msg = this.ensureAgentMsg(entry);
-        const taskId = event.subagent?.taskId;
-        const innerEvent = event.subagent?._innerEvent;
-
-        const startIdx = msg.events!.findIndex(
-          (e) => e.kind === "subagent_start" && e.subagent?.taskId === taskId,
-        );
-
-        if (innerEvent && startIdx >= 0) {
-          const startEvt = msg.events![startIdx];
-          if (!startEvt.subagent!.events) startEvt.subagent!.events = [];
-          if (innerEvent.kind === "tool_result" && innerEvent.toolUseId) {
-            const matchIdx = startEvt.subagent!.events.findIndex(
-              (e) => e.kind === "tool_use" && e.toolUseId === innerEvent.toolUseId,
-            );
-            if (matchIdx >= 0) {
-              startEvt.subagent!.events[matchIdx].toolResult = innerEvent.content;
-              this.cb?.onStreamEvent(this.id, msg, event);
-              return;
-            }
-          }
-          startEvt.subagent!.events.push(innerEvent);
-          this.cb?.onStreamEvent(this.id, msg, event);
-          return;
-        }
-        delete event.subagent?._innerEvent;
-
-        if (startIdx >= 0) {
-          event.contentOffset = msg.events![startIdx].contentOffset;
-        } else {
-          event.contentOffset = msg.content.length;
-        }
-        const prevProgress = msg.events!.findIndex(
-          (e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId,
-        );
-        if (prevProgress >= 0) {
-          msg.events![prevProgress] = event;
-        } else {
-          msg.events!.push(event);
-        }
-        this.cb?.onStreamEvent(this.id, msg, event);
-      } else if (event.kind === "subagent_done") {
-        const msg = this.ensureAgentMsg(entry);
-        const taskId = event.subagent?.taskId;
-        const startIdx = msg.events!.findIndex(
-          (e) => e.kind === "subagent_start" && e.subagent?.taskId === taskId,
-        );
-        if (startIdx >= 0) {
-          event.contentOffset = msg.events![startIdx].contentOffset;
-          msg.events![startIdx].subagent!.status = event.subagent?.status;
-          msg.events![startIdx].subagent!.summary = event.subagent?.summary;
-          msg.events![startIdx].subagent!.usage = event.subagent?.usage;
-        } else {
-          event.contentOffset = msg.content.length;
-        }
-        const progressIdx = msg.events!.findIndex(
-          (e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId,
-        );
-        if (progressIdx >= 0) msg.events!.splice(progressIdx, 1);
-        msg.events!.push(event);
-        this.cb?.onStreamEvent(this.id, msg, event);
+        this.handleSubagentOnMsg(msg, event);
       } else if (event.kind === "tool_result" && event.toolUseId) {
         const msg = this.ensureAgentMsg(entry);
         const matchIdx = msg.events!.findIndex(
@@ -374,7 +396,45 @@ export class Workspace {
       if (!data) return "No active session — send a message first to start a session.";
       return formatContextUsage(data);
     }
+    if (text === "/effort" || text.startsWith("/effort ")) {
+      return this.handleEffortCommand(text.slice("/effort".length).trim(), agent);
+    }
     return null;
+  }
+
+  private handleEffortCommand(arg: string, agent: AgentEntry): string {
+    const model = agent.info.model;
+    const levels = effortLevelsForModel(model);
+    if (levels.length === 0) {
+      return `**${agent.info.name}** (${model}) does not support effort levels.`;
+    }
+
+    const current = agent.session.getState().config.effort;
+    const levelList = levels.map((l) => (l === current ? `**${l}**` : `\`${l}\``)).join(" · ");
+
+    if (!arg) {
+      return [
+        `**${agent.info.name}** (${model})`,
+        `Effort: ${current ?? "*(default)*"}`,
+        `Available: ${levelList}`,
+        "",
+        "Use `/effort <level>` to change it.",
+      ].join("\n");
+    }
+
+    const level = arg.toLowerCase();
+    if (!levels.includes(level)) {
+      return `Invalid effort level \`${arg}\` for ${model}. Available: ${levelList}`;
+    }
+    if (level === current) {
+      return `Effort for **${agent.info.name}** is already **${level}**.`;
+    }
+    if (!agent.session.setEffort) {
+      return `**${agent.info.name}** does not support changing the effort level.`;
+    }
+
+    agent.session.setEffort(level);
+    return `Effort for **${agent.info.name}** set to **${level}**${current ? ` (was ${current})` : ""}. Applies from the next message.`;
   }
 
   async sendMessage(
@@ -570,43 +630,11 @@ export class Workspace {
     return true;
   }
 
-  private getHostDistro(): string | undefined {
-    return this.hostRegistry.get(this.hostId)?.distro;
-  }
-
-  private wslExec(cmd: string): string {
-    const distro = this.getHostDistro();
-    if (distro) {
-      const inner = `cd ${shellQuote(this.cwd)} && ${cmd}`;
-      return execSync(`${getWslBin()} -d ${distro} -- bash -ic ${shellQuote(inner)} 2>/dev/null`, {
-        encoding: "utf-8",
-        timeout: 10000,
-      }).trim();
-    }
-    return execSync(cmd, { cwd: this.cwd, encoding: "utf-8", timeout: 5000 }).trim();
-  }
-
-  private wslExecAsync(cmd: string): Promise<string | null> {
-    const distro = this.getHostDistro();
-    if (distro) {
-      const inner = `cd ${shellQuote(this.cwd)} && ${cmd}`;
-      const fullCmd = `${getWslBin()} -d ${distro} -- bash -ic ${shellQuote(inner)} 2>/dev/null`;
-      return new Promise((resolve) => {
-        exec(fullCmd, { encoding: "utf-8", timeout: 15000 }, (err, stdout) => {
-          resolve(err ? null : stdout.trim() || null);
-        });
-      });
-    }
-    return new Promise((resolve) => {
-      exec(cmd, { cwd: this.cwd, encoding: "utf-8", timeout: 10000 }, (err, stdout) => {
-        resolve(err ? null : stdout.trim() || null);
-      });
-    });
-  }
-
   getGitBranch(): string | null {
     try {
-      return this.wslExec("git rev-parse --abbrev-ref HEAD");
+      return execSync("git rev-parse --abbrev-ref HEAD", {
+        cwd: this.cwd, encoding: "utf-8", timeout: 5000,
+      }).trim();
     } catch {
       return null;
     }
@@ -614,7 +642,14 @@ export class Workspace {
 
   getPrInfo(branch: string | null): Promise<{ url: string; title: string } | null> {
     if (!branch || branch === "main" || branch === "master") return Promise.resolve(null);
-    return this.wslExecAsync(`gh pr view ${shellQuote(branch)} --json url,title 2>/dev/null`).then(
+    // Use execFile to avoid shell injection — branch names go as direct args.
+    const { execFile } = require("child_process");
+    return new Promise<string | null>((resolve) => {
+      execFile("gh", ["pr", "view", branch, "--json", "url,title"],
+        { cwd: this.cwd, encoding: "utf-8", timeout: 10000 },
+        (err: Error | null, stdout: string) => resolve(err ? null : stdout.trim() || null),
+      );
+    }).then(
       (stdout) => {
         if (!stdout) return null;
         try {
@@ -808,6 +843,6 @@ function formatContextUsage(data: Record<string, unknown>): string {
 }
 
 function renderBar(pct: number): string {
-  const filled = Math.round(pct / 5);
+  const filled = Math.max(0, Math.min(20, Math.round(pct / 5)));
   return "█".repeat(filled) + "░".repeat(20 - filled);
 }

@@ -4,16 +4,30 @@ import * as crypto from "crypto";
 import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
-import { exec, execSync, spawn } from "child_process";
+import { execSync, spawn } from "child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { Workspace, WorkspaceCallbacks } from "./task";
 import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } from "./state";
-import { loadConfig, AppConfig, AuthConfig } from "./config";
+import { loadConfig, AppConfig } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
-import { CommandInfo } from "./session";
+import { CommandInfo, StreamEvent } from "./session";
 import { HostRegistry, LocalHost } from "./host";
-import { getWslBin, StreamEvent } from "./session";
 import type { Message } from "./task";
+
+// Commands handled by this server (Workspace.tryHandleCommand) rather than
+// forwarded to the agent. Merged into the SDK command list for autocomplete.
+const LOCAL_COMMANDS: CommandInfo[] = [
+  {
+    name: "effort",
+    description: "Show or set the model reasoning effort level",
+    argumentHint: "[low|medium|high|xhigh|max]",
+  },
+];
+
+function mergeLocalCommands(commands: CommandInfo[]): CommandInfo[] {
+  const names = new Set(commands.map((c) => c.name));
+  return [...LOCAL_COMMANDS.filter((c) => !names.has(c.name)), ...commands];
+}
 
 function stripEventsInnerEvents(events: StreamEvent[]): StreamEvent[] {
   return events.map((e) => {
@@ -74,10 +88,7 @@ export class Server {
   private branchCache = new Map<string, string | null>();
   private prevCpuIdle = 0;
   private prevCpuTotal = 0;
-  private readonly isWSL: boolean;
-  private windowsHost: { memTotal: number; memFree: number; osName: string } | null = null;
-  private windowsHostUpdating = false;
-  private commands: CommandInfo[] = [];
+  private commands: CommandInfo[] = mergeLocalCommands([]);
   private persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private uploadsDir: string;
   private hostRegistry: HostRegistry;
@@ -91,7 +102,6 @@ export class Server {
     if (!fs.existsSync(this.uploadsDir)) fs.mkdirSync(this.uploadsDir, { recursive: true });
     this.config = loadConfig(baseDir);
     this.hostRegistry = this.initHosts();
-    this.isWSL = this.detectWSL();
 
     this.httpServer = http.createServer((req, res) => this.handleHttp(req, res));
     this.wss = new WebSocketServer({
@@ -102,7 +112,6 @@ export class Server {
 
     this.restoreState();
     this.initCpuBaseline();
-    if (this.isWSL) this.refreshWindowsHost();
     this.statusTimer = setInterval(() => this.broadcastSystemStatus(), 3000);
     this.branchTimer = setInterval(() => this.pollBranches(), 5000);
     this.refreshQuota();
@@ -110,7 +119,6 @@ export class Server {
 
     this.httpServer.listen(port, "0.0.0.0", () => {
       console.log(`Agent Team server listening on http://0.0.0.0:${port}`);
-      if (this.isWSL) console.log("WSL detected — reporting Windows host memory");
     });
   }
 
@@ -138,7 +146,10 @@ export class Server {
     const expires = parseInt(expiresStr);
     if (isNaN(expires) || Date.now() > expires) return false;
     const expected = this.signToken(`${user}:${expiresStr}`);
-    return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+    const sigBuf = Buffer.from(sig);
+    const expectedBuf = Buffer.from(expected);
+    if (sigBuf.length !== expectedBuf.length) return false;
+    return crypto.timingSafeEqual(sigBuf, expectedBuf);
   }
 
   private parseCookies(header: string | undefined): Record<string, string> {
@@ -168,7 +179,12 @@ export class Server {
 
     if (req.method === "POST") {
       const chunks: Buffer[] = [];
-      req.on("data", (c: Buffer) => chunks.push(c));
+      let size = 0;
+      req.on("data", (c: Buffer) => {
+        size += c.length;
+        if (size > 8192) { res.statusCode = 413; res.end(); req.destroy(); return; }
+        chunks.push(c);
+      });
       req.on("end", () => {
         const body = Buffer.concat(chunks).toString();
         const params = new URLSearchParams(body);
@@ -200,78 +216,28 @@ export class Server {
     res.end();
   }
 
-  private detectWSL(): boolean {
-    try {
-      return /microsoft|wsl/i.test(fs.readFileSync("/proc/version", "utf-8"));
-    } catch {
-      return false;
-    }
-  }
-
   private initHosts(): HostRegistry {
     const registry = new HostRegistry();
     for (const [id, cfg] of Object.entries(this.config.hosts)) {
-      registry.register(new LocalHost(id, cfg.label, cfg.distro));
+      registry.register(new LocalHost(id, cfg.label));
     }
     console.log(
       `Hosts: ${registry
         .getAll()
-        .map((h) => `${h.id} (${h.type}${h.distro ? `, distro=${h.distro}` : ""})`)
+        .map((h) => `${h.id} (${h.type})`)
         .join(", ")}`,
     );
     return registry;
   }
 
-  private refreshWindowsHost(): void {
-    if (this.windowsHostUpdating) return;
-    this.windowsHostUpdating = true;
-    exec(
-      "wmic.exe OS get Caption,FreePhysicalMemory,TotalVisibleMemorySize /value",
-      { encoding: "utf-8", timeout: 8000 },
-      (err, stdout) => {
-        this.windowsHostUpdating = false;
-        if (err || !stdout) return;
-        const totalKB = parseInt(stdout.match(/TotalVisibleMemorySize=(\d+)/)?.[1] ?? "0");
-        const freeKB = parseInt(stdout.match(/FreePhysicalMemory=(\d+)/)?.[1] ?? "0");
-        const caption = stdout.match(/Caption=(.+)/)?.[1]?.trim() ?? "Windows";
-        if (totalKB > 0) {
-          this.windowsHost = { memTotal: totalKB * 1024, memFree: freeKB * 1024, osName: caption };
-        }
-      },
-    );
-  }
-
   private refreshQuota(): void {
-    const sources: { label: string; token: string }[] = [];
-    const seen = new Set<string>();
-
-    const localCredPath = path.join(os.homedir(), ".claude", ".credentials.json");
+    const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
+    let token: string | undefined;
     try {
-      const creds = JSON.parse(fs.readFileSync(localCredPath, "utf-8"));
-      const token = creds?.claudeAiOauth?.accessToken;
-      if (token) {
-        sources.push({ label: "local", token });
-        seen.add(token);
-      }
+      const creds = JSON.parse(fs.readFileSync(credPath, "utf-8"));
+      token = creds?.claudeAiOauth?.accessToken;
     } catch {}
-
-    for (const host of this.hostRegistry.getAll()) {
-      if (!host.distro) continue;
-      try {
-        const out = execSync(
-          `${getWslBin()} -d ${host.distro} -- cat /home/ykiko/.claude/.credentials.json 2>/dev/null`,
-          { encoding: "utf-8", timeout: 5000 },
-        );
-        const creds = JSON.parse(out);
-        const token = creds?.claudeAiOauth?.accessToken;
-        if (token && !seen.has(token)) {
-          sources.push({ label: host.distro, token });
-          seen.add(token);
-        }
-      } catch {}
-    }
-
-    if (sources.length === 0) return;
+    if (!token) return;
 
     const body = JSON.stringify({
       model: "claude-haiku-4-5-20251001",
@@ -279,22 +245,9 @@ export class Server {
       messages: [{ role: "user", content: "hi" }],
     });
 
-    const pending = sources.length;
-    const results: QuotaEntry[] = [];
-    let done = 0;
-
-    for (const src of sources) {
-      this.fetchQuotaForToken(src.token, body, (entry) => {
-        if (entry) {
-          entry.label = src.label;
-          results.push(entry);
-        }
-        done++;
-        if (done === pending) {
-          this.quotaEntries = results;
-        }
-      });
-    }
+    this.fetchQuotaForToken(token, body, (entry) => {
+      this.quotaEntries = entry ? [{ ...entry, label: "local" }] : [];
+    });
   }
 
   private fetchQuotaForToken(
@@ -406,12 +359,9 @@ export class Server {
     this.prevCpuIdle = idle;
     this.prevCpuTotal = total;
 
-    const wh = this.windowsHost;
-    const memTotal = wh ? wh.memTotal : os.totalmem();
-    const memUsed = wh ? wh.memTotal - wh.memFree : os.totalmem() - os.freemem();
-    const osName = wh ? wh.osName : `${os.type()} ${os.release()}`;
-
-    if (this.isWSL) this.refreshWindowsHost();
+    const memTotal = os.totalmem();
+    const memUsed = os.totalmem() - os.freemem();
+    const osName = `${os.type()} ${os.release()}`;
 
     return {
       type: "system_status",
@@ -452,8 +402,14 @@ export class Server {
       }
 
       if (req.method === "POST" && pathname === "/upload") {
+        const MAX_UPLOAD = 50 * 1024 * 1024;
         const chunks: Buffer[] = [];
-        req.on("data", (chunk: Buffer) => chunks.push(chunk));
+        let size = 0;
+        req.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > MAX_UPLOAD) { res.statusCode = 413; res.end(); req.destroy(); return; }
+          chunks.push(chunk);
+        });
         req.on("end", () => {
           const buffer = Buffer.concat(chunks);
           const rawName = (req.headers["x-filename"] as string) || "image.jpg";
@@ -895,11 +851,11 @@ export class Server {
   }
 
   private openDiff(filePath: string, oldString: string, newString: string): void {
-    const ext = path.extname(filePath);
-    const baseName = path.basename(filePath, ext);
+    const ext = path.extname(path.basename(filePath));
+    const rand = Math.random().toString(36).slice(2, 8);
     const tmpDir = os.tmpdir();
-    const oldFile = path.join(tmpDir, `${baseName}.old${ext}`);
-    const newFile = path.join(tmpDir, `${baseName}.new${ext}`);
+    const oldFile = path.join(tmpDir, `diff-${rand}.old${ext}`);
+    const newFile = path.join(tmpDir, `diff-${rand}.new${ext}`);
     fs.writeFileSync(oldFile, oldString);
     fs.writeFileSync(newFile, newString);
     try {
@@ -1013,8 +969,8 @@ systemctl --user restart agent-team-server
         this.broadcastUI({ type: "agent_idle", workspaceId: wsId, agentId });
       },
       onCommandsChanged: (_wsId, commands) => {
-        this.commands = commands;
-        this.broadcastUI({ type: "commands_update", commands });
+        this.commands = mergeLocalCommands(commands);
+        this.broadcastUI({ type: "commands_update", commands: this.commands });
       },
     };
   }

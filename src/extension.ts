@@ -1,8 +1,11 @@
 import * as vscode from "vscode";
 import WebSocket from "ws";
 
-const SERVER_URL = "ws://localhost:9800";
 const RECONNECT_DELAY_MS = 3000;
+
+function getPort(): number {
+  return vscode.workspace.getConfiguration("agent-team").get<number>("port", 9800);
+}
 
 let ws: WebSocket | null = null;
 let reconnectTimer: NodeJS.Timeout | undefined;
@@ -17,10 +20,11 @@ interface HostActionMessage {
 function connect(output: vscode.OutputChannel) {
   if (disposed) return;
 
-  ws = new WebSocket(SERVER_URL);
+  const serverUrl = `ws://localhost:${getPort()}`;
+  ws = new WebSocket(serverUrl);
 
   ws.on("open", () => {
-    output.appendLine(`[host] connected to ${SERVER_URL}`);
+    output.appendLine(`[host] connected to ${serverUrl}`);
     ws?.send(JSON.stringify({ type: "register_host" }));
   });
 
@@ -94,10 +98,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("agent-team.open", async () => {
-      await vscode.commands.executeCommand("simpleBrowser.show", "http://localhost:9800");
+      await vscode.commands.executeCommand("simpleBrowser.show", `http://localhost:${getPort()}`);
     }),
     vscode.commands.registerCommand("agent-team.openExternal", () => {
-      vscode.env.openExternal(vscode.Uri.parse("http://localhost:9800"));
+      vscode.env.openExternal(vscode.Uri.parse(`http://localhost:${getPort()}`));
     }),
   );
 }

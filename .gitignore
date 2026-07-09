@@ -1,5 +1,5 @@
-# Secrets
-.env
+# Local config (copy from config.example.toml)
+config.toml
 
 # Runtime data
 .agent-team/
