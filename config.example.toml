@@ -23,11 +23,6 @@ max_age_days = 30
 label = "Local"
 type = "local"
 
-# Projects — map project names to local paths
-# Each key under a project is a host ID (e.g. "local").
-# [projects.my-project]
-# local = "/path/to/your/project"
-
 # External LLM providers (optional)
 # The provider name must be a prefix of the model ID you want to route.
 # [providers.deepseek]

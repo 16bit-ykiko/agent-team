@@ -182,8 +182,3 @@ export const MOCK_MODELS: ModelOption[] = [
   { id: "claude-opus-4-6", label: "Opus 4.6", backend: "claude" },
   { id: "gpt-5.5", label: "GPT-5.5", backend: "codex" },
 ];
-
-export const MOCK_PROJECTS: Record<string, Record<string, string>> = {
-  "my-project": { local: "/home/user/projects/my-project" },
-  "api-server": { local: "/home/user/projects/api-server" },
-};

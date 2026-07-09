@@ -11,6 +11,9 @@ import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } fr
 import { loadConfig, AppConfig } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
 import { CommandInfo, StreamEvent } from "./session";
+import { gitBranch, getPrInfo } from "./git";
+import { completeDirs, resolveWorkspacePath } from "./dirs";
+import { searchMessages } from "./search";
 import { HostRegistry, LocalHost } from "./host";
 import type { Message } from "./task";
 
@@ -112,7 +115,8 @@ export class Server {
     this.restoreState();
     this.initCpuBaseline();
     this.statusTimer = setInterval(() => this.broadcastSystemStatus(), 3000);
-    this.branchTimer = setInterval(() => this.pollBranches(), 5000);
+    this.branchTimer = setInterval(() => this.scanBranches(), 2000);
+    this.scanBranches();
     this.refreshQuota();
     this.quotaTimer = setInterval(() => this.refreshQuota(), 60000);
 
@@ -508,7 +512,6 @@ export class Server {
       type: "init",
       workspaces: [...this.workspaces.values()].map((w) => w.getInfo(false)),
       config: {
-        projects: this.config.projects,
         presets: AGENT_PRESETS,
         models: MODEL_OPTIONS,
         commands: this.commands,
@@ -559,11 +562,33 @@ export class Server {
         this.createWorkspace(
           ws,
           msg.name as string,
-          msg.project as string,
+          msg.path as string,
           msg.hostId as string | undefined,
-          msg.customPath as string | undefined,
         );
         return;
+
+      case "list_dirs":
+        this.sendJson(ws, {
+          type: "dirs",
+          prefix: msg.prefix,
+          dirs: completeDirs((msg.prefix as string) ?? ""),
+        });
+        return;
+
+      case "search": {
+        const query = (msg.query as string) ?? "";
+        const sources = [...this.workspaces.values()].map((w) => ({
+          id: w.id,
+          name: w.name,
+          messages: w.messages,
+        }));
+        this.sendJson(ws, {
+          type: "search_results",
+          query,
+          hits: searchMessages(sources, query),
+        });
+        return;
+      }
 
       case "delete_workspace":
         this.deleteWorkspace(msg.workspaceId as string);
@@ -651,43 +676,19 @@ export class Server {
     }
   }
 
-  private createWorkspace(
-    ws: WebSocket,
-    name: string,
-    project: string,
-    hostId?: string,
-    customPath?: string,
-  ): void {
+  private createWorkspace(ws: WebSocket, name: string, pathInput: string, hostId?: string): void {
     const resolvedHostId = hostId || this.hostRegistry.getDefault()?.id || "local";
-    let cwd: string;
-
-    if (customPath) {
-      cwd = customPath;
-      if (!fs.existsSync(cwd)) {
-        this.sendJson(ws, { type: "error", message: `Path does not exist: ${cwd}` });
-        return;
-      }
-    } else {
-      const projectPaths = this.config.projects[project];
-      if (!projectPaths) {
-        this.sendJson(ws, { type: "error", message: `Unknown project: ${project}` });
-        return;
-      }
-      cwd = projectPaths[resolvedHostId];
-      if (!cwd) {
-        this.sendJson(ws, {
-          type: "error",
-          message: `Project "${project}" has no path for host "${resolvedHostId}"`,
-        });
-        return;
-      }
+    const cwd = resolveWorkspacePath(pathInput ?? "");
+    if (!cwd) {
+      this.sendJson(ws, { type: "error", message: `Not a directory: ${pathInput}` });
+      return;
     }
 
     const id = genId("ws");
     const workspace = new Workspace(
       id,
       name,
-      project,
+      path.basename(cwd),
       resolvedHostId,
       cwd,
       this.hostRegistry,
@@ -954,31 +955,54 @@ systemctl --user restart agent-team-server
     };
   }
 
-  private pollBranches(): void {
-    const dayAgo = Date.now() - 86_400_000;
-    for (const ws of this.workspaces.values()) {
-      const lastMsg = ws.messages[ws.messages.length - 1];
-      if ((lastMsg?.timestamp ?? ws.createdAt) < dayAgo) continue;
-      this.pollBranch(ws);
+  // Branch scanning runs every 2s over all workspaces with async execFile —
+  // the old execSync version blocked the event loop for the sum of all git
+  // timeouts, which is what made updates unreliable. A scan pass that is
+  // still in flight skips the next tick instead of piling up.
+  private branchScanning = false;
+  private prFetchedAt = new Map<string, number>();
+
+  private async scanBranches(): Promise<void> {
+    if (this.branchScanning) return;
+    this.branchScanning = true;
+    try {
+      await Promise.all([...this.workspaces.values()].map((ws) => this.scanBranch(ws)));
+    } finally {
+      this.branchScanning = false;
     }
   }
 
-  private pollBranch(ws: Workspace): void {
-    const branch = ws.getGitBranch();
-    if (branch === null) return;
+  private async scanBranch(ws: Workspace): Promise<void> {
+    const branch = await gitBranch(ws.cwd);
     const prev = this.branchCache.get(ws.id);
-    if (prev === branch) return;
+    if (this.branchCache.has(ws.id) && prev === branch) return;
     this.branchCache.set(ws.id, branch);
-    ws.getPrInfo(branch).then((pr) => {
-      ws.cachedPrUrl = pr?.url ?? null;
-      ws.cachedPrTitle = pr?.title ?? null;
-      this.broadcastUI({
-        type: "workspace_branch_update",
-        workspaceId: ws.id,
-        gitBranch: branch,
-        prUrl: ws.cachedPrUrl,
-        prTitle: ws.cachedPrTitle,
-      });
+    ws.cachedBranch = branch;
+    this.broadcastBranch(ws);
+
+    // The PR lookup is a network call through gh; it must not gate branch
+    // updates. Throttled per workspace, and failures keep the previous value
+    // instead of flickering the PR link away.
+    const now = Date.now();
+    if (now - (this.prFetchedAt.get(ws.id) ?? 0) < 60_000) return;
+    this.prFetchedAt.set(ws.id, now);
+    const pr = await getPrInfo(ws.cwd, branch);
+    const url = pr?.url ?? (branch === "main" || branch === "master" ? null : ws.cachedPrUrl);
+    const title = pr?.title ?? (url === ws.cachedPrUrl ? ws.cachedPrTitle : null);
+    if (url !== ws.cachedPrUrl || title !== ws.cachedPrTitle) {
+      ws.cachedPrUrl = url;
+      ws.cachedPrTitle = title;
+      this.broadcastBranch(ws);
+    }
+  }
+
+  private broadcastBranch(ws: Workspace): void {
+    this.broadcastUI({
+      type: "workspace_branch_update",
+      workspaceId: ws.id,
+      gitBranch: ws.cachedBranch,
+      prUrl: ws.cachedPrUrl,
+      prTitle: ws.cachedPrTitle,
     });
   }
 

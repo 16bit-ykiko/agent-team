@@ -23,9 +23,9 @@ import {
   StreamEvent,
   CommandInfo,
   HostInfo,
-  HostConfig,
 } from "./useServer";
 import { splitEvents } from "./events";
+import { groupWorkspaces, isGroupExpanded } from "./groups";
 
 const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
 turndown.addRule("fencedCodeBlock", {
@@ -246,61 +246,81 @@ function AddAgentDialog({
   );
 }
 
-function CreateWorkspaceDialog({
-  projects,
-  hostConfigs,
+// A workspace is just a name plus a directory. The path field completes
+// directories live against the server (shell-style tab completion).
+export function CreateWorkspaceDialog({
   hosts,
   onClose,
   onCreate,
+  onListDirs,
+  dirSuggestions,
 }: {
-  projects: Record<string, Record<string, string>>;
-  hostConfigs: Record<string, HostConfig>;
   hosts: HostInfo[];
   onClose: () => void;
-  onCreate: (name: string, project: string, hostId?: string, customPath?: string) => void;
+  onCreate: (name: string, path: string, hostId?: string) => void;
+  onListDirs: (prefix: string) => void;
+  dirSuggestions: { prefix: string; dirs: string[] };
 }) {
-  const projectNames = Object.keys(projects);
-  const CUSTOM = "__custom__";
   const [name, setName] = useState("");
-  const [project, setProject] = useState(projectNames[0] ?? "");
-  const [customPath, setCustomPath] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const isCustom = project === CUSTOM;
-
-  const availableHosts = Object.entries(projects[project] ?? {})
-    .filter(([hId]) => {
-      const info = hosts.find((h) => h.id === hId);
-      return info
-        ? info.connected || hostConfigs[hId]?.type === "local"
-        : hostConfigs[hId]?.type === "local";
-    })
-    .map(([hId]) => ({ id: hId, label: hostConfigs[hId]?.label ?? hId }));
-
-  const [hostId, setHostId] = useState(availableHosts[0]?.id ?? "");
+  const [dirPath, setDirPath] = useState("~/");
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestIdx, setSuggestIdx] = useState(0);
+  const [hostId, setHostId] = useState(hosts[0]?.id ?? "local");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    inputRef.current?.focus();
+    nameRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    const hosts = Object.keys(projects[project] ?? {});
-    if (hosts.length > 0 && !hosts.includes(hostId)) {
-      setHostId(hosts[0]);
-    }
-  }, [project, hostId, projects]);
+  const requestDirs = (value: string) => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => onListDirs(value), 120);
+  };
 
-  const canSubmit = name.trim() && (isCustom ? customPath.trim() : project);
+  // The server echoes the prefix, so stale replies for older input are ignored.
+  const suggestions = dirSuggestions.prefix === dirPath ? dirSuggestions.dirs : [];
+
+  const handlePathChange = (value: string) => {
+    setDirPath(value);
+    setSuggestOpen(true);
+    setSuggestIdx(0);
+    requestDirs(value);
+  };
+
+  const pickSuggestion = (dir: string) => {
+    setDirPath(dir);
+    setSuggestIdx(0);
+    requestDirs(dir);
+  };
+
+  const handlePathKeyDown = (e: React.KeyboardEvent) => {
+    if (!suggestOpen || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSuggestIdx((i) => (i + 1) % suggestions.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSuggestIdx((i) => (i - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === "Tab" || e.key === "Enter") {
+      e.preventDefault();
+      pickSuggestion(suggestions[suggestIdx]);
+    } else if (e.key === "Escape") {
+      setSuggestOpen(false);
+    }
+  };
+
+  const canSubmit = dirPath.trim().length > 0;
+  const defaultName = dirPath.split("/").filter(Boolean).pop() ?? "";
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
-    if (isCustom) {
-      const p = customPath.trim();
-      const label = p.split("/").filter(Boolean).pop() || "custom";
-      onCreate(name.trim(), label, hostId || undefined, p);
-    } else {
-      onCreate(name.trim(), project, hostId || undefined);
-    }
+    onCreate(
+      (name.trim() || defaultName || "workspace").trim(),
+      dirPath.trim(),
+      hostId || undefined,
+    );
     onClose();
   };
 
@@ -311,38 +331,48 @@ function CreateWorkspaceDialog({
         <label className="dialog-field">
           <span>Name</span>
           <input
-            ref={inputRef}
+            ref={nameRef}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Workspace name..."
+            placeholder={defaultName || "Workspace name..."}
           />
         </label>
-        <label className="dialog-field">
-          <span>Project</span>
-          <select value={project} onChange={(e) => setProject(e.target.value)}>
-            {projectNames.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-            <option value={CUSTOM}>Custom Path...</option>
-          </select>
+        <label className="dialog-field path-field">
+          <span>Path</span>
+          <input
+            value={dirPath}
+            onChange={(e) => handlePathChange(e.target.value)}
+            onKeyDown={handlePathKeyDown}
+            onFocus={() => {
+              setSuggestOpen(true);
+              requestDirs(dirPath);
+            }}
+            placeholder="~/workspace/..."
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {suggestOpen && suggestions.length > 0 && (
+            <div className="dir-suggest">
+              {suggestions.map((dir, i) => (
+                <div
+                  key={dir}
+                  className={`dir-suggest-item ${i === suggestIdx ? "active" : ""}`}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickSuggestion(dir);
+                  }}
+                >
+                  {dir}
+                </div>
+              ))}
+            </div>
+          )}
         </label>
-        {isCustom && (
-          <label className="dialog-field">
-            <span>Path</span>
-            <input
-              value={customPath}
-              onChange={(e) => setCustomPath(e.target.value)}
-              placeholder="/home/user/projects/..."
-            />
-          </label>
-        )}
-        {!isCustom && availableHosts.length > 1 && (
+        {hosts.length > 1 && (
           <label className="dialog-field">
             <span>Host</span>
             <select value={hostId} onChange={(e) => setHostId(e.target.value)}>
-              {availableHosts.map((h) => (
+              {hosts.map((h) => (
                 <option key={h.id} value={h.id}>
                   {h.label}
                 </option>
@@ -1026,10 +1056,8 @@ export function App() {
     connected,
     presets,
     models,
-    projects,
     commands,
     hosts,
-    hostConfigs,
     systemStatus,
     createWorkspace,
     deleteWorkspace,
@@ -1044,6 +1072,10 @@ export function App() {
     startReplayDemo,
     lastError,
     clearError,
+    searchServer,
+    searchResults,
+    listDirs,
+    dirSuggestions,
   } = useServer();
 
   // Server errors (busy agent, cancel failures...) were previously only
@@ -1106,6 +1138,25 @@ export function App() {
     [workspaces],
   );
   const activeWs = workspaces.find((w) => w.id === activeWsId);
+
+  // Sidebar folder groups; explicit expand/collapse choices persist.
+  const wsGroups = useMemo(() => groupWorkspaces(workspaces), [workspaces]);
+  const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("wsGroupOverrides") ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  const toggleGroup = useCallback((key: string, expanded: boolean) => {
+    setGroupOverrides((prev) => {
+      const next = { ...prev, [key]: expanded };
+      try {
+        localStorage.setItem("wsGroupOverrides", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
   const activeWsRef = useRef(activeWs);
   activeWsRef.current = activeWs;
 
@@ -1151,37 +1202,16 @@ export function App() {
     }
   }, [runningSnapshot, activeWsId, workspaces]);
 
-  interface SearchResult {
-    wsId: string;
-    wsName: string;
-    msg: Message;
-    snippet: string;
-  }
-
-  const searchResults: SearchResult[] = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return [];
-    const results: SearchResult[] = [];
-    for (const ws of workspaces) {
-      for (const msg of ws.messages) {
-        if (msg.kind === "system") continue;
-        const text = msg.content.toLowerCase();
-        const idx = text.indexOf(q);
-        if (idx !== -1) {
-          const start = Math.max(0, idx - 20);
-          const end = Math.min(text.length, idx + q.length + 40);
-          const snippet =
-            (start > 0 ? "..." : "") +
-            msg.content.slice(start, end) +
-            (end < text.length ? "..." : "");
-          results.push({ wsId: ws.id, wsName: ws.name, msg, snippet });
-        }
-        if (results.length >= 100) break;
-      }
-      if (results.length >= 100) break;
-    }
-    return results;
-  }, [searchQuery, workspaces]);
+  // Search runs server-side over the full message history — the client only
+  // holds lazily-loaded windows, so local filtering missed almost everything.
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q) return;
+    const t = setTimeout(() => searchServer(q), 200);
+    return () => clearTimeout(t);
+  }, [searchQuery, searchServer]);
+  // null = query in flight (debounce or awaiting the server echo).
+  const searchHits = searchResults.query === searchQuery.trim() ? searchResults.hits : null;
 
   const jumpToMessage = useCallback(
     (wsId: string, msgId: string) => {
@@ -1561,19 +1591,21 @@ export function App() {
         </div>
         {searchQuery.trim() ? (
           <div className="search-results">
-            {searchResults.length === 0 ? (
+            {searchHits === null ? (
+              <div className="search-empty">Searching...</div>
+            ) : searchHits.length === 0 ? (
               <div className="search-empty">No results</div>
             ) : (
-              searchResults.map((r, i) => (
+              searchHits.map((r, i) => (
                 <div
                   key={i}
                   className="search-result-item"
-                  onClick={() => jumpToMessage(r.wsId, r.msg.id)}
+                  onClick={() => jumpToMessage(r.workspaceId, r.messageId)}
                 >
-                  <div className="search-result-ws">{r.wsName}</div>
+                  <div className="search-result-ws">{r.workspaceName}</div>
                   <div className="search-result-snippet">{r.snippet}</div>
                   <div className="search-result-time">
-                    {new Date(r.msg.timestamp).toLocaleString([], {
+                    {new Date(r.timestamp).toLocaleString([], {
                       month: "short",
                       day: "numeric",
                       hour: "2-digit",
@@ -1586,63 +1618,77 @@ export function App() {
           </div>
         ) : (
           <div className="task-list">
-            {sortedWorkspaces.map((ws) => {
-              const activeAgents = ws.agents.filter((a) => a.busy);
-              const running = activeAgents.length > 0;
-              const unread = ws.messages.length - (seenCountRef.current[ws.id] ?? 0);
+            {wsGroups.map((g) => {
+              const expanded =
+                isGroupExpanded(g, groupOverrides, Date.now()) ||
+                g.workspaces.some((w) => w.id === activeWsId);
               return (
-                <div
-                  key={ws.id}
-                  className={`task-item ${ws.id === activeWsId ? "active" : ""}${running ? " task-item-active" : ""}`}
-                  onClick={() => {
-                    setActiveWsId(ws.id);
-                    setSidebarOpen(false);
-                  }}
-                >
+                <div key={g.key} className="ws-group">
                   <div
-                    className={`task-status ${running ? "running" : (finishedStatus[ws.id] ?? "idle")}`}
-                  />
-                  <div className="task-info">
-                    <div className="task-name">
-                      <span className="task-name-text">
-                        {ws.name}
-                        {unread > 0 && ws.id !== activeWsId && (
-                          <span className="unread-badge">{unread}</span>
-                        )}
-                      </span>
-                      <span className="task-host">
-                        {hostConfigs[ws.hostId]?.label ?? ws.hostId}
-                      </span>
-                    </div>
-                    <div className="task-meta">
-                      <span>{ws.project}</span>
-                      {ws.gitBranch && <span className="task-branch">{ws.gitBranch}</span>}
-                    </div>
-                    {activeAgents.length > 0 && (
-                      <div className="task-active-agents">
-                        {activeAgents.map((a) => (
-                          <span
-                            key={a.id}
-                            className="task-active-agent"
-                            style={{ background: a.color }}
-                          >
-                            {a.avatar} {a.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    className="task-delete"
-                    title="Delete"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteWorkspace(ws.id);
-                      if (activeWsId === ws.id) setActiveWsId(null);
-                    }}
+                    className="ws-group-header"
+                    title={g.key}
+                    onClick={() => toggleGroup(g.key, !expanded)}
                   >
-                    x
-                  </button>
+                    <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
+                    <span className="ws-group-label">{g.label}</span>
+                    <span className="ws-group-count">{g.workspaces.length}</span>
+                    {g.running && <span className="streaming-dot" />}
+                  </div>
+                  {expanded &&
+                    g.workspaces.map((ws) => {
+                      const activeAgents = ws.agents.filter((a) => a.busy);
+                      const running = activeAgents.length > 0;
+                      const unread = ws.messages.length - (seenCountRef.current[ws.id] ?? 0);
+                      return (
+                        <div
+                          key={ws.id}
+                          className={`task-item ${ws.id === activeWsId ? "active" : ""}${running ? " task-item-active" : ""}`}
+                          onClick={() => {
+                            setActiveWsId(ws.id);
+                            setSidebarOpen(false);
+                          }}
+                        >
+                          <div
+                            className={`task-status ${running ? "running" : (finishedStatus[ws.id] ?? "idle")}`}
+                          />
+                          <div className="task-info">
+                            <div className="task-name">
+                              <span className="task-name-text">
+                                {ws.name}
+                                {unread > 0 && ws.id !== activeWsId && (
+                                  <span className="unread-badge">{unread}</span>
+                                )}
+                              </span>
+                              {ws.gitBranch && <span className="task-branch">{ws.gitBranch}</span>}
+                            </div>
+                            {activeAgents.length > 0 && (
+                              <div className="task-active-agents">
+                                {activeAgents.map((a) => (
+                                  <span
+                                    key={a.id}
+                                    className="task-active-agent"
+                                    style={{ background: a.color }}
+                                  >
+                                    {a.avatar} {a.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <button
+                            className="task-delete"
+                            title="Delete"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteWorkspace(ws.id);
+                              if (activeWsId === ws.id) setActiveWsId(null);
+                            }}
+                          >
+                            x
+                          </button>
+                        </div>
+                      );
+                    })}
                 </div>
               );
             })}
@@ -1927,11 +1973,11 @@ export function App() {
 
       {showCreate && (
         <CreateWorkspaceDialog
-          projects={projects}
-          hostConfigs={hostConfigs}
           hosts={hosts}
           onClose={() => setShowCreate(false)}
           onCreate={createWorkspace}
+          onListDirs={listDirs}
+          dirSuggestions={dirSuggestions}
         />
       )}
 

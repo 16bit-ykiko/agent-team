@@ -33,7 +33,6 @@ export interface ProviderConfig {
 export interface AppConfig {
   server: ServerConfig;
   auth: AuthConfig | null;
-  projects: Record<string, Record<string, string>>;
   agents: Record<string, AgentConfig>;
   hosts: Record<string, HostConfig>;
   providers: Record<string, ProviderConfig>;
@@ -48,22 +47,6 @@ export function loadConfig(baseDir: string): AppConfig {
   }
   const raw = fs.readFileSync(configPath, "utf-8");
   const parsed = TOML.parse(raw) as Record<string, unknown>;
-
-  const projects: Record<string, Record<string, string>> = {};
-  const rawProjects = parsed.projects;
-  if (rawProjects && typeof rawProjects === "object") {
-    for (const [name, val] of Object.entries(rawProjects as Record<string, unknown>)) {
-      if (val && typeof val === "object") {
-        const paths: Record<string, string> = {};
-        for (const [hostId, p] of Object.entries(val as Record<string, unknown>)) {
-          if (typeof p === "string") paths[hostId] = p;
-        }
-        if (Object.keys(paths).length > 0) projects[name] = paths;
-      } else if (typeof val === "string") {
-        projects[name] = { local: val };
-      }
-    }
-  }
 
   const agents: Record<string, AgentConfig> = {};
   const rawAgents = parsed.agents;
@@ -127,5 +110,5 @@ export function loadConfig(baseDir: string): AppConfig {
     };
   }
 
-  return { server, auth, projects, agents, hosts, providers };
+  return { server, auth, agents, hosts, providers };
 }

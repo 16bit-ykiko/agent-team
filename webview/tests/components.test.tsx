@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
-import { SubAgentItem, StepGroup, MessageItem } from "../src/App";
+import { SubAgentItem, StepGroup, MessageItem, CreateWorkspaceDialog } from "../src/App";
+import { HostInfo } from "../src/useServer";
 import { StreamEvent, Message, AgentInfo } from "../src/useServer";
 
 const sa = (over: Partial<NonNullable<StreamEvent["subagent"]>> = {}): StreamEvent =>
@@ -157,5 +158,79 @@ describe("MessageItem", () => {
     );
     fireEvent.click(getByTitle("Cancel this subagent"));
     expect(onCancelSubagent).toHaveBeenCalledWith("a1", "task-1");
+  });
+});
+
+describe("CreateWorkspaceDialog", () => {
+  const hosts: HostInfo[] = [{ id: "local", label: "Local", type: "local", connected: true }];
+
+  function setup(dirSuggestions = { prefix: "", dirs: [] as string[] }) {
+    const onCreate = vi.fn();
+    const onListDirs = vi.fn();
+    const utils = render(
+      <CreateWorkspaceDialog
+        hosts={hosts}
+        onClose={() => {}}
+        onCreate={onCreate}
+        onListDirs={onListDirs}
+        dirSuggestions={dirSuggestions}
+      />,
+    );
+    const pathInput = utils.getByPlaceholderText("~/workspace/...") as HTMLInputElement;
+    return { ...utils, onCreate, onListDirs, pathInput };
+  }
+
+  it("requests directory completion while typing (debounced)", () => {
+    vi.useFakeTimers();
+    try {
+      const { onListDirs, pathInput } = setup();
+      fireEvent.change(pathInput, { target: { value: "/home/y" } });
+      fireEvent.change(pathInput, { target: { value: "/home/yk" } });
+      expect(onListDirs).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(150);
+      // Only the final value survives the debounce.
+      expect(onListDirs).toHaveBeenCalledTimes(1);
+      expect(onListDirs).toHaveBeenCalledWith("/home/yk");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows suggestions matching the current input and completes on click", () => {
+    const { pathInput, getByText, rerender, onCreate, onListDirs } = setup();
+    fireEvent.change(pathInput, { target: { value: "/home/yk" } });
+    rerender(
+      <CreateWorkspaceDialog
+        hosts={hosts}
+        onClose={() => {}}
+        onCreate={onCreate}
+        onListDirs={onListDirs}
+        dirSuggestions={{ prefix: "/home/yk", dirs: ["/home/ykiko/"] }}
+      />,
+    );
+    fireEvent.mouseDown(getByText("/home/ykiko/"));
+    expect(pathInput.value).toBe("/home/ykiko/");
+  });
+
+  it("ignores stale suggestions for older input", () => {
+    const { pathInput, container, onCreate, onListDirs, rerender } = setup();
+    fireEvent.change(pathInput, { target: { value: "/tmp/x" } });
+    rerender(
+      <CreateWorkspaceDialog
+        hosts={hosts}
+        onClose={() => {}}
+        onCreate={onCreate}
+        onListDirs={onListDirs}
+        dirSuggestions={{ prefix: "/home/yk", dirs: ["/home/ykiko/"] }}
+      />,
+    );
+    expect(container.querySelector(".dir-suggest")).toBeNull();
+  });
+
+  it("submits name + path, defaulting the name to the folder basename", () => {
+    const { pathInput, onCreate, getByText } = setup();
+    fireEvent.change(pathInput, { target: { value: "/home/ykiko/clice" } });
+    fireEvent.click(getByText("Create"));
+    expect(onCreate).toHaveBeenCalledWith("clice", "/home/ykiko/clice", "local");
   });
 });

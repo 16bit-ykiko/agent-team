@@ -177,6 +177,72 @@ body {
   padding: 4px 0;
 }
 
+/* ---- Sidebar folder groups ---- */
+
+.ws-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.ws-group-header:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.ws-group-label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-group-count {
+  color: var(--text-muted);
+  font-size: 10px;
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 0 6px;
+  line-height: 14px;
+}
+.ws-group .task-item {
+  padding-left: 26px;
+}
+
+/* ---- Path autocomplete (new workspace dialog) ---- */
+
+.path-field {
+  position: relative;
+}
+.dir-suggest {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.dir-suggest-item {
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dir-suggest-item:hover,
+.dir-suggest-item.active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
 .task-item {
   padding: 8px 16px;
   cursor: pointer;

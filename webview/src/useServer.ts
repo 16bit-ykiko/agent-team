@@ -1,11 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import {
-  MOCK_WORKSPACES,
-  MOCK_SYSTEM_STATUS,
-  MOCK_PRESETS,
-  MOCK_MODELS,
-  MOCK_PROJECTS,
-} from "./mockData";
+import { MOCK_WORKSPACES, MOCK_SYSTEM_STATUS, MOCK_PRESETS, MOCK_MODELS } from "./mockData";
 
 export interface ToolInput {
   tool: string;
@@ -148,6 +142,14 @@ export interface CommandInfo {
   aliases?: string[];
 }
 
+export interface SearchHit {
+  workspaceId: string;
+  workspaceName: string;
+  messageId: string;
+  timestamp: number;
+  snippet: string;
+}
+
 function resolveWsUrl(): string {
   const loc = window.location;
   if (loc.port === "5173" || loc.port === "9800") {
@@ -162,12 +164,19 @@ export function useServer() {
   const [connected, setConnected] = useState(false);
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
-  const [projects, setProjects] = useState<Record<string, Record<string, string>>>({});
   const [commands, setCommands] = useState<CommandInfo[]>([]);
   const [hosts, setHosts] = useState<HostInfo[]>([]);
   const [hostConfigs, setHostConfigs] = useState<Record<string, HostConfig>>({});
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [searchResults, setSearchResults] = useState<{ query: string; hits: SearchHit[] }>({
+    query: "",
+    hits: [],
+  });
+  const [dirSuggestions, setDirSuggestions] = useState<{ prefix: string; dirs: string[] }>({
+    prefix: "",
+    dirs: [],
+  });
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -353,13 +362,11 @@ export function useServer() {
             });
           });
           const config = msg.config as {
-            projects: Record<string, Record<string, string>>;
             presets: AgentPreset[];
             models: ModelOption[];
             commands: CommandInfo[];
             hosts: Record<string, HostConfig>;
           };
-          setProjects(config.projects);
           setPresets(config.presets);
           setModels(config.models);
           if (config.commands) setCommands(config.commands);
@@ -556,6 +563,14 @@ export function useServer() {
           break;
         }
 
+        case "search_results":
+          setSearchResults({ query: msg.query as string, hits: msg.hits as SearchHit[] });
+          break;
+
+        case "dirs":
+          setDirSuggestions({ prefix: msg.prefix as string, dirs: msg.dirs as string[] });
+          break;
+
         case "system_status":
           setSystemStatus({
             osName: msg.osName as string,
@@ -603,7 +618,6 @@ export function useServer() {
       setWorkspaces(MOCK_WORKSPACES);
       setPresets(MOCK_PRESETS);
       setModels(MOCK_MODELS);
-      setProjects(MOCK_PROJECTS);
       setSystemStatus(MOCK_SYSTEM_STATUS);
       setConnected(true);
       return;
@@ -633,7 +647,6 @@ export function useServer() {
     connected,
     presets,
     models,
-    projects,
     commands,
     hosts,
     hostConfigs,
@@ -672,10 +685,14 @@ export function useServer() {
       return "replay-demo";
     }, [handleServerMessage]),
     createWorkspace: useCallback(
-      (name: string, project: string, hostId?: string, customPath?: string) =>
-        send({ type: "create_workspace", name, project, hostId, customPath }),
+      (name: string, path: string, hostId?: string) =>
+        send({ type: "create_workspace", name, path, hostId }),
       [send],
     ),
+    searchServer: useCallback((query: string) => send({ type: "search", query }), [send]),
+    searchResults,
+    listDirs: useCallback((prefix: string) => send({ type: "list_dirs", prefix }), [send]),
+    dirSuggestions,
     deleteWorkspace: useCallback(
       (id: string) => send({ type: "delete_workspace", workspaceId: id }),
       [send],

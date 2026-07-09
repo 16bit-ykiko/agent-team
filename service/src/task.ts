@@ -1,4 +1,3 @@
-import { execSync } from "child_process";
 import { SessionConfig, StreamEvent, SessionState, CommandInfo } from "./session";
 import { HostSessionHandle, HostRegistry } from "./host";
 import { effortLevelsForModel } from "./presets";
@@ -101,6 +100,9 @@ export class Workspace {
   agents = new Map<string, AgentEntry>();
   messages: Message[] = [];
   createdAt: number;
+  // Filled by the server's background git scanner; getInfo must never run
+  // git itself (a synchronous call here used to block the whole event loop).
+  cachedBranch: string | null = null;
   cachedPrUrl: string | null = null;
   cachedPrTitle: string | null = null;
 
@@ -670,40 +672,6 @@ export class Workspace {
     return true;
   }
 
-  getGitBranch(): string | null {
-    try {
-      return execSync("git rev-parse --abbrev-ref HEAD", {
-        cwd: this.cwd,
-        encoding: "utf-8",
-        timeout: 5000,
-      }).trim();
-    } catch {
-      return null;
-    }
-  }
-
-  getPrInfo(branch: string | null): Promise<{ url: string; title: string } | null> {
-    if (!branch || branch === "main" || branch === "master") return Promise.resolve(null);
-    // Use execFile to avoid shell injection — branch names go as direct args.
-    const { execFile } = require("child_process");
-    return new Promise<string | null>((resolve) => {
-      execFile(
-        "gh",
-        ["pr", "view", branch, "--json", "url,title"],
-        { cwd: this.cwd, encoding: "utf-8", timeout: 10000 },
-        (err: Error | null, stdout: string) => resolve(err ? null : stdout.trim() || null),
-      );
-    }).then((stdout) => {
-      if (!stdout) return null;
-      try {
-        const data = JSON.parse(stdout);
-        return data.url ? { url: data.url, title: data.title || "" } : null;
-      } catch {
-        return null;
-      }
-    });
-  }
-
   getInfo(includeMessages = true): WorkspaceInfo {
     const lastMsg = this.messages[this.messages.length - 1];
     return {
@@ -712,7 +680,7 @@ export class Workspace {
       project: this.project,
       hostId: this.hostId,
       cwd: this.cwd,
-      gitBranch: this.getGitBranch(),
+      gitBranch: this.cachedBranch,
       prUrl: this.cachedPrUrl,
       prTitle: this.cachedPrTitle,
       agents: [...this.agents.values()].map((a) => ({
