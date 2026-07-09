@@ -46,14 +46,16 @@ export function groupWorkspaces(workspaces: Workspace[]): WorkspaceGroup[] {
   return groups;
 }
 
-// A group starts expanded when it has recent activity or something running;
-// an explicit user toggle (persisted per group key) always wins.
+// A group starts expanded when it has recent activity, something running, or
+// holds the active workspace — but an explicit user toggle (persisted per
+// group key) always wins, so even the active group can be collapsed.
 export function isGroupExpanded(
   group: WorkspaceGroup,
   overrides: Record<string, boolean>,
   now: number,
+  containsActive = false,
 ): boolean {
   const override = overrides[group.key];
   if (override !== undefined) return override;
-  return group.running || now - group.lastActive < STALE_MS;
+  return containsActive || group.running || now - group.lastActive < STALE_MS;
 }

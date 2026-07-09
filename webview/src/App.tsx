@@ -1174,6 +1174,26 @@ export function App() {
       return next;
     });
   }, []);
+
+  // Switching into a workspace whose group was explicitly collapsed clears
+  // that override once (e.g. jumping there from search), after which the
+  // group can be collapsed again freely.
+  useEffect(() => {
+    if (!activeWsId) return;
+    const g = wsGroups.find((grp) => grp.workspaces.some((w) => w.id === activeWsId));
+    if (!g) return;
+    setGroupOverrides((prev) => {
+      if (prev[g.key] !== false) return prev;
+      const next = { ...prev, [g.key]: true };
+      try {
+        localStorage.setItem("wsGroupOverrides", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    // Deliberately keyed on the active workspace only: re-running on every
+    // wsGroups identity change would instantly undo a manual collapse.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeWsId]);
   const activeWsRef = useRef(activeWs);
   activeWsRef.current = activeWs;
 
@@ -1633,9 +1653,12 @@ export function App() {
         ) : (
           <div className="task-list">
             {wsGroups.map((g) => {
-              const expanded =
-                isGroupExpanded(g, groupOverrides, Date.now()) ||
-                g.workspaces.some((w) => w.id === activeWsId);
+              const expanded = isGroupExpanded(
+                g,
+                groupOverrides,
+                Date.now(),
+                g.workspaces.some((w) => w.id === activeWsId),
+              );
               return (
                 <div key={g.key} className="ws-group">
                   <div

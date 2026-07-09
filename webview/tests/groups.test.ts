@@ -64,6 +64,12 @@ describe("isGroupExpanded", () => {
     expect(isGroupExpanded(fresh, { "/repo/fresh": false }, NOW)).toBe(false);
     expect(isGroupExpanded(stale, { "/repo/stale": true }, NOW)).toBe(true);
   });
+
+  it("expands a stale group holding the active workspace, unless collapsed by hand", () => {
+    expect(isGroupExpanded(stale, {}, NOW, true)).toBe(true);
+    // The active group must still be collapsible — explicit toggle wins.
+    expect(isGroupExpanded(fresh, { "/repo/fresh": false }, NOW, true)).toBe(false);
+  });
 });
 
 describe("running state includes background subagents", () => {
