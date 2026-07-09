@@ -909,6 +909,16 @@ pre .copy-btn:hover {
   margin: 2px 0;
 }
 
+/* The subagent card already carries a status-tinted background; anything
+   inside it renders plain (left-border accents only), exactly like the
+   top-level event list. Stacked translucent backgrounds looked blotchy. */
+.subagent-details .event,
+.subagent-details .subagent-prompt,
+.subagent-details .subagent-summary,
+.subagent-details .subagent-item {
+  background: transparent;
+}
+
 .event {
   padding: 4px 8px;
   border-left: 2px solid var(--border);

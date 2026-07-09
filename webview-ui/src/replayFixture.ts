@@ -573,3 +573,23 @@ export async function startDemoReplay(
   }
   console.log("[replay-demo] finished");
 }
+
+// The demo has no real server task behind it, so Cancel is emulated locally:
+// emit the same subagent_done(stopped) frame a real stopTask would produce.
+export function cancelDemoSubagent(
+  dispatch: (msg: Record<string, unknown>) => void,
+  taskId: string,
+): void {
+  dispatch(
+    ev("demo-msg-1", {
+      kind: "subagent_done",
+      content: "",
+      subagent: {
+        taskId,
+        description: "",
+        status: "stopped",
+        summary: "Stopped by user (demo — a real run would call `Query.stopTask`).",
+      },
+    }),
+  );
+}

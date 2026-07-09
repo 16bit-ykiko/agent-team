@@ -652,9 +652,17 @@ export function useServer() {
       [send],
     ),
     cancelSubagent: useCallback(
-      (wsId: string, agentId: string, taskId: string) =>
-        send({ type: "cancel_subagent", workspaceId: wsId, agentId, taskId }),
-      [send],
+      (wsId: string, agentId: string, taskId: string) => {
+        if (wsId === "replay-demo") {
+          // Demo workspace exists only client-side; emulate the stop locally.
+          import("./replayFixture").then(({ cancelDemoSubagent }) =>
+            cancelDemoSubagent(handleServerMessage, taskId),
+          );
+          return;
+        }
+        send({ type: "cancel_subagent", workspaceId: wsId, agentId, taskId });
+      },
+      [send, handleServerMessage],
     ),
     // Plays the synthetic rendering-review fixture through the same dispatch
     // path as live server frames. Returns the demo workspace id.

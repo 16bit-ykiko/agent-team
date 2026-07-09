@@ -614,7 +614,10 @@ export class Server {
 
       case "cancel_subagent": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
-        if (!workspace) return;
+        if (!workspace) {
+          this.sendJson(ws, { type: "error", message: "Workspace not found" });
+          return;
+        }
         try {
           workspace.cancelSubagent(msg.agentId as string, msg.taskId as string);
         } catch (e) {
