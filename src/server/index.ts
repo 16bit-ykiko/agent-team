@@ -182,7 +182,12 @@ export class Server {
       let size = 0;
       req.on("data", (c: Buffer) => {
         size += c.length;
-        if (size > 8192) { res.statusCode = 413; res.end(); req.destroy(); return; }
+        if (size > 8192) {
+          res.statusCode = 413;
+          res.end();
+          req.destroy();
+          return;
+        }
         chunks.push(c);
       });
       req.on("end", () => {
@@ -407,7 +412,12 @@ export class Server {
         let size = 0;
         req.on("data", (chunk: Buffer) => {
           size += chunk.length;
-          if (size > MAX_UPLOAD) { res.statusCode = 413; res.end(); req.destroy(); return; }
+          if (size > MAX_UPLOAD) {
+            res.statusCode = 413;
+            res.end();
+            req.destroy();
+            return;
+          }
           chunks.push(chunk);
         });
         req.on("end", () => {
@@ -626,6 +636,17 @@ export class Server {
       case "abort":
         this.abortAgent(msg.workspaceId as string, msg.agentId as string | undefined);
         return;
+
+      case "cancel_subagent": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        if (!workspace) return;
+        try {
+          workspace.cancelSubagent(msg.agentId as string, msg.taskId as string);
+        } catch (e) {
+          this.sendJson(ws, { type: "error", message: `${e instanceof Error ? e.message : e}` });
+        }
+        return;
+      }
 
       case "clear_context": {
         const workspace = this.workspaces.get(msg.workspaceId as string);

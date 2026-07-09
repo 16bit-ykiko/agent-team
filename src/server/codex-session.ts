@@ -95,7 +95,9 @@ export class CodexSession extends EventEmitter {
   private buildArgs(): string[] {
     if (this.sessionId) {
       const args = [
-        "exec", "resume", this.sessionId,
+        "exec",
+        "resume",
+        this.sessionId,
         "--json",
         "--dangerously-bypass-approvals-and-sandbox",
       ];
@@ -109,7 +111,8 @@ export class CodexSession extends EventEmitter {
       "exec",
       "--json",
       "--dangerously-bypass-approvals-and-sandbox",
-      "--color", "never",
+      "--color",
+      "never",
     ];
     if (this.config.model) args.push("-m", this.config.model);
     if (this.config.effort) args.push("-c", `effort=${this.config.effort}`);

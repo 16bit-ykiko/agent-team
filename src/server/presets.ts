@@ -25,14 +25,47 @@ const EFFORT_FOUR = ["low", "medium", "high", "max"];
 const EFFORT_FIVE = ["low", "medium", "high", "xhigh", "max"];
 
 export const MODEL_OPTIONS: ModelOption[] = [
-  { id: "claude-opus-4-6", label: "Claude Opus 4.6", backend: "claude", effort: "high", effortLevels: EFFORT_FOUR },
-  { id: "claude-opus-4-6[1m]", label: "Claude Opus 4.6 (1M)", backend: "claude", effort: "high", effortLevels: EFFORT_FOUR },
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", backend: "claude", effortLevels: EFFORT_FOUR },
-  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", backend: "claude", effortLevels: [] },
+  {
+    id: "claude-opus-4-6",
+    label: "Claude Opus 4.6",
+    backend: "claude",
+    effort: "high",
+    effortLevels: EFFORT_FOUR,
+  },
+  {
+    id: "claude-opus-4-6[1m]",
+    label: "Claude Opus 4.6 (1M)",
+    backend: "claude",
+    effort: "high",
+    effortLevels: EFFORT_FOUR,
+  },
+  {
+    id: "claude-sonnet-4-6",
+    label: "Claude Sonnet 4.6",
+    backend: "claude",
+    effortLevels: EFFORT_FOUR,
+  },
+  {
+    id: "claude-haiku-4-5-20251001",
+    label: "Claude Haiku 4.5",
+    backend: "claude",
+    effortLevels: [],
+  },
   { id: "claude-opus-4-7", label: "Claude Opus 4.7", backend: "claude", effortLevels: EFFORT_FIVE },
-  { id: "claude-opus-4-8", label: "Claude Opus 4.8", backend: "claude", effort: "xhigh", effortLevels: EFFORT_FIVE },
+  {
+    id: "claude-opus-4-8",
+    label: "Claude Opus 4.8",
+    backend: "claude",
+    effort: "xhigh",
+    effortLevels: EFFORT_FIVE,
+  },
   { id: "claude-fable-5", label: "Claude Fable 5", backend: "claude", effortLevels: EFFORT_FIVE },
-  { id: "claude-fable-5[1m]", label: "Claude Fable 5 (1M)", backend: "claude", effortLevels: EFFORT_FIVE },
+  {
+    id: "claude-fable-5[1m]",
+    label: "Claude Fable 5 (1M)",
+    backend: "claude",
+    effortLevels: EFFORT_FIVE,
+  },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", backend: "claude" },
   { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", backend: "claude" },
   { id: "gpt-5.5", label: "GPT-5.5", backend: "codex" },

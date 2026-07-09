@@ -40,7 +40,7 @@
     "build:webview": "cd webview-ui && npm run build",
     "build": "npm run build:webview && npm run build:ext",
     "watch:ext": "node esbuild.js --watch",
-    "test": "vitest run",
+    "test": "vitest run && npm --prefix webview-ui run test",
     "test:watch": "vitest",
     "fmt": "prettier --write .",
     "fmt:check": "prettier --check ."

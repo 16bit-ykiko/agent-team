@@ -9,6 +9,7 @@ export interface HostSessionHandle extends EventEmitter {
   send(message: string): Promise<void>;
   abort(): void;
   setEffort?(level: string): void;
+  stopTask?(taskId: string): Promise<void>;
   getState(): SessionState;
   getContextUsage?(): Promise<Record<string, unknown> | null>;
   getUsageInfo?(): Promise<Record<string, unknown> | null>;
@@ -50,9 +51,7 @@ export class LocalHost implements Host {
 
   createSession(agentId: string, config: SessionConfig): HostSessionHandle {
     const session =
-      config.backend === "codex"
-        ? new CodexSession(config)
-        : new ClaudeSession(config);
+      config.backend === "codex" ? new CodexSession(config) : new ClaudeSession(config);
     this.sessions.set(agentId, session);
     return session;
   }

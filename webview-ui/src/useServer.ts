@@ -207,9 +207,19 @@ export function useServer() {
             if (regular.length === 0 && deltas.length > 0) {
               return { ...m, content };
             }
-            let events = [...(m.events ?? []).map((e) =>
-              e.subagent ? { ...e, subagent: { ...e.subagent, events: e.subagent.events ? [...e.subagent.events] : undefined } } : e,
-            )];
+            let events = [
+              ...(m.events ?? []).map((e) =>
+                e.subagent
+                  ? {
+                      ...e,
+                      subagent: {
+                        ...e.subagent,
+                        events: e.subagent.events ? [...e.subagent.events] : undefined,
+                      },
+                    }
+                  : e,
+              ),
+            ];
             for (const r of regular) {
               const ev = r.event;
               if (ev.kind === "tool_result" && ev.toolUseId) {
@@ -217,15 +227,22 @@ export function useServer() {
                   (e) => e.kind === "tool_use" && e.toolUseId === ev.toolUseId,
                 );
                 if (matchIdx >= 0) {
-                  events[matchIdx] = { ...events[matchIdx], toolResult: ev.content, ...(ev.isMarkdown && { toolResultIsMarkdown: true }) };
+                  events[matchIdx] = {
+                    ...events[matchIdx],
+                    toolResult: ev.content,
+                    ...(ev.isMarkdown && { toolResultIsMarkdown: true }),
+                  };
                   continue;
                 }
               }
               if (ev.kind === "subagent_progress" && ev.subagent?.taskId) {
-                const innerEv = (ev.subagent as unknown as Record<string, unknown>)?._innerEvent as StreamEvent | undefined;
+                const innerEv = (ev.subagent as unknown as Record<string, unknown>)?._innerEvent as
+                  | StreamEvent
+                  | undefined;
                 if (innerEv) {
                   const startIdx = events.findIndex(
-                    (e) => e.kind === "subagent_start" && e.subagent?.taskId === ev.subagent?.taskId,
+                    (e) =>
+                      e.kind === "subagent_start" && e.subagent?.taskId === ev.subagent?.taskId,
                   );
                   if (startIdx >= 0) {
                     const sa = events[startIdx].subagent!;
@@ -235,10 +252,43 @@ export function useServer() {
                         (e) => e.kind === "tool_use" && e.toolUseId === innerEv.toolUseId,
                       );
                       if (innerMatchIdx >= 0) {
-                        sa.events[innerMatchIdx] = { ...sa.events[innerMatchIdx], toolResult: innerEv.content };
+                        sa.events[innerMatchIdx] = {
+                          ...sa.events[innerMatchIdx],
+                          toolResult: innerEv.content,
+                        };
                       } else {
                         sa.events.push(innerEv);
                       }
+                    } else if (innerEv.kind === "subagent_progress" && innerEv.subagent?.taskId) {
+                      // Nested subagent progress replaces the previous progress
+                      // entry for the same nested task (mirrors task.ts).
+                      const nid = innerEv.subagent.taskId;
+                      const pi = sa.events.findIndex(
+                        (e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid,
+                      );
+                      if (pi >= 0) sa.events[pi] = innerEv;
+                      else sa.events.push(innerEv);
+                    } else if (innerEv.kind === "subagent_done" && innerEv.subagent?.taskId) {
+                      const nid = innerEv.subagent.taskId;
+                      const pi = sa.events.findIndex(
+                        (e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid,
+                      );
+                      if (pi >= 0) sa.events.splice(pi, 1);
+                      const si = sa.events.findIndex(
+                        (e) => e.kind === "subagent_start" && e.subagent?.taskId === nid,
+                      );
+                      if (si >= 0) {
+                        sa.events[si] = {
+                          ...sa.events[si],
+                          subagent: {
+                            ...sa.events[si].subagent!,
+                            status: innerEv.subagent.status,
+                            summary: innerEv.subagent.summary,
+                            usage: innerEv.subagent.usage,
+                          },
+                        };
+                      }
+                      sa.events.push(innerEv);
                     } else {
                       sa.events.push(innerEv);
                     }
@@ -246,19 +296,31 @@ export function useServer() {
                   continue;
                 }
                 const idx = events.findIndex(
-                  (e) => e.kind === "subagent_progress" && e.subagent?.taskId === ev.subagent?.taskId,
+                  (e) =>
+                    e.kind === "subagent_progress" && e.subagent?.taskId === ev.subagent?.taskId,
                 );
-                if (idx >= 0) { events[idx] = ev; continue; }
+                if (idx >= 0) {
+                  events[idx] = ev;
+                  continue;
+                }
               } else if (ev.kind === "subagent_done" && ev.subagent?.taskId) {
                 events = events.filter(
-                  (e) => !(e.kind === "subagent_progress" && e.subagent?.taskId === ev.subagent?.taskId),
+                  (e) =>
+                    !(e.kind === "subagent_progress" && e.subagent?.taskId === ev.subagent?.taskId),
                 );
                 const startIdx = events.findIndex(
                   (e) => e.kind === "subagent_start" && e.subagent?.taskId === ev.subagent?.taskId,
                 );
                 if (startIdx >= 0 && ev.subagent) {
                   const existingEvents = events[startIdx].subagent?.events;
-                  events[startIdx] = { ...events[startIdx], subagent: { ...events[startIdx].subagent!, ...ev.subagent, events: existingEvents } };
+                  events[startIdx] = {
+                    ...events[startIdx],
+                    subagent: {
+                      ...events[startIdx].subagent!,
+                      ...ev.subagent,
+                      events: existingEvents,
+                    },
+                  };
                 }
               }
               events.push(ev);
@@ -415,7 +477,10 @@ export function useServer() {
                         (e) => e.subagent?.taskId === serverEv.subagent!.taskId,
                       );
                       if (clientEv?.subagent?.events?.length) {
-                        return { ...serverEv, subagent: { ...serverEv.subagent, events: clientEv.subagent.events } };
+                        return {
+                          ...serverEv,
+                          subagent: { ...serverEv.subagent, events: clientEv.subagent.events },
+                        };
                       }
                       return serverEv;
                     });
@@ -535,6 +600,8 @@ export function useServer() {
   }, [handleServerMessage]);
 
   const useMock = import.meta.env.DEV && new URLSearchParams(window.location.search).has("mock");
+  const useReplay =
+    import.meta.env.DEV && new URLSearchParams(window.location.search).has("replay");
 
   useEffect(() => {
     if (useMock) {
@@ -546,12 +613,19 @@ export function useServer() {
       setConnected(true);
       return;
     }
+    if (useReplay) {
+      setConnected(true);
+      import("./replay").then(({ startReplay }) =>
+        startReplay(handleServerMessage).catch((e) => console.error("[replay]", e)),
+      );
+      return;
+    }
     connect();
     return () => {
       clearTimeout(reconnectRef.current);
       wsRef.current?.close();
     };
-  }, [connect, useMock]);
+  }, [connect, useMock, useReplay, handleServerMessage]);
 
   const send = useCallback((data: unknown) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -582,6 +656,11 @@ export function useServer() {
     loadSubagentEvents: useCallback(
       (wsId: string, messageId: string, taskId: string) =>
         send({ type: "load_subagent_events", workspaceId: wsId, messageId, taskId }),
+      [send],
+    ),
+    cancelSubagent: useCallback(
+      (wsId: string, agentId: string, taskId: string) =>
+        send({ type: "cancel_subagent", workspaceId: wsId, agentId, taskId }),
       [send],
     ),
     createWorkspace: useCallback(

@@ -278,6 +278,13 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
+  // Stop a running subagent task. The SDK emits a task_notification with
+  // status "stopped", which flows back through the normal event pipeline.
+  async stopTask(taskId: string): Promise<void> {
+    if (!this.queryInstance) throw new Error("No active session");
+    await this.queryInstance.stopTask(taskId);
+  }
+
   private cleanupTask(taskId: string): void {
     this.agentTaskIds.delete(taskId);
     this.nestedTaskToParent.delete(taskId);

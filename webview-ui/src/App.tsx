@@ -25,6 +25,7 @@ import {
   HostInfo,
   HostConfig,
 } from "./useServer";
+import { splitEvents } from "./events";
 
 const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
 turndown.addRule("fencedCodeBlock", {
@@ -383,7 +384,7 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
   );
 }
 
-const EventItem = memo(function EventItem({
+export const EventItem = memo(function EventItem({
   ev,
   onOpenDiff,
 }: {
@@ -467,14 +468,16 @@ const EventItem = memo(function EventItem({
   );
 });
 
-const SubAgentItem = memo(function SubAgentItem({
+export const SubAgentItem = memo(function SubAgentItem({
   ev,
   onOpenDiff,
   onLoadEvents,
+  onCancel,
 }: {
   ev: StreamEvent;
   onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
   onLoadEvents?: (taskId: string) => void;
+  onCancel?: (taskId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const sa = ev.subagent;
@@ -487,12 +490,21 @@ const SubAgentItem = memo(function SubAgentItem({
     sa.status === "stopped";
   const isRunning = !isDone;
   const label = sa.agentType || "Agent";
-  const statusIcon = isRunning ? "↻" : sa.status === "completed" ? "✓" : "✗";
-  const statusCls = isRunning ? "running" : sa.status === "completed" ? "completed" : "failed";
+  const statusIcon = isRunning
+    ? "↻"
+    : sa.status === "completed"
+      ? "✓"
+      : sa.status === "stopped"
+        ? "◼"
+        : "✗";
+  const statusCls = isRunning ? "running" : (sa.status ?? "failed");
 
-  const innerEvents = sa.events ?? [];
-  const needsLoad = innerEvents.length === 0 && (sa.eventCount ?? 0) > 0;
-  const totalCount = innerEvents.length || sa.eventCount || 0;
+  const allInner = sa.events ?? [];
+  // Subagents can spawn subagents of their own; fold their nested lifecycle
+  // events into one entry each and render them as nested SubAgentItems.
+  const { regular: innerEvents, subagents: nestedAgents } = splitEvents(allInner);
+  const needsLoad = allInner.length === 0 && (sa.eventCount ?? 0) > 0;
+  const totalCount = allInner.length || sa.eventCount || 0;
   const thinkingEvts = innerEvents.filter((e) => e.kind === "thinking");
   const toolEvts = innerEvents.filter((e) => e.kind === "tool_use");
   const textEvts = innerEvents.filter((e) => e.kind === "text");
@@ -522,11 +534,12 @@ const SubAgentItem = memo(function SubAgentItem({
         {headerParts.length > 0 && <span className="subagent-desc">{headerParts.join(" · ")}</span>}
         {totalCount > 0 && (
           <span className="subagent-counts">
-            {innerEvents.length > 0
+            {allInner.length > 0
               ? [
                   thinkingEvts.length > 0 ? `${thinkingEvts.length} thinking` : null,
                   toolEvts.length > 0 ? `${toolEvts.length} tool(s)` : null,
                   textEvts.length > 0 ? `${textEvts.length} text` : null,
+                  nestedAgents.length > 0 ? `${nestedAgents.length} subagent(s)` : null,
                 ]
                   .filter(Boolean)
                   .join(" · ")
@@ -534,6 +547,18 @@ const SubAgentItem = memo(function SubAgentItem({
           </span>
         )}
         {isRunning && <span className="streaming-dot" />}
+        {isRunning && onCancel && (
+          <button
+            className="btn-cancel-subagent"
+            title="Cancel this subagent"
+            onClick={(e) => {
+              e.stopPropagation();
+              onCancel(sa.taskId);
+            }}
+          >
+            Cancel
+          </button>
+        )}
       </div>
       {open && (
         <div className="subagent-details">
@@ -550,6 +575,15 @@ const SubAgentItem = memo(function SubAgentItem({
               ))}
             </div>
           )}
+          {nestedAgents.map((ne) => (
+            <SubAgentItem
+              key={ne.subagent!.taskId}
+              ev={ne}
+              onOpenDiff={onOpenDiff}
+              onLoadEvents={onLoadEvents}
+              onCancel={onCancel}
+            />
+          ))}
           {sa.summary && (
             <div className="subagent-summary">
               <MdBlock>{sa.summary}</MdBlock>
@@ -562,66 +596,44 @@ const SubAgentItem = memo(function SubAgentItem({
   );
 });
 
-function StepGroup({
+export function StepGroup({
   group,
   onOpenDiff,
   onLoadEvents,
+  onCancelSubagent,
 }: {
   group: { step: number; events: StreamEvent[] };
   onOpenDiff?: (filePath: string, oldStr: string, newStr: string) => void;
   onLoadEvents?: (taskId: string) => void;
+  onCancelSubagent?: (taskId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const regularEvents = group.events.filter(
-    (e) =>
-      e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done",
-  );
-
-  const subagentMap = new Map<string, StreamEvent>();
-  for (const e of group.events) {
-    if (!e.subagent?.taskId) continue;
-    if (e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done")
-      continue;
-    const existing = subagentMap.get(e.subagent.taskId);
-    if (
-      !existing ||
-      e.kind === "subagent_done" ||
-      (e.kind === "subagent_progress" && existing.kind === "subagent_start")
-    ) {
-      const mergedEvents = existing?.subagent?.events ?? e.subagent.events;
-      const merged = {
-        ...e,
-        subagent: {
-          ...(existing?.subagent ?? {}),
-          ...e.subagent,
-          description: existing?.subagent?.description || e.subagent.description,
-          events: mergedEvents,
-        },
-      };
-      subagentMap.set(e.subagent.taskId, merged);
-    }
-  }
-  const subagents = [...subagentMap.values()];
+  const { regular: regularEvents, subagents } = splitEvents(group.events);
 
   const thinkingCount = regularEvents.filter((e) => e.kind === "thinking").length;
   const toolCount = regularEvents.filter((e) => e.kind === "tool_use").length;
   const parts: string[] = [];
   if (thinkingCount > 0) parts.push(`${thinkingCount} thinking`);
   if (toolCount > 0) parts.push(`${toolCount} tool call(s)`);
-  if (subagents.length > 0) parts.push(`${subagents.length} subagent(s)`);
-  if (parts.length === 0) parts.push(`${group.events.length} event(s)`);
+  if (parts.length === 0 && subagents.length === 0) parts.push(`${group.events.length} event(s)`);
 
+  // Subagents render as their own top-level blocks, siblings of the collapsed
+  // step box — not nested inside it.
   return (
-    <div className="step-group">
-      <div className="step-header" onClick={() => setOpen((v) => !v)}>
-        <span className="events-toggle">{open ? "▾" : "▸"}</span>
-        <span className="step-summary">{parts.join(" · ")}</span>
-      </div>
-      {open && (
-        <div className="events-list">
-          {regularEvents.map((ev, i) => (
-            <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
-          ))}
+    <>
+      {regularEvents.length > 0 && (
+        <div className="step-group">
+          <div className="step-header" onClick={() => setOpen((v) => !v)}>
+            <span className="events-toggle">{open ? "▾" : "▸"}</span>
+            <span className="step-summary">{parts.join(" · ")}</span>
+          </div>
+          {open && (
+            <div className="events-list">
+              {regularEvents.map((ev, i) => (
+                <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
+              ))}
+            </div>
+          )}
         </div>
       )}
       {subagents.map((ev) => (
@@ -630,13 +642,14 @@ function StepGroup({
           ev={ev}
           onOpenDiff={onOpenDiff}
           onLoadEvents={onLoadEvents}
+          onCancel={onCancelSubagent}
         />
       ))}
-    </div>
+    </>
   );
 }
 
-const MessageItem = memo(function MessageItem({
+export const MessageItem = memo(function MessageItem({
   msg,
   agents,
   compact,
@@ -644,6 +657,7 @@ const MessageItem = memo(function MessageItem({
   onOpenDiff,
   onQuote,
   onLoadSubagentEvents,
+  onCancelSubagent,
 }: {
   msg: Message;
   agents: AgentInfo[];
@@ -652,11 +666,20 @@ const MessageItem = memo(function MessageItem({
   onOpenDiff?: (filePath: string, oldString: string, newString: string) => void;
   onQuote?: (msg: Message) => void;
   onLoadSubagentEvents?: (messageId: string, taskId: string) => void;
+  onCancelSubagent?: (agentId: string, taskId: string) => void;
 }) {
   const [eventsOpen, setEventsOpen] = useState(false);
   const handleLoadEvents = useCallback(
     (taskId: string) => onLoadSubagentEvents?.(msg.id, taskId),
     [msg.id, onLoadSubagentEvents],
+  );
+  const agentId = msg.agentId;
+  const handleCancelSubagent = useMemo(
+    () =>
+      onCancelSubagent && agentId
+        ? (taskId: string) => onCancelSubagent(agentId, taskId)
+        : undefined,
+    [agentId, onCancelSubagent],
   );
 
   if (msg.kind === "system") {
@@ -793,6 +816,7 @@ const MessageItem = memo(function MessageItem({
                     group={{ step: si, events: seg.events }}
                     onOpenDiff={onOpenDiff}
                     onLoadEvents={handleLoadEvents}
+                    onCancelSubagent={handleCancelSubagent}
                   />
                 )}
               </div>
@@ -802,61 +826,31 @@ const MessageItem = memo(function MessageItem({
           <>
             {hasDetails &&
               (() => {
-                const regEvts = detailEvents.filter(
-                  (e) =>
-                    e.kind !== "subagent_start" &&
-                    e.kind !== "subagent_progress" &&
-                    e.kind !== "subagent_done",
-                );
-                const saMap = new Map<string, StreamEvent>();
-                for (const e of detailEvents) {
-                  if (!e.subagent?.taskId) continue;
-                  if (
-                    e.kind !== "subagent_start" &&
-                    e.kind !== "subagent_progress" &&
-                    e.kind !== "subagent_done"
-                  )
-                    continue;
-                  const ex = saMap.get(e.subagent.taskId);
-                  if (
-                    !ex ||
-                    e.kind === "subagent_done" ||
-                    (e.kind === "subagent_progress" && ex.kind === "subagent_start")
-                  ) {
-                    const mergedEvents = ex?.subagent?.events ?? e.subagent.events;
-                    saMap.set(e.subagent.taskId, {
-                      ...e,
-                      subagent: {
-                        ...(ex?.subagent ?? {}),
-                        ...e.subagent,
-                        description: ex?.subagent?.description || e.subagent.description,
-                        events: mergedEvents,
-                      },
-                    });
-                  }
-                }
-                const saList = [...saMap.values()];
+                const { regular: regEvts, subagents: saList } = splitEvents(detailEvents);
                 return (
-                  <div className="message-events">
-                    <div className="events-header" onClick={() => setEventsOpen((v) => !v)}>
-                      <span className="events-toggle">{eventsOpen ? "▾" : "▸"}</span>
-                      <span>
-                        {(() => {
-                          const parts: string[] = [];
-                          const tc = regEvts.filter((e) => e.kind === "thinking").length;
-                          const tl = regEvts.filter((e) => e.kind === "tool_use").length;
-                          if (tc > 0) parts.push(`${tc} thinking`);
-                          if (tl > 0) parts.push(`${tl} tool call(s)`);
-                          if (saList.length > 0) parts.push(`${saList.length} subagent(s)`);
-                          return parts.length > 0 ? parts.join(" · ") : "streaming...";
-                        })()}
-                      </span>
-                    </div>
-                    {eventsOpen && (
-                      <div className="events-list">
-                        {regEvts.map((ev, i) => (
-                          <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
-                        ))}
+                  <>
+                    {(regEvts.length > 0 || msg.status === "streaming") && (
+                      <div className="message-events">
+                        <div className="events-header" onClick={() => setEventsOpen((v) => !v)}>
+                          <span className="events-toggle">{eventsOpen ? "▾" : "▸"}</span>
+                          <span>
+                            {(() => {
+                              const parts: string[] = [];
+                              const tc = regEvts.filter((e) => e.kind === "thinking").length;
+                              const tl = regEvts.filter((e) => e.kind === "tool_use").length;
+                              if (tc > 0) parts.push(`${tc} thinking`);
+                              if (tl > 0) parts.push(`${tl} tool call(s)`);
+                              return parts.length > 0 ? parts.join(" · ") : "streaming...";
+                            })()}
+                          </span>
+                        </div>
+                        {eventsOpen && (
+                          <div className="events-list">
+                            {regEvts.map((ev, i) => (
+                              <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                     {saList.map((ev) => (
@@ -865,9 +859,10 @@ const MessageItem = memo(function MessageItem({
                         ev={ev}
                         onOpenDiff={onOpenDiff}
                         onLoadEvents={handleLoadEvents}
+                        onCancel={handleCancelSubagent}
                       />
                     ))}
-                  </div>
+                  </>
                 );
               })()}
 
@@ -1077,6 +1072,7 @@ export function App() {
     openDiff,
     loadMessages,
     loadSubagentEvents,
+    cancelSubagent,
   } = useServer();
 
   const [activeWsId, setActiveWsId] = useState<string | null>(() => {
@@ -1747,6 +1743,9 @@ export function App() {
                           onQuote={handleQuote}
                           onLoadSubagentEvents={(messageId, taskId) =>
                             loadSubagentEvents(activeWs.id, messageId, taskId)
+                          }
+                          onCancelSubagent={(agentId, taskId) =>
+                            cancelSubagent(activeWs.id, agentId, taskId)
                           }
                         />
                       );

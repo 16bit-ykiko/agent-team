@@ -271,8 +271,6 @@ body {
   text-align: center;
 }
 
-
-
 .task-meta {
   font-size: 11px;
   color: var(--text-muted);
@@ -780,16 +778,44 @@ pre .copy-btn:hover {
 }
 
 .subagent-item {
-  margin-top: 4px;
-  border-left: 2px solid #a78bfa;
-  padding: 2px 8px;
-  border-radius: 2px;
+  margin: 6px 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid #a78bfa;
+  background: rgba(167, 139, 250, 0.05);
+  padding: 3px 10px;
+  border-radius: 6px;
 }
 .subagent-item.subagent-completed {
   border-left-color: #3fb950;
+  background: rgba(63, 185, 80, 0.04);
 }
 .subagent-item.subagent-failed {
   border-left-color: #f85149;
+  background: rgba(248, 81, 73, 0.04);
+}
+.subagent-item.subagent-stopped {
+  border-left-color: #8b949e;
+  background: transparent;
+}
+/* Nested subagents inside a parent's details keep the accent but stay flat. */
+.subagent-item .subagent-item {
+  margin: 4px 0;
+  background: transparent;
+}
+.btn-cancel-subagent {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: #f85149;
+  cursor: pointer;
+}
+.btn-cancel-subagent:hover {
+  background: rgba(248, 81, 73, 0.12);
+  border-color: #f85149;
 }
 .subagent-header {
   display: flex;
@@ -817,9 +843,16 @@ pre .copy-btn:hover {
 .subagent-icon-failed {
   color: #f85149;
 }
+.subagent-icon-stopped {
+  color: #8b949e;
+}
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 .subagent-label {
   font-weight: 600;

@@ -17,11 +17,15 @@ class FakeSession extends EventEmitter implements HostSessionHandle {
   sessionId: string | null = null;
   usage: UsageStats = { ...emptyUsage };
   isRunning = false;
+  stoppedTasks: string[] = [];
   constructor(private config: SessionConfig) {
     super();
   }
   async send(): Promise<void> {}
   abort(): void {}
+  async stopTask(taskId: string): Promise<void> {
+    this.stoppedTasks.push(taskId);
+  }
   getState(): SessionState {
     return { sessionId: this.sessionId, config: this.config, usage: this.usage };
   }
@@ -58,11 +62,11 @@ function makeWorkspace() {
     onMessageDone: (_wsId, msgId, status) => done.push({ msgId, status }),
   };
   const ws = new Workspace("ws-1", "test", "proj", "local", "/tmp", registry, cb);
-  ws.addAgent("A", "claude-fable-5", "🤖", "#888", {});
+  const agentInfo = ws.addAgent("A", "claude-fable-5", "🤖", "#888", {});
   const session = host.lastSession!;
   const emit = (e: Partial<StreamEvent>) => session.emit("event", e as StreamEvent);
   const agentMsgs = () => ws.messages.filter((m): m is Message => m.kind === "agent");
-  return { ws, emit, done, agentMsgs };
+  return { ws, emit, done, agentMsgs, agentInfo, session };
 }
 
 const subagentStart = (taskId: string): Partial<StreamEvent> => ({
@@ -153,6 +157,13 @@ describe("Workspace event aggregation", () => {
     const start = agentMsgs()[0].events!.find((e) => e.kind === "subagent_start")!;
     expect(start.subagent?.status).toBe("completed");
     expect(start.subagent?.summary).toBe("late");
+  });
+
+  it("cancelSubagent delegates to the owning session's stopTask", () => {
+    const { ws, agentInfo, session } = makeWorkspace();
+    ws.cancelSubagent(agentInfo.id, "task-42");
+    expect(session.stoppedTasks).toEqual(["task-42"]);
+    expect(() => ws.cancelSubagent("nonexistent", "task-42")).toThrow(/Agent not found/);
   });
 
   it("finalizes the message on result and starts a fresh one on the next event", () => {

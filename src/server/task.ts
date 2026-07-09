@@ -1,10 +1,5 @@
 import { execSync } from "child_process";
-import {
-  SessionConfig,
-  StreamEvent,
-  SessionState,
-  CommandInfo,
-} from "./session";
+import { SessionConfig, StreamEvent, SessionState, CommandInfo } from "./session";
 import { HostSessionHandle, HostRegistry } from "./host";
 import { effortLevelsForModel } from "./presets";
 
@@ -85,7 +80,13 @@ export interface AgentEntry {
 export interface WorkspaceCallbacks {
   onNewMessage: (wsId: string, msg: Message) => void;
   onStreamEvent: (wsId: string, msg: Message, event: StreamEvent) => void;
-  onMessageDone: (wsId: string, msgId: string, status: MessageStatus, content: string, events?: StreamEvent[]) => void;
+  onMessageDone: (
+    wsId: string,
+    msgId: string,
+    status: MessageStatus,
+    content: string,
+    events?: StreamEvent[],
+  ) => void;
   onAgentBusy?: (wsId: string, agentId: string) => void;
   onAgentIdle?: (wsId: string, agentId: string) => void;
   onCommandsChanged?: (wsId: string, commands: CommandInfo[]) => void;
@@ -173,21 +174,42 @@ export class Workspace {
       );
 
       if (innerEvent && startIdx >= 0) {
-        const saEvents = msg.events[startIdx].subagent!.events ??= [];
+        const saEvents = (msg.events[startIdx].subagent!.events ??= []);
         if (innerEvent.kind === "tool_result" && innerEvent.toolUseId) {
-          const i = saEvents.findIndex((e) => e.kind === "tool_use" && e.toolUseId === innerEvent.toolUseId);
-          if (i >= 0) { saEvents[i].toolResult = innerEvent.content; this.cb?.onStreamEvent(this.id, msg, event); return; }
+          const i = saEvents.findIndex(
+            (e) => e.kind === "tool_use" && e.toolUseId === innerEvent.toolUseId,
+          );
+          if (i >= 0) {
+            saEvents[i].toolResult = innerEvent.content;
+            this.cb?.onStreamEvent(this.id, msg, event);
+            return;
+          }
         }
         if (innerEvent.kind === "subagent_progress" && innerEvent.subagent?.taskId) {
-          const i = saEvents.findIndex((e) => e.kind === "subagent_progress" && e.subagent?.taskId === innerEvent.subagent?.taskId);
-          if (i >= 0) { saEvents[i] = innerEvent; this.cb?.onStreamEvent(this.id, msg, event); return; }
+          const i = saEvents.findIndex(
+            (e) =>
+              e.kind === "subagent_progress" && e.subagent?.taskId === innerEvent.subagent?.taskId,
+          );
+          if (i >= 0) {
+            saEvents[i] = innerEvent;
+            this.cb?.onStreamEvent(this.id, msg, event);
+            return;
+          }
         }
         if (innerEvent.kind === "subagent_done" && innerEvent.subagent?.taskId) {
           const nid = innerEvent.subagent.taskId;
-          const pi = saEvents.findIndex((e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid);
+          const pi = saEvents.findIndex(
+            (e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid,
+          );
           if (pi >= 0) saEvents.splice(pi, 1);
-          const si = saEvents.findIndex((e) => e.kind === "subagent_start" && e.subagent?.taskId === nid);
-          if (si >= 0) { saEvents[si].subagent!.status = innerEvent.subagent.status; saEvents[si].subagent!.summary = innerEvent.subagent.summary; saEvents[si].subagent!.usage = innerEvent.subagent.usage; }
+          const si = saEvents.findIndex(
+            (e) => e.kind === "subagent_start" && e.subagent?.taskId === nid,
+          );
+          if (si >= 0) {
+            saEvents[si].subagent!.status = innerEvent.subagent.status;
+            saEvents[si].subagent!.summary = innerEvent.subagent.summary;
+            saEvents[si].subagent!.usage = innerEvent.subagent.usage;
+          }
         }
         saEvents.push(innerEvent);
         this.cb?.onStreamEvent(this.id, msg, event);
@@ -196,7 +218,9 @@ export class Workspace {
       delete event.subagent?._innerEvent;
 
       if (startIdx >= 0) event.contentOffset = msg.events[startIdx].contentOffset;
-      const prev = msg.events.findIndex((e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId);
+      const prev = msg.events.findIndex(
+        (e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId,
+      );
       if (prev >= 0) msg.events[prev] = event;
       else msg.events.push(event);
     } else if (event.kind === "subagent_done") {
@@ -209,7 +233,9 @@ export class Workspace {
         msg.events[startIdx].subagent!.summary = event.subagent?.summary;
         msg.events[startIdx].subagent!.usage = event.subagent?.usage;
       }
-      const progIdx = msg.events.findIndex((e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId);
+      const progIdx = msg.events.findIndex(
+        (e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId,
+      );
       if (progIdx >= 0) msg.events.splice(progIdx, 1);
       msg.events.push(event);
     }
@@ -247,7 +273,12 @@ export class Workspace {
         }
       }
 
-      if (!entry.currentMsg && event.kind !== "result" && event.kind !== "error" && event.kind !== "compact") {
+      if (
+        !entry.currentMsg &&
+        event.kind !== "result" &&
+        event.kind !== "error" &&
+        event.kind !== "compact"
+      ) {
         this.cb?.onAgentBusy?.(this.id, agentId);
       }
 
@@ -577,6 +608,15 @@ export class Workspace {
     }
   }
 
+  cancelSubagent(agentId: string, taskId: string): void {
+    const entry = this.agents.get(agentId);
+    if (!entry) throw new Error(`Agent not found: ${agentId}`);
+    if (!entry.session.stopTask) throw new Error("This backend does not support stopping tasks");
+    entry.session.stopTask(taskId).catch((err) => {
+      console.error("[cancelSubagent]", err);
+    });
+  }
+
   abortAgent(agentId: string): void {
     const entry = this.agents.get(agentId);
     if (!entry) return;
@@ -633,7 +673,9 @@ export class Workspace {
   getGitBranch(): string | null {
     try {
       return execSync("git rev-parse --abbrev-ref HEAD", {
-        cwd: this.cwd, encoding: "utf-8", timeout: 5000,
+        cwd: this.cwd,
+        encoding: "utf-8",
+        timeout: 5000,
       }).trim();
     } catch {
       return null;
@@ -645,21 +687,21 @@ export class Workspace {
     // Use execFile to avoid shell injection — branch names go as direct args.
     const { execFile } = require("child_process");
     return new Promise<string | null>((resolve) => {
-      execFile("gh", ["pr", "view", branch, "--json", "url,title"],
+      execFile(
+        "gh",
+        ["pr", "view", branch, "--json", "url,title"],
         { cwd: this.cwd, encoding: "utf-8", timeout: 10000 },
         (err: Error | null, stdout: string) => resolve(err ? null : stdout.trim() || null),
       );
-    }).then(
-      (stdout) => {
-        if (!stdout) return null;
-        try {
-          const data = JSON.parse(stdout);
-          return data.url ? { url: data.url, title: data.title || "" } : null;
-        } catch {
-          return null;
-        }
-      },
-    );
+    }).then((stdout) => {
+      if (!stdout) return null;
+      try {
+        const data = JSON.parse(stdout);
+        return data.url ? { url: data.url, title: data.title || "" } : null;
+      } catch {
+        return null;
+      }
+    });
   }
 
   getInfo(includeMessages = true): WorkspaceInfo {

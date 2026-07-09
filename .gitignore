@@ -16,3 +16,6 @@ dist/
 # Pixi
 .pixi/
 uploads/
+
+# Local replay fixture (may contain private conversation data)
+webview-ui/public/replay.jsonl
