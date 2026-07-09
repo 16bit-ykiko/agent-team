@@ -1634,6 +1634,9 @@ export function App() {
                     <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
                     <span className="ws-group-label">{g.label}</span>
                     <span className="ws-group-count">{g.workspaces.length}</span>
+                    {g.workspaces[0].gitBranch && (
+                      <span className="ws-group-branch">{g.workspaces[0].gitBranch}</span>
+                    )}
                     {g.running && <span className="streaming-dot" />}
                   </div>
                   {expanded && (
@@ -1662,9 +1665,6 @@ export function App() {
                                     <span className="unread-badge">{unread}</span>
                                   )}
                                 </span>
-                                {ws.gitBranch && (
-                                  <span className="task-branch">{ws.gitBranch}</span>
-                                )}
                               </div>
                               {activeAgents.length > 0 && (
                                 <div className="task-active-agents">

@@ -241,7 +241,11 @@ body {
   border-left-color: var(--accent);
 }
 .ws-group-items .task-name {
-  font-size: 12px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.ws-group-items .task-item.active .task-name {
+  color: var(--text-primary);
 }
 .ws-group-items .task-active-agents {
   margin-top: 2px;
@@ -389,13 +393,13 @@ body {
 .task-meta .task-branch {
   color: var(--accent);
 }
-.task-name .task-branch {
+.ws-group-branch {
   color: var(--accent);
   font-size: 10px;
   font-weight: 400;
   flex-shrink: 1;
   min-width: 0;
-  max-width: 45%;
+  max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
