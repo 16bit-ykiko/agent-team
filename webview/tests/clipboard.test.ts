@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { selectionToMarkdown, copySelectionAsMarkdown, MAX_COPY_HTML } from "../src/clipboard";
+import {
+  selectionToMarkdown,
+  copySelectionAsMarkdown,
+  extractImageFiles,
+  MAX_COPY_HTML,
+} from "../src/clipboard";
 
 function mockSelection(html: string | null) {
   const getSelection = vi.fn(() => {
@@ -84,5 +89,34 @@ describe("copySelectionAsMarkdown", () => {
     copySelectionAsMarkdown(e);
     expect(e.clipboardData.setData).not.toHaveBeenCalled();
     expect(e.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe("extractImageFiles", () => {
+  function dt(items: Array<{ kind: string; type: string; file?: File | null }>): DataTransfer {
+    return {
+      items: items.map((i) => ({
+        kind: i.kind,
+        type: i.type,
+        getAsFile: () => i.file ?? null,
+      })),
+    } as unknown as DataTransfer;
+  }
+
+  it("returns image files from a paste and ignores text items", () => {
+    const png = new File(["x"], "shot.png", { type: "image/png" });
+    const files = extractImageFiles(
+      dt([
+        { kind: "string", type: "text/plain" },
+        { kind: "file", type: "image/png", file: png },
+        { kind: "file", type: "application/pdf", file: new File([], "doc.pdf") },
+      ]),
+    );
+    expect(files).toEqual([png]);
+  });
+
+  it("handles null DataTransfer and file items without a file", () => {
+    expect(extractImageFiles(null)).toEqual([]);
+    expect(extractImageFiles(dt([{ kind: "file", type: "image/png", file: null }]))).toEqual([]);
   });
 });

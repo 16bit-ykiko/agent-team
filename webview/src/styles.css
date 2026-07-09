@@ -1927,3 +1927,31 @@ pre .copy-btn:hover {
 .quote-bar-close:hover {
   color: var(--text-primary);
 }
+
+/* ---- Queued messages ---- */
+
+.message-queued {
+  opacity: 0.55;
+}
+.queued-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px dashed var(--warning);
+  color: var(--warning);
+  line-height: 15px;
+}
+.queued-cancel {
+  background: none;
+  border: none;
+  color: var(--warning);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0;
+}
+.queued-cancel:hover {
+  color: var(--error);
+}

@@ -2,7 +2,7 @@ import { SessionConfig, StreamEvent, SessionState, CommandInfo } from "./session
 import { HostSessionHandle, HostRegistry } from "./host";
 import { effortLevelsForModel } from "./presets";
 
-export type MessageStatus = "streaming" | "done" | "error";
+export type MessageStatus = "streaming" | "done" | "error" | "queued";
 export type MessageKind = "user" | "agent" | "system";
 
 export interface MessageImage {
@@ -28,6 +28,10 @@ export interface Message {
   turnId?: string;
   images?: MessageImage[];
   forwardRef?: ForwardRef;
+  // Queued-message bookkeeping: which agent will run it and the fully built
+  // prompt to dispatch (kept on the message so queues survive restarts).
+  queuedFor?: string;
+  queuedPrompt?: string;
 }
 
 export interface AgentInfo {
@@ -306,6 +310,7 @@ export class Workspace {
         }
         entry.currentMsg = null;
         this.cb?.onAgentIdle?.(this.id, agentId);
+        setTimeout(() => this.dequeueNext(agentId), 0);
       } else if (event.kind === "error") {
         const msg = this.ensureAgentMsg(entry);
         msg.status = "error";
@@ -319,6 +324,7 @@ export class Workspace {
         this.cb?.onMessageDone(this.id, msg.id, "error", msg.content, msg.events);
         entry.currentMsg = null;
         this.cb?.onAgentIdle?.(this.id, agentId);
+        setTimeout(() => this.dequeueNext(agentId), 0);
       } else if (event.kind === "subagent_progress" || event.kind === "subagent_done") {
         const msg = this.ensureAgentMsg(entry);
         this.handleSubagentOnMsg(msg, event);
@@ -487,7 +493,6 @@ export class Workspace {
     const agent = this.resolveAgent(resolvedTarget);
     if (!agent)
       throw new Error(resolvedTarget ? `Agent not found: ${resolvedTarget}` : "No default agent");
-    if (agent.session.isRunning) throw new Error(`Agent ${agent.info.name} is busy`);
 
     const cmdResult = await this.tryHandleCommand(cleanContent.trim(), agent);
     if (cmdResult !== null) {
@@ -527,25 +532,6 @@ export class Workspace {
       };
     }
 
-    const userMsg: Message = {
-      id: genId("msg"),
-      kind: "user",
-      agentId: null,
-      content,
-      timestamp: Date.now(),
-      status: "done",
-      images: msgImages?.length ? msgImages : undefined,
-      forwardRef,
-    };
-    this.messages.push(userMsg);
-    this.cb?.onNewMessage(this.id, userMsg);
-
-    this.cb?.onAgentBusy?.(this.id, agent.info.id);
-
-    agent.currentMsg = this.makeAgentMsg(agent.info.id);
-    this.messages.push(agent.currentMsg);
-    this.cb?.onNewMessage(this.id, agent.currentMsg);
-
     let prompt = cleanContent;
     if (quote) {
       const quotedFrom = forwardRef?.fromAgent ?? "Unknown";
@@ -556,11 +542,63 @@ export class Workspace {
       prompt = `[User attached image(s). Use the Read tool to view:\n${refs}]\n\n${prompt || "Please look at the attached image(s)."}`;
     }
 
+    // A busy agent queues the message instead of rejecting it; the queue
+    // drains in order whenever the agent becomes idle.
+    const busy = agent.session.isRunning;
+    const userMsg: Message = {
+      id: genId("msg"),
+      kind: "user",
+      agentId: null,
+      content,
+      timestamp: Date.now(),
+      status: busy ? "queued" : "done",
+      images: msgImages?.length ? msgImages : undefined,
+      forwardRef,
+      ...(busy && { queuedFor: agent.info.id, queuedPrompt: prompt }),
+    };
+    this.messages.push(userMsg);
+    this.cb?.onNewMessage(this.id, userMsg);
+    if (busy) return;
+
+    await this.dispatchPrompt(agent, prompt);
+  }
+
+  private async dispatchPrompt(agent: AgentEntry, prompt: string): Promise<void> {
+    this.cb?.onAgentBusy?.(this.id, agent.info.id);
+
+    agent.currentMsg = this.makeAgentMsg(agent.info.id);
+    this.messages.push(agent.currentMsg);
+    this.cb?.onNewMessage(this.id, agent.currentMsg);
+
     try {
       await agent.session.send(prompt);
     } catch (err) {
-      console.error("[sendMessage]", err);
+      console.error("[dispatchPrompt]", err);
     }
+  }
+
+  // Runs whenever an agent becomes idle: promote the oldest queued message
+  // for that agent and dispatch its stored prompt.
+  dequeueNext(agentId: string): void {
+    const entry = this.agents.get(agentId);
+    if (!entry || entry.session.isRunning) return;
+    const msg = this.messages.find((m) => m.status === "queued" && m.queuedFor === agentId);
+    if (!msg) return;
+    const prompt = msg.queuedPrompt ?? msg.content;
+    msg.status = "done";
+    delete msg.queuedPrompt;
+    delete msg.queuedFor;
+    this.cb?.onMessageDone(this.id, msg.id, "done", msg.content);
+    void this.dispatchPrompt(entry, prompt);
+  }
+
+  // Remove a still-queued message. Returns false if it no longer exists or
+  // already started running.
+  cancelQueued(messageId: string): boolean {
+    const idx = this.messages.findIndex((m) => m.id === messageId && m.status === "queued");
+    if (idx < 0) return false;
+    this.messages.splice(idx, 1);
+    return true;
   }
 
   async forwardMessage(messageId: string, targetAgentId: string): Promise<void> {
@@ -573,7 +611,6 @@ export class Workspace {
 
     const agent = this.resolveAgent(targetAgentId);
     if (!agent) throw new Error("Target agent not found");
-    if (agent.session.isRunning) throw new Error(`Agent ${agent.info.name} is busy`);
 
     const preview = original.content.slice(0, 120) + (original.content.length > 120 ? "..." : "");
     const forwardRef: ForwardRef = {
@@ -583,31 +620,23 @@ export class Workspace {
       preview,
     };
 
+    const prompt = `[Forwarded message from ${fromAgent?.info.name ?? "User"}]:\n\n${original.content}`;
+    const busy = agent.session.isRunning;
     const userMsg: Message = {
       id: genId("msg"),
       kind: "user",
       agentId: null,
       content: "",
       timestamp: Date.now(),
-      status: "done",
+      status: busy ? "queued" : "done",
       forwardRef,
+      ...(busy && { queuedFor: agent.info.id, queuedPrompt: prompt }),
     };
     this.messages.push(userMsg);
     this.cb?.onNewMessage(this.id, userMsg);
+    if (busy) return;
 
-    this.cb?.onAgentBusy?.(this.id, agent.info.id);
-
-    agent.currentMsg = this.makeAgentMsg(agent.info.id);
-    this.messages.push(agent.currentMsg);
-    this.cb?.onNewMessage(this.id, agent.currentMsg);
-
-    const prompt = `[Forwarded message from ${fromAgent?.info.name ?? "User"}]:\n\n${original.content}`;
-
-    try {
-      await agent.session.send(prompt);
-    } catch (err) {
-      console.error("[forwardMessage]", err);
-    }
+    await this.dispatchPrompt(agent, prompt);
   }
 
   cancelSubagent(agentId: string, taskId: string): void {
@@ -651,6 +680,7 @@ export class Workspace {
     }
     entry.currentMsg = null;
     this.cb?.onAgentIdle?.(this.id, entry.info.id);
+    setTimeout(() => this.dequeueNext(entry.info.id), 0);
   }
 
   clearContext(agentId: string): boolean {

@@ -636,6 +636,20 @@ export class Server {
         this.abortAgent(msg.workspaceId as string, msg.agentId as string | undefined);
         return;
 
+      case "cancel_queued": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        if (!workspace) return;
+        if (workspace.cancelQueued(msg.messageId as string)) {
+          this.persistWorkspace(workspace.id);
+          this.broadcastUI({
+            type: "message_removed",
+            workspaceId: workspace.id,
+            messageId: msg.messageId,
+          });
+        }
+        return;
+      }
+
       case "cancel_subagent": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
         if (!workspace) {

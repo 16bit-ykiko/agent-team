@@ -32,6 +32,19 @@ function getSelectionHtml(): string | null {
   return div.innerHTML;
 }
 
+// Image files from a paste event's DataTransfer (Ctrl+V a screenshot).
+export function extractImageFiles(dt: DataTransfer | null): File[] {
+  if (!dt) return [];
+  const files: File[] = [];
+  for (const item of Array.from(dt.items ?? [])) {
+    if (item.kind === "file" && item.type.startsWith("image/")) {
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  return files;
+}
+
 // Copy handler for rendered-markdown containers: converts the selected HTML
 // back to markdown. Ordered so that any failure (conversion error, oversized
 // selection, clipboard restrictions on iOS) falls through to the browser's

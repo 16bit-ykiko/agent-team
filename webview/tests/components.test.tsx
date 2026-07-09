@@ -234,3 +234,37 @@ describe("CreateWorkspaceDialog", () => {
     expect(onCreate).toHaveBeenCalledWith("clice", "/home/ykiko/clice", "local");
   });
 });
+
+describe("MessageItem queued state", () => {
+  const agents: AgentInfo[] = [
+    { id: "a1", name: "Alice", model: "m", avatar: "A", color: "#888", isDefault: true },
+  ];
+  const queuedMsg: Message = {
+    id: "mq",
+    kind: "user",
+    agentId: null,
+    content: "do this next",
+    timestamp: 0,
+    status: "queued",
+    queuedFor: "a1",
+  };
+
+  it("renders a queued badge, dims the message, and cancels via the badge", () => {
+    const onCancelQueued = vi.fn();
+    const { container, getByTitle, getByText } = render(
+      <MessageItem msg={queuedMsg} agents={agents} onCancelQueued={onCancelQueued} />,
+    );
+    expect(getByText("queued")).toBeTruthy();
+    expect(container.querySelector(".message")!.className).toContain("message-queued");
+    fireEvent.click(getByTitle("Remove from queue"));
+    expect(onCancelQueued).toHaveBeenCalledWith("mq");
+  });
+
+  it("renders normally once the message leaves the queue", () => {
+    const { container } = render(
+      <MessageItem msg={{ ...queuedMsg, status: "done", queuedFor: undefined }} agents={agents} />,
+    );
+    expect(container.querySelector(".queued-badge")).toBeNull();
+    expect(container.querySelector(".message")!.className).not.toContain("message-queued");
+  });
+});

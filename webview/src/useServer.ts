@@ -52,11 +52,12 @@ export interface Message {
   agentId: string | null;
   content: string;
   timestamp: number;
-  status: "streaming" | "done" | "error";
+  status: "streaming" | "done" | "error" | "queued";
   events?: StreamEvent[];
   turnId?: string;
   images?: MessageImage[];
   forwardRef?: ForwardRef;
+  queuedFor?: string;
 }
 
 export interface AgentInfo {
@@ -563,6 +564,17 @@ export function useServer() {
           break;
         }
 
+        case "message_removed": {
+          const wsId = msg.workspaceId as string;
+          const messageId = msg.messageId as string;
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === wsId ? { ...w, messages: w.messages.filter((m) => m.id !== messageId) } : w,
+            ),
+          );
+          break;
+        }
+
         case "search_results":
           setSearchResults({ query: msg.query as string, hits: msg.hits as SearchHit[] });
           break;
@@ -687,6 +699,11 @@ export function useServer() {
     createWorkspace: useCallback(
       (name: string, path: string, hostId?: string) =>
         send({ type: "create_workspace", name, path, hostId }),
+      [send],
+    ),
+    cancelQueued: useCallback(
+      (wsId: string, messageId: string) =>
+        send({ type: "cancel_queued", workspaceId: wsId, messageId }),
       [send],
     ),
     searchServer: useCallback((query: string) => send({ type: "search", query }), [send]),

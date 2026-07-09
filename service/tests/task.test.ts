@@ -21,7 +21,11 @@ class FakeSession extends EventEmitter implements HostSessionHandle {
   constructor(private config: SessionConfig) {
     super();
   }
-  async send(): Promise<void> {}
+  sent: string[] = [];
+  async send(prompt: string): Promise<void> {
+    this.sent.push(prompt);
+    this.isRunning = true;
+  }
   abort(): void {}
   async stopTask(taskId: string): Promise<void> {
     this.stoppedTasks.push(taskId);
@@ -176,5 +180,86 @@ describe("Workspace event aggregation", () => {
     expect(done[0].status).toBe("done");
     expect(agentMsgs()).toHaveLength(2);
     expect(agentMsgs()[1].content).toBe("second turn");
+  });
+});
+
+describe("message queue", () => {
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+
+  it("dispatches immediately when the agent is idle", async () => {
+    const { ws, session, agentMsgs } = makeWorkspace();
+    await ws.sendMessage("first task");
+    expect(session.sent).toEqual(["first task"]);
+    expect(ws.messages.find((m) => m.kind === "user")!.status).toBe("done");
+    expect(agentMsgs()).toHaveLength(1);
+  });
+
+  it("queues messages for a busy agent and drains FIFO on idle", async () => {
+    const { ws, emit, session, agentMsgs } = makeWorkspace();
+    session.isRunning = true;
+    await ws.sendMessage("second");
+    await ws.sendMessage("third");
+    expect(session.sent).toEqual([]);
+    const queued = ws.messages.filter((m) => m.status === "queued");
+    expect(queued).toHaveLength(2);
+    expect(queued[0].queuedFor).toBeTruthy();
+    expect(agentMsgs()).toHaveLength(0);
+
+    // The running turn ends: only the first queued message dispatches,
+    // because dispatch marks the session busy again.
+    session.isRunning = false;
+    emit({ kind: "result", content: "" });
+    await tick();
+    expect(session.sent).toEqual(["second"]);
+    expect(ws.messages.filter((m) => m.status === "queued")).toHaveLength(1);
+    expect(ws.messages.find((m) => m.content === "second")!.status).toBe("done");
+
+    // Second turn ends: the next one drains.
+    session.isRunning = false;
+    emit({ kind: "result", content: "" });
+    await tick();
+    expect(session.sent).toEqual(["second", "third"]);
+    expect(ws.messages.filter((m) => m.status === "queued")).toHaveLength(0);
+  });
+
+  it("drains the queue after an aborted turn too", async () => {
+    const { ws, session } = makeWorkspace();
+    session.isRunning = true;
+    await ws.sendMessage("after abort");
+    session.isRunning = false;
+    ws.abortAll();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(session.sent).toEqual(["after abort"]);
+  });
+
+  it("cancelQueued removes a pending message so it never runs", async () => {
+    const { ws, emit, session } = makeWorkspace();
+    session.isRunning = true;
+    await ws.sendMessage("doomed");
+    const queued = ws.messages.find((m) => m.status === "queued")!;
+    expect(ws.cancelQueued(queued.id)).toBe(true);
+    expect(ws.cancelQueued(queued.id)).toBe(false);
+    expect(ws.messages.find((m) => m.id === queued.id)).toBeUndefined();
+
+    session.isRunning = false;
+    emit({ kind: "result", content: "" });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(session.sent).toEqual([]);
+  });
+
+  it("preserves the built prompt for queued messages with quotes", async () => {
+    const { ws, emit, session } = makeWorkspace();
+    session.isRunning = true;
+    await ws.sendMessage("follow-up", undefined, undefined, {
+      messageId: "m0",
+      agentId: null,
+      content: "original text",
+    });
+    session.isRunning = false;
+    emit({ kind: "result", content: "" });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(session.sent).toHaveLength(1);
+    expect(session.sent[0]).toContain("original text");
+    expect(session.sent[0]).toContain("follow-up");
   });
 });

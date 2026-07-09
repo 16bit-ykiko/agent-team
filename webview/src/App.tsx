@@ -25,7 +25,7 @@ import {
 } from "./useServer";
 import { splitEvents } from "./events";
 import { groupWorkspaces, isGroupExpanded } from "./groups";
-import { copySelectionAsMarkdown } from "./clipboard";
+import { copySelectionAsMarkdown, extractImageFiles } from "./clipboard";
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
   const [copied, setCopied] = useState(false);
@@ -641,6 +641,7 @@ export const MessageItem = memo(function MessageItem({
   onQuote,
   onLoadSubagentEvents,
   onCancelSubagent,
+  onCancelQueued,
 }: {
   msg: Message;
   agents: AgentInfo[];
@@ -649,6 +650,7 @@ export const MessageItem = memo(function MessageItem({
   onQuote?: (msg: Message) => void;
   onLoadSubagentEvents?: (messageId: string, taskId: string) => void;
   onCancelSubagent?: (agentId: string, taskId: string) => void;
+  onCancelQueued?: (messageId: string) => void;
 }) {
   const [eventsOpen, setEventsOpen] = useState(false);
   const handleLoadEvents = useCallback(
@@ -712,7 +714,7 @@ export const MessageItem = memo(function MessageItem({
   return (
     <div
       id={`msg-${msg.id}`}
-      className={`message ${compact ? "message-compact" : ""}${highlight ? " message-highlight" : ""}`}
+      className={`message ${compact ? "message-compact" : ""}${highlight ? " message-highlight" : ""}${msg.status === "queued" ? " message-queued" : ""}`}
     >
       <div className="message-gutter">
         {compact ? null : isUser ? (
@@ -733,7 +735,23 @@ export const MessageItem = memo(function MessageItem({
         {!compact && (
           <div className="message-header">
             {isUser ? (
-              <span className="message-author user-author">You</span>
+              <>
+                <span className="message-author user-author">You</span>
+                {msg.status === "queued" && (
+                  <span className="queued-badge">
+                    queued
+                    {onCancelQueued && (
+                      <button
+                        className="queued-cancel"
+                        title="Remove from queue"
+                        onClick={() => onCancelQueued(msg.id)}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </span>
+                )}
+              </>
             ) : agent ? (
               <>
                 <span className="message-author" style={{ color: agent.color }}>
@@ -1032,6 +1050,7 @@ export function App() {
     loadMessages,
     loadSubagentEvents,
     cancelSubagent,
+    cancelQueued,
     startReplayDemo,
     lastError,
     clearError,
@@ -1410,9 +1429,6 @@ export function App() {
     const text = (textareaRef.current?.value ?? "").trim();
     const ws = activeWsRef.current;
     if ((!text && pendingImages.length === 0) || !ws || uploading) return;
-    // The target agent can't accept messages while running (the server would
-    // reject with "Agent is busy"); the primary button shows Stop instead.
-    if (targetBusy) return;
 
     let images: Array<{ name: string; url: string }> | undefined;
     if (pendingImages.length > 0) {
@@ -1793,6 +1809,7 @@ export function App() {
                           onCancelSubagent={(agentId, taskId) =>
                             cancelSubagent(activeWs.id, agentId, taskId)
                           }
+                          onCancelQueued={(messageId) => cancelQueued(activeWs.id, messageId)}
                         />
                       );
                     })}
@@ -1903,6 +1920,15 @@ export function App() {
                   spellCheck={false}
                   onChange={handleTextareaChange}
                   onKeyDown={handleKeyDown}
+                  onPaste={(e) => {
+                    const imgs = extractImageFiles(e.clipboardData);
+                    if (imgs.length === 0) return;
+                    e.preventDefault();
+                    setPendingImages((prev) => [
+                      ...prev,
+                      ...imgs.map((file) => ({ file, preview: URL.createObjectURL(file) })),
+                    ]);
+                  }}
                   disabled={!hasAgents}
                   placeholder={
                     activeWs.agents.length > 1
@@ -1920,28 +1946,29 @@ export function App() {
                     Stop all
                   </button>
                 )}
-                {targetBusy ? (
+                {targetBusy && (
                   <button
-                    className="btn-abort btn-primary-slot"
+                    className="btn-abort"
                     title={`Stop ${targetAgent!.name}`}
                     onClick={() => abort(activeWs.id, targetAgent!.id)}
                   >
-                    ◼ Stop
-                  </button>
-                ) : (
-                  <button
-                    className="btn-primary-slot"
-                    onClick={handleSend}
-                    disabled={(!hasInput && pendingImages.length === 0) || !hasAgents || uploading}
-                    title={
-                      targetAgent && activeWs.agents.length > 1
-                        ? `Send to ${targetAgent.name}`
-                        : "Send"
-                    }
-                  >
-                    {uploading ? "Uploading..." : "Send"}
+                    ◼
                   </button>
                 )}
+                <button
+                  className="btn-primary-slot"
+                  onClick={handleSend}
+                  disabled={(!hasInput && pendingImages.length === 0) || !hasAgents || uploading}
+                  title={
+                    targetBusy
+                      ? `${targetAgent!.name} is busy — message will run next`
+                      : targetAgent && activeWs.agents.length > 1
+                        ? `Send to ${targetAgent.name}`
+                        : "Send"
+                  }
+                >
+                  {uploading ? "Uploading..." : targetBusy ? "Queue" : "Send"}
+                </button>
               </div>
             </div>
           </>
