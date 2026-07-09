@@ -217,15 +217,17 @@ export class ClaudeSession extends EventEmitter {
     this.startIterating();
     this.pushMessage(message);
 
-    this.queryInstance!.supportedCommands().then((cmds) => {
-      const commands: CommandInfo[] = cmds.map((c) => ({
-        name: c.name,
-        description: c.description,
-        argumentHint: c.argumentHint,
-        aliases: c.aliases,
-      }));
-      this.emit("commands", commands);
-    }).catch(() => {});
+    this.queryInstance!.supportedCommands()
+      .then((cmds) => {
+        const commands: CommandInfo[] = cmds.map((c) => ({
+          name: c.name,
+          description: c.description,
+          argumentHint: c.argumentHint,
+          aliases: c.aliases,
+        }));
+        this.emit("commands", commands);
+      })
+      .catch(() => {});
   }
 
   private pushMessage(message: string): void {
@@ -332,14 +334,24 @@ export class ClaudeSession extends EventEmitter {
       case "system": {
         const sys = msg as Record<string, unknown>;
         if (sys.subtype === "commands_changed" && Array.isArray(sys.commands)) {
-          const commands: CommandInfo[] = (sys.commands as Array<Record<string, unknown>>).map((c) => ({
-            name: c.name as string,
-            description: c.description as string,
-            argumentHint: c.argumentHint as string,
-            aliases: c.aliases as string[] | undefined,
-          }));
+          const commands: CommandInfo[] = (sys.commands as Array<Record<string, unknown>>).map(
+            (c) => ({
+              name: c.name as string,
+              description: c.description as string,
+              argumentHint: c.argumentHint as string,
+              aliases: c.aliases as string[] | undefined,
+            }),
+          );
           this.emit("commands", commands);
         } else if (sys.subtype === "task_started") {
+          // task_started fires for every SDK task type: Task-tool subagents
+          // (local_agent), background Bash commands (local_bash), workflow
+          // runs (local_workflow)... Only real subagents get an agent bubble;
+          // for the rest the originating tool_use is already shown. Untracked
+          // task ids are dropped by the agentTaskIds guard below.
+          const taskType = sys.task_type as string | undefined;
+          const isAgentTask = taskType ? taskType === "local_agent" : sys.subagent_type != null;
+          if (!isAgentTask || sys.skip_transcript) break;
           const taskId = sys.task_id as string;
           const toolUseId = sys.tool_use_id as string | undefined;
           const parentTaskId = toolUseId ? this.nestedToolUseToParent.get(toolUseId) : undefined;
@@ -383,11 +395,13 @@ export class ClaudeSession extends EventEmitter {
               agentType: sys.subagent_type as string | undefined,
               status: "running",
               lastTool: sys.last_tool_name as string | undefined,
-              usage: sys.usage ? {
-                totalTokens: (sys.usage as Record<string, number>).total_tokens ?? 0,
-                toolUses: (sys.usage as Record<string, number>).tool_uses ?? 0,
-                durationMs: (sys.usage as Record<string, number>).duration_ms ?? 0,
-              } : undefined,
+              usage: sys.usage
+                ? {
+                    totalTokens: (sys.usage as Record<string, number>).total_tokens ?? 0,
+                    toolUses: (sys.usage as Record<string, number>).tool_uses ?? 0,
+                    durationMs: (sys.usage as Record<string, number>).duration_ms ?? 0,
+                  }
+                : undefined,
               summary: sys.summary as string | undefined,
             },
           } as StreamEvent;
@@ -409,11 +423,13 @@ export class ClaudeSession extends EventEmitter {
               taskId,
               description: "",
               status: sys.status as SubAgentInfo["status"],
-              usage: sys.usage ? {
-                totalTokens: (sys.usage as Record<string, number>).total_tokens ?? 0,
-                toolUses: (sys.usage as Record<string, number>).tool_uses ?? 0,
-                durationMs: (sys.usage as Record<string, number>).duration_ms ?? 0,
-              } : undefined,
+              usage: sys.usage
+                ? {
+                    totalTokens: (sys.usage as Record<string, number>).total_tokens ?? 0,
+                    toolUses: (sys.usage as Record<string, number>).tool_uses ?? 0,
+                    durationMs: (sys.usage as Record<string, number>).duration_ms ?? 0,
+                  }
+                : undefined,
               summary: sys.summary as string | undefined,
             },
           } as StreamEvent;
@@ -424,14 +440,14 @@ export class ClaudeSession extends EventEmitter {
           }
           this.cleanupTask(taskId);
         } else if (sys.subtype === "model_refusal_fallback") {
-          const from = sys.original_model as string ?? "unknown";
-          const to = sys.fallback_model as string ?? "unknown";
+          const from = (sys.original_model as string) ?? "unknown";
+          const to = (sys.fallback_model as string) ?? "unknown";
           this.emit("event", {
             kind: "error",
             content: `Model refused and fell back: ${from} → ${to}`,
           } as StreamEvent);
         } else if (sys.subtype === "model_refusal_no_fallback") {
-          const category = sys.category as string ?? "";
+          const category = (sys.category as string) ?? "";
           this.emit("event", {
             kind: "error",
             content: `Model refused${category ? ` (${category})` : ""} — no fallback configured`,
@@ -479,7 +495,12 @@ export class ClaudeSession extends EventEmitter {
           // Mark this tool_use as belonging to a subagent so task_started
           // for it gets routed as a nested event, not a top-level subagent.
           this.nestedToolUseToParent.set(innerToolId, taskId);
-          ev = { kind: "tool_use", content: formatToolUse(b), toolUseId: innerToolId, toolInput: extractToolInput(b) } as StreamEvent;
+          ev = {
+            kind: "tool_use",
+            content: formatToolUse(b),
+            toolUseId: innerToolId,
+            toolInput: extractToolInput(b),
+          } as StreamEvent;
         } else if (blockType === "tool_result") {
           const rc = b.content as string;
           if (rc) ev = { kind: "tool_result", content: rc } as StreamEvent;
@@ -567,7 +588,11 @@ export class ClaudeSession extends EventEmitter {
             kind: "subagent_progress",
             content: "",
             toolUseId: parentToolUseId,
-            subagent: { taskId, description: "", _innerEvent: { kind: "tool_result", content: text, toolUseId } as StreamEvent },
+            subagent: {
+              taskId,
+              description: "",
+              _innerEvent: { kind: "tool_result", content: text, toolUseId } as StreamEvent,
+            },
           } as StreamEvent);
         }
       } else {

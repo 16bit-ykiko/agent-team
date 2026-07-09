@@ -74,9 +74,31 @@ function ScrollTable(props: ComponentProps<"table">) {
 }
 
 const mdComponents = { pre: CodeBlock, table: ScrollTable };
+const mdRemarkPlugins = [remarkGfm];
+const mdRehypePlugins = [rehypeHighlight];
+
+// Markdown parsing + highlighting is the hottest path during streaming.
+// Memoized so a re-render only re-parses blocks whose text actually changed
+// (inline plugin arrays would defeat react-markdown's own memoization).
+const MdBlock = memo(function MdBlock({ children }: { children: string }) {
+  return (
+    <Markdown
+      remarkPlugins={mdRemarkPlugins}
+      rehypePlugins={mdRehypePlugins}
+      components={mdComponents}
+    >
+      {children}
+    </Markdown>
+  );
+});
 
 function isImageAvatar(avatar: string): boolean {
-  return avatar.includes("/") || avatar.endsWith(".jpg") || avatar.endsWith(".png") || avatar.endsWith(".webp");
+  return (
+    avatar.includes("/") ||
+    avatar.endsWith(".jpg") ||
+    avatar.endsWith(".png") ||
+    avatar.endsWith(".webp")
+  );
 }
 
 function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
@@ -84,11 +106,20 @@ function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) 
   return (
     <div
       className="agent-avatar"
-      style={{ width: size, height: size, background: isImg ? "transparent" : agent.color, fontSize: size * 0.5 }}
+      style={{
+        width: size,
+        height: size,
+        background: isImg ? "transparent" : agent.color,
+        fontSize: size * 0.5,
+      }}
       title={`${agent.name} (${agent.model})`}
     >
       {isImg ? (
-        <img src={agent.avatar} alt={agent.name} style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }} />
+        <img
+          src={agent.avatar}
+          alt={agent.name}
+          style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }}
+        />
       ) : (
         agent.avatar
       )}
@@ -131,10 +162,19 @@ function AddAgentDialog({
             >
               <div
                 className="agent-avatar"
-                style={{ width: 36, height: 36, background: isImageAvatar(p.avatar) ? "transparent" : p.color, fontSize: 18 }}
+                style={{
+                  width: 36,
+                  height: 36,
+                  background: isImageAvatar(p.avatar) ? "transparent" : p.color,
+                  fontSize: 18,
+                }}
               >
                 {isImageAvatar(p.avatar) ? (
-                  <img src={p.avatar} alt={p.name} style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover" }} />
+                  <img
+                    src={p.avatar}
+                    alt={p.name}
+                    style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover" }}
+                  />
                 ) : (
                   p.avatar
                 )}
@@ -164,14 +204,18 @@ function AddAgentDialog({
                   {claude.length > 0 && (
                     <optgroup label="Claude">
                       {claude.map((m) => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
                       ))}
                     </optgroup>
                   )}
                   {codex.length > 0 && (
                     <optgroup label="Codex">
                       {codex.map((m) => (
-                        <option key={m.id} value={m.id}>{m.label}</option>
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
                       ))}
                     </optgroup>
                   )}
@@ -321,15 +365,7 @@ function CreateWorkspaceDialog({
 function renderMentionContent(content: string, agents: AgentInfo[]) {
   const match = content.match(/^@(\S+)(\s+|$)/);
   if (!match) {
-    return (
-      <Markdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
-        components={mdComponents}
-      >
-        {content}
-      </Markdown>
-    );
+    return <MdBlock>{content}</MdBlock>;
   }
   const mentionName = match[1];
   const rest = content.slice(match[0].length);
@@ -342,20 +378,12 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
       >
         @{mentionName}
       </span>
-      {rest && (
-        <Markdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={mdComponents}
-        >
-          {rest}
-        </Markdown>
-      )}
+      {rest && <MdBlock>{rest}</MdBlock>}
     </>
   );
 }
 
-function EventItem({
+const EventItem = memo(function EventItem({
   ev,
   onOpenDiff,
 }: {
@@ -369,33 +397,36 @@ function EventItem({
   const hasResult = isToolUse && ev.toolResult != null;
 
   if (isCompact) {
-    return <div className="event event-compact"><span className="compact-text">{ev.content}</span></div>;
+    return (
+      <div className="event event-compact">
+        <span className="compact-text">{ev.content}</span>
+      </div>
+    );
   }
 
   const resultLen = isResult ? ev.content.length : (ev.toolResult?.length ?? 0);
-  const resultLabel = resultLen > 1000 ? `${Math.round(resultLen / 1000)}k chars` : `${resultLen} chars`;
+  const resultLabel =
+    resultLen > 1000 ? `${Math.round(resultLen / 1000)}k chars` : `${resultLen} chars`;
 
   return (
     <div className={`event event-${ev.kind}`}>
       <span className="event-kind">
         {ev.kind}
-        {ev.toolInput?.tool === "Edit" &&
-          ev.toolInput.old_string != null &&
-          onOpenDiff && (
-            <button
-              className="btn-diff"
-              title="Open diff in VS Code"
-              onClick={() =>
-                onOpenDiff(
-                  ev.toolInput!.file_path!,
-                  ev.toolInput!.old_string!,
-                  ev.toolInput!.new_string!,
-                )
-              }
-            >
-              Diff
-            </button>
-          )}
+        {ev.toolInput?.tool === "Edit" && ev.toolInput.old_string != null && onOpenDiff && (
+          <button
+            className="btn-diff"
+            title="Open diff in VS Code"
+            onClick={() =>
+              onOpenDiff(
+                ev.toolInput!.file_path!,
+                ev.toolInput!.old_string!,
+                ev.toolInput!.new_string!,
+              )
+            }
+          >
+            Diff
+          </button>
+        )}
         {(isResult || hasResult) && (
           <button className="btn-diff" onClick={() => setResultOpen((v) => !v)}>
             {resultOpen ? "Hide" : "Result"} ({resultLabel})
@@ -406,41 +437,27 @@ function EventItem({
         resultOpen && (
           <div className="event-content">
             {ev.isMarkdown ? (
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-                components={mdComponents}
-              >
-                {ev.content}
-              </Markdown>
+              <MdBlock>{ev.content}</MdBlock>
             ) : (
-              <pre><code>{ev.content}</code></pre>
+              <pre>
+                <code>{ev.content}</code>
+              </pre>
             )}
           </div>
         )
       ) : (
         <>
           <div className="event-content">
-            <Markdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
-              components={mdComponents}
-            >
-              {ev.content}
-            </Markdown>
+            <MdBlock>{ev.content}</MdBlock>
           </div>
           {hasResult && resultOpen && (
             <div className="event-content">
               {ev.toolResultIsMarkdown ? (
-                <Markdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeHighlight]}
-                  components={mdComponents}
-                >
-                  {ev.toolResult!}
-                </Markdown>
+                <MdBlock>{ev.toolResult!}</MdBlock>
               ) : (
-                <pre><code>{ev.toolResult}</code></pre>
+                <pre>
+                  <code>{ev.toolResult}</code>
+                </pre>
               )}
             </div>
           )}
@@ -448,9 +465,9 @@ function EventItem({
       )}
     </div>
   );
-}
+});
 
-function SubAgentItem({
+const SubAgentItem = memo(function SubAgentItem({
   ev,
   onOpenDiff,
   onLoadEvents,
@@ -463,7 +480,11 @@ function SubAgentItem({
   const sa = ev.subagent;
   if (!sa) return null;
 
-  const isDone = ev.kind === "subagent_done" || sa.status === "completed" || sa.status === "failed" || sa.status === "stopped";
+  const isDone =
+    ev.kind === "subagent_done" ||
+    sa.status === "completed" ||
+    sa.status === "failed" ||
+    sa.status === "stopped";
   const isRunning = !isDone;
   const label = sa.agentType || "Agent";
   const statusIcon = isRunning ? "↻" : sa.status === "completed" ? "✓" : "✗";
@@ -506,7 +527,9 @@ function SubAgentItem({
                   thinkingEvts.length > 0 ? `${thinkingEvts.length} thinking` : null,
                   toolEvts.length > 0 ? `${toolEvts.length} tool(s)` : null,
                   textEvts.length > 0 ? `${textEvts.length} text` : null,
-                ].filter(Boolean).join(" · ")
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
               : `${totalCount} event(s)`}
           </span>
         )}
@@ -516,13 +539,7 @@ function SubAgentItem({
         <div className="subagent-details">
           {sa.prompt && (
             <div className="subagent-prompt">
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-                components={mdComponents}
-              >
-                {sa.prompt}
-              </Markdown>
+              <MdBlock>{sa.prompt}</MdBlock>
             </div>
           )}
           {needsLoad && <div className="subagent-loading">Loading events...</div>}
@@ -535,13 +552,7 @@ function SubAgentItem({
           )}
           {sa.summary && (
             <div className="subagent-summary">
-              <Markdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight]}
-                components={mdComponents}
-              >
-                {sa.summary}
-              </Markdown>
+              <MdBlock>{sa.summary}</MdBlock>
             </div>
           )}
           {usageStr && <div className="subagent-usage">{usageStr}</div>}
@@ -549,7 +560,7 @@ function SubAgentItem({
       )}
     </div>
   );
-}
+});
 
 function StepGroup({
   group,
@@ -562,26 +573,38 @@ function StepGroup({
 }) {
   const [open, setOpen] = useState(false);
   const regularEvents = group.events.filter(
-    (e) => e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done",
+    (e) =>
+      e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done",
   );
 
   const subagentMap = new Map<string, StreamEvent>();
   for (const e of group.events) {
     if (!e.subagent?.taskId) continue;
-    if (e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done") continue;
+    if (e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done")
+      continue;
     const existing = subagentMap.get(e.subagent.taskId);
-    if (!existing || e.kind === "subagent_done" || (e.kind === "subagent_progress" && existing.kind === "subagent_start")) {
+    if (
+      !existing ||
+      e.kind === "subagent_done" ||
+      (e.kind === "subagent_progress" && existing.kind === "subagent_start")
+    ) {
       const mergedEvents = existing?.subagent?.events ?? e.subagent.events;
-      const merged = { ...e, subagent: { ...(existing?.subagent ?? {}), ...e.subagent, description: existing?.subagent?.description || e.subagent.description, events: mergedEvents } };
+      const merged = {
+        ...e,
+        subagent: {
+          ...(existing?.subagent ?? {}),
+          ...e.subagent,
+          description: existing?.subagent?.description || e.subagent.description,
+          events: mergedEvents,
+        },
+      };
       subagentMap.set(e.subagent.taskId, merged);
     }
   }
   const subagents = [...subagentMap.values()];
 
   const thinkingCount = regularEvents.filter((e) => e.kind === "thinking").length;
-  const toolCount = regularEvents.filter(
-    (e) => e.kind === "tool_use",
-  ).length;
+  const toolCount = regularEvents.filter((e) => e.kind === "tool_use").length;
   const parts: string[] = [];
   if (thinkingCount > 0) parts.push(`${thinkingCount} thinking`);
   if (toolCount > 0) parts.push(`${toolCount} tool call(s)`);
@@ -602,7 +625,12 @@ function StepGroup({
         </div>
       )}
       {subagents.map((ev) => (
-        <SubAgentItem key={ev.subagent!.taskId} ev={ev} onOpenDiff={onOpenDiff} onLoadEvents={onLoadEvents} />
+        <SubAgentItem
+          key={ev.subagent!.taskId}
+          ev={ev}
+          onOpenDiff={onOpenDiff}
+          onLoadEvents={onLoadEvents}
+        />
       ))}
     </div>
   );
@@ -634,13 +662,7 @@ const MessageItem = memo(function MessageItem({
   if (msg.kind === "system") {
     return (
       <div className="system-message">
-        <Markdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={mdComponents}
-        >
-          {msg.content}
-        </Markdown>
+        <MdBlock>{msg.content}</MdBlock>
       </div>
     );
   }
@@ -650,10 +672,7 @@ const MessageItem = memo(function MessageItem({
 
   const events = msg.events ?? [];
   const detailEvents = events.filter(
-    (e) =>
-      e.kind !== "text" &&
-      e.kind !== "text_delta" &&
-      e.kind !== "thinking_delta",
+    (e) => e.kind !== "text" && e.kind !== "text_delta" && e.kind !== "thinking_delta",
   );
   const hasDetails = detailEvents.length > 0 || msg.status === "streaming";
 
@@ -661,9 +680,7 @@ const MessageItem = memo(function MessageItem({
   type Segment = { text: string; events: StreamEvent[]; streaming?: boolean };
   const segments: Segment[] = [];
   if (detailEvents.length > 0 && msg.content) {
-    const offsets = detailEvents
-      .map((e) => e.contentOffset)
-      .filter((o): o is number => o != null);
+    const offsets = detailEvents.map((e) => e.contentOffset).filter((o): o is number => o != null);
     const uniqueOffsets = [...new Set(offsets)].sort((a, b) => a - b);
 
     if (uniqueOffsets.length > 0) {
@@ -694,7 +711,13 @@ const MessageItem = memo(function MessageItem({
     >
       <div className="message-gutter">
         {compact ? null : isUser ? (
-          <div className="avatar-user"><img src="avatars/ykiko.jpg" alt="You" style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /></div>
+          <div className="avatar-user">
+            <img
+              src="avatars/ykiko.jpg"
+              alt="You"
+              style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }}
+            />
+          </div>
         ) : agent ? (
           <AgentAvatar agent={agent} size={32} />
         ) : (
@@ -764,67 +787,89 @@ const MessageItem = memo(function MessageItem({
             )}
             {segments.map((seg, si) => (
               <div key={si}>
-                {seg.text && (
-                  <Markdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeHighlight]}
-                    components={mdComponents}
-                  >
-                    {seg.text}
-                  </Markdown>
-                )}
+                {seg.text && <MdBlock>{seg.text}</MdBlock>}
                 {seg.events.length > 0 && (
-                  <StepGroup group={{ step: si, events: seg.events }} onOpenDiff={onOpenDiff} onLoadEvents={handleLoadEvents} />
+                  <StepGroup
+                    group={{ step: si, events: seg.events }}
+                    onOpenDiff={onOpenDiff}
+                    onLoadEvents={handleLoadEvents}
+                  />
                 )}
               </div>
             ))}
           </div>
         ) : (
           <>
-            {hasDetails && (() => {
-              const regEvts = detailEvents.filter(
-                (e) => e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done",
-              );
-              const saMap = new Map<string, StreamEvent>();
-              for (const e of detailEvents) {
-                if (!e.subagent?.taskId) continue;
-                if (e.kind !== "subagent_start" && e.kind !== "subagent_progress" && e.kind !== "subagent_done") continue;
-                const ex = saMap.get(e.subagent.taskId);
-                if (!ex || e.kind === "subagent_done" || (e.kind === "subagent_progress" && ex.kind === "subagent_start")) {
-                  const mergedEvents = ex?.subagent?.events ?? e.subagent.events;
-                  saMap.set(e.subagent.taskId, { ...e, subagent: { ...(ex?.subagent ?? {}), ...e.subagent, description: ex?.subagent?.description || e.subagent.description, events: mergedEvents } });
+            {hasDetails &&
+              (() => {
+                const regEvts = detailEvents.filter(
+                  (e) =>
+                    e.kind !== "subagent_start" &&
+                    e.kind !== "subagent_progress" &&
+                    e.kind !== "subagent_done",
+                );
+                const saMap = new Map<string, StreamEvent>();
+                for (const e of detailEvents) {
+                  if (!e.subagent?.taskId) continue;
+                  if (
+                    e.kind !== "subagent_start" &&
+                    e.kind !== "subagent_progress" &&
+                    e.kind !== "subagent_done"
+                  )
+                    continue;
+                  const ex = saMap.get(e.subagent.taskId);
+                  if (
+                    !ex ||
+                    e.kind === "subagent_done" ||
+                    (e.kind === "subagent_progress" && ex.kind === "subagent_start")
+                  ) {
+                    const mergedEvents = ex?.subagent?.events ?? e.subagent.events;
+                    saMap.set(e.subagent.taskId, {
+                      ...e,
+                      subagent: {
+                        ...(ex?.subagent ?? {}),
+                        ...e.subagent,
+                        description: ex?.subagent?.description || e.subagent.description,
+                        events: mergedEvents,
+                      },
+                    });
+                  }
                 }
-              }
-              const saList = [...saMap.values()];
-              return (
-                <div className="message-events">
-                  <div className="events-header" onClick={() => setEventsOpen((v) => !v)}>
-                    <span className="events-toggle">{eventsOpen ? "▾" : "▸"}</span>
-                    <span>
-                      {(() => {
-                        const parts: string[] = [];
-                        const tc = regEvts.filter((e) => e.kind === "thinking").length;
-                        const tl = regEvts.filter((e) => e.kind === "tool_use").length;
-                        if (tc > 0) parts.push(`${tc} thinking`);
-                        if (tl > 0) parts.push(`${tl} tool call(s)`);
-                        if (saList.length > 0) parts.push(`${saList.length} subagent(s)`);
-                        return parts.length > 0 ? parts.join(" · ") : "streaming...";
-                      })()}
-                    </span>
-                  </div>
-                  {eventsOpen && (
-                    <div className="events-list">
-                      {regEvts.map((ev, i) => (
-                        <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
-                      ))}
+                const saList = [...saMap.values()];
+                return (
+                  <div className="message-events">
+                    <div className="events-header" onClick={() => setEventsOpen((v) => !v)}>
+                      <span className="events-toggle">{eventsOpen ? "▾" : "▸"}</span>
+                      <span>
+                        {(() => {
+                          const parts: string[] = [];
+                          const tc = regEvts.filter((e) => e.kind === "thinking").length;
+                          const tl = regEvts.filter((e) => e.kind === "tool_use").length;
+                          if (tc > 0) parts.push(`${tc} thinking`);
+                          if (tl > 0) parts.push(`${tl} tool call(s)`);
+                          if (saList.length > 0) parts.push(`${saList.length} subagent(s)`);
+                          return parts.length > 0 ? parts.join(" · ") : "streaming...";
+                        })()}
+                      </span>
                     </div>
-                  )}
-                  {saList.map((ev) => (
-                    <SubAgentItem key={ev.subagent!.taskId} ev={ev} onOpenDiff={onOpenDiff} onLoadEvents={handleLoadEvents} />
-                  ))}
-                </div>
-              );
-            })()}
+                    {eventsOpen && (
+                      <div className="events-list">
+                        {regEvts.map((ev, i) => (
+                          <EventItem key={i} ev={ev} onOpenDiff={onOpenDiff} />
+                        ))}
+                      </div>
+                    )}
+                    {saList.map((ev) => (
+                      <SubAgentItem
+                        key={ev.subagent!.taskId}
+                        ev={ev}
+                        onOpenDiff={onOpenDiff}
+                        onLoadEvents={handleLoadEvents}
+                      />
+                    ))}
+                  </div>
+                );
+              })()}
 
             {msg.content && (
               <div
@@ -838,20 +883,18 @@ const MessageItem = memo(function MessageItem({
                 }}
               >
                 {!isUser && msg.content && msg.status === "done" && onQuote && (
-                  <button className="btn-quote" title="Quote this message" onClick={() => onQuote(msg)}>
+                  <button
+                    className="btn-quote"
+                    title="Quote this message"
+                    onClick={() => onQuote(msg)}
+                  >
                     ↩
                   </button>
                 )}
                 {isUser ? (
                   renderMentionContent(msg.content, agents)
                 ) : (
-                  <Markdown
-                    remarkPlugins={[remarkGfm]}
-                    rehypePlugins={[rehypeHighlight]}
-                    components={mdComponents}
-                  >
-                    {msg.content}
-                  </Markdown>
+                  <MdBlock>{msg.content}</MdBlock>
                 )}
               </div>
             )}
@@ -1747,9 +1790,7 @@ export function App() {
                       }}
                     >
                       <span className="command-name">/{cmd.name}</span>
-                      {cmd.argumentHint && (
-                        <span className="command-hint">{cmd.argumentHint}</span>
-                      )}
+                      {cmd.argumentHint && <span className="command-hint">{cmd.argumentHint}</span>}
                       <span className="command-desc">{cmd.description}</span>
                     </div>
                   ))}

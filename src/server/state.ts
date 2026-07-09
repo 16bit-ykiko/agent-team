@@ -99,9 +99,15 @@ function migrateIfNeeded(baseDir: string): WorkspaceState[] | null {
   }
 }
 
+// appendLog runs on every stream event; only stat the directory once per workspace.
+const ensuredLogDirs = new Set<string>();
+
 export function appendLog(baseDir: string, workspaceId: string, entry: unknown): void {
   const dir = path.join(dataRoot(baseDir), LOGS_DIR, workspaceId);
-  ensureDir(dir);
+  if (!ensuredLogDirs.has(dir)) {
+    ensureDir(dir);
+    ensuredLogDirs.add(dir);
+  }
   const file = path.join(dir, "stream.jsonl");
   fs.appendFileSync(file, JSON.stringify(entry) + "\n");
 }
