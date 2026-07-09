@@ -11,7 +11,6 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark.css";
-import TurndownService from "turndown";
 import {
   useServer,
   Workspace,
@@ -26,25 +25,7 @@ import {
 } from "./useServer";
 import { splitEvents } from "./events";
 import { groupWorkspaces, isGroupExpanded } from "./groups";
-
-const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
-turndown.addRule("fencedCodeBlock", {
-  filter: (node) => node.nodeName === "PRE" && !!node.querySelector("code"),
-  replacement: (_content, node) => {
-    const code = (node as HTMLElement).querySelector("code")!;
-    const lang = [...code.classList].find((c) => c.startsWith("language-"))?.slice(9) ?? "";
-    return `\n\`\`\`${lang}\n${code.textContent}\n\`\`\`\n`;
-  },
-});
-
-function getSelectionHtml(): string | null {
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed) return null;
-  const frag = sel.getRangeAt(0).cloneContents();
-  const div = document.createElement("div");
-  div.appendChild(frag);
-  return div.innerHTML;
-}
+import { copySelectionAsMarkdown } from "./clipboard";
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
   const [copied, setCopied] = useState(false);
@@ -794,16 +775,7 @@ export const MessageItem = memo(function MessageItem({
         )}
 
         {isInterleaved ? (
-          <div
-            className="message-content"
-            onCopy={(e) => {
-              const html = getSelectionHtml();
-              if (!html) return;
-              e.preventDefault();
-              const md = turndown.turndown(html);
-              e.clipboardData.setData("text/plain", md);
-            }}
-          >
+          <div className="message-content" onCopy={copySelectionAsMarkdown}>
             {!isUser && onQuote && (
               <button className="btn-quote" title="Quote this message" onClick={() => onQuote(msg)}>
                 ↩
@@ -866,16 +838,7 @@ export const MessageItem = memo(function MessageItem({
               })()}
 
             {msg.content && (
-              <div
-                className="message-content"
-                onCopy={(e) => {
-                  const html = getSelectionHtml();
-                  if (!html) return;
-                  e.preventDefault();
-                  const md = turndown.turndown(html);
-                  e.clipboardData.setData("text/plain", md);
-                }}
-              >
+              <div className="message-content" onCopy={copySelectionAsMarkdown}>
                 {!isUser && msg.content && msg.status === "done" && onQuote && (
                   <button
                     className="btn-quote"
@@ -1085,6 +1048,29 @@ export function App() {
     const t = setTimeout(clearError, 6000);
     return () => clearTimeout(t);
   }, [lastError, clearError]);
+
+  // iOS Safari overlays the keyboard on top of a 100vh layout instead of
+  // resizing it, hiding the input row and the newest messages. Track the
+  // visual viewport and size the app to it; keep the bottom in view while
+  // the composer is focused.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      document.documentElement.style.setProperty("--app-height", `${vv.height}px`);
+      window.scrollTo(0, 0);
+      if (document.activeElement === textareaRef.current && messagesContainerRef.current) {
+        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+      }
+    };
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+    };
+  }, []);
 
   const [activeWsId, setActiveWsId] = useState<string | null>(() => {
     try {
@@ -1910,6 +1896,11 @@ export function App() {
                 <textarea
                   ref={textareaRef}
                   className="chat-input"
+                  name="chat-message"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   onChange={handleTextareaChange}
                   onKeyDown={handleKeyDown}
                   disabled={!hasAgents}

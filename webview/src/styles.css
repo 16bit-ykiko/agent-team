@@ -27,7 +27,11 @@ body {
   font-size: 14px;
   color: var(--text-primary);
   background: var(--bg-primary);
+  /* Sized to the visual viewport so the iOS keyboard shrinks the layout
+     instead of covering the input row (--app-height set from JS). */
   height: 100vh;
+  height: 100dvh;
+  height: var(--app-height, 100dvh);
   overflow: hidden;
 }
 
