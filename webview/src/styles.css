@@ -974,13 +974,16 @@ pre .copy-btn:hover {
 .subagent-label {
   font-weight: 600;
   color: #a78bfa;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .subagent-desc {
   color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 400px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .subagent-tool {
   color: var(--text-muted);
@@ -990,6 +993,11 @@ pre .copy-btn:hover {
 .subagent-counts {
   color: var(--text-muted);
   font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.subagent-header .streaming-dot {
+  flex-shrink: 0;
 }
 .subagent-details {
   padding: 4px 0 4px 18px;
@@ -1767,6 +1775,10 @@ pre .copy-btn:hover {
 }
 
 @media (max-width: 768px) {
+  .subagent-counts {
+    display: none;
+  }
+
   .mobile-menu-btn {
     display: inline-block;
   }

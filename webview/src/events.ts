@@ -39,3 +39,10 @@ export function splitEvents(events: StreamEvent[]): {
   }
   return { regular, subagents: [...merged.values()] };
 }
+
+// A message "still has work in flight" when any of its subagents hasn't
+// reached a terminal state — the main agent may already be idle while
+// background subagents keep running.
+export function hasRunningSubagents(events?: StreamEvent[]): boolean {
+  return !!events?.some((e) => e.kind === "subagent_start" && e.subagent?.status === "running");
+}

@@ -25,6 +25,7 @@ import {
 } from "./useServer";
 import { splitEvents } from "./events";
 import { groupWorkspaces, isGroupExpanded } from "./groups";
+import { hasRunningSubagents } from "./events";
 import { copySelectionAsMarkdown, extractImageFiles } from "./clipboard";
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
@@ -1144,6 +1145,17 @@ export function App() {
   );
   const activeWs = workspaces.find((w) => w.id === activeWsId);
 
+  // Agents whose latest work still has subagents running: the session can be
+  // idle while background subagents finish, and that should still read as
+  // "working".
+  const agentsAwaitingSubs = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of activeWs?.messages ?? []) {
+      if (m.agentId && hasRunningSubagents(m.events)) set.add(m.agentId);
+    }
+    return set;
+  }, [activeWs?.messages]);
+
   // Sidebar folder groups; explicit expand/collapse choices persist.
   const wsGroups = useMemo(() => groupWorkspaces(workspaces), [workspaces]);
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>(() => {
@@ -1643,7 +1655,9 @@ export function App() {
                     <div className="ws-group-items">
                       {g.workspaces.map((ws) => {
                         const activeAgents = ws.agents.filter((a) => a.busy);
-                        const running = activeAgents.length > 0;
+                        const running =
+                          activeAgents.length > 0 ||
+                          ws.messages.some((m) => hasRunningSubagents(m.events));
                         const unread = ws.messages.length - (seenCountRef.current[ws.id] ?? 0);
                         return (
                           <div
@@ -1719,7 +1733,8 @@ export function App() {
                 </span>
                 <div className="panel-agents">
                   {activeWs.agents.map((agent) => {
-                    const status = agent.busy ? "busy" : connected ? "online" : "offline";
+                    const working = agent.busy || agentsAwaitingSubs.has(agent.id);
+                    const status = working ? "busy" : connected ? "online" : "offline";
                     return (
                       <div
                         key={agent.id}

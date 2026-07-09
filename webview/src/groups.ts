@@ -1,4 +1,5 @@
 import { Workspace } from "./useServer";
+import { hasRunningSubagents } from "./events";
 
 // Groups older than this default to collapsed in the sidebar.
 export const STALE_MS = 3 * 86_400_000;
@@ -35,7 +36,10 @@ export function groupWorkspaces(workspaces: Workspace[]): WorkspaceGroup[] {
       label: key.split("/").filter(Boolean).pop() ?? key,
       workspaces: list,
       lastActive: Math.max(...list.map(lastActive)),
-      running: list.some((w) => w.agents.some((a) => a.busy)),
+      running: list.some(
+        (w) =>
+          w.agents.some((a) => a.busy) || w.messages.some((m) => hasRunningSubagents(m.events)),
+      ),
     });
   }
   groups.sort((a, b) => b.lastActive - a.lastActive);

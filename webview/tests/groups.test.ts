@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { groupWorkspaces, isGroupExpanded, STALE_MS } from "../src/groups";
-import { Workspace } from "../src/useServer";
+import { Workspace, Message, StreamEvent } from "../src/useServer";
 
 const NOW = 1_800_000_000_000;
 
@@ -63,5 +63,32 @@ describe("isGroupExpanded", () => {
   it("lets explicit user toggles override the defaults", () => {
     expect(isGroupExpanded(fresh, { "/repo/fresh": false }, NOW)).toBe(false);
     expect(isGroupExpanded(stale, { "/repo/stale": true }, NOW)).toBe(true);
+  });
+});
+
+describe("running state includes background subagents", () => {
+  it("marks a group running when a message has a live subagent, even with idle agents", () => {
+    const w = ws("bg", "/repo/bg", NOW - 1000);
+    w.messages = [
+      {
+        id: "m1",
+        kind: "agent",
+        agentId: "a",
+        content: "",
+        timestamp: NOW - 1000,
+        status: "done",
+        events: [
+          {
+            kind: "subagent_start",
+            content: "",
+            subagent: { taskId: "t", description: "", status: "running" },
+          } as StreamEvent,
+        ],
+      } as Message,
+    ];
+    const groups = groupWorkspaces([w]);
+    expect(groups[0].running).toBe(true);
+    // Running keeps even a stale group expanded.
+    expect(isGroupExpanded({ ...groups[0], lastActive: NOW - STALE_MS - 1 }, {}, NOW)).toBe(true);
   });
 });
