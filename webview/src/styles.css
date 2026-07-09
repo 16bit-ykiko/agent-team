@@ -181,38 +181,70 @@ body {
   padding: 4px 0;
 }
 
-/* ---- Sidebar folder groups ---- */
+/* ---- Sidebar folder groups ----
+   Hierarchy: group header = larger, bold, bright; items = smaller,
+   indented behind a tree guide line. Every flex text cell has min-width:0
+   so narrow sidebar widths truncate instead of overflowing. */
 
+.ws-group {
+  margin-bottom: 2px;
+}
 .ws-group-header {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
+  gap: 5px;
+  padding: 7px 10px 3px;
   cursor: pointer;
   user-select: none;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-.ws-group-header:hover {
-  background: var(--bg-hover);
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text-primary);
+  min-width: 0;
+}
+.ws-group-header:hover .ws-group-label {
+  color: var(--accent);
+}
+.ws-group-header .events-toggle {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.ws-group-header .streaming-dot {
+  flex-shrink: 0;
 }
 .ws-group-label {
-  font-weight: 600;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ws-group-count {
+  flex-shrink: 0;
   color: var(--text-muted);
   font-size: 10px;
+  font-weight: 400;
   background: var(--bg-tertiary);
   border-radius: 8px;
   padding: 0 6px;
   line-height: 14px;
 }
-.ws-group .task-item {
-  padding-left: 26px;
+.ws-group-items {
+  margin-left: 15px;
+  border-left: 1px solid var(--border);
+}
+.ws-group-items .task-item {
+  padding: 5px 10px 5px 11px;
+  margin-left: -1px;
+  border-left: 2px solid transparent;
+  min-width: 0;
+}
+.ws-group-items .task-item.active {
+  border-left-color: var(--accent);
+}
+.ws-group-items .task-name {
+  font-size: 12px;
+}
+.ws-group-items .task-active-agents {
+  margin-top: 2px;
 }
 
 /* ---- Path autocomplete (new workspace dialog) ---- */
@@ -356,6 +388,17 @@ body {
 
 .task-meta .task-branch {
   color: var(--accent);
+}
+.task-name .task-branch {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 400;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .task-item-active {

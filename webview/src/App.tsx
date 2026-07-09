@@ -1636,61 +1636,66 @@ export function App() {
                     <span className="ws-group-count">{g.workspaces.length}</span>
                     {g.running && <span className="streaming-dot" />}
                   </div>
-                  {expanded &&
-                    g.workspaces.map((ws) => {
-                      const activeAgents = ws.agents.filter((a) => a.busy);
-                      const running = activeAgents.length > 0;
-                      const unread = ws.messages.length - (seenCountRef.current[ws.id] ?? 0);
-                      return (
-                        <div
-                          key={ws.id}
-                          className={`task-item ${ws.id === activeWsId ? "active" : ""}${running ? " task-item-active" : ""}`}
-                          onClick={() => {
-                            setActiveWsId(ws.id);
-                            setSidebarOpen(false);
-                          }}
-                        >
+                  {expanded && (
+                    <div className="ws-group-items">
+                      {g.workspaces.map((ws) => {
+                        const activeAgents = ws.agents.filter((a) => a.busy);
+                        const running = activeAgents.length > 0;
+                        const unread = ws.messages.length - (seenCountRef.current[ws.id] ?? 0);
+                        return (
                           <div
-                            className={`task-status ${running ? "running" : (finishedStatus[ws.id] ?? "idle")}`}
-                          />
-                          <div className="task-info">
-                            <div className="task-name">
-                              <span className="task-name-text">
-                                {ws.name}
-                                {unread > 0 && ws.id !== activeWsId && (
-                                  <span className="unread-badge">{unread}</span>
-                                )}
-                              </span>
-                              {ws.gitBranch && <span className="task-branch">{ws.gitBranch}</span>}
-                            </div>
-                            {activeAgents.length > 0 && (
-                              <div className="task-active-agents">
-                                {activeAgents.map((a) => (
-                                  <span
-                                    key={a.id}
-                                    className="task-active-agent"
-                                    style={{ background: a.color }}
-                                  >
-                                    {a.avatar} {a.name}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <button
-                            className="task-delete"
-                            title="Delete"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteWorkspace(ws.id);
-                              if (activeWsId === ws.id) setActiveWsId(null);
+                            key={ws.id}
+                            className={`task-item ${ws.id === activeWsId ? "active" : ""}${running ? " task-item-active" : ""}`}
+                            onClick={() => {
+                              setActiveWsId(ws.id);
+                              setSidebarOpen(false);
                             }}
                           >
-                            x
-                          </button>
-                        </div>
-                      );
-                    })}
+                            <div
+                              className={`task-status ${running ? "running" : (finishedStatus[ws.id] ?? "idle")}`}
+                            />
+                            <div className="task-info">
+                              <div className="task-name">
+                                <span className="task-name-text">
+                                  {ws.name}
+                                  {unread > 0 && ws.id !== activeWsId && (
+                                    <span className="unread-badge">{unread}</span>
+                                  )}
+                                </span>
+                                {ws.gitBranch && (
+                                  <span className="task-branch">{ws.gitBranch}</span>
+                                )}
+                              </div>
+                              {activeAgents.length > 0 && (
+                                <div className="task-active-agents">
+                                  {activeAgents.map((a) => (
+                                    <span
+                                      key={a.id}
+                                      className="task-active-agent"
+                                      style={{ background: a.color }}
+                                    >
+                                      {a.avatar} {a.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              className="task-delete"
+                              title="Delete"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteWorkspace(ws.id);
+                                if (activeWsId === ws.id) setActiveWsId(null);
+                              }}
+                            >
+                              x
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               );
             })}
