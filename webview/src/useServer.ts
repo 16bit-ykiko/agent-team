@@ -237,8 +237,7 @@ export function useServer() {
               }
               if (ev.kind === "subagent_progress" && ev.subagent?.taskId) {
                 const innerEv = (ev.subagent as unknown as Record<string, unknown>)?._innerEvent as
-                  | StreamEvent
-                  | undefined;
+                  StreamEvent | undefined;
                 if (innerEv) {
                   const startIdx = events.findIndex(
                     (e) =>

@@ -10,8 +10,8 @@ const build = {
   target: "node22",
   sourcemap: true,
   minify: false,
-  entryPoints: ["server/index.ts"],
-  outfile: "dist/server.js",
+  entryPoints: ["src/index.ts"],
+  outfile: "../dist/server.js",
   external: ["@anthropic-ai/claude-agent-sdk"],
 };
 

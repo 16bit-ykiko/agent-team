@@ -596,8 +596,7 @@ export class Server {
           : undefined;
         if (images) this.ensureLocalImages(images);
         const quote = msg.quote as
-          | { messageId: string; agentId: string | null; content: string }
-          | undefined;
+          { messageId: string; agentId: string | null; content: string } | undefined;
         this.sendMessage(
           msg.workspaceId as string,
           msg.content as string,

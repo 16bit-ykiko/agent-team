@@ -10,6 +10,6 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["server/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "dist", "webview-ui"]
+  "include": ["src/**/*", "tests/**/*"],
+  "exclude": ["node_modules"]
 }

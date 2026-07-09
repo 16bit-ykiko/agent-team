@@ -172,7 +172,7 @@ export function buildFrames(): Frame[] {
   frames.push(
     ev(M1, {
       kind: "tool_use",
-      content: "**Read** `server/index.ts`",
+      content: "**Read** `service/src/index.ts`",
       toolUseId: "t-read",
       contentOffset: off1,
     }),
@@ -183,11 +183,11 @@ export function buildFrames(): Frame[] {
     }),
     ev(M1, {
       kind: "tool_use",
-      content: "**Edit** `server/task.ts`",
+      content: "**Edit** `service/src/task.ts`",
       toolUseId: "t-edit",
       toolInput: {
         tool: "Edit",
-        file_path: "server/task.ts",
+        file_path: "service/src/task.ts",
         old_string: "recieve",
         new_string: "receive",
       },

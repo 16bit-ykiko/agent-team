@@ -9,14 +9,14 @@ nodejs = ">=22"
 
 [tasks]
 # Webview UI
-dev-webview = { cmd = "npm run dev", cwd = "webview-ui" }
-build-webview = { cmd = "npm run build", cwd = "webview-ui" }
+dev-webview = { cmd = "npm run dev", cwd = "webview" }
+build-webview = { cmd = "npm run build", cwd = "webview" }
 
 # Server bundle
-build-server = "node esbuild.js"
+build-service = { cmd = "npm run build", cwd = "service" }
 
 # Build everything (server needs dist/webview to serve)
-build = { depends-on = ["build-webview", "build-server"] }
+build = { depends-on = ["build-webview", "build-service"] }
 
 # Run the server (serves HTTP + WS on :9800)
 serve = { cmd = "node dist/server.js", depends-on = ["build"] }

@@ -4,8 +4,8 @@
 // Usage:
 //   1. Pick a run: server logs live in .agent-team/logs/<workspace-id>/stream.jsonl
 //      (every stream event is appended there automatically).
-//   2. Copy it to webview-ui/public/replay.jsonl
-//   3. `npm run dev` in webview-ui, open http://localhost:5173/?replay
+//   2. Copy it to webview/public/replay.jsonl
+//   3. `npm run dev` in webview, open http://localhost:5173/?replay
 //      and select the "Replay" workspace.
 //
 // Query params:
@@ -38,7 +38,7 @@ export async function startReplay(dispatch: (msg: Record<string, unknown>) => vo
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(
-      `Failed to fetch ${url} (${res.status}). Copy a .agent-team/logs/<ws>/stream.jsonl to webview-ui/public/replay.jsonl`,
+      `Failed to fetch ${url} (${res.status}). Copy a .agent-team/logs/<ws>/stream.jsonl to webview/public/replay.jsonl`,
     );
   }
   const entries: LogEntry[] = [];

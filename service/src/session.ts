@@ -624,8 +624,7 @@ export class ClaudeSession extends EventEmitter {
 
     if (eventType === "content_block_delta") {
       const delta = (event as unknown as Record<string, unknown>).delta as
-        | Record<string, unknown>
-        | undefined;
+        Record<string, unknown> | undefined;
       if (!delta) return;
 
       const deltaType = delta.type as string;
@@ -684,8 +683,7 @@ export class ClaudeSession extends EventEmitter {
     try {
       const q = this.queryInstance as unknown as Record<string, unknown>;
       const fn = q["usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET"] as
-        | (() => Promise<unknown>)
-        | undefined;
+        (() => Promise<unknown>) | undefined;
       if (!fn) return null;
       return (await fn.call(this.queryInstance)) as Record<string, unknown>;
     } catch {
