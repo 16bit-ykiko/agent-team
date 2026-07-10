@@ -182,6 +182,7 @@ export class ClaudeSession extends EventEmitter {
   private nestedTaskToParent = new Map<string, string>(); // nested taskId → parentTaskId
   private taskToToolUse = new Map<string, string>(); // taskId → toolUseId (reverse lookup)
   private agentTaskIds = new Set<string>();
+  private lastRateLimitStatus: string | null = null;
 
   constructor(config: SessionConfig) {
     super();
@@ -337,6 +338,32 @@ export class ClaudeSession extends EventEmitter {
       case "result":
         this.handleResult(msg as SDKResultMessage);
         break;
+
+      // Subscription rate-limit info (claude.ai plans). The CLI emits these
+      // routinely with status "allowed"; a "rejected" means the turn is dead
+      // — without surfacing it the user just sees an empty reply.
+      case "rate_limit_event": {
+        const info = (msg as unknown as Record<string, unknown>).rate_limit_info as
+          Record<string, unknown> | undefined;
+        if (!info) break;
+        const status = info.status as string;
+        if (status === this.lastRateLimitStatus) break;
+        this.lastRateLimitStatus = status;
+        if (status === "rejected") {
+          const kind = (info.rateLimitType as string) ?? "usage";
+          const label = kind.replace(/_/g, "-");
+          const resetsAt = info.resetsAt as number | undefined;
+          const resetStr = resetsAt
+            ? ` Resets at ${new Date(resetsAt * 1000).toLocaleString()}.`
+            : "";
+          this.emit("event", {
+            kind: "error",
+            content: `Usage limit reached (${label}).${resetStr}`,
+            raw: msg,
+          } as StreamEvent);
+        }
+        break;
+      }
 
       case "system": {
         const sys = msg as Record<string, unknown>;
@@ -657,7 +684,11 @@ export class ClaudeSession extends EventEmitter {
       this.emit("event", { kind: "result", content: text, raw: msg } as StreamEvent);
     } else {
       const errResult = msg as Record<string, unknown>;
-      const errMsg = (errResult.error as string) ?? "Unknown error";
+      const errList = errResult.errors as string[] | undefined;
+      const errMsg =
+        (errList?.length ? errList.join("\n") : undefined) ??
+        (errResult.error as string) ??
+        `Turn failed (${(errResult.subtype as string) ?? "unknown error"})`;
       this.emit("event", { kind: "error", content: errMsg, raw: msg } as StreamEvent);
     }
 

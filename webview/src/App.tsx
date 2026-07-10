@@ -1077,8 +1077,13 @@ export function App() {
     const vv = window.visualViewport;
     if (!vv) return;
     const apply = () => {
-      document.documentElement.style.setProperty("--app-height", `${vv.height}px`);
-      window.scrollTo(0, 0);
+      // Pin the app to the keyboard-free visible strip: size it to the
+      // visual viewport AND follow its pan offset. (Never call scrollTo here
+      // — that fights the browser's own scroll-into-view and pushes the
+      // composer back under the keyboard.)
+      const el = document.documentElement;
+      el.style.setProperty("--app-height", `${vv.height}px`);
+      el.style.setProperty("--app-offset", `${vv.offsetTop}px`);
       if (document.activeElement === textareaRef.current && messagesContainerRef.current) {
         messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
       }

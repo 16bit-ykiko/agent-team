@@ -219,3 +219,60 @@ describe("subagent lifecycle", () => {
     expect(nestedStart.subagent?._innerEvent?.subagent?.taskId).toBe("task-nested");
   });
 });
+
+describe("rate limit surfacing", () => {
+  const rateLimitEvent = (info: Record<string, unknown>) => ({
+    type: "rate_limit_event",
+    rate_limit_info: info,
+    session_id: "sess-1",
+  });
+
+  it("emits an error when the subscription limit rejects the turn", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(
+      rateLimitEvent({ status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000 }),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe("error");
+    expect(events[0].content).toContain("five-hour");
+    expect(events[0].content).toContain("Resets at");
+  });
+
+  it("stays silent for allowed statuses and dedupes repeats", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(rateLimitEvent({ status: "allowed", rateLimitType: "five_hour" }));
+    dispatch(rateLimitEvent({ status: "allowed_warning", rateLimitType: "five_hour" }));
+    expect(events).toHaveLength(0);
+
+    dispatch(rateLimitEvent({ status: "rejected", rateLimitType: "five_hour" }));
+    dispatch(rateLimitEvent({ status: "rejected", rateLimitType: "five_hour" }));
+    expect(events.filter((e) => e.kind === "error")).toHaveLength(1);
+
+    // Back to allowed, then rejected again → a fresh error.
+    dispatch(rateLimitEvent({ status: "allowed", rateLimitType: "five_hour" }));
+    dispatch(rateLimitEvent({ status: "rejected", rateLimitType: "five_hour" }));
+    expect(events.filter((e) => e.kind === "error")).toHaveLength(2);
+  });
+
+  it("joins the errors array on result errors instead of 'Unknown error'", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "result",
+      subtype: "error_during_execution",
+      errors: ["Usage limit exceeded", "second detail"],
+      session_id: "sess-1",
+    });
+
+    const err = events.find((e) => e.kind === "error");
+    expect(err?.content).toContain("Usage limit exceeded");
+    expect(err?.content).toContain("second detail");
+  });
+
+  it("falls back to the subtype when a result error carries no message", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({ type: "result", subtype: "error_max_turns", errors: [], session_id: "sess-1" });
+    const err = events.find((e) => e.kind === "error");
+    expect(err?.content).toContain("error_max_turns");
+  });
+});
