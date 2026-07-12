@@ -2021,3 +2021,14 @@ pre .copy-btn:hover {
 .queued-cancel:hover {
   color: var(--error);
 }
+
+/* ---- Multi-account ---- */
+
+.agent-account {
+  font-size: 10px;
+  color: var(--warning);
+  background: rgba(229, 192, 123, 0.12);
+  border-radius: 8px;
+  padding: 0 5px;
+  line-height: 14px;
+}

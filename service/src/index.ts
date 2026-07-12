@@ -239,13 +239,19 @@ export class Server {
   }
 
   private refreshQuota(): void {
+    const sources: Array<{ label: string; token: string }> = [];
+
     const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
-    let token: string | undefined;
     try {
       const creds = JSON.parse(fs.readFileSync(credPath, "utf-8"));
-      token = creds?.claudeAiOauth?.accessToken;
+      const token = creds?.claudeAiOauth?.accessToken;
+      if (token) sources.push({ label: "local", token });
     } catch {}
-    if (!token) return;
+
+    for (const [name, acc] of Object.entries(this.config.accounts)) {
+      if (acc.oauth_token) sources.push({ label: name, token: acc.oauth_token });
+    }
+    if (sources.length === 0) return;
 
     const body = JSON.stringify({
       model: "claude-haiku-4-5-20251001",
@@ -253,9 +259,17 @@ export class Server {
       messages: [{ role: "user", content: "hi" }],
     });
 
-    this.fetchQuotaForToken(token, body, (entry) => {
-      this.quotaEntries = entry ? [{ ...entry, label: "local" }] : [];
-    });
+    const results: QuotaEntry[] = [];
+    let done = 0;
+    for (const src of sources) {
+      this.fetchQuotaForToken(src.token, body, (entry) => {
+        if (entry) results.push({ ...entry, label: src.label });
+        if (++done === sources.length) {
+          results.sort((a, b) => a.label.localeCompare(b.label));
+          this.quotaEntries = results;
+        }
+      });
+    }
   }
 
   private fetchQuotaForToken(
@@ -512,6 +526,7 @@ export class Server {
       type: "init",
       workspaces: [...this.workspaces.values()].map((w) => w.getInfo(false)),
       config: {
+        accounts: Object.keys(this.config.accounts),
         presets: AGENT_PRESETS,
         models: MODEL_OPTIONS,
         commands: this.commands,
@@ -603,6 +618,7 @@ export class Server {
           msg.avatar as string,
           msg.color as string,
           msg.permissionMode as string | undefined,
+          msg.account as string | undefined,
         );
         return;
 
@@ -733,6 +749,7 @@ export class Server {
     avatar: string,
     color: string,
     permissionMode?: string,
+    account?: string,
   ): void {
     const workspace = this.workspaces.get(workspaceId);
     if (!workspace) {
@@ -744,17 +761,43 @@ export class Server {
     const backend = preset?.backend ?? (model.startsWith("gpt-") ? "codex" : "claude");
 
     try {
-      const agent = workspace.addAgent(name, model, avatar, color, {
-        backend,
-        effort: preset?.effort,
-        permissionMode: backend === "codex" ? undefined : (permissionMode ?? "bypassPermissions"),
-        providerEnv: this.resolveProviderEnv(model),
-      });
+      if (account && !this.config.accounts[account]) {
+        this.sendJson(ws, { type: "error", message: `Unknown account: ${account}` });
+        return;
+      }
+      const agent = workspace.addAgent(
+        name,
+        model,
+        avatar,
+        color,
+        {
+          backend,
+          effort: preset?.effort,
+          permissionMode: backend === "codex" ? undefined : (permissionMode ?? "bypassPermissions"),
+          providerEnv: this.sessionEnv(model, account),
+        },
+        account,
+      );
       this.persistWorkspaceNow(workspaceId);
       this.broadcastUI({ type: "agent_added", workspaceId, agent });
     } catch (e) {
       this.sendJson(ws, { type: "error", message: `${e instanceof Error ? e.message : e}` });
     }
+  }
+
+  // Long-lived OAuth token (from `claude setup-token`) for a named account;
+  // the env var takes precedence over the locally logged-in credentials in
+  // the spawned session, which is exactly the multi-account switch we want.
+  private resolveAccountEnv(account?: string): Record<string, string> | undefined {
+    const token = account ? this.config.accounts[account]?.oauth_token : undefined;
+    return token ? { CLAUDE_CODE_OAUTH_TOKEN: token } : undefined;
+  }
+
+  private sessionEnv(model: string, account?: string): Record<string, string> | undefined {
+    const provider = this.resolveProviderEnv(model);
+    const acct = this.resolveAccountEnv(account);
+    if (!provider && !acct) return undefined;
+    return { ...provider, ...acct };
   }
 
   private resolveProviderEnv(model: string): Record<string, string> | undefined {
@@ -922,7 +965,7 @@ systemctl --user restart agent-team-server
 
     for (const wsState of states) {
       for (const agent of wsState.agents) {
-        agent.session.config.providerEnv = this.resolveProviderEnv(agent.model);
+        agent.session.config.providerEnv = this.sessionEnv(agent.model, agent.account);
       }
       const workspace = Workspace.fromState(wsState, this.hostRegistry, this.makeCallbacks());
       this.workspaces.set(workspace.id, workspace);

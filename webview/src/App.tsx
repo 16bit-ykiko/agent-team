@@ -110,20 +110,23 @@ function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) 
   );
 }
 
-function AddAgentDialog({
+export function AddAgentDialog({
   presets,
   models,
+  accounts,
   onClose,
   onAdd,
 }: {
   presets: AgentPreset[];
   models: ModelOption[];
+  accounts: string[];
   onClose: () => void;
-  onAdd: (name: string, model: string, avatar: string, color: string) => void;
+  onAdd: (name: string, model: string, avatar: string, color: string, account?: string) => void;
 }) {
   const [selectedPreset, setSelectedPreset] = useState(0);
   const [model, setModel] = useState(models[0]?.id ?? "");
   const [customName, setCustomName] = useState("");
+  const [account, setAccount] = useState("");
 
   const preset = presets[selectedPreset];
   const finalName = customName || preset?.name || "Agent";
@@ -208,6 +211,19 @@ function AddAgentDialog({
           </select>
         </label>
 
+        {accounts.length > 0 && (
+          <label className="dialog-field">
+            <span>Account</span>
+            <select value={account} onChange={(e) => setAccount(e.target.value)}>
+              <option value="">local (default)</option>
+              {accounts.map((a) => (
+                <option key={a} value={a}>
+                  {a}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <div className="dialog-actions">
           <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
@@ -216,7 +232,13 @@ function AddAgentDialog({
             type="button"
             className="btn-primary"
             onClick={() => {
-              onAdd(finalName, model, preset?.avatar ?? "🤖", preset?.color ?? "#888");
+              onAdd(
+                finalName,
+                model,
+                preset?.avatar ?? "🤖",
+                preset?.color ?? "#888",
+                account || undefined,
+              );
               onClose();
             }}
           >
@@ -1052,6 +1074,7 @@ export function App() {
     loadSubagentEvents,
     cancelSubagent,
     cancelQueued,
+    accounts,
     startReplayDemo,
     lastError,
     clearError,
@@ -1767,11 +1790,12 @@ export function App() {
                       <div
                         key={agent.id}
                         className="panel-agent"
-                        title={`${agent.name} (${agent.model})`}
+                        title={`${agent.name} (${agent.model}${agent.account ? `, account: ${agent.account}` : ""})`}
                       >
                         <AgentAvatar agent={agent} size={22} />
                         <span className={`agent-status-dot agent-status-${status}`} />
                         <span>{agent.name}</span>
+                        {agent.account && <span className="agent-account">@{agent.account}</span>}
                         <span className={`agent-status-label agent-status-${status}`}>
                           {status === "busy" ? "working" : status}
                         </span>
@@ -2051,6 +2075,7 @@ export function App() {
         <AddAgentDialog
           presets={presets}
           models={models}
+          accounts={accounts}
           onClose={() => setShowAddAgent(false)}
           onAdd={(name, model, avatar, color) => addAgent(activeWs.id, name, model, avatar, color)}
         />

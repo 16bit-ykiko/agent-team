@@ -23,6 +23,13 @@ max_age_days = 30
 label = "Local"
 type = "local"
 
+# Additional Claude accounts (optional)
+# Generate a long-lived token on the other account with `claude setup-token`,
+# then pick the account per agent in the Add Agent dialog. The locally
+# logged-in account is always available as "local".
+# [accounts.work]
+# oauth_token = "sk-ant-oat01-..."
+
 # External LLM providers (optional)
 # The provider name must be a prefix of the model ID you want to route.
 # [providers.deepseek]

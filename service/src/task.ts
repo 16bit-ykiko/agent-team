@@ -41,6 +41,8 @@ export interface AgentInfo {
   avatar: string;
   color: string;
   isDefault: boolean;
+  // Named account from config [accounts.*]; undefined = local login.
+  account?: string;
 }
 
 export interface AgentState extends AgentInfo {
@@ -356,6 +358,7 @@ export class Workspace {
     avatar: string,
     color: string,
     config: Partial<SessionConfig>,
+    account?: string,
   ): AgentInfo {
     const host = this.hostRegistry.get(this.hostId);
     if (!host) throw new Error(`Host not found: ${this.hostId}`);
@@ -364,7 +367,7 @@ export class Workspace {
     const id = `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const isDefault = this.agents.size === 0;
 
-    const info: AgentInfo = { id, name, model, avatar, color, isDefault };
+    const info: AgentInfo = { id, name, model, avatar, color, isDefault, account };
     const session = host.createSession(id, { cwd: this.cwd, model, ...config });
     const handler = this.createEventHandler(id);
 

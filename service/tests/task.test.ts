@@ -163,6 +163,28 @@ describe("Workspace event aggregation", () => {
     expect(start.subagent?.summary).toBe("late");
   });
 
+  it("records the account an agent was created with", () => {
+    const host = new FakeHost();
+    const registry = new HostRegistry();
+    registry.register(host);
+    const ws = new Workspace("ws-acct", "t", "p", "local", "/tmp", registry, {
+      onNewMessage: () => {},
+      onStreamEvent: () => {},
+      onMessageDone: () => {},
+    });
+    const info = ws.addAgent(
+      "B",
+      "claude-fable-5",
+      "🤖",
+      "#888",
+      { providerEnv: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-x" } },
+      "work",
+    );
+    expect(info.account).toBe("work");
+    // Persisted state keeps the account so restore can re-resolve the token.
+    expect(ws.getState().agents[0].account).toBe("work");
+  });
+
   it("cancelSubagent delegates to the owning session's stopTask", () => {
     const { ws, agentInfo, session } = makeWorkspace();
     ws.cancelSubagent(agentInfo.id, "task-42");

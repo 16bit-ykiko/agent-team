@@ -20,6 +20,12 @@ export interface AuthConfig {
   max_age_days: number;
 }
 
+// A named Claude account backed by a long-lived OAuth token from
+// `claude setup-token`. The locally logged-in account needs no entry.
+export interface AccountConfig {
+  oauth_token: string;
+}
+
 export interface HostConfig {
   label: string;
   type: "local";
@@ -34,6 +40,7 @@ export interface AppConfig {
   server: ServerConfig;
   auth: AuthConfig | null;
   agents: Record<string, AgentConfig>;
+  accounts: Record<string, AccountConfig>;
   hosts: Record<string, HostConfig>;
   providers: Record<string, ProviderConfig>;
 }
@@ -110,5 +117,14 @@ export function loadConfig(baseDir: string): AppConfig {
     };
   }
 
-  return { server, auth, agents, hosts, providers };
+  const accounts: Record<string, AccountConfig> = {};
+  const rawAccounts = parsed.accounts;
+  if (rawAccounts && typeof rawAccounts === "object") {
+    for (const [name, val] of Object.entries(rawAccounts as Record<string, unknown>)) {
+      const c = val as Record<string, string>;
+      if (c?.oauth_token) accounts[name] = { oauth_token: c.oauth_token };
+    }
+  }
+
+  return { server, auth, agents, hosts, providers, accounts };
 }

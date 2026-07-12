@@ -68,6 +68,7 @@ export interface AgentInfo {
   color: string;
   isDefault: boolean;
   busy?: boolean;
+  account?: string;
 }
 
 export interface HostInfo {
@@ -166,6 +167,7 @@ export function useServer() {
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [commands, setCommands] = useState<CommandInfo[]>([]);
+  const [accounts, setAccounts] = useState<string[]>([]);
   const [hosts, setHosts] = useState<HostInfo[]>([]);
   const [hostConfigs, setHostConfigs] = useState<Record<string, HostConfig>>({});
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
@@ -370,6 +372,7 @@ export function useServer() {
           };
           setPresets(config.presets);
           setModels(config.models);
+          setAccounts((config as unknown as { accounts?: string[] }).accounts ?? []);
           if (config.commands) setCommands(config.commands);
           if (config.hosts) setHostConfigs(config.hosts);
           if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
@@ -715,10 +718,17 @@ export function useServer() {
       [send],
     ),
     addAgent: useCallback(
-      (wsId: string, name: string, model: string, avatar: string, color: string) =>
-        send({ type: "add_agent", workspaceId: wsId, name, model, avatar, color }),
+      (
+        wsId: string,
+        name: string,
+        model: string,
+        avatar: string,
+        color: string,
+        account?: string,
+      ) => send({ type: "add_agent", workspaceId: wsId, name, model, avatar, color, account }),
       [send],
     ),
+    accounts,
     removeAgent: useCallback(
       (wsId: string, agentId: string) => send({ type: "remove_agent", workspaceId: wsId, agentId }),
       [send],
