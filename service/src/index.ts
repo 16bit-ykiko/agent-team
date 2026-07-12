@@ -687,6 +687,17 @@ export class Server {
         return;
       }
 
+      case "debug_rate_limit": {
+        if (process.env.AGENT_TEAM_DEBUG !== "1") return;
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        const entry = workspace?.agents.get(msg.agentId as string);
+        entry?.session.simulateRateLimit?.({
+          rateLimitType: msg.rateLimitType as string | undefined,
+          resetsAt: msg.resetsAt as number | undefined,
+        });
+        return;
+      }
+
       case "cancel_subagent": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
         if (!workspace) {

@@ -245,7 +245,6 @@ export class ClaudeSession extends EventEmitter {
     this.processing = true;
     this.turnStartTime = Date.now();
     this.stepCounter = 0;
-    this.lastRateLimitStatus = null;
   }
 
   private startIterating(): void {
@@ -262,7 +261,14 @@ export class ClaudeSession extends EventEmitter {
       } catch (err) {
         if (this.queryInstance !== thisQuery) return;
         const errMsg = err instanceof Error ? err.message : String(err);
-        this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` } as StreamEvent);
+        // Intentional aborts (user Stop, credential swaps) are not errors —
+        // surfacing them added a stray "[Claude error] Operation aborted"
+        // bubble after every forced restart.
+        const isAbort =
+          (err instanceof Error && err.name === "AbortError") || /abort/i.test(errMsg);
+        if (!isAbort) {
+          this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` } as StreamEvent);
+        }
       } finally {
         if (this.queryInstance === thisQuery) {
           if (this.processing) {
@@ -294,6 +300,33 @@ export class ClaudeSession extends EventEmitter {
     if (this.queryInstance && !this.processing) {
       this.abortController?.abort();
     }
+  }
+
+  private handleRateLimitInfo(info: Record<string, unknown>, raw?: unknown): void {
+    const status = info.status as string;
+    if (status === this.lastRateLimitStatus) return;
+    this.lastRateLimitStatus = status;
+    if (status !== "rejected") return;
+    this.emit("rateLimit", {
+      rateLimitType: info.rateLimitType as string | undefined,
+      resetsAt: info.resetsAt as number | undefined,
+    });
+    const kind = (info.rateLimitType as string) ?? "usage";
+    const label = kind.replace(/_/g, "-");
+    const resetsAt = info.resetsAt as number | undefined;
+    const resetStr = resetsAt ? ` Resets at ${new Date(resetsAt * 1000).toLocaleString()}.` : "";
+    this.emit("event", {
+      kind: "error",
+      content: `Usage limit reached (${label}).${resetStr}`,
+      raw,
+    } as StreamEvent);
+  }
+
+  // Debug-only (gated behind AGENT_TEAM_DEBUG on the server): inject the
+  // exact rejection the SDK would emit, to exercise the recovery pipeline
+  // end-to-end without burning a real quota window.
+  simulateRateLimit(info: { rateLimitType?: string; resetsAt?: number }): void {
+    this.handleRateLimitInfo({ status: "rejected", ...info });
   }
 
   // Stop a running subagent task. The SDK emits a task_notification with
@@ -362,27 +395,7 @@ export class ClaudeSession extends EventEmitter {
       case "rate_limit_event": {
         const info = (msg as unknown as Record<string, unknown>).rate_limit_info as
           Record<string, unknown> | undefined;
-        if (!info) break;
-        const status = info.status as string;
-        if (status === this.lastRateLimitStatus) break;
-        this.lastRateLimitStatus = status;
-        if (status === "rejected") {
-          this.emit("rateLimit", {
-            rateLimitType: info.rateLimitType as string | undefined,
-            resetsAt: info.resetsAt as number | undefined,
-          });
-          const kind = (info.rateLimitType as string) ?? "usage";
-          const label = kind.replace(/_/g, "-");
-          const resetsAt = info.resetsAt as number | undefined;
-          const resetStr = resetsAt
-            ? ` Resets at ${new Date(resetsAt * 1000).toLocaleString()}.`
-            : "";
-          this.emit("event", {
-            kind: "error",
-            content: `Usage limit reached (${label}).${resetStr}`,
-            raw: msg,
-          } as StreamEvent);
-        }
+        if (info) this.handleRateLimitInfo(info, msg);
         break;
       }
 
