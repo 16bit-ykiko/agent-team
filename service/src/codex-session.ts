@@ -172,7 +172,13 @@ export class CodexSession extends EventEmitter {
         this.emit("event", { kind: "result", content: "" } as StreamEvent);
         break;
 
+      // Real failure streams carry BOTH a stream-level "error" and a
+      // "turn.failed" for the same fault (observed live: thread.started →
+      // turn.started → error → turn.failed → generator throw). Emit only the
+      // first; a second error event would open a fresh error bubble after the
+      // message was already finalized.
       case "turn.failed":
+        if (this.turnFinalized) break;
         this.turnFinalized = true;
         this.emit("event", {
           kind: "error",
@@ -181,6 +187,7 @@ export class CodexSession extends EventEmitter {
         break;
 
       case "error":
+        if (this.turnFinalized) break;
         this.turnFinalized = true;
         this.emit("event", {
           kind: "error",

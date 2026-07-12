@@ -49,11 +49,25 @@ describe("codex thread event mapping", () => {
   it("surfaces turn.failed and stream errors instead of swallowing them", () => {
     const { events, dispatch } = makeSession();
     dispatch({ type: "turn.failed", error: { message: "usage limit reached" } });
-    dispatch({ type: "error", message: "stream broke" });
-
-    expect(events.map((e) => e.kind)).toEqual(["error", "error"]);
+    expect(events.map((e) => e.kind)).toEqual(["error"]);
     expect(events[0].content).toContain("usage limit reached");
-    expect(events[1].content).toContain("stream broke");
+  });
+
+  it("emits a single error for a real failure stream (error + turn.failed pair)", () => {
+    // Captured live from codex-cli 0.144.1 with a revoked auth token: the
+    // stream reports the same fault twice, then the SDK generator throws.
+    const { events, dispatch } = makeSession();
+    dispatch({ type: "thread.started", thread_id: "thr_live" });
+    dispatch({ type: "turn.started" });
+    dispatch({ type: "error", message: "Your session has ended. Please log in again." });
+    dispatch({
+      type: "turn.failed",
+      error: { message: "Your session has ended. Please log in again." },
+    });
+
+    const errors = events.filter((e) => e.kind === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].content).toContain("log in again");
   });
 
   it("pairs command executions as tool_use/tool_result by item id", () => {
