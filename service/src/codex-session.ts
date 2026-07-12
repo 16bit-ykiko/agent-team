@@ -68,6 +68,12 @@ export class CodexSession extends EventEmitter {
     this.abortController?.abort();
   }
 
+  setProviderEnv(env: Record<string, string> | undefined): void {
+    this.config.providerEnv = env;
+    // The Codex client caches apiKey/baseUrl; rebuild it on next turn.
+    this.codex = null;
+  }
+
   private async getCodex(): Promise<Codex> {
     if (this.codex) return this.codex;
     const { Codex } = await import("@openai/codex-sdk");

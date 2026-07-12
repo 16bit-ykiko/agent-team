@@ -2032,3 +2032,21 @@ pre .copy-btn:hover {
   padding: 0 5px;
   line-height: 14px;
 }
+
+.default-account-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.default-account-row select {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+  padding: 2px 4px;
+}

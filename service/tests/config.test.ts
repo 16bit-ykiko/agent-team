@@ -2,7 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { loadConfig } from "../src/config";
+import { loadConfig, effectiveAccount } from "../src/config";
+import { loadSettings, saveSettings } from "../src/state";
 
 let dir: string;
 
@@ -52,6 +53,42 @@ type = "local"
 `);
     try {
       expect(loadConfig(d).accounts).toEqual({});
+    } finally {
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("effectiveAccount", () => {
+  const accounts = { work: { oauth_token: "t1" }, side: { oauth_token: "t2" } };
+
+  it("prefers the agent's explicit account", () => {
+    expect(effectiveAccount("side", "work", accounts)).toBe("side");
+  });
+
+  it("falls back to local when the explicit account no longer exists", () => {
+    expect(effectiveAccount("gone", "work", accounts)).toBeUndefined();
+  });
+
+  it("applies the runtime default when the agent has no explicit account", () => {
+    expect(effectiveAccount(undefined, "work", accounts)).toBe("work");
+    expect(effectiveAccount(undefined, null, accounts)).toBeUndefined();
+  });
+
+  it("ignores a default that was removed from config", () => {
+    expect(effectiveAccount(undefined, "gone", accounts)).toBeUndefined();
+  });
+});
+
+describe("runtime settings", () => {
+  it("round-trips the default account", () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "settings-test-"));
+    try {
+      expect(loadSettings(d)).toEqual({});
+      saveSettings(d, { defaultAccount: "work" });
+      expect(loadSettings(d).defaultAccount).toBe("work");
+      saveSettings(d, { defaultAccount: null });
+      expect(loadSettings(d).defaultAccount).toBeNull();
     } finally {
       fs.rmSync(d, { recursive: true, force: true });
     }

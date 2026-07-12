@@ -279,6 +279,17 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
+  // Swap credentials/env for this session. The env is baked into the SDK
+  // child process at query start, so if a query is alive and idle we abort it
+  // — the next send() starts a fresh query that resumes the same session id
+  // (session transcripts are local files, valid across accounts).
+  setProviderEnv(env: Record<string, string> | undefined): void {
+    this.config.providerEnv = env;
+    if (this.queryInstance && !this.processing) {
+      this.abortController?.abort();
+    }
+  }
+
   // Stop a running subagent task. The SDK emits a task_notification with
   // status "stopped", which flows back through the normal event pipeline.
   async stopTask(taskId: string): Promise<void> {

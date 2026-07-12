@@ -276,3 +276,13 @@ describe("rate limit surfacing", () => {
     expect(err?.content).toContain("error_max_turns");
   });
 });
+
+describe("setProviderEnv", () => {
+  it("updates the session config without disturbing an unstarted session", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    session.setProviderEnv({ CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-x" });
+    expect(session.config.providerEnv?.CLAUDE_CODE_OAUTH_TOKEN).toBe("sk-ant-oat01-x");
+    session.setProviderEnv(undefined);
+    expect(session.config.providerEnv).toBeUndefined();
+  });
+});

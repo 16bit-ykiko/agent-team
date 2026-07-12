@@ -128,3 +128,17 @@ export function loadConfig(baseDir: string): AppConfig {
 
   return { server, auth, agents, hosts, providers, accounts };
 }
+
+// Which account a session should run on: an explicit per-agent account wins,
+// otherwise the runtime default (when it still exists in config), otherwise
+// the local login.
+export function effectiveAccount(
+  explicit: string | undefined,
+  defaultAccount: string | null,
+  accounts: Record<string, AccountConfig>,
+): string | undefined {
+  if (explicit && accounts[explicit]) return explicit;
+  if (explicit) return undefined; // stale explicit account: fall back to local
+  if (defaultAccount && accounts[defaultAccount]) return defaultAccount;
+  return undefined;
+}

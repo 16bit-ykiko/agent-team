@@ -153,3 +153,13 @@ describe("codex thread event mapping", () => {
     expect(events[0].content).toContain("transient thing");
   });
 });
+
+describe("setProviderEnv", () => {
+  it("rebuilds the cached Codex client on the next turn", () => {
+    const session = new CodexSession({ cwd: "/tmp", backend: "codex" });
+    (session as unknown as { codex: unknown }).codex = { fake: true };
+    session.setProviderEnv({ OPENAI_API_KEY: "sk-x" });
+    expect((session as unknown as { codex: unknown }).codex).toBeNull();
+    expect(session.config.providerEnv?.OPENAI_API_KEY).toBe("sk-x");
+  });
+});

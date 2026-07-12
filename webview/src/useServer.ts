@@ -168,6 +168,7 @@ export function useServer() {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [commands, setCommands] = useState<CommandInfo[]>([]);
   const [accounts, setAccounts] = useState<string[]>([]);
+  const [defaultAccount, setDefaultAccountState] = useState<string | null>(null);
   const [hosts, setHosts] = useState<HostInfo[]>([]);
   const [hostConfigs, setHostConfigs] = useState<Record<string, HostConfig>>({});
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
@@ -372,7 +373,12 @@ export function useServer() {
           };
           setPresets(config.presets);
           setModels(config.models);
-          setAccounts((config as unknown as { accounts?: string[] }).accounts ?? []);
+          const cfgExtra = config as unknown as {
+            accounts?: string[];
+            defaultAccount?: string | null;
+          };
+          setAccounts(cfgExtra.accounts ?? []);
+          setDefaultAccountState(cfgExtra.defaultAccount ?? null);
           if (config.commands) setCommands(config.commands);
           if (config.hosts) setHostConfigs(config.hosts);
           if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
@@ -578,6 +584,15 @@ export function useServer() {
           break;
         }
 
+        case "config_update":
+          setAccounts((msg.accounts as string[]) ?? []);
+          setDefaultAccountState((msg.defaultAccount as string | null) ?? null);
+          break;
+
+        case "default_account":
+          setDefaultAccountState((msg.account as string | null) ?? null);
+          break;
+
         case "search_results":
           setSearchResults({ query: msg.query as string, hits: msg.hits as SearchHit[] });
           break;
@@ -729,6 +744,11 @@ export function useServer() {
       [send],
     ),
     accounts,
+    defaultAccount,
+    setDefaultAccount: useCallback(
+      (account: string | null) => send({ type: "set_default_account", account }),
+      [send],
+    ),
     removeAgent: useCallback(
       (wsId: string, agentId: string) => send({ type: "remove_agent", workspaceId: wsId, agentId }),
       [send],

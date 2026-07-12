@@ -111,3 +111,21 @@ export function appendLog(baseDir: string, workspaceId: string, entry: unknown):
   const file = path.join(dir, "stream.jsonl");
   fs.appendFileSync(file, JSON.stringify(entry) + "\n");
 }
+
+// Small runtime settings persisted outside config.toml (which stays
+// user-owned): currently just the default-account override.
+export interface RuntimeSettings {
+  defaultAccount?: string | null;
+}
+
+function settingsPath(baseDir: string): string {
+  return path.join(dataRoot(baseDir), CACHE_DIR, "settings.json");
+}
+
+export function loadSettings(baseDir: string): RuntimeSettings {
+  return readJson<RuntimeSettings>(settingsPath(baseDir)) ?? {};
+}
+
+export function saveSettings(baseDir: string, settings: RuntimeSettings): void {
+  writeJson(settingsPath(baseDir), settings);
+}

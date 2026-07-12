@@ -10,6 +10,7 @@ export interface HostSessionHandle extends EventEmitter {
   abort(): void;
   setEffort?(level: string): void;
   stopTask?(taskId: string): Promise<void>;
+  setProviderEnv?(env: Record<string, string> | undefined): void;
   getState(): SessionState;
   getContextUsage?(): Promise<Record<string, unknown> | null>;
   getUsageInfo?(): Promise<Record<string, unknown> | null>;

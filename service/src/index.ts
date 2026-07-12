@@ -7,8 +7,16 @@ import * as path from "path";
 import { execSync, spawn } from "child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import { Workspace, WorkspaceCallbacks } from "./task";
-import { saveWorkspace, deleteWorkspaceState, saveIndex, loadAll, appendLog } from "./state";
-import { loadConfig, AppConfig } from "./config";
+import {
+  saveWorkspace,
+  deleteWorkspaceState,
+  saveIndex,
+  loadAll,
+  appendLog,
+  loadSettings,
+  saveSettings,
+} from "./state";
+import { loadConfig, AppConfig, effectiveAccount } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
 import { CommandInfo, StreamEvent } from "./session";
 import { gitBranch, getPrInfo } from "./git";
@@ -96,6 +104,7 @@ export class Server {
   private hostRegistry: HostRegistry;
   private quotaEntries: QuotaEntry[] = [];
   private quotaTimer: ReturnType<typeof setInterval> | null = null;
+  private defaultAccount: string | null = null;
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
@@ -103,7 +112,12 @@ export class Server {
     this.uploadsDir = path.join(baseDir, "uploads");
     if (!fs.existsSync(this.uploadsDir)) fs.mkdirSync(this.uploadsDir, { recursive: true });
     this.config = loadConfig(baseDir);
+    this.defaultAccount = loadSettings(baseDir).defaultAccount ?? null;
+    if (this.defaultAccount && !this.config.accounts[this.defaultAccount]) {
+      this.defaultAccount = null;
+    }
     this.hostRegistry = this.initHosts();
+    this.watchConfig();
 
     this.httpServer = http.createServer((req, res) => this.handleHttp(req, res));
     this.wss = new WebSocketServer({
@@ -527,6 +541,7 @@ export class Server {
       workspaces: [...this.workspaces.values()].map((w) => w.getInfo(false)),
       config: {
         accounts: Object.keys(this.config.accounts),
+        defaultAccount: this.defaultAccount,
         presets: AGENT_PRESETS,
         models: MODEL_OPTIONS,
         commands: this.commands,
@@ -650,6 +665,10 @@ export class Server {
 
       case "abort":
         this.abortAgent(msg.workspaceId as string, msg.agentId as string | undefined);
+        return;
+
+      case "set_default_account":
+        this.setDefaultAccount(ws, (msg.account as string | null) ?? null);
         return;
 
       case "cancel_queued": {
@@ -794,10 +813,64 @@ export class Server {
   }
 
   private sessionEnv(model: string, account?: string): Record<string, string> | undefined {
+    const resolved = effectiveAccount(account, this.defaultAccount, this.config.accounts);
     const provider = this.resolveProviderEnv(model);
-    const acct = this.resolveAccountEnv(account);
+    const acct = this.resolveAccountEnv(resolved);
     if (!provider && !acct) return undefined;
     return { ...provider, ...acct };
+  }
+
+  // Re-resolve credentials for every live session (after a config reload or a
+  // default-account switch). Idle Claude sessions restart their query on the
+  // next message, resuming the same session id under the new account.
+  private reapplyAccountEnv(): void {
+    for (const ws of this.workspaces.values()) {
+      for (const entry of ws.agents.values()) {
+        entry.session.setProviderEnv?.(this.sessionEnv(entry.info.model, entry.info.account));
+      }
+    }
+  }
+
+  private setDefaultAccount(ws: WebSocket, account: string | null): void {
+    if (account && !this.config.accounts[account]) {
+      this.sendJson(ws, { type: "error", message: `Unknown account: ${account}` });
+      return;
+    }
+    this.defaultAccount = account;
+    saveSettings(this.baseDir, { defaultAccount: account });
+    this.reapplyAccountEnv();
+    this.broadcastUI({ type: "default_account", account });
+  }
+
+  // Hot-reload config.toml: accounts/providers/presets apply live (the port
+  // and auth cookie secret need a restart). watchFile (polling) survives the
+  // atomic rename-writes editors do, unlike fs.watch.
+  private watchConfig(): void {
+    const configPath = path.join(this.baseDir, "config.toml");
+    fs.watchFile(configPath, { interval: 2000 }, () => {
+      try {
+        this.config = loadConfig(this.baseDir);
+      } catch (e) {
+        this.broadcastUI({
+          type: "error",
+          message: `config.toml reload failed: ${e instanceof Error ? e.message : e}`,
+        });
+        return;
+      }
+      if (this.defaultAccount && !this.config.accounts[this.defaultAccount]) {
+        this.defaultAccount = null;
+        saveSettings(this.baseDir, { defaultAccount: null });
+        this.broadcastUI({ type: "default_account", account: null });
+      }
+      this.reapplyAccountEnv();
+      this.refreshQuota();
+      this.broadcastUI({
+        type: "config_update",
+        accounts: Object.keys(this.config.accounts),
+        defaultAccount: this.defaultAccount,
+      });
+      console.log("[config] reloaded config.toml");
+    });
   }
 
   private resolveProviderEnv(model: string): Record<string, string> | undefined {
@@ -1064,6 +1137,7 @@ systemctl --user restart agent-team-server
   }
 
   close(): void {
+    fs.unwatchFile(path.join(this.baseDir, "config.toml"));
     if (this.statusTimer) clearInterval(this.statusTimer);
     if (this.branchTimer) clearInterval(this.branchTimer);
     this.persistAll();

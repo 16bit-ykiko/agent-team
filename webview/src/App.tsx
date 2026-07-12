@@ -1010,11 +1010,37 @@ function StatusBar({ label, pct, extra }: { label: string; pct: number; extra?: 
   );
 }
 
-function SystemStatusPanel({ status }: { status: SystemStatus }) {
+function SystemStatusPanel({
+  status,
+  accounts,
+  defaultAccount,
+  onSetDefault,
+}: {
+  status: SystemStatus;
+  accounts: string[];
+  defaultAccount: string | null;
+  onSetDefault: (account: string | null) => void;
+}) {
   const memPct = Math.round((status.memUsed / status.memTotal) * 100);
 
   return (
     <div className="system-status-panel">
+      {accounts.length > 0 && (
+        <div className="default-account-row" title="Account used by agents without an explicit one">
+          <span>Account</span>
+          <select
+            value={defaultAccount ?? ""}
+            onChange={(e) => onSetDefault(e.target.value || null)}
+          >
+            <option value="">local</option>
+            {accounts.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="system-status-grid">
         <StatusBar label="CPU" pct={status.cpuUsage} />
         <StatusBar
@@ -1075,6 +1101,8 @@ export function App() {
     cancelSubagent,
     cancelQueued,
     accounts,
+    defaultAccount,
+    setDefaultAccount,
     startReplayDemo,
     lastError,
     clearError,
@@ -1766,7 +1794,14 @@ export function App() {
             })}
           </div>
         )}
-        {systemStatus && <SystemStatusPanel status={systemStatus} />}
+        {systemStatus && (
+          <SystemStatusPanel
+            status={systemStatus}
+            accounts={accounts}
+            defaultAccount={defaultAccount}
+            onSetDefault={setDefaultAccount}
+          />
+        )}
       </div>
 
       <div className="resize-handle" onMouseDown={onResizeStart} />
