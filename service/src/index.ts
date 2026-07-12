@@ -1112,7 +1112,13 @@ systemctl --user restart agent-team-server
     );
     setTimeout(() => {
       const w = this.workspaces.get(wsId);
-      if (w && !w.retryLast(agentId)) w.dequeueNext(agentId);
+      if (!w) return;
+      // The old query was started with the previous account's credentials
+      // (setProviderEnv couldn't abort it because the turn was still
+      // processing). Kill it so the retry starts a fresh query.
+      const e = w.agents.get(agentId);
+      if (e) e.session.abort();
+      if (!w.retryLast(agentId)) w.dequeueNext(agentId);
     }, 1000);
   }
 

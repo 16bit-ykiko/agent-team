@@ -232,6 +232,10 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private pushMessage(message: string): void {
+    // Rate-limit dedupe is per turn: a fresh user message must be able to
+    // report its own rejection even when the previous turn was rejected too
+    // (a session-lifetime dedupe swallowed the second turn's error entirely).
+    this.lastRateLimitStatus = null;
     const userMsg: SDKUserMessage = {
       type: "user",
       message: { role: "user", content: message },
@@ -241,6 +245,7 @@ export class ClaudeSession extends EventEmitter {
     this.processing = true;
     this.turnStartTime = Date.now();
     this.stepCounter = 0;
+    this.lastRateLimitStatus = null;
   }
 
   private startIterating(): void {
@@ -255,6 +260,7 @@ export class ClaudeSession extends EventEmitter {
           this.handleSDKMessage(msg);
         }
       } catch (err) {
+        if (this.queryInstance !== thisQuery) return;
         const errMsg = err instanceof Error ? err.message : String(err);
         this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` } as StreamEvent);
       } finally {

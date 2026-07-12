@@ -300,6 +300,23 @@ describe("rate-limit retry mechanics", () => {
     expect(session.sent).toEqual(["do the thing", "do the thing"]);
   });
 
+  it("abort before retryLast ensures fresh dispatch after credential switch", async () => {
+    const { ws, emit, session } = makeWorkspace();
+    const agentId = ws.getState().agents[0].id;
+    await ws.sendMessage("rate limited prompt");
+    expect(session.sent).toEqual(["rate limited prompt"]);
+
+    // Simulate the turn ending after a rate limit (error → result).
+    emit({ kind: "error", content: "Usage limit reached" });
+    session.isRunning = false;
+
+    // The server's handleRateLimit would abort then retry.
+    session.abort();
+    expect(ws.retryLast(agentId)).toBe(true);
+    await tick();
+    expect(session.sent).toEqual(["rate limited prompt", "rate limited prompt"]);
+  });
+
   it("pauseAgent holds the queue until the deadline, retryLast clears it", async () => {
     const { ws, emit, session } = makeWorkspace();
     const agentId = ws.getState().agents[0].id;

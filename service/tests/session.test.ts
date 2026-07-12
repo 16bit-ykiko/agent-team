@@ -239,6 +239,34 @@ describe("rate limit surfacing", () => {
     expect(events[0].content).toContain("Resets at");
   });
 
+  it("reports again on a new turn even if the previous turn was also rejected", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    const priv = session as unknown as {
+      handleSDKMessage(m: unknown): void;
+      inputController: unknown;
+      pushMessage(m: string): void;
+    };
+    priv.inputController = { push() {}, end() {} };
+
+    const rejected = {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected", rateLimitType: "five_hour" },
+      session_id: "s",
+    };
+    priv.pushMessage("first");
+    priv.handleSDKMessage(rejected);
+    priv.handleSDKMessage(rejected); // same turn — deduped
+    expect(events.filter((e) => e.kind === "error")).toHaveLength(1);
+
+    // User sends another message while still limited: its rejection must
+    // surface too (this exact case rendered as an empty bubble in prod).
+    priv.pushMessage("second");
+    priv.handleSDKMessage(rejected);
+    expect(events.filter((e) => e.kind === "error")).toHaveLength(2);
+  });
+
   it("stays silent for allowed statuses and dedupes repeats", () => {
     const { events, dispatch } = makeSession();
     dispatch(rateLimitEvent({ status: "allowed", rateLimitType: "five_hour" }));
@@ -309,5 +337,38 @@ describe("rateLimit recovery signal", () => {
     expect(signals).toHaveLength(1);
     expect(signals[0].rateLimitType).toBe("seven_day");
     expect(signals[0].resetsAt).toBe(1_800_000_000);
+  });
+
+  it("resets dedup after a new turn so retry rate limits surface", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const errors: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => {
+      if (e.kind === "error") errors.push(e);
+    });
+    const dispatch = (msg: unknown) =>
+      (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage(msg);
+
+    // Inject a stub inputController so pushMessage doesn't NPE.
+    const inner = session as unknown as Record<string, unknown>;
+    inner.inputController = { push: () => {}, end: () => {} };
+
+    // First turn: rate limit fires.
+    dispatch({
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000 },
+      session_id: "s",
+    });
+    expect(errors).toHaveLength(1);
+
+    // Simulate retry: pushMessage resets lastRateLimitStatus.
+    (session as unknown as { pushMessage(m: string): void }).pushMessage("retry");
+
+    // Second turn hits the same rate limit — must NOT be swallowed.
+    dispatch({
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000 },
+      session_id: "s",
+    });
+    expect(errors).toHaveLength(2);
   });
 });
