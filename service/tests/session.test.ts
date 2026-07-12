@@ -286,3 +286,28 @@ describe("setProviderEnv", () => {
     expect(session.config.providerEnv).toBeUndefined();
   });
 });
+
+describe("rateLimit recovery signal", () => {
+  it("emits rateLimit with type and reset on rejection, once per status flip", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const signals: Array<{ rateLimitType?: string; resetsAt?: number }> = [];
+    session.on("rateLimit", (info) => signals.push(info));
+    const dispatch = (msg: unknown) =>
+      (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage(msg);
+
+    dispatch({
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000 },
+      session_id: "s",
+    });
+    dispatch({
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000 },
+      session_id: "s",
+    });
+
+    expect(signals).toHaveLength(1);
+    expect(signals[0].rateLimitType).toBe("seven_day");
+    expect(signals[0].resetsAt).toBe(1_800_000_000);
+  });
+});

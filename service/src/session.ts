@@ -361,6 +361,10 @@ export class ClaudeSession extends EventEmitter {
         if (status === this.lastRateLimitStatus) break;
         this.lastRateLimitStatus = status;
         if (status === "rejected") {
+          this.emit("rateLimit", {
+            rateLimitType: info.rateLimitType as string | undefined,
+            resetsAt: info.resetsAt as number | undefined,
+          });
           const kind = (info.rateLimitType as string) ?? "usage";
           const label = kind.replace(/_/g, "-");
           const resetsAt = info.resetsAt as number | undefined;

@@ -80,6 +80,10 @@ export interface AgentEntry {
   session: HostSessionHandle;
   handler: (event: StreamEvent) => void;
   currentMsg: Message | null;
+  // Last prompt dispatched to the session — the retry unit for rate limits.
+  lastPrompt?: string;
+  // While set (epoch ms), the queue holds and dequeueNext is a no-op.
+  pausedUntil?: number;
 }
 
 export interface WorkspaceCallbacks {
@@ -95,6 +99,11 @@ export interface WorkspaceCallbacks {
   onAgentBusy?: (wsId: string, agentId: string) => void;
   onAgentIdle?: (wsId: string, agentId: string) => void;
   onCommandsChanged?: (wsId: string, commands: CommandInfo[]) => void;
+  onRateLimit?: (
+    wsId: string,
+    agentId: string,
+    info: { rateLimitType?: string; resetsAt?: number },
+  ) => void;
 }
 
 export class Workspace {
@@ -375,6 +384,9 @@ export class Workspace {
     session.on("commands", (cmds: CommandInfo[]) => {
       this.cb?.onCommandsChanged?.(this.id, cmds);
     });
+    session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) => {
+      this.cb?.onRateLimit?.(this.id, id, info);
+    });
 
     this.agents.set(id, { info, session, handler, currentMsg: null });
     this.pushSystemMessage(`${avatar} **${name}** joined the team`);
@@ -567,6 +579,7 @@ export class Workspace {
   }
 
   private async dispatchPrompt(agent: AgentEntry, prompt: string): Promise<void> {
+    agent.lastPrompt = prompt;
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
 
     agent.currentMsg = this.makeAgentMsg(agent.info.id);
@@ -585,6 +598,7 @@ export class Workspace {
   dequeueNext(agentId: string): void {
     const entry = this.agents.get(agentId);
     if (!entry || entry.session.isRunning) return;
+    if (entry.pausedUntil && Date.now() < entry.pausedUntil) return;
     const msg = this.messages.find((m) => m.status === "queued" && m.queuedFor === agentId);
     if (!msg) return;
     const prompt = msg.queuedPrompt ?? msg.content;
@@ -593,6 +607,27 @@ export class Workspace {
     delete msg.queuedFor;
     this.cb?.onMessageDone(this.id, msg.id, "done", msg.content);
     void this.dispatchPrompt(entry, prompt);
+  }
+
+  // Hold an agent's queue until `until` (rate-limit backoff).
+  pauseAgent(agentId: string, until: number): void {
+    const entry = this.agents.get(agentId);
+    if (entry) entry.pausedUntil = until;
+  }
+
+  // Re-dispatch the last prompt (rate-limit recovery). Always lifts the
+  // pause — even when there is nothing to retry, the queue must resume.
+  retryLast(agentId: string): boolean {
+    const entry = this.agents.get(agentId);
+    if (!entry) return false;
+    entry.pausedUntil = undefined;
+    if (entry.session.isRunning || !entry.lastPrompt) return false;
+    void this.dispatchPrompt(entry, entry.lastPrompt);
+    return true;
+  }
+
+  postSystemMessage(content: string): void {
+    this.pushSystemMessage(content);
   }
 
   // Remove a still-queued message. Returns false if it no longer exists or
@@ -785,6 +820,9 @@ export class Workspace {
       session.on("event", handler);
       session.on("commands", (cmds: CommandInfo[]) => {
         ws.cb?.onCommandsChanged?.(ws.id, cmds);
+      });
+      session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) => {
+        ws.cb?.onRateLimit?.(ws.id, agentState.id, info);
       });
       ws.agents.set(agentState.id, {
         info: {

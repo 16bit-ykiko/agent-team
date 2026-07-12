@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { loadConfig, effectiveAccount } from "../src/config";
+import { loadConfig, effectiveAccount, pickFailoverAccount } from "../src/config";
 import { loadSettings, saveSettings } from "../src/state";
 
 let dir: string;
@@ -92,5 +92,27 @@ describe("runtime settings", () => {
     } finally {
       fs.rmSync(d, { recursive: true, force: true });
     }
+  });
+});
+
+describe("pickFailoverAccount", () => {
+  const accounts = { work: { oauth_token: "t1" } };
+
+  it("moves local to the first configured account", () => {
+    expect(pickFailoverAccount(undefined, accounts)).toBe("work");
+  });
+
+  it("moves an exhausted account back to local", () => {
+    expect(pickFailoverAccount("work", accounts)).toBeNull();
+  });
+
+  it("prefers another account over local when several exist", () => {
+    expect(
+      pickFailoverAccount("work", { work: { oauth_token: "t1" }, side: { oauth_token: "t2" } }),
+    ).toBe("side");
+  });
+
+  it("returns undefined when only local exists and local is exhausted", () => {
+    expect(pickFailoverAccount(undefined, {})).toBeUndefined();
   });
 });

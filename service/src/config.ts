@@ -142,3 +142,16 @@ export function effectiveAccount(
   if (defaultAccount && accounts[defaultAccount]) return defaultAccount;
   return undefined;
 }
+
+// Where to fail over when `current` (undefined = local) hits a weekly-type
+// limit: the first other configured account, else back to local, else
+// nowhere (returns undefined). null = local login.
+export function pickFailoverAccount(
+  current: string | undefined,
+  accounts: Record<string, AccountConfig>,
+): string | null | undefined {
+  const others = Object.keys(accounts).filter((a) => a !== current);
+  if (others.length > 0) return others[0];
+  if (current !== undefined) return null;
+  return undefined;
+}

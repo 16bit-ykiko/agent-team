@@ -285,3 +285,39 @@ describe("message queue", () => {
     expect(session.sent[0]).toContain("follow-up");
   });
 });
+
+describe("rate-limit retry mechanics", () => {
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+
+  it("records the last prompt and retryLast re-dispatches it", async () => {
+    const { ws, session } = makeWorkspace();
+    await ws.sendMessage("do the thing");
+    expect(session.sent).toEqual(["do the thing"]);
+
+    session.isRunning = false;
+    expect(ws.retryLast(session ? (ws.getState().agents[0].id as string) : "")).toBe(true);
+    await tick();
+    expect(session.sent).toEqual(["do the thing", "do the thing"]);
+  });
+
+  it("pauseAgent holds the queue until the deadline, retryLast clears it", async () => {
+    const { ws, emit, session } = makeWorkspace();
+    const agentId = ws.getState().agents[0].id;
+    session.isRunning = true;
+    await ws.sendMessage("queued work");
+
+    ws.pauseAgent(agentId, Date.now() + 60_000);
+    session.isRunning = false;
+    emit({ kind: "result", content: "" });
+    await tick();
+    // Paused: the queued message must NOT dispatch.
+    expect(session.sent).toEqual([]);
+
+    // Recovery path: retryLast clears the pause; with no lastPrompt it
+    // returns false and the caller falls back to dequeueNext.
+    expect(ws.retryLast(agentId)).toBe(false);
+    ws.dequeueNext(agentId);
+    await tick();
+    expect(session.sent).toEqual(["queued work"]);
+  });
+});

@@ -16,7 +16,7 @@ import {
   loadSettings,
   saveSettings,
 } from "./state";
-import { loadConfig, AppConfig, effectiveAccount } from "./config";
+import { loadConfig, AppConfig, effectiveAccount, pickFailoverAccount } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
 import { CommandInfo, StreamEvent } from "./session";
 import { gitBranch, getPrInfo } from "./git";
@@ -105,6 +105,8 @@ export class Server {
   private quotaEntries: QuotaEntry[] = [];
   private quotaTimer: ReturnType<typeof setInterval> | null = null;
   private defaultAccount: string | null = null;
+  private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private lastAccountSwitchAt = 0;
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
@@ -1047,6 +1049,73 @@ systemctl --user restart agent-team-server
     console.log(`Restored ${this.workspaces.size} workspace(s)`);
   }
 
+  // Rate-limit recovery policy:
+  //  - five_hour: hold the agent's queue and auto-retry the failed prompt
+  //    shortly after the window resets ("wait it out")
+  //  - weekly-type limits (seven_day / fable pools): fail over the DEFAULT
+  //    account to another credential and retry immediately — agents pinned to
+  //    an explicit account are left alone (switching under them would be
+  //    surprising), they just get the error message.
+  private handleRateLimit(
+    wsId: string,
+    agentId: string,
+    info: { rateLimitType?: string; resetsAt?: number },
+  ): void {
+    const ws = this.workspaces.get(wsId);
+    const entry = ws?.agents.get(agentId);
+    if (!ws || !entry) return;
+    const agentName = entry.info.name;
+
+    if (!info.rateLimitType || info.rateLimitType === "five_hour") {
+      const resetMs = info.resetsAt ? info.resetsAt * 1000 : Date.now() + 30 * 60_000;
+      // Retry one minute after the reset; never sooner than 1 min or later
+      // than 6 h from now (clock skew / bogus resets).
+      const delay = Math.min(Math.max(resetMs - Date.now() + 60_000, 60_000), 6 * 3600_000);
+      ws.pauseAgent(agentId, Date.now() + delay);
+      const at = new Date(Date.now() + delay).toLocaleTimeString();
+      ws.postSystemMessage(`⏳ **${agentName}** hit the 5-hour limit — auto-retrying at ${at}.`);
+      const key = `${wsId}:${agentId}`;
+      clearTimeout(this.retryTimers.get(key));
+      this.retryTimers.set(
+        key,
+        setTimeout(() => {
+          this.retryTimers.delete(key);
+          const w = this.workspaces.get(wsId);
+          if (w && !w.retryLast(agentId)) w.dequeueNext(agentId);
+        }, delay),
+      );
+      return;
+    }
+
+    // Weekly-type limit.
+    if (entry.info.account) {
+      ws.postSystemMessage(
+        `🚫 **${agentName}** hit the ${info.rateLimitType.replace(/_/g, "-")} limit on its pinned account \`${entry.info.account}\`. Switch its account manually if needed.`,
+      );
+      return;
+    }
+    // Debounce: if both credentials are exhausted the rotations would
+    // ping-pong; allow one auto-switch per 5 minutes.
+    if (Date.now() - this.lastAccountSwitchAt < 5 * 60_000) return;
+
+    const current = effectiveAccount(undefined, this.defaultAccount, this.config.accounts);
+    const next = pickFailoverAccount(current, this.config.accounts);
+    if (next === undefined) return; // nowhere to go — the error message stands
+
+    this.lastAccountSwitchAt = Date.now();
+    this.defaultAccount = next;
+    saveSettings(this.baseDir, { defaultAccount: next });
+    this.reapplyAccountEnv();
+    this.broadcastUI({ type: "default_account", account: next });
+    ws.postSystemMessage(
+      `🔁 ${info.rateLimitType.replace(/_/g, "-")} limit on \`${current ?? "local"}\` — switched the default account to \`${next ?? "local"}\` and retrying.`,
+    );
+    setTimeout(() => {
+      const w = this.workspaces.get(wsId);
+      if (w && !w.retryLast(agentId)) w.dequeueNext(agentId);
+    }, 1000);
+  }
+
   private makeCallbacks(): WorkspaceCallbacks {
     return {
       onNewMessage: (wsId, msg) => {
@@ -1082,6 +1151,7 @@ systemctl --user restart agent-team-server
         this.commands = mergeLocalCommands(commands);
         this.broadcastUI({ type: "commands_update", commands: this.commands });
       },
+      onRateLimit: (wsId, agentId, info) => this.handleRateLimit(wsId, agentId, info),
     };
   }
 
@@ -1138,6 +1208,7 @@ systemctl --user restart agent-team-server
 
   close(): void {
     fs.unwatchFile(path.join(this.baseDir, "config.toml"));
+    for (const t of this.retryTimers.values()) clearTimeout(t);
     if (this.statusTimer) clearInterval(this.statusTimer);
     if (this.branchTimer) clearInterval(this.branchTimer);
     this.persistAll();
