@@ -68,7 +68,12 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", backend: "claude" },
   { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", backend: "claude" },
-  { id: "gpt-5.5", label: "GPT-5.5", backend: "codex" },
+  {
+    id: "gpt-5.5",
+    label: "GPT-5.5",
+    backend: "codex",
+    effortLevels: ["minimal", "low", "medium", "high", "xhigh"],
+  },
 ];
 
 function findModelOption(modelId: string): ModelOption | undefined {
@@ -82,8 +87,9 @@ export function effortLevelsForModel(modelId: string): string[] {
   return findModelOption(modelId)?.effortLevels ?? EFFORT_FIVE;
 }
 
-// The models with a curated effort table are exactly the Claude 4.6+ models,
-// which all support adaptive thinking with a display option.
+// Adaptive thinking (with a display option) is a Claude 4.6+ feature; codex
+// models carry effort levels too, so gate on backend as well.
 export function supportsAdaptiveThinking(modelId: string): boolean {
-  return (findModelOption(modelId)?.effortLevels?.length ?? 0) > 0;
+  const opt = findModelOption(modelId);
+  return opt?.backend === "claude" && (opt.effortLevels?.length ?? 0) > 0;
 }

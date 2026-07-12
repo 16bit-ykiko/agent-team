@@ -12,7 +12,7 @@ const build = {
   minify: false,
   entryPoints: ["src/index.ts"],
   outfile: "../dist/server.js",
-  external: ["@anthropic-ai/claude-agent-sdk"],
+  external: ["@anthropic-ai/claude-agent-sdk", "@openai/codex-sdk"],
 };
 
 if (watch) {

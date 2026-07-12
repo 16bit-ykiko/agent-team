@@ -1,8 +1,11 @@
-import { spawn, execSync, ChildProcess } from "child_process";
+import { execSync } from "child_process";
 import { EventEmitter } from "events";
-import * as readline from "readline";
+import * as fs from "fs";
 import { StreamEvent, UsageStats, SessionConfig, SessionState } from "./session";
+import type { Codex, ThreadEvent, ThreadItem, ThreadOptions } from "@openai/codex-sdk";
 
+// The SDK ships a vendored binary per platform, but we may run against a
+// system-installed codex — resolve it ourselves and pass codexPathOverride.
 let codexBin: string | null = null;
 function getCodexBin(): string {
   if (codexBin) return codexBin;
@@ -15,11 +18,20 @@ function getCodexBin(): string {
       `${process.env.HOME}/.local/bin/codex`,
       "/usr/local/bin/codex",
     ];
-    codexBin = candidates.find((c) => c && require("fs").existsSync(c)) ?? "codex";
+    codexBin = candidates.find((c) => c && fs.existsSync(c)) ?? "codex";
   }
   return codexBin;
 }
 
+// Codex sessions run through the official @openai/codex-sdk (a typed wrapper
+// over `codex exec --json`; threads persist in ~/.codex/sessions and are
+// resumed by id). Event mapping notes:
+//  - agent_message → text_delta (task.ts builds content from deltas and
+//    ignores plain "text" events)
+//  - turn.completed → usage + a "result" event, which is what finalizes the
+//    message; the old implementation never sent one, so codex replies stayed
+//    "streaming" forever and the working state never cleared
+//  - turn.failed / stream errors → "error" events (previously swallowed)
 export class CodexSession extends EventEmitter {
   sessionId: string | null = null;
   config: SessionConfig;
@@ -32,8 +44,10 @@ export class CodexSession extends EventEmitter {
     duration_ms: 0,
   };
 
-  private proc: ChildProcess | null = null;
+  private codex: Codex | null = null;
   private busy = false;
+  private abortController: AbortController | null = null;
+  private turnFinalized = false;
 
   constructor(config: SessionConfig) {
     super();
@@ -44,36 +58,86 @@ export class CodexSession extends EventEmitter {
     return this.busy;
   }
 
-  async send(message: string): Promise<void> {
-    if (this.busy) {
-      throw new Error("Session is busy");
-    }
-    this.busy = true;
-    const startTime = Date.now();
-
-    try {
-      await this.run(message);
-    } finally {
-      this.usage.turns++;
-      this.usage.duration_ms += Date.now() - startTime;
-      this.busy = false;
-    }
-  }
-
   setEffort(level: string): void {
-    // Codex spawns a fresh process per message, so the new level is picked
-    // up by the next buildArgs() call.
+    // Thread options are per-turn (each run resumes by id), so the new level
+    // applies from the next message.
     this.config.effort = level;
   }
 
   abort(): void {
-    if (this.proc && this.proc.exitCode === null) {
-      this.proc.kill("SIGTERM");
-      setTimeout(() => {
-        if (this.proc && this.proc.exitCode === null) {
-          this.proc.kill("SIGKILL");
+    this.abortController?.abort();
+  }
+
+  private async getCodex(): Promise<Codex> {
+    if (this.codex) return this.codex;
+    const { Codex } = await import("@openai/codex-sdk");
+    const providerEnv = this.config.providerEnv ?? {};
+    this.codex = new Codex({
+      codexPathOverride: getCodexBin(),
+      ...(providerEnv["OPENAI_API_KEY"] && { apiKey: providerEnv["OPENAI_API_KEY"] }),
+      ...(providerEnv["OPENAI_BASE_URL"] && { baseUrl: providerEnv["OPENAI_BASE_URL"] }),
+    });
+    return this.codex;
+  }
+
+  private threadOptions(): ThreadOptions {
+    return {
+      workingDirectory: this.config.cwd,
+      sandboxMode: "danger-full-access",
+      approvalPolicy: "never",
+      skipGitRepoCheck: true,
+      ...(this.config.model && { model: this.config.model }),
+      ...(this.config.effort && {
+        modelReasoningEffort: this.config.effort as ThreadOptions["modelReasoningEffort"],
+      }),
+    };
+  }
+
+  async send(message: string): Promise<void> {
+    if (this.busy) throw new Error("Session is busy");
+    this.busy = true;
+    this.turnFinalized = false;
+    const startTime = Date.now();
+    this.abortController = new AbortController();
+
+    try {
+      const codex = await this.getCodex();
+      const thread = this.sessionId
+        ? codex.resumeThread(this.sessionId, this.threadOptions())
+        : codex.startThread(this.threadOptions());
+
+      const { events } = await thread.runStreamed(message, {
+        signal: this.abortController.signal,
+      });
+      for await (const ev of events) {
+        this.handleThreadEvent(ev);
+      }
+
+      // Stream ended without turn.completed/turn.failed (e.g. process died):
+      // still close the message so the UI doesn't stay "working" forever.
+      if (!this.turnFinalized && !this.abortController.signal.aborted) {
+        this.emit("event", { kind: "result", content: "" } as StreamEvent);
+      }
+    } catch (err) {
+      if (!this.abortController.signal.aborted && !this.turnFinalized) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // A failed resume usually means the thread is gone from
+        // ~/.codex/sessions — reset so the next message starts fresh.
+        if (this.sessionId && /resume|session|thread|not found|No such/i.test(msg)) {
+          this.sessionId = null;
+          this.emit("event", {
+            kind: "error",
+            content: `[Codex error] ${msg}\n\nThe stored Codex session could not be resumed; the next message will start a fresh session.`,
+          } as StreamEvent);
+        } else {
+          this.emit("event", { kind: "error", content: `[Codex error] ${msg}` } as StreamEvent);
         }
-      }, 3000);
+      }
+    } finally {
+      this.usage.turns++;
+      this.usage.duration_ms += Date.now() - startTime;
+      this.busy = false;
+      this.abortController = null;
     }
   }
 
@@ -92,193 +156,126 @@ export class CodexSession extends EventEmitter {
     return session;
   }
 
-  private buildArgs(): string[] {
-    if (this.sessionId) {
-      const args = [
-        "exec",
-        "resume",
-        this.sessionId,
-        "--json",
-        "--dangerously-bypass-approvals-and-sandbox",
-      ];
-      if (this.config.model) args.push("-m", this.config.model);
-      if (this.config.effort) args.push("-c", `effort=${this.config.effort}`);
-      args.push("-");
-      return args;
-    }
+  private handleThreadEvent(ev: ThreadEvent): void {
+    switch (ev.type) {
+      case "thread.started":
+        if (ev.thread_id) this.sessionId = ev.thread_id;
+        break;
 
-    const args = [
-      "exec",
-      "--json",
-      "--dangerously-bypass-approvals-and-sandbox",
-      "--color",
-      "never",
-    ];
-    if (this.config.model) args.push("-m", this.config.model);
-    if (this.config.effort) args.push("-c", `effort=${this.config.effort}`);
-    args.push("-");
-    return args;
-  }
-
-  private run(message: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const args = this.buildArgs();
-
-      const extraEnv: Record<string, string> = {};
-      if (this.config.providerEnv) {
-        const apiKey = this.config.providerEnv["OPENAI_API_KEY"];
-        if (apiKey) extraEnv["OPENAI_API_KEY"] = apiKey;
-        const baseUrl = this.config.providerEnv["OPENAI_BASE_URL"];
-        if (baseUrl) extraEnv["OPENAI_BASE_URL"] = baseUrl;
-      }
-
-      this.proc = spawn(getCodexBin(), args, {
-        cwd: this.config.cwd,
-        env: {
-          ...process.env,
-          ...extraEnv,
-        },
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
-      this.proc.stdin!.write(message);
-      this.proc.stdin!.end();
-
-      let stderr = "";
-      let settled = false;
-
-      const rl = readline.createInterface({ input: this.proc.stdout! });
-
-      rl.on("line", (line) => {
-        if (!line.trim()) return;
-        try {
-          const data = JSON.parse(line);
-          this.handleNotification(data);
-        } catch {
-          // ignore malformed lines
+      case "turn.completed":
+        if (ev.usage) {
+          this.usage.input_tokens += ev.usage.input_tokens ?? 0;
+          this.usage.output_tokens += ev.usage.output_tokens ?? 0;
+          this.usage.cache_read_tokens += ev.usage.cached_input_tokens ?? 0;
         }
-      });
+        this.turnFinalized = true;
+        this.emit("event", { kind: "result", content: "" } as StreamEvent);
+        break;
 
-      this.proc.stderr!.on("data", (chunk) => {
-        stderr += chunk.toString();
-      });
-
-      this.proc.on("close", (code) => {
-        if (settled) return;
-        settled = true;
-
-        if (code !== 0 && code !== null) {
-          const msg = stderr.trim() || `Codex exited with code ${code}`;
-          this.emit("event", {
-            kind: "error",
-            content: `[Codex error] ${msg}`,
-          } as StreamEvent);
-          reject(new Error(msg));
-        } else {
-          resolve();
-        }
-      });
-
-      this.proc.on("error", (err) => {
-        if (settled) return;
-        settled = true;
+      case "turn.failed":
+        this.turnFinalized = true;
         this.emit("event", {
           kind: "error",
-          content: `[Codex error] ${err.message}`,
+          content: `[Codex error] ${ev.error?.message ?? "Turn failed"}`,
         } as StreamEvent);
-        reject(err);
-      });
-    });
-  }
+        break;
 
-  private handleNotification(data: unknown): void {
-    if (!data || typeof data !== "object") return;
-    const obj = data as Record<string, unknown>;
-    const type = obj.type as string | undefined;
-    if (!type) return;
+      case "error":
+        this.turnFinalized = true;
+        this.emit("event", {
+          kind: "error",
+          content: `[Codex error] ${ev.message ?? "Unknown stream error"}`,
+        } as StreamEvent);
+        break;
 
-    if (type === "thread.started") {
-      const threadId = obj.thread_id as string;
-      if (threadId) this.sessionId = threadId;
-      return;
-    }
-
-    if (type === "turn.completed") {
-      const usage = obj.usage as Record<string, number> | undefined;
-      if (usage) {
-        this.usage.input_tokens += usage.input_tokens ?? 0;
-        this.usage.output_tokens += usage.output_tokens ?? 0;
-        this.usage.cache_read_tokens += usage.cached_input_tokens ?? 0;
-      }
-      return;
-    }
-
-    if (type === "item.started") {
-      const item = obj.item as Record<string, unknown> | undefined;
-      if (item) {
-        const event = parseStartedItem(item);
+      case "item.started": {
+        const event = parseStartedItem(ev.item);
         if (event) this.emit("event", event);
+        break;
       }
-      return;
-    }
 
-    if (type === "item.completed") {
-      const item = obj.item as Record<string, unknown> | undefined;
-      if (item) {
-        const event = parseCompletedItem(item);
+      case "item.completed": {
+        const event = parseCompletedItem(ev.item);
         if (event) this.emit("event", event);
+        break;
       }
-      return;
+
+      default:
+        break;
     }
   }
 }
 
-function parseStartedItem(item: Record<string, unknown>): StreamEvent | null {
-  const type = item.type as string;
-
-  if (type === "command_execution") {
-    const command = item.command as string;
-    if (command) {
+function parseStartedItem(item: ThreadItem): StreamEvent | null {
+  switch (item.type) {
+    case "command_execution":
       return {
         kind: "tool_use",
-        content: `**Bash**\n\`\`\`bash\n${command}\n\`\`\``,
+        content: `**Bash**\n\`\`\`bash\n${item.command}\n\`\`\``,
+        toolUseId: item.id,
       };
-    }
+    case "mcp_tool_call":
+      return {
+        kind: "tool_use",
+        content: `**MCP** \`${item.server}.${item.tool}\``,
+        toolUseId: item.id,
+      };
+    case "web_search":
+      return {
+        kind: "tool_use",
+        content: `**WebSearch** ${item.query}`,
+        toolUseId: item.id,
+      };
+    default:
+      return null;
   }
-
-  return null;
 }
 
-function parseCompletedItem(item: Record<string, unknown>): StreamEvent | null {
-  const type = item.type as string;
-
-  if (type === "agent_message") {
-    const text = (item.text as string)?.trim();
-    if (text) {
-      return { kind: "text", content: text, raw: item };
+function parseCompletedItem(item: ThreadItem): StreamEvent | null {
+  switch (item.type) {
+    case "agent_message": {
+      const text = item.text?.trim();
+      // Deltas are what task.ts accumulates into the message content.
+      return text ? { kind: "text_delta", content: text } : null;
     }
-  }
 
-  if (type === "command_execution") {
-    const exitCode = item.exit_code as number | undefined;
-    const output = item.aggregated_output as string;
-    if (output) {
-      const status = exitCode === 0 ? "" : ` (exit code ${exitCode})`;
-      return { kind: "tool_result", content: `${output}${status}` };
+    case "reasoning": {
+      const text = item.text?.trim();
+      return text ? { kind: "thinking", content: text } : null;
     }
-  }
 
-  if (type === "file_change") {
-    const filePath = item.file_path as string;
-    const patch = item.patch as string;
-    if (filePath && patch) {
+    case "command_execution": {
+      const status =
+        item.exit_code === 0 || item.exit_code == null ? "" : ` (exit code ${item.exit_code})`;
+      const output = item.aggregated_output ?? "";
+      if (!output && !status) return null;
+      return { kind: "tool_result", content: `${output}${status}`, toolUseId: item.id };
+    }
+
+    case "mcp_tool_call": {
+      const body = item.error
+        ? `Error: ${item.error.message}`
+        : JSON.stringify(item.result?.structured_content ?? item.result?.content ?? "done");
+      return { kind: "tool_result", content: body, toolUseId: item.id };
+    }
+
+    case "file_change": {
+      const changes = item.changes
+        .map((c) => `${c.kind === "add" ? "+" : c.kind === "delete" ? "-" : "~"} ${c.path}`)
+        .join("\n");
+      const status = item.status === "failed" ? " (failed)" : "";
       return {
         kind: "tool_use",
-        content: `**Edit** \`${filePath}\`\n\`\`\`diff\n${patch}\n\`\`\``,
-        toolInput: { tool: "Edit", file_path: filePath },
+        content: `**Edit**${status}\n\`\`\`\n${changes}\n\`\`\``,
+        toolUseId: item.id,
       };
     }
-  }
 
-  return null;
+    case "error":
+      // Non-fatal item-level error: surface it without finalizing the turn.
+      return { kind: "compact", content: `Codex warning: ${item.message}` };
+
+    default:
+      return null;
+  }
 }
