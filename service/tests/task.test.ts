@@ -338,3 +338,33 @@ describe("rate-limit retry mechanics", () => {
     expect(session.sent).toEqual(["queued work"]);
   });
 });
+
+describe("silent-turn diagnostics", () => {
+  it("renders a diagnostic instead of an empty bubble when a turn produces nothing", async () => {
+    const { ws, emit, agentMsgs } = makeWorkspace();
+    await ws.sendMessage("hello");
+    // The turn dies without any event (network drop / CLI crash), then ends.
+    emit({ kind: "result", content: "" });
+
+    const msg = agentMsgs()[0];
+    expect(msg.status).toBe("done");
+    expect(msg.content).toContain("no output");
+  });
+
+  it("leaves real replies untouched", async () => {
+    const { ws, emit, agentMsgs } = makeWorkspace();
+    await ws.sendMessage("hello");
+    emit({ kind: "text_delta", content: "real answer" });
+    emit({ kind: "result", content: "" });
+    expect(agentMsgs()[0].content).toBe("real answer");
+  });
+
+  it("keeps tool-only turns silent-but-visible (events present, no diagnostic)", async () => {
+    const { ws, emit, agentMsgs } = makeWorkspace();
+    await ws.sendMessage("hello");
+    emit({ kind: "tool_use", content: "Bash ls", toolUseId: "t1" });
+    emit({ kind: "result", content: "" });
+    expect(agentMsgs()[0].content).toBe("");
+    expect(agentMsgs()[0].events).toHaveLength(1);
+  });
+});

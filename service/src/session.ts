@@ -183,6 +183,7 @@ export class ClaudeSession extends EventEmitter {
   private taskToToolUse = new Map<string, string>(); // taskId → toolUseId (reverse lookup)
   private agentTaskIds = new Set<string>();
   private lastRateLimitStatus: string | null = null;
+  private intentionalAbort = false;
 
   constructor(config: SessionConfig) {
     super();
@@ -194,6 +195,7 @@ export class ClaudeSession extends EventEmitter {
   }
 
   async send(message: string): Promise<void> {
+    this.intentionalAbort = false;
     if (!this.queryInstance) {
       await this.startQuery(message);
     } else {
@@ -261,12 +263,11 @@ export class ClaudeSession extends EventEmitter {
       } catch (err) {
         if (this.queryInstance !== thisQuery) return;
         const errMsg = err instanceof Error ? err.message : String(err);
-        // Intentional aborts (user Stop, credential swaps) are not errors —
-        // surfacing them added a stray "[Claude error] Operation aborted"
-        // bubble after every forced restart.
-        const isAbort =
-          (err instanceof Error && err.name === "AbortError") || /abort/i.test(errMsg);
-        if (!isAbort) {
+        // Suppress the error bubble ONLY for aborts WE initiated (user Stop,
+        // credential swaps). Matching /abort/i on any error was a disaster:
+        // network failures throw "This operation was aborted" and every one
+        // of them rendered as a silent empty reply.
+        if (!this.intentionalAbort) {
           this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` } as StreamEvent);
         }
       } finally {
@@ -298,6 +299,7 @@ export class ClaudeSession extends EventEmitter {
   setProviderEnv(env: Record<string, string> | undefined): void {
     this.config.providerEnv = env;
     if (this.queryInstance && !this.processing) {
+      this.intentionalAbort = true;
       this.abortController?.abort();
     }
   }
@@ -767,6 +769,7 @@ export class ClaudeSession extends EventEmitter {
   }
 
   abort(): void {
+    this.intentionalAbort = true;
     if (this.abortController) {
       this.abortController.abort();
     }

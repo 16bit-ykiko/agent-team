@@ -310,6 +310,13 @@ export class Workspace {
         // text comes via text_delta streaming; finalized text event is redundant
       } else if (event.kind === "result") {
         if (entry.currentMsg) {
+          // Defense in depth: a turn that ends with neither text nor any
+          // visible event is a failure (CLI crash, network drop, spawn
+          // problem) — render a diagnostic instead of a silent empty bubble.
+          if (!entry.currentMsg.content.trim() && !(entry.currentMsg.events ?? []).length) {
+            entry.currentMsg.content =
+              "*(no output — the session ended without producing anything; check network/credentials or server logs)*";
+          }
           entry.currentMsg.status = "done";
           this.cb?.onMessageDone(
             this.id,
@@ -590,6 +597,10 @@ export class Workspace {
       await agent.session.send(prompt);
     } catch (err) {
       console.error("[dispatchPrompt]", err);
+      agent.handler({
+        kind: "error",
+        content: `[send failed] ${err instanceof Error ? err.message : err}`,
+      } as StreamEvent);
     }
   }
 
