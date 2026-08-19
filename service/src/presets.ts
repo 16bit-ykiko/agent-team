@@ -23,6 +23,11 @@ export interface ModelOption {
 // xhigh was introduced with Opus 4.7; older models support the 4 base levels.
 const EFFORT_FOUR = ["low", "medium", "high", "max"];
 const EFFORT_FIVE = ["low", "medium", "high", "xhigh", "max"];
+// Codex effort sets, from the server model metadata (~/.codex/models_cache.json).
+// "ultra" (max reasoning + automatic task delegation) is Sol/Terra only.
+const CODEX_EFFORT = ["low", "medium", "high", "xhigh"];
+const CODEX_EFFORT_MAX = [...CODEX_EFFORT, "max"];
+const CODEX_EFFORT_ULTRA = [...CODEX_EFFORT_MAX, "ultra"];
 
 export const MODEL_OPTIONS: ModelOption[] = [
   {
@@ -74,11 +79,31 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", backend: "claude" },
   { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", backend: "claude" },
+  // Codex models available on ChatGPT accounts. Bare gpt-5.6 / gpt-5.6-pro are
+  // API-key only and rejected with a ChatGPT login, so they are not listed.
+  {
+    id: "gpt-5.6-sol",
+    label: "GPT-5.6 Sol",
+    backend: "codex",
+    effortLevels: CODEX_EFFORT_ULTRA,
+  },
+  {
+    id: "gpt-5.6-terra",
+    label: "GPT-5.6 Terra",
+    backend: "codex",
+    effortLevels: CODEX_EFFORT_ULTRA,
+  },
+  {
+    id: "gpt-5.6-luna",
+    label: "GPT-5.6 Luna",
+    backend: "codex",
+    effortLevels: CODEX_EFFORT_MAX,
+  },
   {
     id: "gpt-5.5",
     label: "GPT-5.5",
     backend: "codex",
-    effortLevels: ["minimal", "low", "medium", "high", "xhigh"],
+    effortLevels: CODEX_EFFORT,
   },
 ];
 

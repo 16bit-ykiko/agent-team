@@ -31,7 +31,7 @@ const LOCAL_COMMANDS: CommandInfo[] = [
   {
     name: "effort",
     description: "Show or set the model reasoning effort level",
-    argumentHint: "[low|medium|high|xhigh|max]",
+    argumentHint: "[low|medium|high|xhigh|max|ultra]",
   },
 ];
 

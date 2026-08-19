@@ -173,6 +173,7 @@ export class CodexSession extends EventEmitter {
           this.usage.input_tokens += ev.usage.input_tokens ?? 0;
           this.usage.output_tokens += ev.usage.output_tokens ?? 0;
           this.usage.cache_read_tokens += ev.usage.cached_input_tokens ?? 0;
+          this.usage.cache_creation_tokens += ev.usage.cache_write_input_tokens ?? 0;
         }
         this.turnFinalized = true;
         this.emit("event", { kind: "result", content: "" } as StreamEvent);
