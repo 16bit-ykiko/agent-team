@@ -26,7 +26,7 @@ import {
 import { splitEvents } from "./events";
 import { groupWorkspaces, isGroupExpanded } from "./groups";
 import { hasRunningSubagents } from "./events";
-import { copySelectionAsMarkdown, extractImageFiles } from "./clipboard";
+import { copySelectionAsMarkdown, extractImageFiles, installMacCtrlClipboard } from "./clipboard";
 import { isImeKeyEvent } from "./ime";
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
@@ -1192,6 +1192,19 @@ export function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(
+    () =>
+      installMacCtrlClipboard(
+        () => textareaRef.current,
+        (files) =>
+          setPendingImages((prev) => [
+            ...prev,
+            ...files.map((file) => ({ file, preview: URL.createObjectURL(file) })),
+          ]),
+      ),
+    [],
+  );
   const draggingRef = useRef(false);
 
   const sortedWorkspaces = useMemo(

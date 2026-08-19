@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  installMacCtrlClipboard,
   selectionToMarkdown,
   copySelectionAsMarkdown,
   extractImageFiles,
@@ -118,5 +119,117 @@ describe("extractImageFiles", () => {
   it("handles null DataTransfer and file items without a file", () => {
     expect(extractImageFiles(null)).toEqual([]);
     expect(extractImageFiles(dt([{ kind: "file", type: "image/png", file: null }]))).toEqual([]);
+  });
+});
+
+describe("installMacCtrlClipboard", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.body.innerHTML = "";
+  });
+
+  const press = (key: string, over: Partial<KeyboardEventInit> = {}) => {
+    const e = new KeyboardEvent("keydown", { key, ctrlKey: true, cancelable: true, ...over });
+    window.dispatchEvent(e);
+    return e;
+  };
+
+  it("is a no-op off macOS", () => {
+    expect(
+      installMacCtrlClipboard(
+        () => null,
+        () => {},
+        "Linux x86_64",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("copies via execCommand on Ctrl+C with a textarea selection", () => {
+    const exec = vi.fn(() => true);
+    document.execCommand = exec as typeof document.execCommand;
+    const ta = document.createElement("textarea");
+    ta.value = "hello";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.setSelectionRange(0, 5);
+
+    const cleanup = installMacCtrlClipboard(
+      () => ta,
+      () => {},
+      "MacIntel",
+    )!;
+    const e = press("c");
+    expect(exec).toHaveBeenCalledWith("copy");
+    expect(e.defaultPrevented).toBe(true);
+    cleanup();
+  });
+
+  it("leaves Ctrl+C alone without a selection (and Cmd combos alone entirely)", () => {
+    const exec = vi.fn(() => true);
+    document.execCommand = exec as typeof document.execCommand;
+    const cleanup = installMacCtrlClipboard(
+      () => null,
+      () => {},
+      "MacIntel",
+    )!;
+
+    expect(press("c").defaultPrevented).toBe(false);
+    expect(press("c", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(exec).not.toHaveBeenCalled();
+    cleanup();
+  });
+
+  it("pastes clipboard text into the fallback textarea on Ctrl+V", async () => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      platform: "MacIntel",
+      clipboard: { readText: async () => "pasted" },
+    });
+    const exec = vi.fn(() => false); // force the setRangeText fallback
+    document.execCommand = exec as typeof document.execCommand;
+    const ta = document.createElement("textarea");
+    document.body.appendChild(ta);
+
+    const cleanup = installMacCtrlClipboard(
+      () => ta,
+      () => {},
+      "MacIntel",
+    )!;
+    const e = press("v");
+    expect(e.defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(ta.value).toBe("pasted"));
+    cleanup();
+  });
+
+  it("does not hijack Ctrl+V when the async clipboard API is unavailable", () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    const cleanup = installMacCtrlClipboard(
+      () => null,
+      () => {},
+      "MacIntel",
+    )!;
+    expect(press("v").defaultPrevented).toBe(false);
+    cleanup();
+  });
+
+  it("turns clipboard images into pending uploads instead of text", async () => {
+    const blob = new Blob(["img"], { type: "image/png" });
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: {
+        readText: async () => "ignored",
+        read: async () => [{ types: ["image/png"], getType: async () => blob }],
+      },
+    });
+    const added: File[][] = [];
+    const cleanup = installMacCtrlClipboard(
+      () => null,
+      (f) => added.push(f),
+      "MacIntel",
+    )!;
+    press("v");
+    await vi.waitFor(() => expect(added).toHaveLength(1));
+    expect(added[0][0].type).toBe("image/png");
+    cleanup();
   });
 });
