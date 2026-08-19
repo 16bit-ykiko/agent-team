@@ -273,9 +273,14 @@ export function CreateWorkspaceDialog({
   const [hostId, setHostId] = useState(hosts[0]?.id ?? "local");
   const nameRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const blurTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     nameRef.current?.focus();
+    return () => {
+      clearTimeout(debounceRef.current);
+      clearTimeout(blurTimerRef.current);
+    };
   }, []);
 
   const requestDirs = (value: string) => {
@@ -350,8 +355,17 @@ export function CreateWorkspaceDialog({
             onChange={(e) => handlePathChange(e.target.value)}
             onKeyDown={handlePathKeyDown}
             onFocus={() => {
+              clearTimeout(blurTimerRef.current);
               setSuggestOpen(true);
               requestDirs(dirPath);
+            }}
+            onBlur={() => {
+              // Tapping/clicking anywhere else closes the list — the only way
+              // to dismiss on mobile, where there is no Esc. Delayed so a
+              // click that lands past the list (e.g. on Create after the
+              // list shrinks) completes before the layout shifts. Picking a
+              // suggestion never blurs: items preventDefault on mousedown.
+              blurTimerRef.current = setTimeout(() => setSuggestOpen(false), 150);
             }}
             placeholder="~/workspace/..."
             autoComplete="off"

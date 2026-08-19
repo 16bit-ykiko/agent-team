@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, act } from "@testing-library/react";
 import { SubAgentItem, StepGroup, MessageItem, CreateWorkspaceDialog } from "../src/App";
 import { HostInfo } from "../src/useServer";
 import { StreamEvent, Message, AgentInfo } from "../src/useServer";
@@ -232,6 +232,57 @@ describe("CreateWorkspaceDialog", () => {
     fireEvent.change(pathInput, { target: { value: "/home/ykiko/clice" } });
     fireEvent.click(getByText("Create"));
     expect(onCreate).toHaveBeenCalledWith("clice", "/home/ykiko/clice", "local");
+  });
+
+  it("closes the suggestion list when the path input loses focus (mobile has no Esc)", () => {
+    vi.useFakeTimers();
+    try {
+      const { pathInput, container, onCreate, onListDirs, rerender } = setup();
+      fireEvent.change(pathInput, { target: { value: "/home/yk" } });
+      rerender(
+        <CreateWorkspaceDialog
+          hosts={hosts}
+          onClose={() => {}}
+          onCreate={onCreate}
+          onListDirs={onListDirs}
+          dirSuggestions={{ prefix: "/home/yk", dirs: ["/home/ykiko/"] }}
+        />,
+      );
+      expect(container.querySelector(".dir-suggest")).not.toBeNull();
+
+      fireEvent.blur(pathInput);
+      act(() => vi.advanceTimersByTime(200));
+      expect(container.querySelector(".dir-suggest")).toBeNull();
+
+      // Refocusing brings it back before the user types anything.
+      fireEvent.focus(pathInput);
+      expect(container.querySelector(".dir-suggest")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the list open across a quick blur/focus (tapping a suggestion)", () => {
+    vi.useFakeTimers();
+    try {
+      const { pathInput, container, onCreate, onListDirs, rerender } = setup();
+      fireEvent.change(pathInput, { target: { value: "/home/yk" } });
+      rerender(
+        <CreateWorkspaceDialog
+          hosts={hosts}
+          onClose={() => {}}
+          onCreate={onCreate}
+          onListDirs={onListDirs}
+          dirSuggestions={{ prefix: "/home/yk", dirs: ["/home/ykiko/"] }}
+        />,
+      );
+      fireEvent.blur(pathInput);
+      fireEvent.focus(pathInput); // cancels the pending close
+      act(() => vi.advanceTimersByTime(300));
+      expect(container.querySelector(".dir-suggest")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -263,18 +263,15 @@ body {
 .path-field {
   position: relative;
 }
+/* In normal flow so it pushes the dialog buttons down instead of covering
+   them — there is no Esc on mobile to dismiss an overlay. */
 .dir-suggest {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 10;
-  max-height: 220px;
+  margin-top: 4px;
+  max-height: 180px;
   overflow-y: auto;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: 4px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
 }
 .dir-suggest-item {
   padding: 5px 10px;
@@ -1514,6 +1511,10 @@ pre .copy-btn:hover {
   padding: 20px;
   min-width: 360px;
   max-width: 520px;
+  /* The path autocomplete grows the dialog; scroll instead of overflowing
+     the viewport on small screens. */
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
 }
 
 .dialog-title {
