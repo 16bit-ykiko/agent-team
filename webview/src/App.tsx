@@ -27,6 +27,7 @@ import { splitEvents } from "./events";
 import { groupWorkspaces, isGroupExpanded } from "./groups";
 import { hasRunningSubagents } from "./events";
 import { copySelectionAsMarkdown, extractImageFiles } from "./clipboard";
+import { isImeKeyEvent } from "./ime";
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
   const [copied, setCopied] = useState(false);
@@ -299,6 +300,7 @@ export function CreateWorkspaceDialog({
   };
 
   const handlePathKeyDown = (e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
     if (!suggestOpen || suggestions.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -1169,6 +1171,8 @@ export function App() {
   const [pendingImages, setPendingImages] = useState<Array<{ file: File; preview: string }>>([]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composingRef = useRef(false);
+  const compositionEndTsRef = useRef(0);
 
   const [quotedMsg, setQuotedMsg] = useState<{
     id: string;
@@ -1555,6 +1559,7 @@ export function App() {
   }, [activeWsId, sendMessage, pendingImages, uploading, quotedMsg, targetBusy]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (isImeKeyEvent(e, composingRef.current, compositionEndTsRef.current)) return;
     if (cmdQuery !== null && filteredCmds.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -2027,6 +2032,13 @@ export function App() {
                   spellCheck={false}
                   onChange={handleTextareaChange}
                   onKeyDown={handleKeyDown}
+                  onCompositionStart={() => {
+                    composingRef.current = true;
+                  }}
+                  onCompositionEnd={(e) => {
+                    composingRef.current = false;
+                    compositionEndTsRef.current = e.timeStamp;
+                  }}
                   onPaste={(e) => {
                     const imgs = extractImageFiles(e.clipboardData);
                     if (imgs.length === 0) return;
