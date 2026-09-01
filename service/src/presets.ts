@@ -77,6 +77,18 @@ export const MODEL_OPTIONS: ModelOption[] = [
     backend: "claude",
     effortLevels: EFFORT_FIVE,
   },
+  {
+    id: "claude-fable-5-1",
+    label: "Claude Fable 5.1",
+    backend: "claude",
+    effortLevels: EFFORT_FIVE,
+  },
+  {
+    id: "claude-fable-5-1[1m]",
+    label: "Claude Fable 5.1 (1M)",
+    backend: "claude",
+    effortLevels: EFFORT_FIVE,
+  },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", backend: "claude" },
   { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", backend: "claude" },
   // Codex models available on ChatGPT accounts. Bare gpt-5.6 / gpt-5.6-pro are
