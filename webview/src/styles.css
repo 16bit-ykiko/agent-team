@@ -44,6 +44,12 @@
 html {
   min-height: calc(100% + env(safe-area-inset-top, 0px));
   background: var(--bg-primary);
+  /* iOS inflates text inside any block much wider than the viewport ("font
+     boosting"). Markdown tables are nowrap and scroll horizontally, so they
+     hit it: a 12px table rendered larger than the 13px prose around it.
+     `user-scalable=no` used to suppress this, but iOS ignores that now. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
