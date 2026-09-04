@@ -723,8 +723,20 @@ export function App() {
                 <div className="panel-agents">
                   {activeWs.agents.map((agent) => {
                     const working = agent.busy || agentsAwaitingSubs.has(agent.id);
-                    const status = working ? "busy" : connected ? "online" : "offline";
-                    const statusText = status === "busy" ? (agent.activity ?? "working") : status;
+                    const sleeping = !working && !!agent.activity?.startsWith("sleeping");
+                    const status = working
+                      ? "busy"
+                      : sleeping
+                        ? "sleeping"
+                        : connected
+                          ? "online"
+                          : "offline";
+                    const statusText =
+                      status === "busy"
+                        ? (agent.activity ?? "working")
+                        : status === "sleeping"
+                          ? agent.activity!
+                          : status;
                     return (
                       <div
                         key={agent.id}

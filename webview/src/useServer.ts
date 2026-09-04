@@ -22,7 +22,7 @@ export interface SubAgentInfo {
   events?: StreamEvent[];
 }
 
-export type NoticeLevel = "info" | "notice" | "warning" | "error" | "wakeup";
+export type NoticeLevel = "info" | "notice" | "warning" | "error" | "schedule" | "wakeup";
 
 export interface ContextUsage {
   tokens: number;

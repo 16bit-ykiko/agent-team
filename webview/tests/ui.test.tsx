@@ -416,3 +416,21 @@ describe("scheduled wake-ups", () => {
     expect(el.textContent).toContain("check CI");
   });
 });
+
+describe("scheduled banner", () => {
+  it("renders the schedule with its label and the planned prompt", () => {
+    const { container } = render(
+      <BannerItem
+        ev={ev("notice", {
+          level: "schedule",
+          content: "Wake up in 8m (02:10) — watching CI\n\n> check CI",
+        })}
+      />,
+    );
+    const el = container.querySelector(".banner")!;
+    expect(el.className).toContain("banner-schedule");
+    expect(el.querySelector(".banner-label")!.textContent).toBe("Scheduled");
+    expect(el.textContent).toContain("Wake up in 8m");
+    expect(el.querySelector("blockquote")!.textContent).toContain("check CI");
+  });
+});

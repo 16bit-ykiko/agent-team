@@ -697,12 +697,15 @@ describe("context usage and wake-ups", () => {
     call({ delaySeconds: 480, reason: "watching CI", prompt: "check CI\nfix if red" }, "t1");
     call({ delaySeconds: 5400, noop: true, reason: "quiet" }, "t2");
     call({ stop: true }, "t3");
-    expect(events[0].toolName).toBe("ScheduleWakeup");
-    expect(events[0].content).toBe(
+    const calls = events.filter((e) => e.kind === "tool_use");
+    expect(calls[0].toolName).toBe("ScheduleWakeup");
+    expect(calls[0].content).toBe(
       "**ScheduleWakeup** in 8m — watching CI\n\n> check CI\n> fix if red",
     );
-    expect(events[1].content).toBe("**ScheduleWakeup** in 1.5h (no change) — quiet");
-    expect(events[2].content).toBe("**ScheduleWakeup** stop — loop ended");
+    expect(calls[1].content).toBe("**ScheduleWakeup** in 1.5h (no change) — quiet");
+    expect(calls[2].content).toBe("**ScheduleWakeup** stop — loop ended");
+    // Each call is also announced as a schedule banner.
+    expect(events.filter((e) => e.level === "schedule")).toHaveLength(3);
   });
 });
 
@@ -761,5 +764,85 @@ describe("self-initiated turns", () => {
     s.handleSDKMessage(assistantText("AWAKE"));
     expect(events.filter((e) => e.level === "wakeup")).toHaveLength(1);
     expect(events[0].content).toBe("wake-up text");
+  });
+});
+
+describe("scheduled wake-up banner and sleeping label", () => {
+  it("announces the schedule as a banner and sleeps after the turn until the next one starts", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "ScheduleWakeup",
+            input: { delaySeconds: 480, reason: "watching CI", prompt: "check CI" },
+          },
+        ],
+      },
+    });
+    const banner = events.find((e) => e.level === "schedule")!;
+    expect(banner.kind).toBe("notice");
+    expect(banner.content).toMatch(/^Wake up in 8m \(\d{2}:\d{2}.*\) — watching CI\n\n> check CI$/);
+    expect(events.map((e) => e.kind)).toEqual(["tool_use", "notice"]);
+  });
+
+  it("sets a sleeping activity after the result and clears it when the wake-up turn starts", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const s = session as unknown as { handleSDKMessage(m: unknown): void; expectingTurn: boolean };
+    s.expectingTurn = true;
+    const activity: Array<string | null> = [];
+    session.on("activity", (a: string | null) => activity.push(a));
+    s.handleSDKMessage({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "t1",
+            name: "ScheduleWakeup",
+            input: { delaySeconds: 60, reason: "r" },
+          },
+        ],
+      },
+    });
+    s.handleSDKMessage({ type: "result", subtype: "success", result: "", session_id: "s" });
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatch(/^sleeping until \d{2}:\d{2}.* · r$/);
+    // the wake-up turn
+    s.handleSDKMessage({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: { content: [{ type: "text", text: "AWAKE" }] },
+    });
+    expect(activity[activity.length - 1]).toBeNull();
+  });
+
+  it("does not sleep after a stop", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const s = session as unknown as { handleSDKMessage(m: unknown): void; expectingTurn: boolean };
+    s.expectingTurn = true;
+    const events: StreamEvent[] = [];
+    const activity: Array<string | null> = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    session.on("activity", (a: string | null) => activity.push(a));
+    s.handleSDKMessage({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        content: [{ type: "tool_use", id: "t1", name: "ScheduleWakeup", input: { stop: true } }],
+      },
+    });
+    s.handleSDKMessage({ type: "result", subtype: "success", result: "", session_id: "s" });
+    expect(events.find((e) => e.level === "schedule")!.content).toContain("Loop ended");
+    expect(activity).toEqual([]);
   });
 });

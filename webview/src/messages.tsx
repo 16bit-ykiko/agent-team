@@ -38,7 +38,7 @@ export const BannerItem = memo(function BannerItem({ ev }: { ev: StreamEvent }) 
       ? "⇢"
       : ev.kind === "retry"
         ? "↻"
-        : level === "wakeup"
+        : level === "wakeup" || level === "schedule"
           ? "⏰"
           : level === "warning" || level === "error"
             ? "!"
@@ -48,6 +48,7 @@ export const BannerItem = memo(function BannerItem({ ev }: { ev: StreamEvent }) 
       <span className="banner-icon">{icon}</span>
       <div className="banner-text">
         {level === "wakeup" && <span className="banner-label">Woke up</span>}
+        {level === "schedule" && <span className="banner-label">Scheduled</span>}
         {ev.kind === "notice" ? <MdBlock>{ev.content}</MdBlock> : ev.content}
       </div>
     </div>

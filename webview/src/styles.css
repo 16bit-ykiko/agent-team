@@ -1359,14 +1359,22 @@ pre .copy-btn:hover {
 .banner-info {
   opacity: 0.75;
 }
-.banner-wakeup {
+.banner-wakeup,
+.banner-schedule {
   color: var(--text-primary);
   border-color: rgba(198, 120, 221, 0.35);
   background: rgba(198, 120, 221, 0.06);
 }
-.banner-wakeup .banner-icon {
+.banner-wakeup .banner-icon,
+.banner-schedule .banner-icon {
   background: transparent;
   font-size: 12px;
+}
+.banner-schedule .banner-text blockquote {
+  margin: 4px 0 0;
+  padding: 2px 10px;
+  border-left: 2px solid var(--purple);
+  color: var(--text-secondary);
 }
 .banner-label {
   display: inline-block;
@@ -1377,8 +1385,15 @@ pre .copy-btn:hover {
   color: var(--purple);
   margin-right: 8px;
 }
-.banner-wakeup .banner-text p {
+.banner-wakeup .banner-text p,
+.banner-schedule .banner-text > p:first-child {
   display: inline;
+}
+.agent-status-label.agent-status-sleeping {
+  color: var(--purple);
+}
+.agent-status-dot.agent-status-sleeping {
+  background: var(--purple);
 }
 
 /* ---- Subagents ---------------------------------------------------------- */

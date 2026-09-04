@@ -45,8 +45,9 @@ export type StreamEventKind =
   // API retry in progress; replaces the previous retry event of the turn.
   | "retry";
 
-// "wakeup": a scheduled wake-up (ScheduleWakeup / cron) fired and started a turn.
-export type NoticeLevel = "info" | "notice" | "warning" | "error" | "wakeup";
+// "schedule": the agent scheduled its own wake-up (what it will do, when).
+// "wakeup": that wake-up (or a background task) fired and started a turn.
+export type NoticeLevel = "info" | "notice" | "warning" | "error" | "schedule" | "wakeup";
 
 export interface StreamEvent {
   kind: StreamEventKind;
@@ -217,6 +218,10 @@ export class ClaudeSession extends EventEmitter {
   // without it is CLI-initiated: a scheduled wake-up, a /loop tick, a
   // background-task notification.
   private expectingTurn = false;
+  // Wake-up scheduled during the current turn; becomes the idle activity
+  // label ("sleeping until …") once the turn ends.
+  private pendingWake: { at: number; reason: string; stop: boolean } | null = null;
+  private sleeping = false;
 
   constructor(config: SessionConfig) {
     super();
@@ -326,6 +331,10 @@ export class ClaudeSession extends EventEmitter {
     this.processing = true;
     this.turnStartTime = Date.now();
     this.stepCounter = 0;
+    if (this.sleeping) {
+      this.sleeping = false;
+      this.setActivity(null);
+    }
     if (!this.expectingTurn) {
       this.emit("event", {
         kind: "notice",
@@ -400,6 +409,8 @@ export class ClaudeSession extends EventEmitter {
     this.agentTaskIds.clear();
     this.pendingNested.clear();
     this.setActivity(null);
+    this.sleeping = false;
+    this.pendingWake = null;
   }
 
   // Transient "what is the agent doing right now" label (compacting, a long
@@ -842,6 +853,7 @@ export class ClaudeSession extends EventEmitter {
           toolUseId: toolId,
           step,
         } as StreamEvent);
+        if (b.name === "ScheduleWakeup") this.noteSchedule(b.input as Record<string, unknown>);
       } else if (blockType === "tool_result") {
         const resultContent = b.content as string;
         if (resultContent) {
@@ -978,6 +990,40 @@ export class ClaudeSession extends EventEmitter {
     this.expectingTurn = false;
     this.pendingNested.clear();
     this.setActivity(null);
+    if (this.pendingWake && !this.pendingWake.stop) {
+      const { at, reason } = this.pendingWake;
+      this.sleeping = true;
+      this.setActivity(`sleeping until ${formatClock(at)}${reason ? ` · ${reason}` : ""}`);
+    }
+    this.pendingWake = null;
+  }
+
+  // A ScheduleWakeup call is the agent announcing what it will do next and
+  // when. Surface it as a banner now, and as the idle label after the turn.
+  private noteSchedule(input: Record<string, unknown> | undefined): void {
+    if (!input) return;
+    if (input.stop) {
+      this.pendingWake = { at: 0, reason: "", stop: true };
+      this.emit("event", {
+        kind: "notice",
+        level: "schedule",
+        content: "Loop ended — no further wake-ups.",
+      } as StreamEvent);
+      return;
+    }
+    const delay = Number(input.delaySeconds ?? 0);
+    const at = Date.now() + delay * 1000;
+    const reason = String(input.reason ?? "").trim();
+    const prompt = String(input.prompt ?? "").trim();
+    this.pendingWake = { at, reason, stop: false };
+    const when = `${formatDelay(delay)} (${formatClock(at)})`;
+    const what = reason ? ` — ${reason}` : "";
+    const next = prompt ? `\n\n> ${prompt.replace(/\n/g, "\n> ")}` : "";
+    this.emit("event", {
+      kind: "notice",
+      level: "schedule",
+      content: `Wake up in ${when}${input.noop ? " · no change" : ""}${what}${next}`,
+    } as StreamEvent);
   }
 
   // Context occupancy after this turn: what the last request carried
@@ -1118,6 +1164,16 @@ export class ClaudeSession extends EventEmitter {
   }
 }
 
+function formatDelay(seconds: number): string {
+  if (seconds >= 3600) return `${(seconds / 3600).toFixed(seconds % 3600 ? 1 : 0)}h`;
+  if (seconds >= 60) return `${Math.round(seconds / 60)}m`;
+  return `${seconds}s`;
+}
+
+function formatClock(at: number): string {
+  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function extractToolInput(block: Record<string, unknown>): ToolInput | undefined {
   const name = block.name as string;
   const input = block.input as Record<string, unknown> | undefined;
@@ -1174,12 +1230,7 @@ function formatToolUse(block: Record<string, unknown>): string {
     case "ScheduleWakeup": {
       if (input.stop) return "**ScheduleWakeup** stop — loop ended";
       const delay = Number(input.delaySeconds ?? 0);
-      const when =
-        delay >= 3600
-          ? `${(delay / 3600).toFixed(delay % 3600 ? 1 : 0)}h`
-          : delay >= 60
-            ? `${Math.round(delay / 60)}m`
-            : `${delay}s`;
+      const when = formatDelay(delay);
       const reason = input.reason ? ` — ${input.reason as string}` : "";
       const prompt = input.prompt ? `\n\n> ${String(input.prompt).replace(/\n/g, "\n> ")}` : "";
       return `**ScheduleWakeup** in ${when}${input.noop ? " (no change)" : ""}${reason}${prompt}`;
