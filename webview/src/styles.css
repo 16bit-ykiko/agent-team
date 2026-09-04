@@ -36,6 +36,16 @@
   box-sizing: border-box;
 }
 
+/* iOS standalone + viewport-fit=cover pulls the document up under the status
+   bar without growing the viewport to match, so the bottom strip of the screen
+   falls outside the paintable area and shows flat canvas colour. Growing the
+   document element by the top inset is the documented compensation; `body` is
+   fixed, so nothing else gives `html` a height. */
+html {
+  min-height: calc(100% + env(safe-area-inset-top, 0px));
+  background: var(--bg-primary);
+}
+
 body {
   font-family: var(--font-ui);
   font-size: 14px;
@@ -2278,11 +2288,13 @@ pre .copy-btn:hover {
   .mobile-menu-btn {
     display: inline-block;
   }
+  /* Fixed overlays are laid out against the (possibly short) layout viewport,
+     so they take the app height explicitly instead of pinning top+bottom. */
   .sidebar {
     position: fixed;
-    top: 0;
+    top: var(--app-offset, 0px);
     left: 0;
-    bottom: 0;
+    height: var(--app-height, 100%);
     z-index: 100;
     width: 280px !important;
     transform: translateX(-100%);
@@ -2297,7 +2309,10 @@ pre .copy-btn:hover {
   .sidebar-overlay {
     display: block;
     position: fixed;
-    inset: 0;
+    top: var(--app-offset, 0px);
+    left: 0;
+    right: 0;
+    height: var(--app-height, 100%);
     z-index: 99;
     background: rgba(0, 0, 0, 0.4);
   }
@@ -2341,9 +2356,14 @@ pre .copy-btn:hover {
     font-size: 11px;
   }
 
+  /* Follow the body box rather than the layout viewport: in a standalone
+     home-screen app WebKit's layout viewport can be stuck ~60px short of the
+     screen, and `position: fixed; inset: 0` would inherit that shortfall as a
+     dead band under the composer. body is already fixed + overflow:hidden, so
+     relative positioning here is enough to contain .main-panel. */
   .app {
-    position: fixed;
-    inset: 0;
+    position: relative;
+    height: 100%;
     overflow: hidden;
   }
   .main-panel {

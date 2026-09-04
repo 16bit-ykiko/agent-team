@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isStandalone } from "./viewport";
 
 // One muted line of viewport facts (sidebar, small screens only) so layout
 // problems on real phones can be diagnosed from a screenshot: what iOS
@@ -31,10 +32,7 @@ export function readViewportFacts(): ViewportFacts {
     dvh: probe.offsetHeight,
     safeTop: parseFloat(cs.paddingTop) || 0,
     safeBottom: parseFloat(cs.paddingBottom) || 0,
-    standalone:
-      (navigator as unknown as { standalone?: boolean }).standalone === true ||
-      (typeof window.matchMedia === "function" &&
-        window.matchMedia("(display-mode: standalone)").matches),
+    standalone: isStandalone(),
   };
   probe.remove();
   return facts;

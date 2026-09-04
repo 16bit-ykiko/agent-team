@@ -11,7 +11,14 @@ import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs"
 import { Sidebar } from "./Sidebar";
 import { GitBar } from "./GitBar";
 import { HistoryHint } from "./HistoryHint";
-import { viewportVars } from "./viewport";
+import {
+  viewportVars,
+  fullHeight,
+  keyboardOpen,
+  isStandalone,
+  readSafeTop,
+  type ViewportMetrics,
+} from "./viewport";
 import { ViewportTracker, healViewport } from "./viewportHeal";
 import { uploadSnapshot } from "./debugSnapshot";
 
@@ -142,15 +149,28 @@ export function App() {
   // iOS Safari overlays the keyboard on top of a 100vh layout instead of
   // resizing it, hiding the input row and the newest messages. Track the
   // visual viewport and size the app to it; keep the bottom in view while
-  // the composer is focused.
+  // the composer is focused. In a standalone home-screen app the layout
+  // viewport can also stay stuck ~60px short of the screen, which is why the
+  // facts below carry the screen height and the top safe-area inset.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
-    const tracker = new ViewportTracker(window.innerHeight);
+    // Safe-area insets only change on rotation, so probe them there rather
+    // than on every visual-viewport scroll event.
+    let safeTop = readSafeTop();
+    const facts = (): ViewportMetrics => ({
+      vvHeight: vv.height,
+      vvOffsetTop: vv.offsetTop,
+      innerHeight: window.innerHeight,
+      screenHeight: window.screen.height,
+      safeTop,
+      standalone: isStandalone(),
+    });
+    const tracker = new ViewportTracker(Math.max(window.innerHeight, fullHeight(facts()) ?? 0));
     let healTimer: ReturnType<typeof setTimeout> | undefined;
     const heal = () => {
-      const keyboardOpen = !!viewportVars(vv.height, vv.offsetTop, window.innerHeight).height;
-      if (!tracker.needsHeal(window.innerHeight, keyboardOpen)) return;
+      const f = facts();
+      if (!tracker.needsHeal(window.innerHeight, keyboardOpen(f))) return;
       healViewport(appRef.current, messagesContainerRef.current);
     };
     const scheduleHeal = () => {
@@ -163,6 +183,7 @@ export function App() {
     };
     document.addEventListener("focusout", onFocusOut);
     const onWindowResize = () => {
+      safeTop = readSafeTop();
       tracker.observe(window.innerHeight);
       scheduleHeal();
     };
@@ -173,7 +194,7 @@ export function App() {
       // — that fights the browser's own scroll-into-view and pushes the
       // composer back under the keyboard.)
       const el = document.documentElement;
-      const vars = viewportVars(vv.height, vv.offsetTop, window.innerHeight);
+      const vars = viewportVars(facts());
       if (vars.height) el.style.setProperty("--app-height", vars.height);
       else el.style.removeProperty("--app-height");
       if (vars.offset) el.style.setProperty("--app-offset", vars.offset);

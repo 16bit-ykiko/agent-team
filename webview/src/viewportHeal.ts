@@ -10,6 +10,10 @@ export const HEAL_TOLERANCE = 4;
 
 export class ViewportTracker {
   maxHeight: number;
+  // Seed with the tallest height we have reason to believe in, not just the
+  // current one: after a reload the viewport is often already shrunk, and a
+  // tracker seeded from it would take the broken height for the maximum and
+  // never heal.
   constructor(initial: number) {
     this.maxHeight = initial;
   }

@@ -15,6 +15,12 @@ describe("ViewportTracker", () => {
     t.observe(900);
     expect(t.maxHeight).toBe(900);
   });
+
+  it("can be seeded above the current height so a reload into the bug still heals", () => {
+    // Page loaded with the viewport already shrunk (812 of a 874px screen).
+    const t = new ViewportTracker(Math.max(812, 874));
+    expect(t.needsHeal(812, false)).toBe(true);
+  });
 });
 
 describe("healViewport", () => {
