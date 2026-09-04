@@ -7,6 +7,16 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content"
     />
     <meta name="format-detection" content="telephone=no,date=no,address=no,email=no,url=no" />
+    <!-- Installable as a home-screen app: standalone display hides the browser
+         chrome, the status bar overlays the page (safe-area insets in CSS). -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#21252b" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Agents" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
     <title>Agent Team</title>
   </head>
   <body>

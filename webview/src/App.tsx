@@ -970,7 +970,10 @@ export function App() {
                     title="Stop all running agents"
                     onClick={() => abort(activeWs.id)}
                   >
-                    Stop all
+                    <span className="btn-text">Stop all</span>
+                    <span className="btn-icon" aria-hidden="true">
+                      ⏹
+                    </span>
                   </button>
                 )}
                 {targetBusy && (
@@ -994,7 +997,12 @@ export function App() {
                         : "Send"
                   }
                 >
-                  {uploading ? "Uploading..." : targetBusy ? "Queue" : "Send"}
+                  <span className="btn-text">
+                    {uploading ? "Uploading..." : targetBusy ? "Queue" : "Send"}
+                  </span>
+                  <span className="btn-icon" aria-hidden="true">
+                    {uploading ? "…" : targetBusy ? "⇥" : "↑"}
+                  </span>
                 </button>
               </div>
             </div>

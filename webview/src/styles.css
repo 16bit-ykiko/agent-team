@@ -173,7 +173,7 @@ button {
 }
 
 .sidebar-header {
-  padding: 12px 12px 10px 16px;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 12px 10px 16px;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -593,7 +593,7 @@ button {
 }
 
 .panel-header {
-  padding: 10px 20px 8px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 20px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   display: flex;
@@ -1650,7 +1650,7 @@ pre .copy-btn:hover {
   display: none;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 16px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
   font-weight: 600;
@@ -1677,7 +1677,7 @@ pre .copy-btn:hover {
 /* ---- Composer ----------------------------------------------------------- */
 
 .input-area {
-  padding: 10px 20px 14px;
+  padding: 10px 20px calc(14px + env(safe-area-inset-bottom, 0px));
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
 }
@@ -1744,6 +1744,9 @@ pre .copy-btn:hover {
 /* Fixed-width primary slot so Send ↔ Queue morphing causes no layout shift. */
 .btn-primary-slot {
   min-width: 78px;
+}
+.input-row .btn-icon {
+  display: none;
 }
 .btn-abort-others {
   font-size: 11px;
@@ -2228,6 +2231,7 @@ pre .copy-btn:hover {
     transform: translateX(-100%);
     transition: transform 0.2s ease;
     box-shadow: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
   .sidebar.sidebar-open {
     transform: translateX(0);
@@ -2243,8 +2247,10 @@ pre .copy-btn:hover {
   .resize-handle {
     display: none;
   }
+
+  /* Header: one row of title + agents, a slim info line under it. */
   .panel-header {
-    padding: 8px 12px 6px;
+    padding: calc(6px + env(safe-area-inset-top, 0px)) 12px 6px;
   }
   .panel-header-top {
     flex-wrap: wrap;
@@ -2252,10 +2258,32 @@ pre .copy-btn:hover {
   }
   .panel-agents {
     flex-wrap: wrap;
+    gap: 4px;
+  }
+  .panel-agent {
+    max-width: 100%;
   }
   .panel-title {
     font-size: 12px;
   }
+  .workspace-info-bar {
+    gap: 10px;
+    margin-top: 4px;
+    padding-top: 4px;
+  }
+  .ws-info-item:first-child {
+    display: none;
+  }
+  .ws-info-branch {
+    max-width: 60%;
+  }
+  .ws-archive-btn {
+    display: none;
+  }
+  .archived-banner {
+    font-size: 11px;
+  }
+
   .app {
     position: fixed;
     inset: 0;
@@ -2277,21 +2305,122 @@ pre .copy-btn:hover {
     min-height: 0;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    padding: 8px 0 12px;
   }
+
+  /* Messages: smaller gutter, tighter nesting so tool/thinking content
+     keeps most of the width instead of marching to the right. */
   .message {
-    padding: 6px 12px;
+    padding: 6px 10px;
+    gap: 8px;
   }
+  .message-gutter {
+    width: 28px;
+  }
+  .avatar-user,
+  .message-gutter .agent-avatar {
+    width: 28px !important;
+    height: 28px !important;
+  }
+  .message-gutter .agent-avatar img {
+    width: 28px !important;
+    height: 28px !important;
+  }
+  .message-content {
+    font-size: 13px;
+  }
+  .step-group {
+    padding-left: 6px;
+    margin: 3px 0;
+  }
+  .event {
+    padding-left: 4px;
+  }
+  .event-content pre {
+    padding: 6px 8px;
+    font-size: 11.5px;
+  }
+  .subagent-item {
+    padding: 2px 6px;
+  }
+  .subagent-details {
+    padding-left: 8px;
+  }
+  .banner {
+    padding: 4px 8px;
+  }
+  .message-status .status-chip {
+    font-size: 10px;
+  }
+  .ctx-bar {
+    display: none;
+  }
+  .event-row .btn-inline {
+    opacity: 1;
+  }
+
+  /* Composer: one rounded pill, icon-only round buttons (Discord-style). */
   .input-area {
     flex-shrink: 0;
-    padding: 8px;
+    padding: 6px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+    border-top: none;
+  }
+  .input-row {
+    align-items: flex-end;
+    border-radius: 22px;
+    padding: 4px 4px 4px 4px;
+    gap: 4px;
+    background: var(--bg-tertiary);
+    border-color: var(--border-strong);
   }
   .input-row .chat-input {
     font-size: 16px;
+    padding: 7px 6px;
+    min-height: 34px;
+    line-height: 1.35;
   }
   .input-row .chat-input::placeholder {
     font-size: 14px;
     opacity: 0.6;
   }
+  .input-row button {
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  .input-row .btn-text {
+    display: none;
+  }
+  .input-row .btn-icon {
+    display: inline;
+  }
+  .btn-primary-slot {
+    min-width: 34px;
+  }
+  .btn-attach {
+    background: transparent !important;
+    color: var(--text-secondary) !important;
+    font-size: 22px !important;
+  }
+  .btn-abort {
+    font-size: 12px;
+  }
+  .btn-abort-others {
+    opacity: 1;
+    font-size: 13px;
+  }
+  .command-popup,
+  .mention-popup {
+    margin-bottom: 6px;
+  }
+
   .empty-header.mobile-only {
     display: flex;
   }
@@ -2302,11 +2431,5 @@ pre .copy-btn:hover {
   .image-preview-item {
     width: 60px;
     height: 60px;
-  }
-  .event-row .btn-inline {
-    opacity: 1;
-  }
-  .ctx-bar {
-    display: none;
   }
 }
