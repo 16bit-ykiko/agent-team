@@ -559,3 +559,31 @@ describe("per-message effort and context", () => {
     expect(patches).toEqual([{ context: { tokens: 42000, window: 200000 } }]);
   });
 });
+
+describe("agent run state on the wire", () => {
+  it("exposes the session state, falls back to busy, and blocks archiving while waiting", () => {
+    const host = new FakeHost();
+    const registry = new HostRegistry();
+    registry.register(host);
+    const seen: string[] = [];
+    const cb: WorkspaceCallbacks = {
+      onNewMessage: () => {},
+      onStreamEvent: () => {},
+      onMessageDone: () => {},
+      onAgentState: (_ws, _id, state) => seen.push(state),
+    };
+    const ws = new Workspace("ws-1", "test", "proj", "local", "/tmp", registry, cb);
+    ws.addAgent("A", "claude-fable-5-1", "🤖", "#888", {});
+    expect(ws.getInfo(false).agents[0].state).toBe("idle");
+    host.lastSession!.isRunning = true;
+    expect(ws.getInfo(false).agents[0].state).toBe("working");
+    host.lastSession!.isRunning = false;
+
+    host.lastSession!.emit("runState", "waiting");
+    expect(seen).toEqual(["waiting"]);
+    expect(ws.getInfo(false).agents[0].state).toBe("waiting");
+    expect(ws.isIdle).toBe(false);
+    host.lastSession!.emit("runState", "idle");
+    expect(ws.isIdle).toBe(true);
+  });
+});

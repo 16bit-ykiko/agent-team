@@ -1,4 +1,12 @@
-import { SessionConfig, StreamEvent, SessionState, CommandInfo, ContextUsage } from "./session";
+import {
+  SessionConfig,
+  StreamEvent,
+  SessionState,
+  CommandInfo,
+  ContextUsage,
+  RunState,
+} from "./session";
+import type { GitInfo, PrInfo } from "./git";
 import { HostSessionHandle, HostRegistry } from "./host";
 import { effortLevelsForModel } from "./presets";
 
@@ -52,6 +60,7 @@ export interface AgentInfo {
 // Wire form of an agent: info plus transient runtime state.
 export interface AgentRuntimeInfo extends AgentInfo {
   busy: boolean;
+  state: RunState;
   activity: string | null;
   effort: string | null;
 }
@@ -66,9 +75,8 @@ export interface WorkspaceInfo {
   project: string;
   hostId: string;
   cwd: string;
-  gitBranch: string | null;
-  prUrl: string | null;
-  prTitle: string | null;
+  git: GitInfo | null;
+  pr: PrInfo | null;
   agents: AgentRuntimeInfo[];
   messages: Message[];
   createdAt: number;
@@ -104,6 +112,7 @@ export interface AgentEntry {
   pausedUntil?: number;
   // Transient "doing X right now" label from the session (see setActivity).
   activity?: string | null;
+  runState?: RunState;
 }
 
 export interface WorkspaceCallbacks {
@@ -126,6 +135,7 @@ export interface WorkspaceCallbacks {
     info: { rateLimitType?: string; resetsAt?: number },
   ) => void;
   onAgentActivity?: (wsId: string, agentId: string, activity: string | null) => void;
+  onAgentState?: (wsId: string, agentId: string, state: RunState) => void;
   // Persistent agent attributes changed (effort level...).
   onAgentUpdated?: (wsId: string, agent: AgentRuntimeInfo) => void;
   // An SDK message the session did not know how to render; logged so a
@@ -150,9 +160,8 @@ export class Workspace {
   messagesLoaded = true;
   // Filled by the server's background git scanner; getInfo must never run
   // git itself (a synchronous call here used to block the whole event loop).
-  cachedBranch: string | null = null;
-  cachedPrUrl: string | null = null;
-  cachedPrTitle: string | null = null;
+  git: GitInfo | null = null;
+  pr: PrInfo | null = null;
 
   private cb?: WorkspaceCallbacks;
   private hostRegistry: HostRegistry;
@@ -184,6 +193,7 @@ export class Workspace {
   get isIdle(): boolean {
     for (const a of this.agents.values()) {
       if (a.session.isRunning) return false;
+      if (this.agentState(a) === "waiting") return false;
     }
     return !this.messages.some((m) => m.status === "queued" || m.status === "streaming");
   }
@@ -481,6 +491,11 @@ export class Workspace {
     });
     session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) => {
       this.cb?.onRateLimit?.(this.id, agentId, info);
+    });
+    session.on("runState", (state: RunState) => {
+      const entry = this.agents.get(agentId);
+      if (entry) entry.runState = state;
+      this.cb?.onAgentState?.(this.id, agentId, state);
     });
     session.on("activity", (activity: string | null) => {
       const entry = this.agents.get(agentId);
@@ -840,10 +855,15 @@ export class Workspace {
     return true;
   }
 
+  private agentState(a: AgentEntry): RunState {
+    return a.runState ?? a.session.runState ?? (a.session.isRunning ? "working" : "idle");
+  }
+
   agentInfo(a: AgentEntry): AgentRuntimeInfo {
     return {
       ...a.info,
       busy: a.session.isRunning,
+      state: this.agentState(a),
       activity: a.activity ?? null,
       effort: a.session.getState().config.effort ?? null,
     };
@@ -856,9 +876,8 @@ export class Workspace {
       project: this.project,
       hostId: this.hostId,
       cwd: this.cwd,
-      gitBranch: this.cachedBranch,
-      prUrl: this.cachedPrUrl,
-      prTitle: this.cachedPrTitle,
+      git: this.git,
+      pr: this.pr,
       agents: [...this.agents.values()].map((a) => this.agentInfo(a)),
       messages: includeMessages ? this.messages : [],
       createdAt: this.createdAt,

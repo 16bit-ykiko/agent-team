@@ -144,9 +144,8 @@ describe("Sidebar archived section", () => {
     project: "proj",
     hostId: "local",
     cwd: "/repo",
-    gitBranch: null,
-    prUrl: null,
-    prTitle: null,
+    git: null,
+    pr: null,
     agents: [],
     messages: [],
     createdAt: NOW - 1000,
@@ -280,9 +279,8 @@ describe("Sidebar group quick-create", () => {
           project: "repo",
           hostId: "local",
           cwd: "/home/me/repo",
-          gitBranch: null,
-          prUrl: null,
-          prTitle: null,
+          git: null,
+          pr: null,
           agents: [],
           messages: [],
           createdAt: NOW - 1000,
@@ -432,5 +430,49 @@ describe("scheduled banner", () => {
     expect(el.querySelector(".banner-label")!.textContent).toBe("Scheduled");
     expect(el.textContent).toContain("Wake up in 8m");
     expect(el.querySelector("blockquote")!.textContent).toContain("check CI");
+  });
+});
+
+describe("GitBar", () => {
+  it("shows branch with dirty/ahead/behind badges and a PR card with state and checks", async () => {
+    const { GitBar } = await import("../src/GitBar");
+    const { container } = render(
+      <GitBar
+        git={{ branch: "feat/x", dirty: 3, ahead: 1, behind: 0 }}
+        pr={{
+          number: 243,
+          url: "https://x/pull/243",
+          title: "Fix it",
+          state: "open",
+          draft: false,
+          checks: "pending",
+        }}
+      />,
+    );
+    expect(container.querySelector(".ws-branch-name")!.textContent).toBe("feat/x");
+    expect([...container.querySelectorAll(".git-badge")].map((b) => b.textContent)).toEqual([
+      "●3",
+      "↑1",
+    ]);
+    const pr = container.querySelector(".pr-card")!;
+    expect(pr.className).toContain("pr-open");
+    expect(pr.textContent).toContain("#243");
+    expect(pr.textContent).toContain("Fix it");
+    expect(pr.querySelector(".pr-state")!.textContent).toBe("open");
+    expect(pr.querySelector(".pr-checks")!.className).toContain("pr-checks-pending");
+  });
+
+  it("renders merged/draft states and nothing when there is no git info", async () => {
+    const { GitBar } = await import("../src/GitBar");
+    const { container, rerender } = render(
+      <GitBar
+        git={{ branch: "b", dirty: 0, ahead: 0, behind: 0 }}
+        pr={{ number: 1, url: "u", title: "", state: "merged", draft: true, checks: null }}
+      />,
+    );
+    expect(container.querySelector(".pr-state")!.textContent).toBe("merged");
+    expect(container.querySelector(".git-badge")).toBeNull();
+    rerender(<GitBar git={null} pr={null} />);
+    expect(container.innerHTML).toBe("");
   });
 });

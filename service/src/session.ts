@@ -68,6 +68,12 @@ export interface StreamEvent {
   subagent?: SubAgentInfo;
 }
 
+// What an agent is doing from the user's point of view. "waiting" = the
+// turn ended but background work (subagents, tasks) will re-invoke it;
+// "sleeping" = a scheduled wake-up is pending. Messages can be sent in every
+// state but "working" (where they queue).
+export type RunState = "idle" | "working" | "waiting" | "sleeping";
+
 export interface ContextUsage {
   tokens: number;
   window: number;
@@ -222,6 +228,11 @@ export class ClaudeSession extends EventEmitter {
   // label ("sleeping until …") once the turn ends.
   private pendingWake: { at: number; reason: string; stop: boolean } | null = null;
   private sleeping = false;
+  // Live, non-ambient background tasks as reported by background_tasks_changed
+  // (id → description). Level signal: replaced wholesale on every message.
+  private backgroundTasks = new Map<string, string>();
+  private bgDrainedAt = 0;
+  runState: RunState = "idle";
 
   constructor(config: SessionConfig) {
     super();
@@ -230,6 +241,30 @@ export class ClaudeSession extends EventEmitter {
 
   get isRunning(): boolean {
     return this.processing;
+  }
+
+  private updateRunState(): void {
+    const next: RunState = this.processing
+      ? "working"
+      : this.backgroundTasks.size > 0
+        ? "waiting"
+        : this.sleeping
+          ? "sleeping"
+          : "idle";
+    if (next === this.runState) return;
+    const prev = this.runState;
+    this.runState = next;
+    if (next === "waiting") {
+      const descs = [...this.backgroundTasks.values()].filter(Boolean);
+      const label =
+        descs.length === 1
+          ? descs[0]
+          : `${this.backgroundTasks.size} background tasks${descs[0] ? `: ${descs[0]}…` : ""}`;
+      this.setActivity(`waiting on ${label}`);
+    } else if (prev === "waiting" && next === "idle") {
+      this.setActivity(null);
+    }
+    this.emit("runState", next);
   }
 
   async send(message: string): Promise<void> {
@@ -247,6 +282,7 @@ export class ClaudeSession extends EventEmitter {
     const { iterable, controller } = createInputStream();
     this.inputController = controller;
     this.abortController = new AbortController();
+    this.backgroundTasks.clear();
 
     const options = this.buildOptions();
 
@@ -287,6 +323,7 @@ export class ClaudeSession extends EventEmitter {
     this.processing = true;
     this.turnStartTime = Date.now();
     this.stepCounter = 0;
+    this.updateRunState();
   }
 
   private startIterating(): void {
@@ -320,7 +357,10 @@ export class ClaudeSession extends EventEmitter {
           this.queryInstance = null;
           this.inputController = null;
           this.abortController = null;
+          this.backgroundTasks.clear();
+          this.sleeping = false;
           this.setActivity(null);
+          this.updateRunState();
         }
       }
     })();
@@ -331,17 +371,19 @@ export class ClaudeSession extends EventEmitter {
     this.processing = true;
     this.turnStartTime = Date.now();
     this.stepCounter = 0;
+    const wasSleeping = this.sleeping;
     if (this.sleeping) {
       this.sleeping = false;
       this.setActivity(null);
     }
+    this.updateRunState();
     if (!this.expectingTurn) {
-      this.emit("event", {
-        kind: "notice",
-        level: "wakeup",
-        content:
-          "Resumed on its own — a scheduled wake-up or background task notification started this turn.",
-      } as StreamEvent);
+      const why = wasSleeping
+        ? "Scheduled wake-up fired."
+        : this.backgroundTasks.size > 0 || Date.now() - this.bgDrainedAt < 15_000
+          ? "A background task reported back — resumed to handle its result."
+          : "Resumed on its own — a wake-up or background task notification started this turn.";
+      this.emit("event", { kind: "notice", level: "wakeup", content: why } as StreamEvent);
     }
   }
 
@@ -411,6 +453,8 @@ export class ClaudeSession extends EventEmitter {
     this.setActivity(null);
     this.sleeping = false;
     this.pendingWake = null;
+    this.backgroundTasks.clear();
+    this.updateRunState();
   }
 
   // Transient "what is the agent doing right now" label (compacting, a long
@@ -435,7 +479,6 @@ export class ClaudeSession extends EventEmitter {
   ]);
   private static readonly SILENT_SYSTEM_SUBTYPES = new Set([
     "init",
-    "background_tasks_changed",
     "task_updated",
     "hook_progress",
     "thinking_tokens",
@@ -484,7 +527,10 @@ export class ClaudeSession extends EventEmitter {
 
     switch (msg.type) {
       case "assistant":
-        this.setProcessing();
+        // Subagent output (parent_tool_use_id set) streams while the main
+        // agent may be idle-but-waiting; only the main agent's own blocks
+        // mean a turn is in progress.
+        if (!(msg as SDKAssistantMessage).parent_tool_use_id) this.setProcessing();
         this.handleAssistantMessage(msg as SDKAssistantMessage);
         break;
 
@@ -493,7 +539,7 @@ export class ClaudeSession extends EventEmitter {
         break;
 
       case "stream_event":
-        this.setProcessing();
+        if (!(msg as SDKPartialAssistantMessage).parent_tool_use_id) this.setProcessing();
         this.handlePartialMessage(msg as SDKPartialAssistantMessage);
         break;
 
@@ -550,6 +596,17 @@ export class ClaudeSession extends EventEmitter {
 
       case "system": {
         const sys = msg as Record<string, unknown>;
+        if (sys.subtype === "background_tasks_changed") {
+          const had = this.backgroundTasks.size > 0;
+          this.backgroundTasks.clear();
+          for (const t of (sys.tasks as Array<Record<string, unknown>>) ?? []) {
+            if (t.ambient) continue;
+            this.backgroundTasks.set(t.task_id as string, (t.description as string) ?? "");
+          }
+          if (had && this.backgroundTasks.size === 0) this.bgDrainedAt = Date.now();
+          this.updateRunState();
+          break;
+        }
         if (this.handleSystemBanner(sys)) break;
         if (sys.subtype === "commands_changed" && Array.isArray(sys.commands)) {
           const commands: CommandInfo[] = (sys.commands as Array<Record<string, unknown>>).map(
@@ -996,6 +1053,7 @@ export class ClaudeSession extends EventEmitter {
       this.setActivity(`sleeping until ${formatClock(at)}${reason ? ` · ${reason}` : ""}`);
     }
     this.pendingWake = null;
+    this.updateRunState();
   }
 
   // A ScheduleWakeup call is the agent announcing what it will do next and

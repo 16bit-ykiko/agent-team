@@ -20,7 +20,7 @@ import {
 import { loadConfig, AppConfig, effectiveAccount, pickFailoverAccount } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
 import { CommandInfo, StreamEvent } from "./session";
-import { gitBranch, getPrInfo } from "./git";
+import { gitStatus, getPrInfo, GitInfo, PrInfo } from "./git";
 import { completeDirs, resolveWorkspacePath } from "./dirs";
 import { searchMessages } from "./search";
 import { HostRegistry, LocalHost } from "./host";
@@ -96,7 +96,6 @@ export class Server {
   private webDir: string;
   private statusTimer: ReturnType<typeof setInterval> | null = null;
   private branchTimer: ReturnType<typeof setInterval> | null = null;
-  private branchCache = new Map<string, string | null>();
   private prevCpuIdle = 0;
   private prevCpuTotal = 0;
   private commands: CommandInfo[] = mergeLocalCommands([]);
@@ -133,8 +132,8 @@ export class Server {
     this.restoreState();
     this.initCpuBaseline();
     this.statusTimer = setInterval(() => this.broadcastSystemStatus(), 3000);
-    this.branchTimer = setInterval(() => this.scanBranches(), 2000);
-    this.scanBranches();
+    this.branchTimer = setInterval(() => this.scanGit(), 3000);
+    this.scanGit();
     this.refreshQuota();
     this.quotaTimer = setInterval(() => this.refreshQuota(), 60000);
     this.sweepArchives();
@@ -780,6 +779,13 @@ export class Server {
       this.makeCallbacks(),
     );
 
+    // Same-folder workspaces share the scanner's cache; seed from it so the
+    // header has branch/PR info from the first frame.
+    const cached = this.gitCache.get(cwd);
+    if (cached) {
+      workspace.git = cached.git;
+      workspace.pr = cached.pr;
+    }
     this.workspaces.set(id, workspace);
     this.persistWorkspaceNow(id);
     this.persistIndex();
@@ -1108,7 +1114,6 @@ systemctl --user restart agent-team-server
     ws.archivedAt = Date.now();
     this.persistWorkspaceNow(workspaceId);
     ws.unloadMessages();
-    this.branchCache.delete(workspaceId);
     this.broadcastUI({ type: "workspace_archived", workspaceId, archivedAt: ws.archivedAt });
   }
 
@@ -1240,6 +1245,13 @@ systemctl --user restart agent-team-server
       },
       onAgentIdle: (wsId, agentId) => {
         this.broadcastUI({ type: "agent_idle", workspaceId: wsId, agentId });
+        // A finished turn is the moment a PR is likely to have appeared or
+        // moved; refresh it on the next scan instead of waiting a minute.
+        const ws = this.workspaces.get(wsId);
+        if (ws) this.requestPrRefresh(ws.cwd);
+      },
+      onAgentState: (wsId, agentId, state) => {
+        this.broadcastUI({ type: "agent_state", workspaceId: wsId, agentId, state });
       },
       onCommandsChanged: (_wsId, commands) => {
         this.commands = mergeLocalCommands(commands);
@@ -1259,59 +1271,79 @@ systemctl --user restart agent-team-server
     };
   }
 
-  // Branch scanning runs every 2s over all workspaces with async execFile —
-  // the old execSync version blocked the event loop for the sum of all git
-  // timeouts, which is what made updates unreliable. A scan pass that is
-  // still in flight skips the next tick instead of piling up.
-  private branchScanning = false;
-  private prFetchedAt = new Map<string, number>();
+  // ---- Git / PR scanning ----------------------------------------------
+  // One scan per folder, not per workspace (a folder often hosts many
+  // workspaces). `git status` is cheap and runs every tick; `gh pr view` is a
+  // network call, refreshed on branch change, after a turn ends, or once a
+  // minute. A pass still in flight skips the next tick instead of piling up.
+  private gitScanning = false;
+  private gitCache = new Map<
+    string,
+    { git: GitInfo | null; pr: PrInfo | null; prBranch: string | null; prFetchedAt: number }
+  >();
 
-  private async scanBranches(): Promise<void> {
-    if (this.branchScanning) return;
-    this.branchScanning = true;
+  private requestPrRefresh(cwd: string): void {
+    const entry = this.gitCache.get(cwd);
+    if (entry) entry.prFetchedAt = 0;
+  }
+
+  private async scanGit(): Promise<void> {
+    if (this.gitScanning) return;
+    this.gitScanning = true;
     try {
+      const live = [...this.workspaces.values()].filter((ws) => !ws.isArchived);
+      const cwds = [...new Set(live.map((ws) => ws.cwd))];
+      for (const cwd of this.gitCache.keys()) {
+        if (!cwds.includes(cwd)) this.gitCache.delete(cwd);
+      }
       await Promise.all(
-        [...this.workspaces.values()]
-          .filter((ws) => !ws.isArchived)
-          .map((ws) => this.scanBranch(ws)),
+        cwds.map((cwd) =>
+          this.scanFolder(
+            cwd,
+            live.filter((w) => w.cwd === cwd),
+          ),
+        ),
       );
     } finally {
-      this.branchScanning = false;
+      this.gitScanning = false;
     }
   }
 
-  private async scanBranch(ws: Workspace): Promise<void> {
-    const branch = await gitBranch(ws.cwd);
-    const prev = this.branchCache.get(ws.id);
-    if (this.branchCache.has(ws.id) && prev === branch) return;
-    this.branchCache.set(ws.id, branch);
-    ws.cachedBranch = branch;
-    this.broadcastBranch(ws);
+  private async scanFolder(cwd: string, workspaces: Workspace[]): Promise<void> {
+    const first = !this.gitCache.has(cwd);
+    const entry = this.gitCache.get(cwd) ?? { git: null, pr: null, prBranch: null, prFetchedAt: 0 };
+    this.gitCache.set(cwd, entry);
 
-    // The PR lookup is a network call through gh; it must not gate branch
-    // updates. Throttled per workspace, and failures keep the previous value
-    // instead of flickering the PR link away.
-    const now = Date.now();
-    if (now - (this.prFetchedAt.get(ws.id) ?? 0) < 60_000) return;
-    this.prFetchedAt.set(ws.id, now);
-    const pr = await getPrInfo(ws.cwd, branch);
-    const url = pr?.url ?? (branch === "main" || branch === "master" ? null : ws.cachedPrUrl);
-    const title = pr?.title ?? (url === ws.cachedPrUrl ? ws.cachedPrTitle : null);
-    if (url !== ws.cachedPrUrl || title !== ws.cachedPrTitle) {
-      ws.cachedPrUrl = url;
-      ws.cachedPrTitle = title;
-      this.broadcastBranch(ws);
+    // Keep the cached objects when nothing changed so workspaces can be
+    // compared by identity below.
+    const git = await gitStatus(cwd);
+    if (first || !sameGit(entry.git, git)) entry.git = git;
+    const branch = entry.git?.branch ?? null;
+
+    const branchChanged = branch !== entry.prBranch;
+    if (branchChanged || Date.now() - entry.prFetchedAt >= 60_000) {
+      entry.prFetchedAt = Date.now();
+      entry.prBranch = branch;
+      const pr = await getPrInfo(cwd, branch);
+      // A failed lookup keeps the previous PR unless the branch moved, so a
+      // flaky gh call does not make the link flicker.
+      const next = pr ?? (branchChanged ? null : entry.pr);
+      if (!samePr(entry.pr, next)) entry.pr = next;
     }
-  }
 
-  private broadcastBranch(ws: Workspace): void {
-    this.broadcastUI({
-      type: "workspace_branch_update",
-      workspaceId: ws.id,
-      gitBranch: ws.cachedBranch,
-      prUrl: ws.cachedPrUrl,
-      prTitle: ws.cachedPrTitle,
-    });
+    // Push to every workspace that is out of date: the folder changed, or
+    // the workspace never received this folder's info.
+    for (const ws of workspaces) {
+      if (ws.git === entry.git && ws.pr === entry.pr) continue;
+      ws.git = entry.git;
+      ws.pr = entry.pr;
+      this.broadcastUI({
+        type: "workspace_git_update",
+        workspaceId: ws.id,
+        git: ws.git,
+        pr: ws.pr,
+      });
+    }
   }
 
   close(): void {
@@ -1330,6 +1362,24 @@ systemctl --user restart agent-team-server
 
 function genId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sameGit(a: GitInfo | null, b: GitInfo | null): boolean {
+  if (!a || !b) return a === b;
+  return (
+    a.branch === b.branch && a.dirty === b.dirty && a.ahead === b.ahead && a.behind === b.behind
+  );
+}
+
+function samePr(a: PrInfo | null, b: PrInfo | null): boolean {
+  if (!a || !b) return a === b;
+  return (
+    a.url === b.url &&
+    a.title === b.title &&
+    a.state === b.state &&
+    a.draft === b.draft &&
+    a.checks === b.checks
+  );
 }
 
 const LOGIN_PAGE = `<!DOCTYPE html>

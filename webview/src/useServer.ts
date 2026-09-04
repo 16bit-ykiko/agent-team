@@ -24,6 +24,24 @@ export interface SubAgentInfo {
 
 export type NoticeLevel = "info" | "notice" | "warning" | "error" | "schedule" | "wakeup";
 
+export type RunState = "idle" | "working" | "waiting" | "sleeping";
+
+export interface GitInfo {
+  branch: string | null;
+  dirty: number;
+  ahead: number;
+  behind: number;
+}
+
+export interface PrInfo {
+  number: number;
+  url: string;
+  title: string;
+  state: "open" | "merged" | "closed";
+  draft: boolean;
+  checks: "success" | "failure" | "pending" | null;
+}
+
 export interface ContextUsage {
   tokens: number;
   window: number;
@@ -80,6 +98,7 @@ export interface AgentInfo {
   color: string;
   isDefault: boolean;
   busy?: boolean;
+  state?: RunState;
   // Transient label of what the agent is doing (compacting, a long tool...).
   activity?: string | null;
   // Current reasoning effort level, when the model supports one.
@@ -105,9 +124,8 @@ export interface Workspace {
   project: string;
   hostId: string;
   cwd: string;
-  gitBranch: string | null;
-  prUrl: string | null;
-  prTitle: string | null;
+  git?: GitInfo | null;
+  pr?: PrInfo | null;
   agents: AgentInfo[];
   messages: Message[];
   createdAt: number;
@@ -495,13 +513,24 @@ export function useServer() {
           break;
         }
 
-        case "workspace_branch_update": {
+        case "workspace_git_update": {
           const wsId = msg.workspaceId as string;
-          const gitBranch = msg.gitBranch as string | null;
-          const prUrl = (msg.prUrl as string | null) ?? null;
-          const prTitle = (msg.prTitle as string | null) ?? null;
+          const git = (msg.git as GitInfo | null) ?? null;
+          const pr = (msg.pr as PrInfo | null) ?? null;
+          setWorkspaces((prev) => prev.map((w) => (w.id === wsId ? { ...w, git, pr } : w)));
+          break;
+        }
+
+        case "agent_state": {
+          const wsId = msg.workspaceId as string;
+          const agentId = msg.agentId as string;
+          const state = msg.state as RunState;
           setWorkspaces((prev) =>
-            prev.map((w) => (w.id === wsId ? { ...w, gitBranch, prUrl, prTitle } : w)),
+            prev.map((w) =>
+              w.id === wsId
+                ? { ...w, agents: w.agents.map((a) => (a.id === agentId ? { ...a, state } : a)) }
+                : w,
+            ),
           );
           break;
         }

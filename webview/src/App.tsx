@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useServer, Message } from "./useServer";
 import { groupWorkspaces } from "./groups";
-import { hasRunningSubagents } from "./events";
+import { agentQueues, agentState, isAgentActive, stateLabel } from "./agents";
 import { extractImageFiles, installMacCtrlClipboard } from "./clipboard";
 import { isImeKeyEvent } from "./ime";
 import { AgentAvatar } from "./avatar";
@@ -9,8 +9,10 @@ import { formatRelative } from "./format";
 import { MessageItem } from "./messages";
 import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs";
 import { Sidebar } from "./Sidebar";
+import { GitBar } from "./GitBar";
 
 // Re-exported for tests and for anyone importing the old single-file layout.
+export { GitBar } from "./GitBar";
 export { EventItem, SubAgentItem, StepGroup, MessageItem, BannerItem } from "./messages";
 export { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs";
 export { Sidebar } from "./Sidebar";
@@ -217,17 +219,6 @@ export function App() {
   );
   const activeWs = workspaces.find((w) => w.id === activeWsId);
 
-  // Agents whose latest work still has subagents running: the session can be
-  // idle while background subagents finish, and that should still read as
-  // "working".
-  const agentsAwaitingSubs = useMemo(() => {
-    const set = new Set<string>();
-    for (const m of activeWs?.messages ?? []) {
-      if (m.agentId && hasRunningSubagents(m.events)) set.add(m.agentId);
-    }
-    return set;
-  }, [activeWs?.messages]);
-
   // Sidebar folder groups; explicit expand/collapse choices persist.
   const wsGroups = useMemo(() => groupWorkspaces(workspaces), [workspaces]);
   const [seenTick, setSeenTick] = useState(0);
@@ -418,7 +409,7 @@ export function App() {
     }
   }, [activeWs?.messages?.length]);
 
-  const isAnyRunning = activeWs?.agents.some((a) => a.busy) ?? false;
+  const isAnyRunning = activeWs?.agents.some(isAgentActive) ?? false;
   const hasAgents = (activeWs?.agents.length ?? 0) > 0;
 
   // The agent a Send would go to: first @mention in the draft, else the
@@ -432,7 +423,7 @@ export function App() {
     }
     return activeWs.agents.find((a) => a.isDefault) ?? activeWs.agents[0];
   }, [activeWs, mentionTarget]);
-  const targetBusy = !!targetAgent?.busy;
+  const targetBusy = !!targetAgent && agentQueues(targetAgent);
   const othersRunning = activeWs?.agents.some((a) => a.busy && a.id !== targetAgent?.id) ?? false;
 
   const onResizeStart = useCallback(
@@ -722,21 +713,16 @@ export function App() {
                 </span>
                 <div className="panel-agents">
                   {activeWs.agents.map((agent) => {
-                    const working = agent.busy || agentsAwaitingSubs.has(agent.id);
-                    const sleeping = !working && !!agent.activity?.startsWith("sleeping");
-                    const status = working
-                      ? "busy"
-                      : sleeping
-                        ? "sleeping"
-                        : connected
-                          ? "online"
-                          : "offline";
-                    const statusText =
-                      status === "busy"
-                        ? (agent.activity ?? "working")
-                        : status === "sleeping"
-                          ? agent.activity!
-                          : status;
+                    const s = agentState(agent);
+                    const status =
+                      s === "working"
+                        ? "busy"
+                        : s === "idle"
+                          ? connected
+                            ? "online"
+                            : "offline"
+                          : s;
+                    const statusText = stateLabel(agent, connected);
                     return (
                       <div
                         key={agent.id}
@@ -776,19 +762,7 @@ export function App() {
                   <span className="ws-info-icon">&#128193;</span>
                   {activeWs.cwd}
                 </span>
-                {activeWs.gitBranch && (
-                  <span className="ws-info-item ws-info-branch">
-                    <span className="ws-info-icon">&#9831;</span>
-                    {activeWs.gitBranch}
-                  </span>
-                )}
-                {activeWs.prUrl && (
-                  <a className="pr-card" href={activeWs.prUrl} target="_blank" rel="noreferrer">
-                    <span className="pr-icon">&#9741;</span>
-                    <span className="pr-number">#{activeWs.prUrl.split("/").pop()}</span>
-                    {activeWs.prTitle && <span className="pr-title">{activeWs.prTitle}</span>}
-                  </a>
-                )}
+                <GitBar git={activeWs.git ?? null} pr={activeWs.pr ?? null} />
                 <span className="ws-info-spacer" />
                 {activeWs.archivedAt == null ? (
                   <button

@@ -690,6 +690,17 @@ button {
   background: var(--accent);
   animation: pulse 1.5s infinite;
 }
+.agent-status-dot.agent-status-waiting {
+  background: var(--purple);
+  animation: pulse 1.5s infinite;
+}
+.agent-status-label.agent-status-waiting {
+  color: var(--purple);
+}
+.panel-agent-waiting,
+.panel-agent-sleeping {
+  border-color: rgba(198, 120, 221, 0.3);
+}
 .agent-status-label {
   font-size: 10.5px;
   color: var(--text-muted);
@@ -741,6 +752,36 @@ button {
 }
 .ws-info-branch {
   color: var(--success);
+  gap: 6px;
+}
+.ws-branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.git-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 5px;
+  border-radius: 7px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+.git-dirty {
+  color: var(--warning);
+}
+.git-ahead {
+  color: var(--accent);
+}
+.git-behind {
+  color: var(--error);
+}
+.ws-group-dirty {
+  color: var(--warning);
+  font-size: 8px;
+  margin-left: 3px;
+  vertical-align: middle;
 }
 .ws-info-spacer {
   flex: 1;
@@ -765,8 +806,42 @@ button {
   border-color: var(--accent);
   color: var(--text-primary);
 }
-.pr-icon {
+.pr-state {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 14px;
+  padding: 0 6px;
+  border-radius: 7px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+.pr-open .pr-state {
   color: var(--success);
+}
+.pr-draft .pr-state {
+  color: var(--text-secondary);
+}
+.pr-merged .pr-state {
+  color: var(--purple);
+}
+.pr-closed .pr-state {
+  color: var(--error);
+}
+.pr-checks {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.pr-checks-success {
+  background: var(--success);
+}
+.pr-checks-failure {
+  background: var(--error);
+}
+.pr-checks-pending {
+  background: var(--warning);
+  animation: pulse 1.5s infinite;
 }
 .pr-number {
   font-weight: 600;

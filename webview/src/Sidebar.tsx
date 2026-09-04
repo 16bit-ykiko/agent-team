@@ -1,8 +1,16 @@
 import { useState } from "react";
 import type { Workspace, SystemStatus, SearchHit } from "./useServer";
 import { groupWorkspaces, isGroupExpanded, archivedWorkspaces } from "./groups";
-import { hasRunningSubagents } from "./events";
+import { isAgentActive } from "./agents";
 import { formatBytes, formatRelative, formatResetTime } from "./format";
+
+function gitTitle(git: { dirty: number; ahead: number; behind: number }): string {
+  const parts: string[] = [];
+  if (git.dirty) parts.push(`${git.dirty} changed file${git.dirty === 1 ? "" : "s"}`);
+  if (git.ahead) parts.push(`${git.ahead} ahead`);
+  if (git.behind) parts.push(`${git.behind} behind`);
+  return parts.length ? parts.join(", ") : "clean";
+}
 
 function quotaBarColor(pct: number): string {
   if (pct >= 80) return "var(--error)";
@@ -211,8 +219,11 @@ export function Sidebar(p: SidebarProps) {
                 >
                   <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
                   <span className="ws-group-label">{g.label}</span>
-                  {g.workspaces[0].gitBranch && (
-                    <span className="ws-group-branch">{g.workspaces[0].gitBranch}</span>
+                  {g.workspaces[0].git?.branch && (
+                    <span className="ws-group-branch" title={gitTitle(g.workspaces[0].git)}>
+                      {g.workspaces[0].git.branch}
+                      {g.workspaces[0].git.dirty > 0 && <span className="ws-group-dirty">●</span>}
+                    </span>
                   )}
                   <button
                     className="ws-group-add"
@@ -230,10 +241,8 @@ export function Sidebar(p: SidebarProps) {
                 {expanded && (
                   <div className="ws-group-items">
                     {g.workspaces.map((ws) => {
-                      const activeAgents = ws.agents.filter((a) => a.busy);
-                      const running =
-                        activeAgents.length > 0 ||
-                        ws.messages.some((m) => hasRunningSubagents(m.events));
+                      const activeAgents = ws.agents.filter(isAgentActive);
+                      const running = activeAgents.length > 0;
                       const unread = ws.messages.length - (p.seenCounts[ws.id] ?? 0);
                       return (
                         <div

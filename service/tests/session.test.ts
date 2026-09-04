@@ -846,3 +846,163 @@ describe("scheduled wake-up banner and sleeping label", () => {
     expect(activity).toEqual([]);
   });
 });
+
+describe("run state", () => {
+  const bg = (tasks: Array<{ id: string; desc?: string; ambient?: boolean }>) => ({
+    type: "system",
+    subtype: "background_tasks_changed",
+    session_id: "s",
+    tasks: tasks.map((t) => ({
+      task_id: t.id,
+      task_type: "local_agent",
+      description: t.desc ?? "",
+      ambient: t.ambient,
+    })),
+  });
+  const text = (t: string) => ({
+    type: "assistant",
+    session_id: "s",
+    parent_tool_use_id: null,
+    message: { content: [{ type: "text", text: t }] },
+  });
+  const result = { type: "result", subtype: "success", result: "", session_id: "s" };
+
+  function harness() {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const states: string[] = [];
+    const activity: Array<string | null> = [];
+    session.on("runState", (s: string) => states.push(s));
+    session.on("activity", (a: string | null) => activity.push(a));
+    const s = session as unknown as {
+      handleSDKMessage(m: unknown): void;
+      expectingTurn: boolean;
+      processing: boolean;
+    };
+    return { session, s, states, activity };
+  }
+
+  it("goes working → waiting while background tasks are live → idle when they finish", () => {
+    const { session, s, states, activity } = harness();
+    s.expectingTurn = true;
+    s.handleSDKMessage(text("spawning"));
+    s.handleSDKMessage(
+      bg([
+        { id: "t1", desc: "search the repo" },
+        { id: "amb", ambient: true },
+      ]),
+    );
+    s.handleSDKMessage(result);
+    expect(session.runState).toBe("waiting");
+    expect(activity.at(-1)).toBe("waiting on search the repo");
+    expect(session.isRunning).toBe(false);
+    // the subagent reports back and re-invokes the main agent
+    s.handleSDKMessage(bg([]));
+    expect(session.runState).toBe("idle");
+    expect(activity.at(-1)).toBeNull();
+    expect(states).toEqual(["working", "waiting", "idle"]);
+  });
+
+  it("prefers working over waiting, and sleeping only when nothing else is pending", () => {
+    const { session, s } = harness();
+    s.expectingTurn = true;
+    s.handleSDKMessage({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "w",
+            name: "ScheduleWakeup",
+            input: { delaySeconds: 60, reason: "r" },
+          },
+        ],
+      },
+    });
+    s.handleSDKMessage(bg([{ id: "t1", desc: "bg" }]));
+    expect(session.runState).toBe("working");
+    s.handleSDKMessage(result);
+    expect(session.runState).toBe("waiting");
+    s.handleSDKMessage(bg([]));
+    expect(session.runState).toBe("sleeping");
+    s.handleSDKMessage(text("AWAKE"));
+    expect(session.runState).toBe("working");
+  });
+
+  it("summarises several background tasks", () => {
+    const { s, activity } = harness();
+    s.expectingTurn = true;
+    s.handleSDKMessage(text("go"));
+    s.handleSDKMessage(
+      bg([
+        { id: "a", desc: "first" },
+        { id: "b", desc: "second" },
+      ]),
+    );
+    s.handleSDKMessage(result);
+    expect(activity.at(-1)).toBe("waiting on 2 background tasks: first…");
+  });
+});
+
+describe("subagent output while waiting", () => {
+  it("does not count nested assistant output as a main-agent turn", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    const states: string[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    session.on("runState", (s: string) => states.push(s));
+    const s = session as unknown as { handleSDKMessage(m: unknown): void; expectingTurn: boolean };
+    s.expectingTurn = true;
+    // Main turn launches a background subagent and ends.
+    s.handleSDKMessage({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          { type: "tool_use", id: "toolu_1", name: "Agent", input: { run_in_background: true } },
+        ],
+      },
+    });
+    s.handleSDKMessage(taskStarted({ task_type: "local_agent", subagent_type: "claude" }));
+    s.handleSDKMessage({
+      type: "system",
+      subtype: "background_tasks_changed",
+      session_id: "s",
+      tasks: [{ task_id: "task-1", task_type: "local_agent", description: "bg" }],
+    });
+    s.handleSDKMessage({ type: "result", subtype: "success", result: "launched", session_id: "s" });
+    expect(session.runState).toBe("waiting");
+
+    // The subagent streams its own blocks; the main agent stays waiting.
+    s.handleSDKMessage({
+      type: "stream_event",
+      session_id: "s",
+      parent_tool_use_id: "toolu_1",
+      event: { type: "content_block_delta", delta: { type: "text_delta", text: "working…" } },
+    });
+    s.handleSDKMessage({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: "toolu_1",
+      message: { content: [{ type: "text", text: "DONE" }] },
+    });
+    expect(session.runState).toBe("waiting");
+    expect(session.isRunning).toBe(false);
+    expect(events.filter((e) => e.level === "wakeup")).toHaveLength(0);
+
+    // The CLI re-invokes the main agent with the result.
+    s.handleSDKMessage({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: { content: [{ type: "text", text: "BG DONE" }] },
+    });
+    expect(session.runState).toBe("working");
+    const wake = events.filter((e) => e.level === "wakeup");
+    expect(wake).toHaveLength(1);
+    expect(wake[0].content).toContain("background task");
+    expect(states).toEqual(["working", "waiting", "working"]);
+  });
+});

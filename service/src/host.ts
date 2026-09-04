@@ -1,11 +1,20 @@
 import { EventEmitter } from "events";
-import { ClaudeSession, SessionConfig, SessionState, StreamEvent, UsageStats } from "./session";
+import {
+  ClaudeSession,
+  RunState,
+  SessionConfig,
+  SessionState,
+  StreamEvent,
+  UsageStats,
+} from "./session";
 import { CodexSession } from "./codex-session";
 
 export interface HostSessionHandle extends EventEmitter {
   sessionId: string | null;
   usage: UsageStats;
   readonly isRunning: boolean;
+  // Richer than isRunning; sessions that don't track it fall back to it.
+  readonly runState?: RunState;
   send(message: string): Promise<void>;
   abort(): void;
   setEffort?(level: string): void;

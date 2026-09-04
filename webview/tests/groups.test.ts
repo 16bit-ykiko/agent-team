@@ -17,9 +17,8 @@ function ws(id: string, cwd: string, lastMessageAt: number, busy = false): Works
     project: cwd.split("/").pop() ?? "",
     hostId: "local",
     cwd,
-    gitBranch: null,
-    prUrl: null,
-    prTitle: null,
+    git: null,
+    pr: null,
     agents: busy
       ? [{ id: "a", name: "A", model: "m", avatar: "x", color: "#fff", isDefault: true, busy }]
       : [],
@@ -79,27 +78,23 @@ describe("isGroupExpanded", () => {
 });
 
 describe("running state includes background subagents", () => {
-  it("marks a group running when a message has a live subagent, even with idle agents", () => {
+  it("marks a group running when an agent is waiting on background work, not when sleeping", () => {
     const w = ws("bg", "/repo/bg", NOW - 1000);
-    w.messages = [
+    w.agents = [
       {
-        id: "m1",
-        kind: "agent",
-        agentId: "a",
-        content: "",
-        timestamp: NOW - 1000,
-        status: "done",
-        events: [
-          {
-            kind: "subagent_start",
-            content: "",
-            subagent: { taskId: "t", description: "", status: "running" },
-          } as StreamEvent,
-        ],
-      } as Message,
+        id: "a",
+        name: "A",
+        model: "m",
+        avatar: "x",
+        color: "#fff",
+        isDefault: true,
+        state: "waiting",
+      },
     ];
     const groups = groupWorkspaces([w]);
     expect(groups[0].running).toBe(true);
+    w.agents = [{ ...w.agents[0], state: "sleeping" }];
+    expect(groupWorkspaces([w])[0].running).toBe(false);
     // Running keeps even a stale group expanded.
     expect(isGroupExpanded({ ...groups[0], lastActive: NOW - STALE_MS - 1 }, {}, NOW)).toBe(true);
   });
