@@ -213,6 +213,10 @@ export class ClaudeSession extends EventEmitter {
   // Last prompt we pushed, to tell a CLI-originated user turn (scheduled
   // wake-up, injected context) from an echo of our own input.
   private lastPushed: string | null = null;
+  // True between pushing a prompt and that turn starting. A turn that starts
+  // without it is CLI-initiated: a scheduled wake-up, a /loop tick, a
+  // background-task notification.
+  private expectingTurn = false;
 
   constructor(config: SessionConfig) {
     super();
@@ -268,6 +272,7 @@ export class ClaudeSession extends EventEmitter {
     // (a session-lifetime dedupe swallowed the second turn's error entirely).
     this.lastRateLimitStatus = null;
     this.lastPushed = message;
+    this.expectingTurn = true;
     const userMsg: SDKUserMessage = {
       type: "user",
       message: { role: "user", content: message },
@@ -317,9 +322,17 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private setProcessing(): void {
-    if (!this.processing) {
-      this.processing = true;
-      this.turnStartTime = Date.now();
+    if (this.processing) return;
+    this.processing = true;
+    this.turnStartTime = Date.now();
+    this.stepCounter = 0;
+    if (!this.expectingTurn) {
+      this.emit("event", {
+        kind: "notice",
+        level: "wakeup",
+        content:
+          "Resumed on its own — a scheduled wake-up or background task notification started this turn.",
+      } as StreamEvent);
     }
   }
 
@@ -407,12 +420,14 @@ export class ClaudeSession extends EventEmitter {
     "control_request",
     "control_response",
     "control_cancel_request",
+    "command_lifecycle",
   ]);
   private static readonly SILENT_SYSTEM_SUBTYPES = new Set([
     "init",
     "background_tasks_changed",
     "task_updated",
     "hook_progress",
+    "thinking_tokens",
   ]);
 
   private reportUnhandled(msg: SDKMessage): void {
@@ -703,7 +718,8 @@ export class ClaudeSession extends EventEmitter {
         const max = sys.max_retries as number;
         const delay = Math.round(((sys.retry_delay_ms as number) ?? 0) / 1000);
         const status = sys.error_status != null ? ` HTTP ${sys.error_status as number}` : "";
-        const reason = sys.error ? ` (${String(sys.error).replace(/_/g, " ")})` : "";
+        const reason =
+          sys.error && sys.error !== "unknown" ? ` (${String(sys.error).replace(/_/g, " ")})` : "";
         this.emit("event", {
           kind: "retry",
           level: "warning",
@@ -861,6 +877,8 @@ export class ClaudeSession extends EventEmitter {
             : "";
       const trimmed = text.trim();
       if (trimmed && trimmed !== this.lastPushed?.trim()) {
+        // Suppress the generic banner: the injected text is the better one.
+        this.expectingTurn = true;
         this.setProcessing();
         this.emit("event", { kind: "notice", level: "wakeup", content: trimmed } as StreamEvent);
       }
@@ -957,6 +975,7 @@ export class ClaudeSession extends EventEmitter {
       this.turnStartTime = 0;
     }
     this.processing = false;
+    this.expectingTurn = false;
     this.pendingNested.clear();
     this.setActivity(null);
   }

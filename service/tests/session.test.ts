@@ -6,6 +6,9 @@ import { ClaudeSession, StreamEvent } from "../src/session";
 // so we can drive it directly with recorded SDK payloads.
 function makeSession() {
   const session = new ClaudeSession({ cwd: "/tmp" });
+  // Tests drive the SDK stream directly; pretend a prompt was pushed so the
+  // first turn is not flagged as self-initiated.
+  (session as unknown as { expectingTurn: boolean }).expectingTurn = true;
   const events: StreamEvent[] = [];
   session.on("event", (e: StreamEvent) => events.push(e));
   const dispatch = (msg: unknown) =>
@@ -546,7 +549,7 @@ describe("CLI banners and activity", () => {
   });
 
   it("tags tool_use events with the tool name", () => {
-    const { events, dispatch } = makeSessionWithChannels();
+    const { events, dispatch } = makeSession();
     dispatch({
       type: "assistant",
       session_id: "sess-1",
@@ -700,5 +703,63 @@ describe("context usage and wake-ups", () => {
     );
     expect(events[1].content).toBe("**ScheduleWakeup** in 1.5h (no change) — quiet");
     expect(events[2].content).toBe("**ScheduleWakeup** stop — loop ended");
+  });
+});
+
+describe("self-initiated turns", () => {
+  const assistantText = (text: string) => ({
+    type: "assistant",
+    session_id: "s",
+    parent_tool_use_id: null,
+    message: { content: [{ type: "text", text }] },
+  });
+
+  it("flags a turn that starts without a pushed prompt as a wake-up", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    const s = session as unknown as {
+      handleSDKMessage(m: unknown): void;
+      expectingTurn: boolean;
+      processing: boolean;
+    };
+    // Our own prompt: pushMessage marks the turn as expected.
+    s.expectingTurn = true;
+    s.processing = true;
+    s.handleSDKMessage(assistantText("scheduled"));
+    s.handleSDKMessage({
+      type: "result",
+      subtype: "success",
+      result: "scheduled",
+      session_id: "s",
+    });
+    // A minute later the CLI starts a turn on its own.
+    s.handleSDKMessage(assistantText("AWAKE"));
+    s.handleSDKMessage({ type: "result", subtype: "success", result: "AWAKE", session_id: "s" });
+
+    expect(events.map((e) => [e.kind, e.level ?? ""])).toEqual([
+      ["text", ""],
+      ["result", ""],
+      ["notice", "wakeup"],
+      ["text", ""],
+      ["result", ""],
+    ]);
+    expect(session.isRunning).toBe(false);
+  });
+
+  it("does not double-flag when the CLI also emits the injected prompt text", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    const s = session as unknown as { handleSDKMessage(m: unknown): void };
+    s.handleSDKMessage({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: { role: "user", content: "wake-up text" },
+    });
+    s.handleSDKMessage(assistantText("AWAKE"));
+    expect(events.filter((e) => e.level === "wakeup")).toHaveLength(1);
+    expect(events[0].content).toBe("wake-up text");
   });
 });
