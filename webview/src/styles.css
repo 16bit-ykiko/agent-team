@@ -2207,6 +2207,16 @@ pre .copy-btn:hover {
   font-family: inherit;
 }
 
+.viewport-info {
+  display: none;
+  padding: 4px 14px calc(6px + env(safe-area-inset-bottom, 0px));
+  font-size: 9.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ---- Scrollbar ---------------------------------------------------------- */
 
 ::-webkit-scrollbar {
@@ -2385,6 +2395,9 @@ pre .copy-btn:hover {
   }
   .ctx-bar {
     display: none;
+  }
+  .viewport-info {
+    display: block;
   }
   .event-row .btn-inline {
     opacity: 1;
