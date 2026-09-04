@@ -230,7 +230,10 @@ export class Server {
             `agent_team_session=${cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`,
           );
           res.statusCode = 302;
-          res.setHeader("Location", "/");
+          // Relative: the app may live under a reverse-proxy prefix, and a
+          // home-screen app that navigates outside its manifest scope gets
+          // Safari's toolbar back.
+          res.setHeader("Location", "./");
           res.end();
         } else {
           res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -440,9 +443,12 @@ export class Server {
           this.handleLogin(req, res);
           return;
         }
-        if (!this.isAuthenticated(req)) {
+        // Install metadata must be fetchable without a session: iOS reads the
+        // manifest and icons when adding to the home screen.
+        const publicAsset = pathname === "/manifest.webmanifest" || pathname.startsWith("/icons/");
+        if (!publicAsset && !this.isAuthenticated(req)) {
           res.statusCode = 302;
-          res.setHeader("Location", "/login");
+          res.setHeader("Location", "login");
           res.end();
           return;
         }
@@ -1460,7 +1466,12 @@ function samePr(a: PrInfo | null, b: PrInfo | null): boolean {
 
 const LOGIN_PAGE = `<!DOCTYPE html>
 <html><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Agents">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>Login — Agent Team</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
