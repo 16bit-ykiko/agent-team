@@ -560,6 +560,18 @@ export class Server {
     return data;
   }
 
+  private cachedBuildId: string | null = null;
+  private buildId(): string {
+    if (this.cachedBuildId) return this.cachedBuildId;
+    try {
+      const html = fs.readFileSync(path.join(this.webDir, "index.html"), "utf-8");
+      this.cachedBuildId = crypto.createHash("sha1").update(html).digest("hex").slice(0, 12);
+    } catch {
+      this.cachedBuildId = String(process.pid);
+    }
+    return this.cachedBuildId;
+  }
+
   private sendJson(ws: WebSocket, msg: unknown): void {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }
@@ -589,6 +601,9 @@ export class Server {
 
     this.sendJson(ws, {
       type: "init",
+      // Identifies the served bundle; a client that reconnects and sees a
+      // different id reloads itself (home-screen apps never reload on their own).
+      buildId: this.buildId(),
       workspaces: [...this.workspaces.values()].map((w) => w.getInfo(false)),
       config: {
         accounts: Object.keys(this.config.accounts),

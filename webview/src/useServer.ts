@@ -228,6 +228,7 @@ export function useServer() {
     dirs: [],
   });
   const wsRef = useRef<WebSocket | null>(null);
+  const buildIdRef = useRef<string | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const pendingEventsRef = useRef<PendingEvent[]>([]);
@@ -245,6 +246,14 @@ export function useServer() {
     (msg: Record<string, unknown>) => {
       switch (msg.type) {
         case "init": {
+          const buildId = msg.buildId as string | undefined;
+          if (buildId && buildIdRef.current && buildIdRef.current !== buildId) {
+            // The server was redeployed while we were connected; pick up the
+            // new bundle instead of running stale code against it.
+            window.location.reload();
+            return;
+          }
+          if (buildId) buildIdRef.current = buildId;
           const incoming = msg.workspaces as Workspace[];
           setWorkspaces((prev) => {
             if (prev.length === 0) return incoming;

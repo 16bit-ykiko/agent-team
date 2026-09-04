@@ -48,11 +48,13 @@ body {
      page out from under us. */
   position: fixed;
   top: var(--app-offset, 0px);
+  bottom: 0;
   left: 0;
   width: 100%;
-  height: 100vh;
-  height: 100dvh;
-  height: var(--app-height, 100dvh);
+  /* top+bottom pin the body to the viewport regardless of what vh/dvh
+     report (standalone iOS is unreliable); the explicit height only applies
+     while the keyboard is up. */
+  height: var(--app-height, auto);
   overflow: hidden;
 }
 
