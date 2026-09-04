@@ -2391,7 +2391,8 @@ pre .copy-btn:hover {
   /* Composer: one rounded pill, icon-only round buttons (Discord-style). */
   .input-area {
     flex-shrink: 0;
-    padding: 6px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+    /* The home indicator needs the inset; on top of it a few px is enough. */
+    padding: 6px 10px calc(4px + env(safe-area-inset-bottom, 0px));
     border-top: none;
   }
   .input-row {

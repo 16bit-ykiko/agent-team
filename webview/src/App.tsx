@@ -11,6 +11,7 @@ import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs"
 import { Sidebar } from "./Sidebar";
 import { GitBar } from "./GitBar";
 import { HistoryHint } from "./HistoryHint";
+import { viewportVars } from "./viewport";
 
 // Re-exported for tests and for anyone importing the old single-file layout.
 export { GitBar } from "./GitBar";
@@ -137,8 +138,11 @@ export function App() {
       // — that fights the browser's own scroll-into-view and pushes the
       // composer back under the keyboard.)
       const el = document.documentElement;
-      el.style.setProperty("--app-height", `${vv.height}px`);
-      el.style.setProperty("--app-offset", `${vv.offsetTop}px`);
+      const vars = viewportVars(vv.height, vv.offsetTop, window.innerHeight);
+      if (vars.height) el.style.setProperty("--app-height", vars.height);
+      else el.style.removeProperty("--app-height");
+      if (vars.offset) el.style.setProperty("--app-offset", vars.offset);
+      else el.style.removeProperty("--app-offset");
       if (document.activeElement === textareaRef.current && messagesContainerRef.current) {
         messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
       }
