@@ -107,9 +107,22 @@ function resultLabel(len: number): string {
   return len > 1000 ? `${Math.round(len / 1000)}k chars` : `${len} chars`;
 }
 
-export const EventItem = memo(function EventItem({ ev }: { ev: StreamEvent }) {
+function formatSize(len: number): string {
+  return len > 1000 ? `${(len / 1000).toFixed(len < 10000 ? 1 : 0)}k chars` : `${len} chars`;
+}
+
+export const EventItem = memo(function EventItem({
+  ev,
+  onLoadDetails,
+}: {
+  ev: StreamEvent;
+  // Set while the message is a summary: called on first expand so the
+  // bodies get fetched.
+  onLoadDetails?: () => void;
+}) {
   const [resultOpen, setResultOpen] = useState(false);
   const [bodyOpen, setBodyOpen] = useState(false);
+  const summarized = !!onLoadDetails;
 
   if (ev.kind === "compact" || ev.kind === "notice" || ev.kind === "retry") {
     return <BannerItem ev={ev} />;
@@ -117,17 +130,32 @@ export const EventItem = memo(function EventItem({ ev }: { ev: StreamEvent }) {
 
   const isResult = ev.kind === "tool_result";
   const isToolUse = ev.kind === "tool_use";
-  const hasResult = isToolUse && ev.toolResult != null;
   const toolName = isToolUse ? toolNameOf(ev) : null;
   const summary = isToolUse ? toolSummary(ev) : "";
   const label = toolName ? chipLabelFor(toolName) : (KIND_LABEL[ev.kind] ?? ev.kind);
   const chipClass = chipClassFor(toolName, ev.kind);
   // Multi-line tool calls (Bash commands, edits) always show their body;
   // single-line ones (Read, Grep) get a summary and an optional details toggle.
-  const multiLine = isToolUse && ev.content.includes("\n");
+  const bodyLen = ev.bodyLength ?? ev.content.length;
+  const multiLine = isToolUse && (ev.content.includes("\n") || bodyLen > ev.content.length);
   const showBodyByDefault = isToolUse && (multiLine || !summary);
-  const hasHiddenBody = isToolUse && !showBodyByDefault && ev.content.length > summary.length + 16;
-  const resultLen = isResult ? ev.content.length : (ev.toolResult?.length ?? 0);
+  const hasHiddenBody = isToolUse && !showBodyByDefault && bodyLen > summary.length + 16;
+  const resultLen = isResult
+    ? (ev.contentLength ?? ev.content.length)
+    : (ev.resultLength ?? ev.toolResult?.length ?? 0);
+  const hasResult = isToolUse && (ev.toolResult != null || ev.resultLength != null);
+  // A summarised body renders as a placeholder until the details arrive.
+  const bodyMissing = summarized && !isToolUse && !ev.content && (ev.contentLength ?? 0) > 0;
+  const toolBodyMissing =
+    summarized && isToolUse && showBodyByDefault && bodyLen > ev.content.length;
+  const toggleResult = () => {
+    if (summarized) onLoadDetails?.();
+    setResultOpen((v) => !v);
+  };
+  const toggleBody = () => {
+    if (summarized) onLoadDetails?.();
+    setBodyOpen((v) => !v);
+  };
 
   return (
     <div className={`event event-${ev.kind}`}>
@@ -139,18 +167,24 @@ export const EventItem = memo(function EventItem({ ev }: { ev: StreamEvent }) {
           </span>
         )}
         {hasHiddenBody && (
-          <button className="btn-inline" onClick={() => setBodyOpen((v) => !v)}>
+          <button className="btn-inline" onClick={toggleBody}>
             {bodyOpen ? "Hide" : "Details"}
           </button>
         )}
         {(isResult || hasResult) && (
-          <button className="btn-inline btn-diff" onClick={() => setResultOpen((v) => !v)}>
+          <button className="btn-inline btn-diff" onClick={toggleResult}>
             {resultOpen ? "Hide result" : "Result"} · {resultLabel(resultLen)}
           </button>
         )}
       </div>
+      {(bodyMissing || (toolBodyMissing && !bodyOpen)) && (
+        <div className="event-content event-placeholder" onClick={toggleBody}>
+          {formatSize(bodyMissing ? (ev.contentLength ?? 0) : bodyLen)} · tap to load
+        </div>
+      )}
       {isResult ? (
-        resultOpen && (
+        resultOpen &&
+        ev.content && (
           <div className="event-content event-result">
             {ev.isMarkdown ? (
               <MdBlock>{ev.content}</MdBlock>
@@ -163,12 +197,12 @@ export const EventItem = memo(function EventItem({ ev }: { ev: StreamEvent }) {
         )
       ) : (
         <>
-          {(!isToolUse || showBodyByDefault || bodyOpen) && (
+          {!bodyMissing && !toolBodyMissing && (!isToolUse || showBodyByDefault || bodyOpen) && (
             <div className="event-content">
               <MdBlock>{ev.content}</MdBlock>
             </div>
           )}
-          {hasResult && resultOpen && (
+          {hasResult && resultOpen && ev.toolResult != null && (
             <div className="event-content event-result">
               {ev.toolResultIsMarkdown ? (
                 <MdBlock>{ev.toolResult!}</MdBlock>
@@ -189,10 +223,12 @@ export const SubAgentItem = memo(function SubAgentItem({
   ev,
   onLoadEvents,
   onCancel,
+  onLoadDetails,
 }: {
   ev: StreamEvent;
   onLoadEvents?: (taskId: string) => void;
   onCancel?: (taskId: string) => void;
+  onLoadDetails?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const sa = ev.subagent;
@@ -227,6 +263,7 @@ export const SubAgentItem = memo(function SubAgentItem({
   const handleToggle = () => {
     const willOpen = !open;
     setOpen(willOpen);
+    if (willOpen && onLoadDetails) onLoadDetails();
     if (willOpen && needsLoad && onLoadEvents && sa.taskId) {
       onLoadEvents(sa.taskId);
     }
@@ -282,13 +319,15 @@ export const SubAgentItem = memo(function SubAgentItem({
               <MdBlock>{sa.prompt}</MdBlock>
             </div>
           )}
-          {needsLoad && <div className="subagent-loading">Loading events...</div>}
+          {(needsLoad || (!sa.prompt && sa.hasPrompt) || (!sa.summary && sa.summaryLength)) && (
+            <div className="subagent-loading">Loading…</div>
+          )}
           {(innerEvents.length > 0 || banners.length > 0) && (
             <div className="subagent-events">
               {allInner
                 .filter((e) => !e.subagent)
                 .map((ie, i) => (
-                  <EventItem key={i} ev={ie} />
+                  <EventItem key={i} ev={ie} onLoadDetails={onLoadDetails} />
                 ))}
             </div>
           )}
@@ -298,6 +337,7 @@ export const SubAgentItem = memo(function SubAgentItem({
               ev={ne}
               onLoadEvents={onLoadEvents}
               onCancel={onCancel}
+              onLoadDetails={onLoadDetails}
             />
           ))}
           {sa.summary && (
@@ -340,14 +380,20 @@ export function StepGroup({
   group,
   onLoadEvents,
   onCancelSubagent,
+  onLoadDetails,
   defaultOpen = false,
 }: {
   group: { step: number; events: StreamEvent[] };
   onLoadEvents?: (taskId: string) => void;
   onCancelSubagent?: (taskId: string) => void;
+  onLoadDetails?: () => void;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const toggle = () => {
+    if (!open) onLoadDetails?.();
+    setOpen((v) => !v);
+  };
   const { regular: regularEvents, subagents, banners } = splitEvents(group.events);
   const tools = stepTools(regularEvents);
 
@@ -357,7 +403,7 @@ export function StepGroup({
     <>
       {regularEvents.length > 0 && (
         <div className={`step-group${open ? " open" : ""}`}>
-          <div className="step-header" onClick={() => setOpen((v) => !v)}>
+          <div className="step-header" onClick={toggle}>
             <span className="events-toggle">{open ? "▾" : "▸"}</span>
             <span className="step-summary">{stepSummary(regularEvents)}</span>
             {!open && tools.length > 0 && (
@@ -374,7 +420,7 @@ export function StepGroup({
           {open && (
             <div className="events-list">
               {regularEvents.map((ev, i) => (
-                <EventItem key={i} ev={ev} />
+                <EventItem key={i} ev={ev} onLoadDetails={onLoadDetails} />
               ))}
             </div>
           )}
@@ -389,6 +435,7 @@ export function StepGroup({
           ev={ev}
           onLoadEvents={onLoadEvents}
           onCancel={onCancelSubagent}
+          onLoadDetails={onLoadDetails}
         />
       ))}
     </>
@@ -404,6 +451,7 @@ export const MessageItem = memo(function MessageItem({
   onLoadSubagentEvents,
   onCancelSubagent,
   onCancelQueued,
+  onLoadDetails,
 }: {
   msg: Message;
   agents: AgentInfo[];
@@ -413,10 +461,18 @@ export const MessageItem = memo(function MessageItem({
   onLoadSubagentEvents?: (messageId: string, taskId: string) => void;
   onCancelSubagent?: (agentId: string, taskId: string) => void;
   onCancelQueued?: (messageId: string) => void;
+  onLoadDetails?: (messageId: string) => void;
 }) {
   const handleLoadEvents = useCallback(
     (taskId: string) => onLoadSubagentEvents?.(msg.id, taskId),
     [msg.id, onLoadSubagentEvents],
+  );
+  // Only wired while the message is a summary; once details arrive the
+  // prop becomes undefined and the items render their bodies directly.
+  const summarized = msg.detail === "summary";
+  const handleLoadDetails = useMemo(
+    () => (summarized && onLoadDetails ? () => onLoadDetails(msg.id) : undefined),
+    [summarized, onLoadDetails, msg.id],
   );
   const agentId = msg.agentId;
   const handleCancelSubagent = useMemo(
@@ -592,6 +648,7 @@ export const MessageItem = memo(function MessageItem({
                     group={{ step: si, events: seg.events }}
                     onLoadEvents={handleLoadEvents}
                     onCancelSubagent={handleCancelSubagent}
+                    onLoadDetails={handleLoadDetails}
                   />
                 )}
               </div>
@@ -609,6 +666,7 @@ export const MessageItem = memo(function MessageItem({
                         group={{ step: 0, events: regEvts }}
                         onLoadEvents={handleLoadEvents}
                         onCancelSubagent={handleCancelSubagent}
+                        onLoadDetails={handleLoadDetails}
                       />
                     )}
                     {banners.map((ev, i) => (
@@ -620,6 +678,7 @@ export const MessageItem = memo(function MessageItem({
                         ev={ev}
                         onLoadEvents={handleLoadEvents}
                         onCancel={handleCancelSubagent}
+                        onLoadDetails={handleLoadDetails}
                       />
                     ))}
                   </>

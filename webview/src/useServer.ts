@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { MOCK_WORKSPACES, MOCK_SYSTEM_STATUS, MOCK_PRESETS, MOCK_MODELS } from "./mockData";
-import { applyStreamBatch, PendingEvent } from "./stream";
+import { applyStreamBatch, mergeDetailEvents, PendingEvent } from "./stream";
 
 export interface ToolInput {
   tool: string;
@@ -20,6 +20,8 @@ export interface SubAgentInfo {
   summary?: string;
   eventCount?: number;
   events?: StreamEvent[];
+  hasPrompt?: boolean;
+  summaryLength?: number;
 }
 
 export type NoticeLevel = "info" | "notice" | "warning" | "error" | "schedule" | "wakeup";
@@ -60,6 +62,10 @@ export interface StreamEvent {
   toolResult?: string;
   toolResultIsMarkdown?: boolean;
   subagent?: SubAgentInfo;
+  // Present on summary pages instead of the bodies.
+  contentLength?: number;
+  bodyLength?: number;
+  resultLength?: number;
 }
 
 export interface MessageImage {
@@ -88,6 +94,8 @@ export interface Message {
   queuedFor?: string;
   effort?: string;
   context?: ContextUsage;
+  // History pages arrive as summaries; full events load on first expand.
+  detail?: "summary";
 }
 
 export interface AgentInfo {
@@ -133,6 +141,8 @@ export interface Workspace {
   archivedAt?: number | null;
   hasMore?: boolean;
   messagesLoaded?: boolean;
+  // An older page has been requested and not yet arrived.
+  loadingOlder?: boolean;
 }
 
 export interface QuotaWindow {
@@ -290,11 +300,17 @@ export function useServer() {
             prev.map((w) => {
               if (w.id !== wsId) return w;
               if (!w.messagesLoaded) {
-                return { ...w, messages: incoming, hasMore, messagesLoaded: true };
+                return {
+                  ...w,
+                  messages: incoming,
+                  hasMore,
+                  messagesLoaded: true,
+                  loadingOlder: false,
+                };
               }
               const existingIds = new Set(w.messages.map((m) => m.id));
               const newMsgs = incoming.filter((m) => !existingIds.has(m.id));
-              return { ...w, messages: [...newMsgs, ...w.messages], hasMore };
+              return { ...w, messages: [...newMsgs, ...w.messages], hasMore, loadingOlder: false };
             }),
           );
           break;
@@ -386,22 +402,7 @@ export function useServer() {
                 ...w,
                 messages: w.messages.map((m) => {
                   if (m.id !== messageId) return m;
-                  let merged = events;
-                  if (events && m.events) {
-                    merged = events.map((serverEv) => {
-                      if (!serverEv.subagent?.taskId) return serverEv;
-                      const clientEv = m.events!.find(
-                        (e) => e.subagent?.taskId === serverEv.subagent!.taskId,
-                      );
-                      if (clientEv?.subagent?.events?.length) {
-                        return {
-                          ...serverEv,
-                          subagent: { ...serverEv.subagent, events: clientEv.subagent.events },
-                        };
-                      }
-                      return serverEv;
-                    });
-                  }
+                  const merged = events ? mergeDetailEvents(m.events, events) : undefined;
                   return {
                     ...m,
                     status,
@@ -483,6 +484,26 @@ export function useServer() {
           const wsId = msg.workspaceId as string;
           setWorkspaces((prev) =>
             prev.map((w) => (w.id === wsId ? { ...w, archivedAt: null } : w)),
+          );
+          break;
+        }
+
+        case "message_details": {
+          const wsId = msg.workspaceId as string;
+          const messageId = msg.messageId as string;
+          const events = msg.events as StreamEvent[];
+          setWorkspaces((prev) =>
+            prev.map((w) => {
+              if (w.id !== wsId) return w;
+              return {
+                ...w,
+                messages: w.messages.map((m) =>
+                  m.id === messageId
+                    ? { ...m, events: mergeDetailEvents(m.events, events), detail: undefined }
+                    : m,
+                ),
+              };
+            }),
           );
           break;
         }
@@ -647,8 +668,21 @@ export function useServer() {
     lastError,
     clearError: useCallback(() => setLastError(null), []),
     loadMessages: useCallback(
-      (wsId: string, before?: number) =>
-        send({ type: "load_messages", workspaceId: wsId, before, limit: 50 }),
+      (wsId: string, before?: number) => {
+        // Small screens get smaller first pages; scrolling back fetches more.
+        const limit = before ? 50 : window.innerWidth < 768 ? 25 : 50;
+        if (before) {
+          setWorkspaces((prev) =>
+            prev.map((w) => (w.id === wsId ? { ...w, loadingOlder: true } : w)),
+          );
+        }
+        send({ type: "load_messages", workspaceId: wsId, before, limit });
+      },
+      [send],
+    ),
+    loadMessageDetails: useCallback(
+      (wsId: string, messageId: string) =>
+        send({ type: "load_message_details", workspaceId: wsId, messageId }),
       [send],
     ),
     loadSubagentEvents: useCallback(

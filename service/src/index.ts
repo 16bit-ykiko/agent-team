@@ -23,6 +23,8 @@ import { CommandInfo, StreamEvent } from "./session";
 import { gitStatus, getPrInfo, GitInfo, PrInfo } from "./git";
 import { completeDirs, resolveWorkspacePath } from "./dirs";
 import { searchMessages } from "./search";
+import { summarizeMessages } from "./summary";
+import * as zlib from "zlib";
 import { HostRegistry, LocalHost } from "./host";
 import type { Message } from "./task";
 
@@ -127,6 +129,9 @@ export class Server {
     this.wss = new WebSocketServer({
       server: this.httpServer,
       verifyClient: (info: { req: http.IncomingMessage }) => this.isAuthenticated(info.req),
+      // History pages and stream events are highly repetitive JSON; deflate
+      // cuts them several-fold, which matters most on mobile links.
+      perMessageDeflate: { threshold: 1024 },
     });
     this.wss.on("connection", (ws) => this.onConnect(ws));
 
@@ -508,11 +513,51 @@ export class Server {
       }
       const ext = path.extname(target);
       res.setHeader("Content-Type", MIME[ext] ?? "application/octet-stream");
+      if (ext === ".js" || ext === ".css") {
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      }
+      const gz = this.gzipped(target, ext, req.headers["accept-encoding"]);
+      if (gz) {
+        res.setHeader("Content-Encoding", "gzip");
+        res.setHeader("Vary", "Accept-Encoding");
+        res.end(gz);
+        return;
+      }
       fs.createReadStream(target).pipe(res);
     } catch (e) {
       res.statusCode = 500;
       res.end(String(e));
     }
+  }
+
+  // Pre-compressed static assets (the JS bundle is ~600 KB raw; gzip is
+  // roughly a quarter of that). Cached by path + mtime.
+  private gzipCache = new Map<string, { mtimeMs: number; data: Buffer }>();
+  private static readonly GZIP_EXTS = new Set([
+    ".js",
+    ".css",
+    ".html",
+    ".json",
+    ".svg",
+    ".webmanifest",
+  ]);
+
+  private gzipped(
+    file: string,
+    ext: string,
+    acceptEncoding: string | string[] | undefined,
+  ): Buffer | null {
+    if (!Server.GZIP_EXTS.has(ext)) return null;
+    const accept = Array.isArray(acceptEncoding)
+      ? acceptEncoding.join(",")
+      : (acceptEncoding ?? "");
+    if (!/\bgzip\b/.test(accept)) return null;
+    const mtimeMs = fs.statSync(file).mtimeMs;
+    const cached = this.gzipCache.get(file);
+    if (cached && cached.mtimeMs === mtimeMs) return cached.data;
+    const data = zlib.gzipSync(fs.readFileSync(file), { level: 6 });
+    this.gzipCache.set(file, { mtimeMs, data });
+    return data;
   }
 
   private sendJson(ws: WebSocket, msg: unknown): void {
@@ -573,10 +618,25 @@ export class Server {
           this.sendJson(ws, {
             type: "workspace_messages",
             workspaceId: workspace.id,
-            messages: stripMessageSubagentEvents(page),
+            messages: summarizeMessages(page),
             hasMore: filtered.length > limit,
           });
         }
+        return;
+      }
+
+      case "load_message_details": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        if (!workspace) return;
+        this.ensureLoaded(workspace);
+        const message = workspace.getMessages().find((m) => m.id === msg.messageId);
+        if (!message) return;
+        this.sendJson(ws, {
+          type: "message_details",
+          workspaceId: workspace.id,
+          messageId: message.id,
+          events: stripEventsInnerEvents(message.events ?? []),
+        });
         return;
       }
 

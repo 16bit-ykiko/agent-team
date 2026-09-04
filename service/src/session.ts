@@ -66,6 +66,10 @@ export interface StreamEvent {
   toolResult?: string;
   toolResultIsMarkdown?: boolean;
   subagent?: SubAgentInfo;
+  // Summary-page fields (see summary.ts): sizes of bodies not included.
+  contentLength?: number;
+  bodyLength?: number;
+  resultLength?: number;
 }
 
 // What an agent is doing from the user's point of view. "waiting" = the
@@ -90,6 +94,8 @@ export interface SubAgentInfo {
   summary?: string;
   eventCount?: number;
   events?: StreamEvent[];
+  hasPrompt?: boolean;
+  summaryLength?: number;
   _innerEvent?: StreamEvent;
 }
 

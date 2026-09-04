@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { applyEventsToMessage, applyStreamBatch, toolNameOf, toolSummary } from "../src/stream";
+import {
+  applyEventsToMessage,
+  applyStreamBatch,
+  mergeDetailEvents,
+  toolNameOf,
+  toolSummary,
+} from "../src/stream";
 import { Message, StreamEvent } from "../src/useServer";
 
 const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent =>
@@ -113,5 +119,24 @@ describe("tool name helpers", () => {
   it("summarises single-line tool calls without the name or backticks", () => {
     expect(toolSummary(ev("tool_use", { content: "**Read** `src/a.ts`" }))).toBe("src/a.ts");
     expect(toolSummary(ev("tool_use", { content: "**Bash**\n```bash\nls\n```" }))).toBe("");
+  });
+});
+
+describe("mergeDetailEvents", () => {
+  it("takes the server events but keeps client-loaded subagent transcripts", () => {
+    const client = [
+      ev("subagent_start", {
+        subagent: { taskId: "t", description: "", events: [ev("tool_use")] },
+      }),
+    ];
+    const server = [
+      ev("thinking", { content: "full body" }),
+      ev("subagent_start", { subagent: { taskId: "t", description: "d", eventCount: 1 } }),
+    ];
+    const merged = mergeDetailEvents(client, server);
+    expect(merged[0].content).toBe("full body");
+    expect(merged[1].subagent!.events).toHaveLength(1);
+    expect(merged[1].subagent!.description).toBe("d");
+    expect(mergeDetailEvents(undefined, server)).toBe(server);
   });
 });

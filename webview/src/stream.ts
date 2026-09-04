@@ -162,6 +162,23 @@ export function applyStreamBatch<W extends { id: string; messages: Message[] }>(
   });
 }
 
+// Replace a message's events with the server's full copy while keeping any
+// subagent transcripts the client already loaded (the server strips those).
+export function mergeDetailEvents(
+  clientEvents: StreamEvent[] | undefined,
+  serverEvents: StreamEvent[],
+): StreamEvent[] {
+  if (!clientEvents?.length) return serverEvents;
+  return serverEvents.map((serverEv) => {
+    if (!serverEv.subagent?.taskId) return serverEv;
+    const clientEv = clientEvents.find((e) => e.subagent?.taskId === serverEv.subagent!.taskId);
+    if (clientEv?.subagent?.events?.length) {
+      return { ...serverEv, subagent: { ...serverEv.subagent, events: clientEv.subagent.events } };
+    }
+    return serverEv;
+  });
+}
+
 // Tool name of a tool_use event. New servers tag it explicitly; older
 // persisted events only carry the "**Name** ..." markdown prefix.
 export function toolNameOf(ev: StreamEvent): string | null {

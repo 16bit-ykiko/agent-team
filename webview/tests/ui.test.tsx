@@ -476,3 +476,89 @@ describe("GitBar", () => {
     expect(container.innerHTML).toBe("");
   });
 });
+
+describe("summary pages and lazy details", () => {
+  it("renders a summarised thinking event as a placeholder that requests details", () => {
+    const onLoad = vi.fn();
+    const { container, getByText } = render(
+      <EventItem
+        ev={ev("thinking", { content: "", contentLength: 4200 })}
+        onLoadDetails={onLoad}
+      />,
+    );
+    expect(container.querySelector(".event-placeholder")!.textContent).toContain("4.2k chars");
+    fireEvent.click(getByText(/tap to load/));
+    expect(onLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the result size from the summary and loads on toggle", () => {
+    const onLoad = vi.fn();
+    const { getByText, container } = render(
+      <EventItem
+        ev={ev("tool_use", { toolName: "Read", content: "**Read** `a`", resultLength: 12000 })}
+        onLoadDetails={onLoad}
+      />,
+    );
+    fireEvent.click(getByText(/^Result · 12k chars/));
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    // Nothing to show yet; no empty result box.
+    expect(container.querySelector(".event-result")).toBeNull();
+  });
+
+  it("requests details when a step group of a summarised message is opened", () => {
+    const onLoadDetails = vi.fn();
+    const msg: Message = {
+      id: "m1",
+      kind: "agent",
+      agentId: "a1",
+      content: "",
+      timestamp: 0,
+      status: "done",
+      detail: "summary",
+      events: [ev("thinking", { content: "", contentLength: 10 })],
+    };
+    const { container } = render(
+      <MessageItem msg={msg} agents={[agent]} onLoadDetails={onLoadDetails} />,
+    );
+    fireEvent.click(container.querySelector(".step-header")!);
+    expect(onLoadDetails).toHaveBeenCalledWith("m1");
+  });
+
+  it("does not request details once the message is full", () => {
+    const onLoadDetails = vi.fn();
+    const msg: Message = {
+      id: "m1",
+      kind: "agent",
+      agentId: "a1",
+      content: "",
+      timestamp: 0,
+      status: "done",
+      events: [ev("thinking", { content: "body" })],
+    };
+    const { container } = render(
+      <MessageItem msg={msg} agents={[agent]} onLoadDetails={onLoadDetails} />,
+    );
+    fireEvent.click(container.querySelector(".step-header")!);
+    expect(onLoadDetails).not.toHaveBeenCalled();
+    expect(container.querySelector(".event-content")!.textContent).toContain("body");
+  });
+});
+
+describe("HistoryHint", () => {
+  it("walks through loading, older-available, and start-of-conversation", async () => {
+    const { HistoryHint } = await import("../src/HistoryHint");
+    const { container, rerender } = render(
+      <HistoryHint hasMore={false} loading={false} loaded={false} count={0} />,
+    );
+    expect(container.textContent).toContain("Loading conversation");
+    rerender(<HistoryHint hasMore loading loaded count={5} />);
+    expect(container.textContent).toContain("Loading older messages");
+    expect(container.querySelector(".spinner")).toBeTruthy();
+    rerender(<HistoryHint hasMore loading={false} loaded count={5} />);
+    expect(container.textContent).toContain("Scroll up");
+    rerender(<HistoryHint hasMore={false} loading={false} loaded count={5} />);
+    expect(container.textContent).toContain("Beginning of conversation");
+    rerender(<HistoryHint hasMore={false} loading={false} loaded count={0} />);
+    expect(container.innerHTML).toBe("");
+  });
+});

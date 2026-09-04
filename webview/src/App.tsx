@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useServer, Message } from "./useServer";
 import { groupWorkspaces } from "./groups";
 import { agentQueues, agentState, isAgentActive, stateLabel } from "./agents";
@@ -10,6 +10,7 @@ import { MessageItem } from "./messages";
 import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs";
 import { Sidebar } from "./Sidebar";
 import { GitBar } from "./GitBar";
+import { HistoryHint } from "./HistoryHint";
 
 // Re-exported for tests and for anyone importing the old single-file layout.
 export { GitBar } from "./GitBar";
@@ -94,6 +95,7 @@ export function App() {
     abort,
     clearContext,
     loadMessages,
+    loadMessageDetails,
     loadSubagentEvents,
     cancelSubagent,
     cancelQueued,
@@ -371,21 +373,37 @@ export function App() {
     });
   }, [activeWsId, connected, loadMessages]);
 
-  const loadingMoreRef = useRef(false);
+  // Prepending a page changes scrollHeight; Safari has no overflow-anchor,
+  // so remember where we were and restore it once the page is in the DOM.
+  const anchorRef = useRef<{ wsId: string; firstId: string; height: number; top: number } | null>(
+    null,
+  );
   const onMessagesScroll = useCallback(() => {
     const el = messagesContainerRef.current;
-    if (!el || !activeWs || loadingMoreRef.current) return;
+    if (!el || !activeWs || activeWs.loadingOlder) return;
     if (el.scrollTop < 80 && activeWs.hasMore) {
       const oldest = activeWs.messages[0];
       if (oldest) {
-        loadingMoreRef.current = true;
+        anchorRef.current = {
+          wsId: activeWs.id,
+          firstId: oldest.id,
+          height: el.scrollHeight,
+          top: el.scrollTop,
+        };
         loadMessages(activeWs.id, oldest.timestamp);
-        setTimeout(() => {
-          loadingMoreRef.current = false;
-        }, 500);
       }
     }
   }, [activeWs, loadMessages]);
+
+  const firstMsgId = activeWs?.messages[0]?.id;
+  useLayoutEffect(() => {
+    const a = anchorRef.current;
+    const el = messagesContainerRef.current;
+    if (!a || !el || !activeWs || a.wsId !== activeWs.id) return;
+    if (firstMsgId === a.firstId) return;
+    anchorRef.current = null;
+    el.scrollTop = a.top + (el.scrollHeight - a.height);
+  }, [firstMsgId, activeWs]);
 
   const prevMsgCountRef = useRef(0);
   const userScrolledUpRef = useRef(false);
@@ -793,6 +811,9 @@ export function App() {
               {(() => {
                 const msgs = activeWs.messages;
                 const total = msgs.length;
+                if (!activeWs.messagesLoaded) {
+                  return <HistoryHint hasMore={false} loading={false} loaded={false} count={0} />;
+                }
                 if (total === 0) {
                   return (
                     <div className="empty-state">
@@ -804,9 +825,12 @@ export function App() {
                 }
                 return (
                   <>
-                    {activeWs.hasMore && (
-                      <div className="load-more-hint">Scroll up to load more</div>
-                    )}
+                    <HistoryHint
+                      hasMore={!!activeWs.hasMore}
+                      loading={!!activeWs.loadingOlder}
+                      loaded
+                      count={total}
+                    />
                     {msgs.map((msg, i) => {
                       const prev = i > 0 ? msgs[i - 1] : null;
                       const compact =
@@ -830,6 +854,7 @@ export function App() {
                             cancelSubagent(activeWs.id, agentId, taskId)
                           }
                           onCancelQueued={(messageId) => cancelQueued(activeWs.id, messageId)}
+                          onLoadDetails={(messageId) => loadMessageDetails(activeWs.id, messageId)}
                         />
                       );
                     })}

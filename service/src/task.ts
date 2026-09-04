@@ -44,6 +44,9 @@ export interface Message {
   // occupancy reported when it finished.
   effort?: string;
   context?: ContextUsage;
+  // "summary" when the events carry only chips/counts (history pages); the
+  // full events arrive via load_message_details.
+  detail?: "summary";
 }
 
 export interface AgentInfo {
