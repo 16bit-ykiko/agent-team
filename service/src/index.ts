@@ -1223,7 +1223,7 @@ systemctl --user restart agent-team-server
           event,
         });
       },
-      onMessageDone: (wsId, msgId, status, content, events) => {
+      onMessageDone: (wsId, msgId, status, content, events, patch) => {
         this.broadcastUI({
           type: "message_done",
           workspaceId: wsId,
@@ -1231,6 +1231,7 @@ systemctl --user restart agent-team-server
           status,
           content,
           events: events ? stripEventsInnerEvents(events) : undefined,
+          ...patch,
         });
         this.persistWorkspace(wsId);
       },

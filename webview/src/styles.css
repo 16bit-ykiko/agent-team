@@ -704,14 +704,6 @@ button {
 .agent-status-label.agent-status-offline {
   color: var(--error);
 }
-.agent-effort {
-  font-size: 10px;
-  color: var(--purple);
-  background: rgba(198, 120, 221, 0.12);
-  border-radius: 8px;
-  padding: 0 5px;
-  line-height: 14px;
-}
 .agent-account {
   font-size: 10px;
   color: var(--warning);
@@ -905,11 +897,60 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.compact-status {
+.compact-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+  min-height: 14px;
+}
+
+/* Effort + context occupancy under the message header. */
+.message-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 1px 0 5px;
+}
+.status-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 2px;
+  font-size: 10.5px;
+  line-height: 16px;
+  padding: 0 7px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.ctx-bar {
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.ctx-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+.ctx-warn {
+  color: var(--warning);
+}
+.ctx-warn .ctx-bar-fill {
+  background: var(--warning);
+}
+.ctx-high {
+  color: var(--error);
+}
+.ctx-high .ctx-bar-fill {
+  background: var(--error);
 }
 .working-indicator {
   color: var(--text-muted);
@@ -1178,6 +1219,11 @@ pre .copy-btn:hover {
 .chip-text {
   color: var(--text-secondary);
 }
+.chip-schedule {
+  color: var(--purple);
+  background: rgba(198, 120, 221, 0.12);
+  border-color: transparent;
+}
 .event-summary {
   min-width: 0;
   overflow: hidden;
@@ -1312,6 +1358,27 @@ pre .copy-btn:hover {
 }
 .banner-info {
   opacity: 0.75;
+}
+.banner-wakeup {
+  color: var(--text-primary);
+  border-color: rgba(198, 120, 221, 0.35);
+  background: rgba(198, 120, 221, 0.06);
+}
+.banner-wakeup .banner-icon {
+  background: transparent;
+  font-size: 12px;
+}
+.banner-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--purple);
+  margin-right: 8px;
+}
+.banner-wakeup .banner-text p {
+  display: inline;
 }
 
 /* ---- Subagents ---------------------------------------------------------- */
@@ -2148,5 +2215,8 @@ pre .copy-btn:hover {
   }
   .event-row .btn-inline {
     opacity: 1;
+  }
+  .ctx-bar {
+    display: none;
   }
 }

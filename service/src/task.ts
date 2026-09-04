@@ -1,4 +1,4 @@
-import { SessionConfig, StreamEvent, SessionState, CommandInfo } from "./session";
+import { SessionConfig, StreamEvent, SessionState, CommandInfo, ContextUsage } from "./session";
 import { HostSessionHandle, HostRegistry } from "./host";
 import { effortLevelsForModel } from "./presets";
 
@@ -32,6 +32,10 @@ export interface Message {
   // prompt to dispatch (kept on the message so queues survive restarts).
   queuedFor?: string;
   queuedPrompt?: string;
+  // Agent replies: reasoning effort the turn ran with, and the context
+  // occupancy reported when it finished.
+  effort?: string;
+  context?: ContextUsage;
 }
 
 export interface AgentInfo {
@@ -111,6 +115,7 @@ export interface WorkspaceCallbacks {
     status: MessageStatus,
     content: string,
     events?: StreamEvent[],
+    patch?: Partial<Pick<Message, "context">>,
   ) => void;
   onAgentBusy?: (wsId: string, agentId: string) => void;
   onAgentIdle?: (wsId: string, agentId: string) => void;
@@ -217,6 +222,7 @@ export class Workspace {
   }
 
   private makeAgentMsg(agentId: string): Message {
+    const effort = this.agents.get(agentId)?.session.getState().config.effort;
     return {
       id: genId("msg"),
       kind: "agent",
@@ -226,6 +232,7 @@ export class Workspace {
       status: "streaming",
       events: [],
       turnId: genId("turn"),
+      ...(effort && { effort }),
     };
   }
 
@@ -377,12 +384,14 @@ export class Workspace {
               "*(no output — the session ended without producing anything; check network/credentials or server logs)*";
           }
           entry.currentMsg.status = "done";
+          if (event.context) entry.currentMsg.context = event.context;
           this.cb?.onMessageDone(
             this.id,
             entry.currentMsg.id,
             "done",
             entry.currentMsg.content,
             entry.currentMsg.events,
+            event.context ? { context: event.context } : undefined,
           );
         }
         entry.currentMsg = null;

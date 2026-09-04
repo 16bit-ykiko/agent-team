@@ -531,3 +531,31 @@ describe("effort on the wire", () => {
     expect(ws.getInfo(false).agents[0].effort).toBe("max");
   });
 });
+
+describe("per-message effort and context", () => {
+  it("stamps the effort on new agent messages and the context on completion", async () => {
+    const host = new FakeHost();
+    const registry = new HostRegistry();
+    registry.register(host);
+    const patches: unknown[] = [];
+    const cb: WorkspaceCallbacks = {
+      onNewMessage: () => {},
+      onStreamEvent: () => {},
+      onMessageDone: (_ws, _id, _status, _content, _events, patch) => patches.push(patch),
+    };
+    const ws = new Workspace("ws-1", "test", "proj", "local", "/tmp", registry, cb);
+    ws.addAgent("A", "claude-fable-5-1", "🤖", "#888", { effort: "xhigh" });
+    await ws.sendMessage("hi");
+    const session = host.lastSession!;
+    session.emit("event", { kind: "text_delta", content: "yo" } as StreamEvent);
+    session.emit("event", {
+      kind: "result",
+      content: "",
+      context: { tokens: 42000, window: 200000 },
+    } as StreamEvent);
+    const m = ws.messages.filter((x) => x.kind === "agent")[0];
+    expect(m.effort).toBe("xhigh");
+    expect(m.context).toEqual({ tokens: 42000, window: 200000 });
+    expect(patches).toEqual([{ context: { tokens: 42000, window: 200000 } }]);
+  });
+});

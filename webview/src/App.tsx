@@ -734,11 +734,6 @@ export function App() {
                         <AgentAvatar agent={agent} size={22} />
                         <span className={`agent-status-dot agent-status-${status}`} />
                         <span className="panel-agent-name">{agent.name}</span>
-                        {agent.effort && (
-                          <span className="agent-effort" title="Reasoning effort (/effort)">
-                            {agent.effort}
-                          </span>
-                        )}
                         {agent.account && <span className="agent-account">@{agent.account}</span>}
                         <span className={`agent-status-label agent-status-${status}`}>
                           {statusText}

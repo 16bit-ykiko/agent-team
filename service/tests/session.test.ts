@@ -611,3 +611,94 @@ describe("subagent output arriving before task_started", () => {
     expect(events.map((e) => e.kind)).toEqual(["result", "subagent_start"]);
   });
 });
+
+describe("context usage and wake-ups", () => {
+  it("reports context occupancy on the result event from usage + modelUsage", () => {
+    const session = new ClaudeSession({ cwd: "/tmp", model: "claude-fable-5-1[1m]" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage({
+      type: "result",
+      subtype: "success",
+      result: "ok",
+      session_id: "s",
+      usage: { input_tokens: 4000, cache_read_input_tokens: 80000, cache_creation_input_tokens: 0 },
+      modelUsage: {
+        "claude-fable-5-1": { contextWindow: 1000000, inputTokens: 1, outputTokens: 1 },
+      },
+    });
+    expect(events[0]).toMatchObject({
+      kind: "result",
+      context: { tokens: 84000, window: 1000000 },
+    });
+  });
+
+  it("omits context when the window is unknown", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "result",
+      subtype: "success",
+      result: "",
+      session_id: "s",
+      usage: { input_tokens: 5 },
+    });
+    expect(events[0].context).toBeUndefined();
+  });
+
+  it("renders a CLI-originated user turn (wake-up) as a wakeup notice, not our own echo", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    const s = session as unknown as {
+      handleSDKMessage(m: unknown): void;
+      lastPushed: string | null;
+    };
+    s.lastPushed = "watch CI";
+    s.handleSDKMessage({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: { role: "user", content: "watch CI" },
+    });
+    s.handleSDKMessage({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "Scheduled wake-up: check the deploy" }],
+      },
+    });
+    s.handleSDKMessage({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      isReplay: true,
+      message: { role: "user", content: "replayed" },
+    });
+    expect(events).toEqual([
+      { kind: "notice", level: "wakeup", content: "Scheduled wake-up: check the deploy" },
+    ]);
+    expect(session.isRunning).toBe(true);
+  });
+
+  it("formats ScheduleWakeup calls as a readable schedule line", () => {
+    const { events, dispatch } = makeSession();
+    const call = (input: Record<string, unknown>, id: string) =>
+      dispatch({
+        type: "assistant",
+        session_id: "s",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "tool_use", id, name: "ScheduleWakeup", input }] },
+      });
+    call({ delaySeconds: 480, reason: "watching CI", prompt: "check CI\nfix if red" }, "t1");
+    call({ delaySeconds: 5400, noop: true, reason: "quiet" }, "t2");
+    call({ stop: true }, "t3");
+    expect(events[0].toolName).toBe("ScheduleWakeup");
+    expect(events[0].content).toBe(
+      "**ScheduleWakeup** in 8m — watching CI\n\n> check CI\n> fix if red",
+    );
+    expect(events[1].content).toBe("**ScheduleWakeup** in 1.5h (no change) — quiet");
+    expect(events[2].content).toBe("**ScheduleWakeup** stop — loop ended");
+  });
+});

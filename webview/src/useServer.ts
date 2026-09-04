@@ -22,7 +22,12 @@ export interface SubAgentInfo {
   events?: StreamEvent[];
 }
 
-export type NoticeLevel = "info" | "notice" | "warning" | "error";
+export type NoticeLevel = "info" | "notice" | "warning" | "error" | "wakeup";
+
+export interface ContextUsage {
+  tokens: number;
+  window: number;
+}
 
 export interface StreamEvent {
   kind: string;
@@ -63,6 +68,8 @@ export interface Message {
   images?: MessageImage[];
   forwardRef?: ForwardRef;
   queuedFor?: string;
+  effort?: string;
+  context?: ContextUsage;
 }
 
 export interface AgentInfo {
@@ -350,6 +357,7 @@ export function useServer() {
           const status = msg.status as Message["status"];
           const content = msg.content as string;
           const events = msg.events as StreamEvent[] | undefined;
+          const context = msg.context as ContextUsage | undefined;
           pendingEventsRef.current = pendingEventsRef.current.filter(
             (e) => !(e.wsId === wsId && e.messageId === messageId),
           );
@@ -376,7 +384,13 @@ export function useServer() {
                       return serverEv;
                     });
                   }
-                  return { ...m, status, content, ...(merged ? { events: merged } : {}) };
+                  return {
+                    ...m,
+                    status,
+                    content,
+                    ...(merged ? { events: merged } : {}),
+                    ...(context ? { context } : {}),
+                  };
                 }),
               };
             }),

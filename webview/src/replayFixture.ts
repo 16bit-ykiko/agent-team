@@ -177,6 +177,7 @@ export function buildFrames(): Frame[] {
       timestamp: now,
       status: "streaming",
       events: [],
+      effort: "xhigh",
     },
   });
 
@@ -494,6 +495,13 @@ export function buildFrames(): Frame[] {
       content: "Permission denied for Bash (rule): `rm -rf` is blocked by settings",
     }),
     ev(M1, {
+      kind: "tool_use",
+      toolName: "ScheduleWakeup",
+      toolUseId: "t-wake",
+      content: "**ScheduleWakeup** in 8m — watching CI\n\n> check the CI run and fix anything red",
+    }),
+    ev(M1, { kind: "notice", level: "wakeup", content: "check the CI run and fix anything red" }),
+    ev(M1, {
       kind: "retry",
       level: "warning",
       content: "API retry 1/10 in 2s — HTTP 529 (overloaded)",
@@ -529,6 +537,7 @@ export function buildFrames(): Frame[] {
     messageId: M1,
     status: "done",
     content: m1p1 + m1p2 + m1p3,
+    context: { tokens: 152_000, window: 200_000 },
   });
 
   // ---- Message 2: quoted user message + markdown torture reply ----------

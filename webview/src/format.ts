@@ -40,6 +40,13 @@ export function formatRelative(ts: number, now = Date.now()): string {
 
 // "claude-fable-5-1[1m]" → "fable 5.1 [1m]", "claude-opus-4-6" → "opus 4.6",
 // "claude-haiku-4-5-20251001" → "haiku 4.5", "gpt-5.6-sol" → "gpt 5.6 sol".
+// 84_000 → "84k", 1_200_000 → "1.2M".
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
+}
+
 export function shortModel(model: string): string {
   const m = model.match(/^(.*?)(\[1m\])?$/i);
   let base = (m?.[1] ?? model).replace(/^claude-/, "").replace(/-\d{8}$/, "");

@@ -45,7 +45,8 @@ export type StreamEventKind =
   // API retry in progress; replaces the previous retry event of the turn.
   | "retry";
 
-export type NoticeLevel = "info" | "notice" | "warning" | "error";
+// "wakeup": a scheduled wake-up (ScheduleWakeup / cron) fired and started a turn.
+export type NoticeLevel = "info" | "notice" | "warning" | "error" | "wakeup";
 
 export interface StreamEvent {
   kind: StreamEventKind;
@@ -53,6 +54,9 @@ export interface StreamEvent {
   // Tool name for tool_use events (the content is the formatted markdown).
   toolName?: string;
   level?: NoticeLevel;
+  // On result events: size of the context sent on the turn's last request
+  // and the model's window, for the per-message usage row.
+  context?: ContextUsage;
   toolInput?: ToolInput;
   step?: number;
   contentOffset?: number;
@@ -61,6 +65,11 @@ export interface StreamEvent {
   toolResult?: string;
   toolResultIsMarkdown?: boolean;
   subagent?: SubAgentInfo;
+}
+
+export interface ContextUsage {
+  tokens: number;
+  window: number;
 }
 
 export interface SubAgentInfo {
@@ -201,6 +210,9 @@ export class ClaudeSession extends EventEmitter {
   private intentionalAbort = false;
   private activity: string | null = null;
   private unhandledSeen = new Set<string>();
+  // Last prompt we pushed, to tell a CLI-originated user turn (scheduled
+  // wake-up, injected context) from an echo of our own input.
+  private lastPushed: string | null = null;
 
   constructor(config: SessionConfig) {
     super();
@@ -255,6 +267,7 @@ export class ClaudeSession extends EventEmitter {
     // report its own rejection even when the previous turn was rejected too
     // (a session-lifetime dedupe swallowed the second turn's error entirely).
     this.lastRateLimitStatus = null;
+    this.lastPushed = message;
     const userMsg: SDKUserMessage = {
       type: "user",
       message: { role: "user", content: message },
@@ -831,6 +844,27 @@ export class ClaudeSession extends EventEmitter {
     const message = msg.message as Record<string, unknown> | undefined;
     if (!message) return;
     const content = message.content;
+    if (msg.isReplay) return;
+
+    // A user turn the CLI started on its own (scheduled wake-up, /loop) is
+    // plain text rather than tool results. Show it so the reply that follows
+    // has a visible cause. Our own prompt is not echoed, but guard anyway.
+    if (!parentToolUseId) {
+      const text =
+        typeof content === "string"
+          ? content
+          : Array.isArray(content)
+            ? (content as Array<Record<string, unknown>>)
+                .filter((c) => c.type === "text")
+                .map((c) => c.text as string)
+                .join("\n")
+            : "";
+      const trimmed = text.trim();
+      if (trimmed && trimmed !== this.lastPushed?.trim()) {
+        this.setProcessing();
+        this.emit("event", { kind: "notice", level: "wakeup", content: trimmed } as StreamEvent);
+      }
+    }
     if (!Array.isArray(content)) return;
 
     for (const block of content) {
@@ -905,7 +939,8 @@ export class ClaudeSession extends EventEmitter {
       }
 
       const text = (result.result as string)?.trim() ?? "";
-      this.emit("event", { kind: "result", content: text } as StreamEvent);
+      const context = usage ? this.contextUsageFrom(usage, result.modelUsage) : undefined;
+      this.emit("event", { kind: "result", content: text, context } as StreamEvent);
     } else {
       const errResult = msg as Record<string, unknown>;
       const errList = errResult.errors as string[] | undefined;
@@ -924,6 +959,30 @@ export class ClaudeSession extends EventEmitter {
     this.processing = false;
     this.pendingNested.clear();
     this.setActivity(null);
+  }
+
+  // Context occupancy after this turn: what the last request carried
+  // (fresh input + cached prefix) against the model's window from modelUsage.
+  private contextUsageFrom(
+    usage: Record<string, number>,
+    modelUsage: unknown,
+  ): ContextUsage | undefined {
+    const tokens =
+      (usage.input_tokens ?? 0) +
+      (usage.cache_read_input_tokens ?? 0) +
+      (usage.cache_creation_input_tokens ?? 0);
+    if (!tokens) return undefined;
+    const entries = Object.entries(
+      (modelUsage as Record<string, { contextWindow?: number }>) ?? {},
+    );
+    const model = this.config.model ?? "";
+    const own =
+      entries.find(([k]) => k === model) ??
+      entries.find(([k]) => k === model.replace(/\[1m\]$/, "")) ??
+      entries.find(([, v]) => !!v?.contextWindow);
+    const window = own?.[1]?.contextWindow;
+    if (!window) return undefined;
+    return { tokens, window };
   }
 
   async getContextUsage(): Promise<Record<string, unknown> | null> {
@@ -1092,6 +1151,23 @@ function formatToolUse(block: Record<string, unknown>): string {
 
     case "Agent":
       return `**Agent** ${input.prompt ?? ""}`;
+
+    case "ScheduleWakeup": {
+      if (input.stop) return "**ScheduleWakeup** stop — loop ended";
+      const delay = Number(input.delaySeconds ?? 0);
+      const when =
+        delay >= 3600
+          ? `${(delay / 3600).toFixed(delay % 3600 ? 1 : 0)}h`
+          : delay >= 60
+            ? `${Math.round(delay / 60)}m`
+            : `${delay}s`;
+      const reason = input.reason ? ` — ${input.reason as string}` : "";
+      const prompt = input.prompt ? `\n\n> ${String(input.prompt).replace(/\n/g, "\n> ")}` : "";
+      return `**ScheduleWakeup** in ${when}${input.noop ? " (no change)" : ""}${reason}${prompt}`;
+    }
+
+    case "CronCreate":
+      return `**CronCreate** \`${input.cron ?? ""}\`${input.prompt ? ` — ${String(input.prompt).slice(0, 120)}` : ""}`;
 
     default:
       return `**${name}**\n\`\`\`json\n${JSON.stringify(input, null, 2)}\n\`\`\``;

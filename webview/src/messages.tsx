@@ -5,7 +5,7 @@ import { toolNameOf, toolSummary } from "./stream";
 import { copySelectionAsMarkdown } from "./clipboard";
 import { MdBlock } from "./markdown";
 import { AgentAvatar } from "./avatar";
-import { shortModel } from "./format";
+import { shortModel, formatTokens } from "./format";
 
 function renderMentionContent(content: string, agents: AgentInfo[]) {
   const match = content.match(/^@(\S+)(\s+|$)/);
@@ -38,18 +38,62 @@ export const BannerItem = memo(function BannerItem({ ev }: { ev: StreamEvent }) 
       ? "⇢"
       : ev.kind === "retry"
         ? "↻"
-        : level === "warning" || level === "error"
-          ? "!"
-          : "i";
+        : level === "wakeup"
+          ? "⏰"
+          : level === "warning" || level === "error"
+            ? "!"
+            : "i";
   return (
     <div className={`banner banner-${level}`} data-kind={ev.kind}>
       <span className="banner-icon">{icon}</span>
       <div className="banner-text">
+        {level === "wakeup" && <span className="banner-label">Woke up</span>}
         {ev.kind === "notice" ? <MdBlock>{ev.content}</MdBlock> : ev.content}
       </div>
     </div>
   );
 });
+
+// Tools that schedule the session's own future (ScheduleWakeup, cron) get a
+// distinct chip so a "sleeping until X" step reads differently from work.
+const SCHEDULE_TOOLS = new Set(["ScheduleWakeup", "CronCreate", "CronDelete"]);
+
+function chipClassFor(toolName: string | null, kind: string): string {
+  if (toolName && SCHEDULE_TOOLS.has(toolName)) return "chip-schedule";
+  return kind === "tool_use" ? "chip-tool" : `chip-${kind}`;
+}
+
+function chipLabelFor(toolName: string): string {
+  return toolName === "ScheduleWakeup" ? "⏰ Wake-up" : toolName;
+}
+
+// Effort + context occupancy line under an agent message header.
+export function MessageStatus({ msg }: { msg: Message }) {
+  if (!msg.effort && !msg.context) return null;
+  const ctx = msg.context;
+  const pct = ctx ? Math.min(100, Math.round((ctx.tokens / ctx.window) * 100)) : null;
+  const tone = pct == null ? "" : pct >= 90 ? " ctx-high" : pct >= 70 ? " ctx-warn" : "";
+  return (
+    <div className="message-status">
+      {msg.effort && (
+        <span className="status-chip" title="Reasoning effort">
+          effort {msg.effort}
+        </span>
+      )}
+      {ctx && pct != null && (
+        <span
+          className={`status-chip ctx-chip${tone}`}
+          title={`Context: ${ctx.tokens.toLocaleString()} / ${ctx.window.toLocaleString()} tokens`}
+        >
+          <span className="ctx-bar">
+            <span className="ctx-bar-fill" style={{ width: `${pct}%` }} />
+          </span>
+          ctx {formatTokens(ctx.tokens)} / {formatTokens(ctx.window)} · {pct}%
+        </span>
+      )}
+    </div>
+  );
+}
 
 const KIND_LABEL: Record<string, string> = {
   thinking: "Thinking",
@@ -75,8 +119,8 @@ export const EventItem = memo(function EventItem({ ev }: { ev: StreamEvent }) {
   const hasResult = isToolUse && ev.toolResult != null;
   const toolName = isToolUse ? toolNameOf(ev) : null;
   const summary = isToolUse ? toolSummary(ev) : "";
-  const label = toolName ?? KIND_LABEL[ev.kind] ?? ev.kind;
-  const chipClass = isToolUse ? "chip-tool" : `chip-${ev.kind}`;
+  const label = toolName ? chipLabelFor(toolName) : (KIND_LABEL[ev.kind] ?? ev.kind);
+  const chipClass = chipClassFor(toolName, ev.kind);
   // Multi-line tool calls (Bash commands, edits) always show their body;
   // single-line ones (Read, Grep) get a summary and an optional details toggle.
   const multiLine = isToolUse && ev.content.includes("\n");
@@ -318,8 +362,8 @@ export function StepGroup({
             {!open && tools.length > 0 && (
               <span className="step-tools">
                 {tools.slice(0, 6).map((t) => (
-                  <span key={t} className="event-chip chip-tool chip-mini">
-                    {t}
+                  <span key={t} className={`event-chip chip-mini ${chipClassFor(t, "tool_use")}`}>
+                    {chipLabelFor(t)}
                   </span>
                 ))}
                 {tools.length > 6 && <span className="step-tools-more">+{tools.length - 6}</span>}
@@ -503,12 +547,14 @@ export const MessageItem = memo(function MessageItem({
             {activity && <span className="activity-label">{activity}</span>}
           </div>
         )}
-        {compact && streaming && (
-          <span className="compact-status">
-            <span className="streaming-dot" />
+        {compact && (
+          <div className="compact-header">
+            <span className="message-time">{time}</span>
+            {streaming && <span className="streaming-dot" />}
             {activity && <span className="activity-label">{activity}</span>}
-          </span>
+          </div>
         )}
+        {!isUser && <MessageStatus msg={msg} />}
 
         {msg.forwardRef && (
           <div className="forward-ref">

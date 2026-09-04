@@ -338,3 +338,81 @@ describe("CreateWorkspaceDialog initial path", () => {
     expect(onCreate).toHaveBeenCalledWith("repo", "/home/me/repo", "local");
   });
 });
+
+describe("message status row and timestamps", () => {
+  const base: Message = {
+    id: "m",
+    kind: "agent",
+    agentId: "a1",
+    content: "done",
+    timestamp: Date.UTC(2026, 0, 1, 10, 30),
+    status: "done",
+    events: [],
+  };
+
+  it("shows effort and context occupancy under the header, colored by pressure", () => {
+    const { container, rerender } = render(
+      <MessageItem
+        msg={{ ...base, effort: "high", context: { tokens: 84000, window: 200000 } }}
+        agents={[agent]}
+      />,
+    );
+    const row = container.querySelector(".message-status")!;
+    expect(row.textContent).toContain("effort high");
+    expect(row.textContent).toContain("ctx 84k / 200k · 42%");
+    expect(row.querySelector(".ctx-chip")!.className).not.toContain("ctx-warn");
+    rerender(
+      <MessageItem
+        msg={{ ...base, context: { tokens: 185000, window: 200000 } }}
+        agents={[agent]}
+      />,
+    );
+    expect(container.querySelector(".ctx-chip")!.className).toContain("ctx-high");
+    expect(container.querySelector(".message-status")!.textContent).not.toContain("effort");
+  });
+
+  it("renders nothing for messages without effort or context, and never for user messages", () => {
+    const { container, rerender } = render(<MessageItem msg={base} agents={[agent]} />);
+    expect(container.querySelector(".message-status")).toBeNull();
+    rerender(
+      <MessageItem
+        msg={{ ...base, kind: "user", agentId: null, effort: "high" }}
+        agents={[agent]}
+      />,
+    );
+    expect(container.querySelector(".message-status")).toBeNull();
+  });
+
+  it("keeps a timestamp on compact continuation messages", () => {
+    const { container } = render(<MessageItem msg={base} agents={[agent]} compact />);
+    expect(container.querySelector(".message-header")).toBeNull();
+    expect(container.querySelector(".compact-header .message-time")!.textContent).toMatch(/\d/);
+  });
+});
+
+describe("scheduled wake-ups", () => {
+  it("gives ScheduleWakeup calls a schedule chip with a readable summary", () => {
+    const { container } = render(
+      <EventItem
+        ev={ev("tool_use", {
+          toolName: "ScheduleWakeup",
+          content: "**ScheduleWakeup** in 8m — watching CI\n\n> check CI",
+        })}
+      />,
+    );
+    const chip = container.querySelector(".event-chip")!;
+    expect(chip.className).toContain("chip-schedule");
+    expect(chip.textContent).toBe("⏰ Wake-up");
+    expect(container.querySelector(".event-content")!.textContent).toContain("check CI");
+  });
+
+  it("renders the fired wake-up as its own banner", () => {
+    const { container } = render(
+      <BannerItem ev={ev("notice", { level: "wakeup", content: "Scheduled wake-up: check CI" })} />,
+    );
+    const el = container.querySelector(".banner")!;
+    expect(el.className).toContain("banner-wakeup");
+    expect(el.querySelector(".banner-label")!.textContent).toBe("Woke up");
+    expect(el.textContent).toContain("check CI");
+  });
+});

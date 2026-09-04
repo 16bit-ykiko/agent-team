@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatRelative, formatResetTime, shortModel } from "../src/format";
+import { formatRelative, formatResetTime, formatTokens, shortModel } from "../src/format";
 
 const NOW = 1_800_000_000_000;
 
@@ -33,5 +33,15 @@ describe("shortModel", () => {
     expect(shortModel("claude-haiku-4-5-20251001")).toBe("haiku 4.5");
     expect(shortModel("gpt-5.6-sol")).toBe("gpt 5.6 sol");
     expect(shortModel("deepseek-v4-pro")).toBe("deepseek v4 pro");
+  });
+});
+
+describe("formatTokens", () => {
+  it("abbreviates token counts", () => {
+    expect(formatTokens(512)).toBe("512");
+    expect(formatTokens(84_000)).toBe("84k");
+    expect(formatTokens(200_000)).toBe("200k");
+    expect(formatTokens(1_000_000)).toBe("1M");
+    expect(formatTokens(1_200_000)).toBe("1.2M");
   });
 });
