@@ -3,6 +3,7 @@ import type { Workspace, SystemStatus, SearchHit } from "./useServer";
 import { groupWorkspaces, isGroupExpanded, archivedWorkspaces } from "./groups";
 import { isAgentActive } from "./agents";
 import { formatBytes, formatRelative, formatResetTime } from "./format";
+import { ViewportInfo } from "./ViewportInfo";
 
 function gitTitle(git: { dirty: number; ahead: number; behind: number }): string {
   const parts: string[] = [];
@@ -365,6 +366,7 @@ export function Sidebar(p: SidebarProps) {
           onSetDefault={p.onSetDefaultAccount}
         />
       )}
+      <ViewportInfo />
     </>
   );
 }
