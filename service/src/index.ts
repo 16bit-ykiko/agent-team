@@ -12,6 +12,7 @@ import {
   deleteWorkspaceState,
   saveIndex,
   loadAll,
+  loadWorkspaceMessages,
   appendLog,
   loadSettings,
   saveSettings,
@@ -107,6 +108,7 @@ export class Server {
   private defaultAccount: string | null = null;
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private lastAccountSwitchAt = 0;
+  private archiveTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
@@ -135,6 +137,8 @@ export class Server {
     this.scanBranches();
     this.refreshQuota();
     this.quotaTimer = setInterval(() => this.refreshQuota(), 60000);
+    this.sweepArchives();
+    this.archiveTimer = setInterval(() => this.sweepArchives(), 3600_000);
 
     this.httpServer.listen(port, "0.0.0.0", () => {
       console.log(`Agent Team server listening on http://0.0.0.0:${port}`);
@@ -548,6 +552,7 @@ export class Server {
         models: MODEL_OPTIONS,
         commands: this.commands,
         hosts: this.config.hosts,
+        archiveAfterDays: this.config.workspace.archive_after_days,
       },
       hosts: this.hostRegistry.getAllInfo(),
     });
@@ -559,6 +564,7 @@ export class Server {
       case "load_messages": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
         if (workspace) {
+          this.ensureLoaded(workspace);
           const before = (msg.before as number) ?? Infinity;
           const limit = Math.min((msg.limit as number) ?? 50, 200);
           const all = workspace.getMessages();
@@ -577,6 +583,7 @@ export class Server {
       case "load_subagent_events": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
         if (workspace) {
+          this.ensureLoaded(workspace);
           const message = workspace.getMessages().find((m) => m.id === msg.messageId);
           const ev = message?.events?.find((e) => e.subagent?.taskId === msg.taskId);
           this.sendJson(ws, {
@@ -609,11 +616,10 @@ export class Server {
 
       case "search": {
         const query = (msg.query as string) ?? "";
-        const sources = [...this.workspaces.values()].map((w) => ({
-          id: w.id,
-          name: w.name,
-          messages: w.messages,
-        }));
+        // Archived workspaces are unloaded; search covers what is in memory.
+        const sources = [...this.workspaces.values()]
+          .filter((w) => w.messagesLoaded)
+          .map((w) => ({ id: w.id, name: w.name, messages: w.messages }));
         this.sendJson(ws, {
           type: "search_results",
           query,
@@ -673,9 +679,26 @@ export class Server {
         this.setDefaultAccount(ws, (msg.account as string | null) ?? null);
         return;
 
+      case "archive_workspace":
+        this.archiveWorkspace(msg.workspaceId as string, false);
+        return;
+
+      case "unarchive_workspace": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        if (workspace) this.unarchiveWorkspace(workspace);
+        return;
+      }
+
+      case "purge_archived":
+        for (const w of [...this.workspaces.values()]) {
+          if (w.isArchived) this.deleteWorkspace(w.id);
+        }
+        return;
+
       case "cancel_queued": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
         if (!workspace) return;
+        this.ensureLoaded(workspace);
         if (workspace.cancelQueued(msg.messageId as string)) {
           this.persistWorkspace(workspace.id);
           this.broadcastUI({
@@ -950,6 +973,7 @@ export class Server {
       this.broadcastUI({ type: "error", message: "Workspace not found" });
       return;
     }
+    this.unarchiveWorkspace(workspace);
 
     try {
       await workspace.sendMessage(content, target, images, quote);
@@ -970,6 +994,7 @@ export class Server {
   ): Promise<void> {
     const workspace = this.workspaces.get(workspaceId);
     if (!workspace) return;
+    this.unarchiveWorkspace(workspace);
     try {
       await workspace.forwardMessage(messageId, targetAgentId);
     } catch (e) {
@@ -1054,10 +1079,61 @@ systemctl --user restart agent-team-server
         agent.session.config.providerEnv = this.sessionEnv(agent.model, agent.account);
       }
       const workspace = Workspace.fromState(wsState, this.hostRegistry, this.makeCallbacks());
+      if (workspace.isArchived) workspace.unloadMessages();
       this.workspaces.set(workspace.id, workspace);
     }
 
-    console.log(`Restored ${this.workspaces.size} workspace(s)`);
+    const archived = [...this.workspaces.values()].filter((w) => w.isArchived).length;
+    console.log(`Restored ${this.workspaces.size} workspace(s), ${archived} archived`);
+  }
+
+  // ---- Archiving -------------------------------------------------------
+  // An archived workspace stays in the list but costs nothing: its history
+  // is on disk only, its idle CLI child processes are gone, and the branch
+  // scanner skips it. Any interaction that needs the history restores it.
+
+  private ensureLoaded(ws: Workspace): void {
+    if (ws.messagesLoaded) return;
+    ws.setMessages(loadWorkspaceMessages(this.baseDir, ws.id));
+  }
+
+  private archiveWorkspace(workspaceId: string, auto: boolean): void {
+    const ws = this.workspaces.get(workspaceId);
+    if (!ws || ws.isArchived) return;
+    if (!ws.isIdle) {
+      if (!auto) this.broadcastUI({ type: "error", message: "Workspace is still busy" });
+      return;
+    }
+    ws.abortAll();
+    ws.archivedAt = Date.now();
+    this.persistWorkspaceNow(workspaceId);
+    ws.unloadMessages();
+    this.branchCache.delete(workspaceId);
+    this.broadcastUI({ type: "workspace_archived", workspaceId, archivedAt: ws.archivedAt });
+  }
+
+  private unarchiveWorkspace(ws: Workspace): void {
+    this.ensureLoaded(ws);
+    if (!ws.isArchived) return;
+    ws.archivedAt = null;
+    this.persistWorkspaceNow(ws.id);
+    this.broadcastUI({ type: "workspace_unarchived", workspaceId: ws.id });
+  }
+
+  private sweepArchives(): void {
+    const days = this.config.workspace.archive_after_days;
+    if (!days) return;
+    const cutoff = Date.now() - days * 86400_000;
+    for (const ws of this.workspaces.values()) {
+      if (ws.isArchived) {
+        // Browsing an archived workspace loads its history; let it go again
+        // once nothing is happening there.
+        if (ws.messagesLoaded && ws.isIdle) ws.unloadMessages();
+        continue;
+      }
+      if (ws.lastActivityAt > cutoff) continue;
+      this.archiveWorkspace(ws.id, true);
+    }
   }
 
   // Rate-limit recovery policy:
@@ -1169,6 +1245,16 @@ systemctl --user restart agent-team-server
         this.broadcastUI({ type: "commands_update", commands: this.commands });
       },
       onRateLimit: (wsId, agentId, info) => this.handleRateLimit(wsId, agentId, info),
+      onAgentUpdated: (wsId, agent) => {
+        this.broadcastUI({ type: "agent_updated", workspaceId: wsId, agent });
+        this.persistWorkspace(wsId);
+      },
+      onAgentActivity: (wsId, agentId, activity) => {
+        this.broadcastUI({ type: "agent_activity", workspaceId: wsId, agentId, activity });
+      },
+      onUnhandled: (wsId, agentId, msg) => {
+        appendLog(this.baseDir, wsId, { timestamp: Date.now(), agentId, unhandled: msg });
+      },
     };
   }
 
@@ -1183,7 +1269,11 @@ systemctl --user restart agent-team-server
     if (this.branchScanning) return;
     this.branchScanning = true;
     try {
-      await Promise.all([...this.workspaces.values()].map((ws) => this.scanBranch(ws)));
+      await Promise.all(
+        [...this.workspaces.values()]
+          .filter((ws) => !ws.isArchived)
+          .map((ws) => this.scanBranch(ws)),
+      );
     } finally {
       this.branchScanning = false;
     }
@@ -1228,6 +1318,8 @@ systemctl --user restart agent-team-server
     for (const t of this.retryTimers.values()) clearTimeout(t);
     if (this.statusTimer) clearInterval(this.statusTimer);
     if (this.branchTimer) clearInterval(this.branchTimer);
+    if (this.archiveTimer) clearInterval(this.archiveTimer);
+    if (this.quotaTimer) clearInterval(this.quotaTimer);
     this.persistAll();
     for (const ws of this.workspaces.values()) ws.abortAll();
     this.wss.close();

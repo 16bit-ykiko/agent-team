@@ -1,923 +1,19 @@
-import {
-  useState,
-  useRef,
-  useEffect,
-  useCallback,
-  useMemo,
-  memo,
-  type ComponentProps,
-} from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github-dark.css";
-import {
-  useServer,
-  Workspace,
-  Message,
-  AgentInfo,
-  AgentPreset,
-  ModelOption,
-  SystemStatus,
-  StreamEvent,
-  CommandInfo,
-  HostInfo,
-} from "./useServer";
-import { splitEvents } from "./events";
-import { groupWorkspaces, isGroupExpanded } from "./groups";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useServer, Message } from "./useServer";
+import { groupWorkspaces } from "./groups";
 import { hasRunningSubagents } from "./events";
-import { copySelectionAsMarkdown, extractImageFiles, installMacCtrlClipboard } from "./clipboard";
+import { extractImageFiles, installMacCtrlClipboard } from "./clipboard";
 import { isImeKeyEvent } from "./ime";
+import { AgentAvatar } from "./avatar";
+import { formatRelative } from "./format";
+import { MessageItem } from "./messages";
+import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs";
+import { Sidebar } from "./Sidebar";
 
-function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
-  const [copied, setCopied] = useState(false);
-  const preRef = useRef<HTMLPreElement>(null);
-  return (
-    <pre {...rest} ref={preRef}>
-      <button
-        className="copy-btn"
-        onClick={() => {
-          navigator.clipboard.writeText(preRef.current?.querySelector("code")?.textContent ?? "");
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
-      </button>
-      {children}
-    </pre>
-  );
-}
-
-function ScrollTable(props: ComponentProps<"table">) {
-  return (
-    <div className="table-scroll-wrapper">
-      <table {...props} />
-    </div>
-  );
-}
-
-const mdComponents = { pre: CodeBlock, table: ScrollTable };
-const mdRemarkPlugins = [remarkGfm];
-const mdRehypePlugins = [rehypeHighlight];
-
-// Markdown parsing + highlighting is the hottest path during streaming.
-// Memoized so a re-render only re-parses blocks whose text actually changed
-// (inline plugin arrays would defeat react-markdown's own memoization).
-const MdBlock = memo(function MdBlock({ children }: { children: string }) {
-  return (
-    <Markdown
-      remarkPlugins={mdRemarkPlugins}
-      rehypePlugins={mdRehypePlugins}
-      components={mdComponents}
-    >
-      {children}
-    </Markdown>
-  );
-});
-
-function isImageAvatar(avatar: string): boolean {
-  return (
-    avatar.includes("/") ||
-    avatar.endsWith(".jpg") ||
-    avatar.endsWith(".png") ||
-    avatar.endsWith(".webp")
-  );
-}
-
-function AgentAvatar({ agent, size = 28 }: { agent: AgentInfo; size?: number }) {
-  const isImg = isImageAvatar(agent.avatar);
-  return (
-    <div
-      className="agent-avatar"
-      style={{
-        width: size,
-        height: size,
-        background: isImg ? "transparent" : agent.color,
-        fontSize: size * 0.5,
-      }}
-      title={`${agent.name} (${agent.model})`}
-    >
-      {isImg ? (
-        <img
-          src={agent.avatar}
-          alt={agent.name}
-          style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover" }}
-        />
-      ) : (
-        agent.avatar
-      )}
-    </div>
-  );
-}
-
-export function AddAgentDialog({
-  presets,
-  models,
-  accounts,
-  onClose,
-  onAdd,
-}: {
-  presets: AgentPreset[];
-  models: ModelOption[];
-  accounts: string[];
-  onClose: () => void;
-  onAdd: (name: string, model: string, avatar: string, color: string, account?: string) => void;
-}) {
-  const [selectedPreset, setSelectedPreset] = useState(0);
-  const [model, setModel] = useState(models[0]?.id ?? "");
-  const [customName, setCustomName] = useState("");
-  const [account, setAccount] = useState("");
-
-  const preset = presets[selectedPreset];
-  const finalName = customName || preset?.name || "Agent";
-
-  return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <div className="dialog-title">Add Agent</div>
-
-        <div className="preset-grid">
-          {presets.map((p, i) => (
-            <div
-              key={p.name}
-              className={`preset-item ${i === selectedPreset ? "selected" : ""}`}
-              onClick={() => {
-                setSelectedPreset(i);
-                setCustomName("");
-              }}
-            >
-              <div
-                className="agent-avatar"
-                style={{
-                  width: 36,
-                  height: 36,
-                  background: isImageAvatar(p.avatar) ? "transparent" : p.color,
-                  fontSize: 18,
-                }}
-              >
-                {isImageAvatar(p.avatar) ? (
-                  <img
-                    src={p.avatar}
-                    alt={p.name}
-                    style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover" }}
-                  />
-                ) : (
-                  p.avatar
-                )}
-              </div>
-              <span>{p.name}</span>
-            </div>
-          ))}
-        </div>
-
-        <label className="dialog-field">
-          <span>Name (or use preset)</span>
-          <input
-            value={customName}
-            onChange={(e) => setCustomName(e.target.value)}
-            placeholder={preset?.name}
-          />
-        </label>
-
-        <label className="dialog-field">
-          <span>Model</span>
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {(() => {
-              const claude = models.filter((m) => m.backend === "claude");
-              const codex = models.filter((m) => m.backend === "codex");
-              return (
-                <>
-                  {claude.length > 0 && (
-                    <optgroup label="Claude">
-                      {claude.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {codex.length > 0 && (
-                    <optgroup label="Codex">
-                      {codex.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </>
-              );
-            })()}
-          </select>
-        </label>
-
-        {accounts.length > 0 && (
-          <label className="dialog-field">
-            <span>Account</span>
-            <select value={account} onChange={(e) => setAccount(e.target.value)}>
-              <option value="">local (default)</option>
-              {accounts.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <div className="dialog-actions">
-          <button type="button" className="btn-secondary" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn-primary"
-            onClick={() => {
-              onAdd(
-                finalName,
-                model,
-                preset?.avatar ?? "🤖",
-                preset?.color ?? "#888",
-                account || undefined,
-              );
-              onClose();
-            }}
-          >
-            Add
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// A workspace is just a name plus a directory. The path field completes
-// directories live against the server (shell-style tab completion).
-export function CreateWorkspaceDialog({
-  hosts,
-  onClose,
-  onCreate,
-  onListDirs,
-  dirSuggestions,
-}: {
-  hosts: HostInfo[];
-  onClose: () => void;
-  onCreate: (name: string, path: string, hostId?: string) => void;
-  onListDirs: (prefix: string) => void;
-  dirSuggestions: { prefix: string; dirs: string[] };
-}) {
-  const [name, setName] = useState("");
-  const [dirPath, setDirPath] = useState("~/");
-  const [suggestOpen, setSuggestOpen] = useState(false);
-  const [suggestIdx, setSuggestIdx] = useState(0);
-  const [hostId, setHostId] = useState(hosts[0]?.id ?? "local");
-  const nameRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const blurTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  useEffect(() => {
-    nameRef.current?.focus();
-    return () => {
-      clearTimeout(debounceRef.current);
-      clearTimeout(blurTimerRef.current);
-    };
-  }, []);
-
-  const requestDirs = (value: string) => {
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => onListDirs(value), 120);
-  };
-
-  // The server echoes the prefix, so stale replies for older input are ignored.
-  const suggestions = dirSuggestions.prefix === dirPath ? dirSuggestions.dirs : [];
-
-  const handlePathChange = (value: string) => {
-    setDirPath(value);
-    setSuggestOpen(true);
-    setSuggestIdx(0);
-    requestDirs(value);
-  };
-
-  const pickSuggestion = (dir: string) => {
-    setDirPath(dir);
-    setSuggestIdx(0);
-    requestDirs(dir);
-  };
-
-  const handlePathKeyDown = (e: React.KeyboardEvent) => {
-    if (e.nativeEvent.isComposing) return;
-    if (!suggestOpen || suggestions.length === 0) return;
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setSuggestIdx((i) => (i + 1) % suggestions.length);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setSuggestIdx((i) => (i - 1 + suggestions.length) % suggestions.length);
-    } else if (e.key === "Tab" || e.key === "Enter") {
-      e.preventDefault();
-      pickSuggestion(suggestions[suggestIdx]);
-    } else if (e.key === "Escape") {
-      setSuggestOpen(false);
-    }
-  };
-
-  const canSubmit = dirPath.trim().length > 0;
-  const defaultName = dirPath.split("/").filter(Boolean).pop() ?? "";
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canSubmit) return;
-    onCreate(
-      (name.trim() || defaultName || "workspace").trim(),
-      dirPath.trim(),
-      hostId || undefined,
-    );
-    onClose();
-  };
-
-  return (
-    <div className="dialog-overlay" onClick={onClose}>
-      <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
-        <div className="dialog-title">New Workspace</div>
-        <label className="dialog-field">
-          <span>Name</span>
-          <input
-            ref={nameRef}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={defaultName || "Workspace name..."}
-          />
-        </label>
-        <label className="dialog-field path-field">
-          <span>Path</span>
-          <input
-            value={dirPath}
-            onChange={(e) => handlePathChange(e.target.value)}
-            onKeyDown={handlePathKeyDown}
-            onFocus={() => {
-              clearTimeout(blurTimerRef.current);
-              setSuggestOpen(true);
-              requestDirs(dirPath);
-            }}
-            onBlur={() => {
-              // Tapping/clicking anywhere else closes the list — the only way
-              // to dismiss on mobile, where there is no Esc. Delayed so a
-              // click that lands past the list (e.g. on Create after the
-              // list shrinks) completes before the layout shifts. Picking a
-              // suggestion never blurs: items preventDefault on mousedown.
-              blurTimerRef.current = setTimeout(() => setSuggestOpen(false), 150);
-            }}
-            placeholder="~/workspace/..."
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {suggestOpen && suggestions.length > 0 && (
-            <div className="dir-suggest">
-              {suggestions.map((dir, i) => (
-                <div
-                  key={dir}
-                  className={`dir-suggest-item ${i === suggestIdx ? "active" : ""}`}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    pickSuggestion(dir);
-                  }}
-                >
-                  {dir}
-                </div>
-              ))}
-            </div>
-          )}
-        </label>
-        {hosts.length > 1 && (
-          <label className="dialog-field">
-            <span>Host</span>
-            <select value={hostId} onChange={(e) => setHostId(e.target.value)}>
-              {hosts.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {h.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        <div className="dialog-actions">
-          <button type="button" className="btn-secondary" onClick={onClose}>
-            Cancel
-          </button>
-          <button type="submit" className="btn-primary" disabled={!canSubmit}>
-            Create
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
-
-function renderMentionContent(content: string, agents: AgentInfo[]) {
-  const match = content.match(/^@(\S+)(\s+|$)/);
-  if (!match) {
-    return <MdBlock>{content}</MdBlock>;
-  }
-  const mentionName = match[1];
-  const rest = content.slice(match[0].length);
-  const mentioned = agents.find((a) => a.name === mentionName);
-  return (
-    <>
-      <span
-        className="mention-pill"
-        style={mentioned ? { background: mentioned.color } : undefined}
-      >
-        @{mentionName}
-      </span>
-      {rest && <MdBlock>{rest}</MdBlock>}
-    </>
-  );
-}
-
-export const EventItem = memo(function EventItem({ ev }: { ev: StreamEvent }) {
-  const [resultOpen, setResultOpen] = useState(false);
-  const isResult = ev.kind === "tool_result";
-  const isToolUse = ev.kind === "tool_use";
-  const isCompact = ev.kind === "compact";
-  const hasResult = isToolUse && ev.toolResult != null;
-
-  if (isCompact) {
-    return (
-      <div className="event event-compact">
-        <span className="compact-text">{ev.content}</span>
-      </div>
-    );
-  }
-
-  const resultLen = isResult ? ev.content.length : (ev.toolResult?.length ?? 0);
-  const resultLabel =
-    resultLen > 1000 ? `${Math.round(resultLen / 1000)}k chars` : `${resultLen} chars`;
-
-  return (
-    <div className={`event event-${ev.kind}`}>
-      <span className="event-kind">
-        {ev.kind}
-        {(isResult || hasResult) && (
-          <button className="btn-diff" onClick={() => setResultOpen((v) => !v)}>
-            {resultOpen ? "Hide" : "Result"} ({resultLabel})
-          </button>
-        )}
-      </span>
-      {isResult ? (
-        resultOpen && (
-          <div className="event-content">
-            {ev.isMarkdown ? (
-              <MdBlock>{ev.content}</MdBlock>
-            ) : (
-              <pre>
-                <code>{ev.content}</code>
-              </pre>
-            )}
-          </div>
-        )
-      ) : (
-        <>
-          <div className="event-content">
-            <MdBlock>{ev.content}</MdBlock>
-          </div>
-          {hasResult && resultOpen && (
-            <div className="event-content">
-              {ev.toolResultIsMarkdown ? (
-                <MdBlock>{ev.toolResult!}</MdBlock>
-              ) : (
-                <pre>
-                  <code>{ev.toolResult}</code>
-                </pre>
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-});
-
-export const SubAgentItem = memo(function SubAgentItem({
-  ev,
-  onLoadEvents,
-  onCancel,
-}: {
-  ev: StreamEvent;
-  onLoadEvents?: (taskId: string) => void;
-  onCancel?: (taskId: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const sa = ev.subagent;
-  if (!sa) return null;
-
-  const isDone =
-    ev.kind === "subagent_done" ||
-    sa.status === "completed" ||
-    sa.status === "failed" ||
-    sa.status === "stopped";
-  const isRunning = !isDone;
-  const label = sa.agentType || "Agent";
-  const statusIcon = isRunning
-    ? "↻"
-    : sa.status === "completed"
-      ? "✓"
-      : sa.status === "stopped"
-        ? "◼"
-        : "✗";
-  const statusCls = isRunning ? "running" : (sa.status ?? "failed");
-
-  const allInner = sa.events ?? [];
-  // Subagents can spawn subagents of their own; fold their nested lifecycle
-  // events into one entry each and render them as nested SubAgentItems.
-  const { regular: innerEvents, subagents: nestedAgents } = splitEvents(allInner);
-  const needsLoad = allInner.length === 0 && (sa.eventCount ?? 0) > 0;
-  const totalCount = allInner.length || sa.eventCount || 0;
-  const thinkingEvts = innerEvents.filter((e) => e.kind === "thinking");
-  const toolEvts = innerEvents.filter((e) => e.kind === "tool_use");
-  const textEvts = innerEvents.filter((e) => e.kind === "text");
-
-  const handleToggle = () => {
-    const willOpen = !open;
-    setOpen(willOpen);
-    if (willOpen && needsLoad && onLoadEvents && sa.taskId) {
-      onLoadEvents(sa.taskId);
-    }
-  };
-
-  const usageStr = sa.usage
-    ? `${Math.round(sa.usage.totalTokens / 1000)}k tokens · ${sa.usage.toolUses} tools · ${(sa.usage.durationMs / 1000).toFixed(1)}s`
-    : null;
-
-  const headerParts: string[] = [];
-  if (sa.description) headerParts.push(sa.description);
-  if (!sa.description && isRunning && sa.lastTool) headerParts.push(`using ${sa.lastTool}`);
-
-  return (
-    <div className={`subagent-item subagent-${statusCls}`}>
-      <div className="subagent-header" onClick={handleToggle}>
-        <span className="events-toggle">{open ? "▾" : "▸"}</span>
-        <span className={`subagent-status-icon subagent-icon-${statusCls}`}>{statusIcon}</span>
-        <span className="subagent-label">{label}</span>
-        {headerParts.length > 0 && <span className="subagent-desc">{headerParts.join(" · ")}</span>}
-        {totalCount > 0 && (
-          <span className="subagent-counts">
-            {allInner.length > 0
-              ? [
-                  thinkingEvts.length > 0 ? `${thinkingEvts.length} thinking` : null,
-                  toolEvts.length > 0 ? `${toolEvts.length} tool(s)` : null,
-                  textEvts.length > 0 ? `${textEvts.length} text` : null,
-                  nestedAgents.length > 0 ? `${nestedAgents.length} subagent(s)` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")
-              : `${totalCount} event(s)`}
-          </span>
-        )}
-        {isRunning && <span className="streaming-dot" />}
-        {isRunning && onCancel && (
-          <button
-            className="btn-cancel-subagent"
-            title="Cancel this subagent"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCancel(sa.taskId);
-            }}
-          >
-            Cancel
-          </button>
-        )}
-      </div>
-      {open && (
-        <div className="subagent-details">
-          {sa.prompt && (
-            <div className="subagent-prompt">
-              <MdBlock>{sa.prompt}</MdBlock>
-            </div>
-          )}
-          {needsLoad && <div className="subagent-loading">Loading events...</div>}
-          {innerEvents.length > 0 && (
-            <div className="subagent-events">
-              {innerEvents.map((ie, i) => (
-                <EventItem key={i} ev={ie} />
-              ))}
-            </div>
-          )}
-          {nestedAgents.map((ne) => (
-            <SubAgentItem
-              key={ne.subagent!.taskId}
-              ev={ne}
-              onLoadEvents={onLoadEvents}
-              onCancel={onCancel}
-            />
-          ))}
-          {sa.summary && (
-            <div className="subagent-summary">
-              <MdBlock>{sa.summary}</MdBlock>
-            </div>
-          )}
-          {usageStr && <div className="subagent-usage">{usageStr}</div>}
-        </div>
-      )}
-    </div>
-  );
-});
-
-export function StepGroup({
-  group,
-  onLoadEvents,
-  onCancelSubagent,
-}: {
-  group: { step: number; events: StreamEvent[] };
-  onLoadEvents?: (taskId: string) => void;
-  onCancelSubagent?: (taskId: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const { regular: regularEvents, subagents } = splitEvents(group.events);
-
-  const thinkingCount = regularEvents.filter((e) => e.kind === "thinking").length;
-  const toolCount = regularEvents.filter((e) => e.kind === "tool_use").length;
-  const parts: string[] = [];
-  if (thinkingCount > 0) parts.push(`${thinkingCount} thinking`);
-  if (toolCount > 0) parts.push(`${toolCount} tool call(s)`);
-  if (parts.length === 0 && subagents.length === 0) parts.push(`${group.events.length} event(s)`);
-
-  // Subagents render as their own top-level blocks, siblings of the collapsed
-  // step box — not nested inside it.
-  return (
-    <>
-      {regularEvents.length > 0 && (
-        <div className="step-group">
-          <div className="step-header" onClick={() => setOpen((v) => !v)}>
-            <span className="events-toggle">{open ? "▾" : "▸"}</span>
-            <span className="step-summary">{parts.join(" · ")}</span>
-          </div>
-          {open && (
-            <div className="events-list">
-              {regularEvents.map((ev, i) => (
-                <EventItem key={i} ev={ev} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      {subagents.map((ev) => (
-        <SubAgentItem
-          key={ev.subagent!.taskId}
-          ev={ev}
-          onLoadEvents={onLoadEvents}
-          onCancel={onCancelSubagent}
-        />
-      ))}
-    </>
-  );
-}
-
-export const MessageItem = memo(function MessageItem({
-  msg,
-  agents,
-  compact,
-  highlight,
-  onQuote,
-  onLoadSubagentEvents,
-  onCancelSubagent,
-  onCancelQueued,
-}: {
-  msg: Message;
-  agents: AgentInfo[];
-  compact?: boolean;
-  highlight?: boolean;
-  onQuote?: (msg: Message) => void;
-  onLoadSubagentEvents?: (messageId: string, taskId: string) => void;
-  onCancelSubagent?: (agentId: string, taskId: string) => void;
-  onCancelQueued?: (messageId: string) => void;
-}) {
-  const [eventsOpen, setEventsOpen] = useState(false);
-  const handleLoadEvents = useCallback(
-    (taskId: string) => onLoadSubagentEvents?.(msg.id, taskId),
-    [msg.id, onLoadSubagentEvents],
-  );
-  const agentId = msg.agentId;
-  const handleCancelSubagent = useMemo(
-    () =>
-      onCancelSubagent && agentId
-        ? (taskId: string) => onCancelSubagent(agentId, taskId)
-        : undefined,
-    [agentId, onCancelSubagent],
-  );
-
-  if (msg.kind === "system") {
-    return (
-      <div className="system-message">
-        <MdBlock>{msg.content}</MdBlock>
-      </div>
-    );
-  }
-
-  const isUser = msg.kind === "user";
-  const agent = !isUser ? agents.find((a) => a.id === msg.agentId) : null;
-
-  const events = msg.events ?? [];
-  const detailEvents = events.filter(
-    (e) => e.kind !== "text" && e.kind !== "text_delta" && e.kind !== "thinking_delta",
-  );
-  const hasDetails = detailEvents.length > 0 || msg.status === "streaming";
-
-  // Build interleaved segments using contentOffset to split msg.content
-  type Segment = { text: string; events: StreamEvent[]; streaming?: boolean };
-  const segments: Segment[] = [];
-  if (detailEvents.length > 0 && msg.content) {
-    const offsets = detailEvents.map((e) => e.contentOffset).filter((o): o is number => o != null);
-    const uniqueOffsets = [...new Set(offsets)].sort((a, b) => a - b);
-
-    if (uniqueOffsets.length > 0) {
-      let prevOff = 0;
-      for (const off of uniqueOffsets) {
-        const text = msg.content.substring(prevOff, off).trim();
-        const evtsAtOff = detailEvents.filter((e) => e.contentOffset === off);
-        segments.push({ text, events: evtsAtOff });
-        prevOff = off;
-      }
-      const trailing = msg.content.substring(prevOff).trim();
-      if (trailing || msg.status === "streaming") {
-        segments.push({ text: trailing, events: [], streaming: msg.status === "streaming" });
-      }
-    }
-  }
-  const isInterleaved = segments.length > 1 || (segments.length === 1 && segments[0].text !== "");
-
-  const time = new Date(msg.timestamp).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  return (
-    <div
-      id={`msg-${msg.id}`}
-      className={`message ${compact ? "message-compact" : ""}${highlight ? " message-highlight" : ""}${msg.status === "queued" ? " message-queued" : ""}`}
-    >
-      <div className="message-gutter">
-        {compact ? null : isUser ? (
-          <div className="avatar-user">
-            <img
-              src="avatars/ykiko.jpg"
-              alt="You"
-              style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }}
-            />
-          </div>
-        ) : agent ? (
-          <AgentAvatar agent={agent} size={32} />
-        ) : (
-          <div className="avatar-user">?</div>
-        )}
-      </div>
-      <div className="message-body">
-        {!compact && (
-          <div className="message-header">
-            {isUser ? (
-              <>
-                <span className="message-author user-author">You</span>
-                {msg.status === "queued" && (
-                  <span className="queued-badge">
-                    queued
-                    {onCancelQueued && (
-                      <button
-                        className="queued-cancel"
-                        title="Remove from queue"
-                        onClick={() => onCancelQueued(msg.id)}
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </span>
-                )}
-              </>
-            ) : agent ? (
-              <>
-                <span className="message-author" style={{ color: agent.color }}>
-                  {agent.name}
-                </span>
-                <span className="message-model">
-                  {agent.model.replace("claude-", "").replace(/-/g, " ")}
-                </span>
-              </>
-            ) : null}
-            <span className="message-time">{time}</span>
-            {msg.status === "streaming" && <span className="streaming-dot" />}
-          </div>
-        )}
-        {compact && msg.status === "streaming" && <span className="streaming-dot" />}
-
-        {msg.forwardRef && (
-          <div className="forward-ref">
-            <span className="forward-ref-icon">↩</span>
-            <span className="forward-ref-agent">
-              {msg.forwardRef.fromAvatar} {msg.forwardRef.fromAgent}
-            </span>
-            <span className="forward-ref-preview">{msg.forwardRef.preview}</span>
-          </div>
-        )}
-
-        {msg.status === "streaming" && !msg.content && detailEvents.length === 0 && (
-          <div className="working-indicator">Working...</div>
-        )}
-
-        {msg.images && msg.images.length > 0 && (
-          <div className="msg-images">
-            {msg.images.map((img, i) => (
-              <a key={i} href={img.url} target="_blank" rel="noopener noreferrer">
-                <img src={img.url} alt={img.name} />
-              </a>
-            ))}
-          </div>
-        )}
-
-        {isInterleaved ? (
-          <div className="message-content" onCopy={copySelectionAsMarkdown}>
-            {!isUser && onQuote && (
-              <button className="btn-quote" title="Quote this message" onClick={() => onQuote(msg)}>
-                ↩
-              </button>
-            )}
-            {segments.map((seg, si) => (
-              <div key={si}>
-                {seg.text && <MdBlock>{seg.text}</MdBlock>}
-                {seg.events.length > 0 && (
-                  <StepGroup
-                    group={{ step: si, events: seg.events }}
-                    onLoadEvents={handleLoadEvents}
-                    onCancelSubagent={handleCancelSubagent}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <>
-            {hasDetails &&
-              (() => {
-                const { regular: regEvts, subagents: saList } = splitEvents(detailEvents);
-                return (
-                  <>
-                    {(regEvts.length > 0 || msg.status === "streaming") && (
-                      <div className="message-events">
-                        <div className="events-header" onClick={() => setEventsOpen((v) => !v)}>
-                          <span className="events-toggle">{eventsOpen ? "▾" : "▸"}</span>
-                          <span>
-                            {(() => {
-                              const parts: string[] = [];
-                              const tc = regEvts.filter((e) => e.kind === "thinking").length;
-                              const tl = regEvts.filter((e) => e.kind === "tool_use").length;
-                              if (tc > 0) parts.push(`${tc} thinking`);
-                              if (tl > 0) parts.push(`${tl} tool call(s)`);
-                              return parts.length > 0 ? parts.join(" · ") : "streaming...";
-                            })()}
-                          </span>
-                        </div>
-                        {eventsOpen && (
-                          <div className="events-list">
-                            {regEvts.map((ev, i) => (
-                              <EventItem key={i} ev={ev} />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {saList.map((ev) => (
-                      <SubAgentItem
-                        key={ev.subagent!.taskId}
-                        ev={ev}
-                        onLoadEvents={handleLoadEvents}
-                        onCancel={handleCancelSubagent}
-                      />
-                    ))}
-                  </>
-                );
-              })()}
-
-            {msg.content && (
-              <div className="message-content" onCopy={copySelectionAsMarkdown}>
-                {!isUser && msg.content && msg.status === "done" && onQuote && (
-                  <button
-                    className="btn-quote"
-                    title="Quote this message"
-                    onClick={() => onQuote(msg)}
-                  >
-                    ↩
-                  </button>
-                )}
-                {isUser ? (
-                  renderMentionContent(msg.content, agents)
-                ) : (
-                  <MdBlock>{msg.content}</MdBlock>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-});
+// Re-exported for tests and for anyone importing the old single-file layout.
+export { EventItem, SubAgentItem, StepGroup, MessageItem, BannerItem } from "./messages";
+export { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs";
+export { Sidebar } from "./Sidebar";
 
 function compressToBlob(file: File, maxDim = 1600, quality = 0.85): Promise<Blob> {
   return new Promise((resolve, reject) => {
@@ -979,123 +75,6 @@ async function uploadImage(file: File): Promise<{ name: string; url: string }> {
   return res.json();
 }
 
-function formatBytes(bytes: number): string {
-  const gb = bytes / (1024 * 1024 * 1024);
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-}
-
-function formatUptime(seconds: number): string {
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (d > 0) return `${d}d ${h}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
-function formatResetTime(resetsAt: number): string {
-  const delta = resetsAt * 1000 - Date.now();
-  if (delta <= 0) return "now";
-  const mins = Math.floor(delta / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  return remMins > 0 ? `${hours}h${remMins}m` : `${hours}h`;
-}
-
-function quotaBarColor(pct: number): string {
-  if (pct >= 80) return "var(--error)";
-  if (pct >= 50) return "var(--warning)";
-  return "var(--accent)";
-}
-
-function StatusBar({ label, pct, extra }: { label: string; pct: number; extra?: string }) {
-  return (
-    <div className="status-item">
-      <span className="status-label">{label}</span>
-      <span className="status-value">
-        <span className="status-bar">
-          <span
-            className="status-bar-fill"
-            style={{ width: `${pct}%`, background: quotaBarColor(pct) }}
-          />
-        </span>
-        <span className="status-pct">{extra ?? `${pct}%`}</span>
-      </span>
-    </div>
-  );
-}
-
-function SystemStatusPanel({
-  status,
-  accounts,
-  defaultAccount,
-  onSetDefault,
-}: {
-  status: SystemStatus;
-  accounts: string[];
-  defaultAccount: string | null;
-  onSetDefault: (account: string | null) => void;
-}) {
-  const memPct = Math.round((status.memUsed / status.memTotal) * 100);
-
-  return (
-    <div className="system-status-panel">
-      {accounts.length > 0 && (
-        <div className="default-account-row" title="Account used by agents without an explicit one">
-          <span>Account</span>
-          <select
-            value={defaultAccount ?? ""}
-            onChange={(e) => onSetDefault(e.target.value || null)}
-          >
-            <option value="">local</option>
-            {accounts.map((a) => (
-              <option key={a} value={a}>
-                {a}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-      <div className="system-status-grid">
-        <StatusBar label="CPU" pct={status.cpuUsage} />
-        <StatusBar
-          label="Mem"
-          pct={memPct}
-          extra={`${formatBytes(status.memUsed)} / ${formatBytes(status.memTotal)}`}
-        />
-        {status.quota.flatMap((q) => {
-          const tag = status.quota.length > 1 ? q.label : "Opus";
-          const items = [];
-          if (q.fiveHour) {
-            const pct = Math.round(q.fiveHour.utilization * 100);
-            items.push(
-              <StatusBar
-                key={`${q.label}-5h`}
-                label={`${tag} 5h`}
-                pct={pct}
-                extra={`${pct}% · ${formatResetTime(q.fiveHour.resetsAt)}`}
-              />,
-            );
-          }
-          if (q.sevenDay) {
-            const pct = Math.round(q.sevenDay.utilization * 100);
-            items.push(
-              <StatusBar
-                key={`${q.label}-7d`}
-                label={`${tag} 7d`}
-                pct={pct}
-                extra={`${pct}% · ${formatResetTime(q.sevenDay.resetsAt)}`}
-              />,
-            );
-          }
-          return items;
-        })}
-      </div>
-    </div>
-  );
-}
-
 export function App() {
   const {
     workspaces,
@@ -1126,7 +105,12 @@ export function App() {
     searchResults,
     listDirs,
     dirSuggestions,
+    archiveWorkspace,
+    unarchiveWorkspace,
+    purgeArchived,
+    archiveAfterDays,
   } = useServer();
+  const [showPurge, setShowPurge] = useState(false);
 
   // Server errors (busy agent, cancel failures...) were previously only
   // logged to the console; surface them as a dismissible toast.
@@ -1175,6 +159,7 @@ export function App() {
   const inputMapRef = useRef(new Map<string, string>());
   const prevWsIdRef = useRef<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [createInPath, setCreateInPath] = useState<string | undefined>(undefined);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
@@ -1245,6 +230,7 @@ export function App() {
 
   // Sidebar folder groups; explicit expand/collapse choices persist.
   const wsGroups = useMemo(() => groupWorkspaces(workspaces), [workspaces]);
+  const [seenTick, setSeenTick] = useState(0);
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>(() => {
     try {
       return JSON.parse(localStorage.getItem("wsGroupOverrides") ?? "{}");
@@ -1295,6 +281,7 @@ export function App() {
   useEffect(() => {
     if (activeWsId && activeWs) {
       seenCountRef.current[activeWsId] = activeWs.messages.length;
+      setSeenTick((t) => t + 1);
       setFinishedStatus((prev) => {
         if (!(activeWsId in prev)) return prev;
         const next = { ...prev };
@@ -1679,161 +666,45 @@ export function App() {
         className={`sidebar${sidebarOpen ? " sidebar-open" : ""}`}
         style={{ width: sidebarWidth }}
       >
-        <div className="sidebar-header">
-          <span>Workspaces {!connected && <span className="disconnected">(offline)</span>}</span>
-          <span>
-            <button
-              title="Replay rendering demo (synthetic events for visual review)"
-              onClick={() => {
-                const wsId = startReplayDemo();
-                setActiveWsId(wsId);
-                setSidebarOpen(false);
-              }}
-            >
-              🎬
-            </button>
-            <button title="New workspace" onClick={() => setShowCreate(true)}>
-              +
-            </button>
-          </span>
-        </div>
-        <div className="search-bar">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search messages..."
-            autoComplete="off"
-          />
-          {searchQuery && (
-            <button className="search-clear" onClick={() => setSearchQuery("")}>
-              x
-            </button>
-          )}
-        </div>
-        {searchQuery.trim() ? (
-          <div className="search-results">
-            {searchHits === null ? (
-              <div className="search-empty">Searching...</div>
-            ) : searchHits.length === 0 ? (
-              <div className="search-empty">No results</div>
-            ) : (
-              searchHits.map((r, i) => (
-                <div
-                  key={i}
-                  className="search-result-item"
-                  onClick={() => jumpToMessage(r.workspaceId, r.messageId)}
-                >
-                  <div className="search-result-ws">{r.workspaceName}</div>
-                  <div className="search-result-snippet">{r.snippet}</div>
-                  <div className="search-result-time">
-                    {new Date(r.timestamp).toLocaleString([], {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        ) : (
-          <div className="task-list">
-            {wsGroups.map((g) => {
-              const expanded = isGroupExpanded(
-                g,
-                groupOverrides,
-                Date.now(),
-                g.workspaces.some((w) => w.id === activeWsId),
-              );
-              return (
-                <div key={g.key} className="ws-group">
-                  <div
-                    className="ws-group-header"
-                    title={g.key}
-                    onClick={() => toggleGroup(g.key, !expanded)}
-                  >
-                    <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
-                    <span className="ws-group-label">{g.label}</span>
-                    <span className="ws-group-count">{g.workspaces.length}</span>
-                    {g.workspaces[0].gitBranch && (
-                      <span className="ws-group-branch">{g.workspaces[0].gitBranch}</span>
-                    )}
-                    {g.running && <span className="streaming-dot" />}
-                  </div>
-                  {expanded && (
-                    <div className="ws-group-items">
-                      {g.workspaces.map((ws) => {
-                        const activeAgents = ws.agents.filter((a) => a.busy);
-                        const running =
-                          activeAgents.length > 0 ||
-                          ws.messages.some((m) => hasRunningSubagents(m.events));
-                        const unread = ws.messages.length - (seenCountRef.current[ws.id] ?? 0);
-                        return (
-                          <div
-                            key={ws.id}
-                            className={`task-item ${ws.id === activeWsId ? "active" : ""}${running ? " task-item-active" : ""}`}
-                            onClick={() => {
-                              setActiveWsId(ws.id);
-                              setSidebarOpen(false);
-                            }}
-                          >
-                            <div
-                              className={`task-status ${running ? "running" : (finishedStatus[ws.id] ?? "idle")}`}
-                            />
-                            <div className="task-info">
-                              <div className="task-name">
-                                <span className="task-name-text">
-                                  {ws.name}
-                                  {unread > 0 && ws.id !== activeWsId && (
-                                    <span className="unread-badge">{unread}</span>
-                                  )}
-                                </span>
-                              </div>
-                              {activeAgents.length > 0 && (
-                                <div className="task-active-agents">
-                                  {activeAgents.map((a) => (
-                                    <span
-                                      key={a.id}
-                                      className="task-active-agent"
-                                      style={{ background: a.color }}
-                                    >
-                                      {a.avatar} {a.name}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <button
-                              className="task-delete"
-                              title="Delete"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteWorkspace(ws.id);
-                                if (activeWsId === ws.id) setActiveWsId(null);
-                              }}
-                            >
-                              x
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {systemStatus && (
-          <SystemStatusPanel
-            status={systemStatus}
-            accounts={accounts}
-            defaultAccount={defaultAccount}
-            onSetDefault={setDefaultAccount}
-          />
-        )}
+        <Sidebar
+          workspaces={workspaces}
+          activeWsId={activeWsId}
+          connected={connected}
+          groupOverrides={groupOverrides}
+          seenCounts={seenTick >= 0 ? seenCountRef.current : {}}
+          finishedStatus={finishedStatus}
+          searchQuery={searchQuery}
+          searchHits={searchHits}
+          systemStatus={systemStatus}
+          accounts={accounts}
+          defaultAccount={defaultAccount}
+          onSelect={(id) => {
+            setActiveWsId(id);
+            setSidebarOpen(false);
+          }}
+          onDelete={(id) => {
+            deleteWorkspace(id);
+            if (activeWsId === id) setActiveWsId(null);
+          }}
+          onToggleGroup={toggleGroup}
+          onSearchChange={setSearchQuery}
+          onJump={jumpToMessage}
+          onCreate={() => {
+            setCreateInPath(undefined);
+            setShowCreate(true);
+          }}
+          onCreateIn={(cwd) => {
+            setCreateInPath(cwd);
+            setShowCreate(true);
+          }}
+          onReplayDemo={() => {
+            const wsId = startReplayDemo();
+            setActiveWsId(wsId);
+            setSidebarOpen(false);
+          }}
+          onPurgeArchived={() => setShowPurge(true)}
+          onSetDefaultAccount={setDefaultAccount}
+        />
       </div>
 
       <div className="resize-handle" onMouseDown={onResizeStart} />
@@ -1853,18 +724,24 @@ export function App() {
                   {activeWs.agents.map((agent) => {
                     const working = agent.busy || agentsAwaitingSubs.has(agent.id);
                     const status = working ? "busy" : connected ? "online" : "offline";
+                    const statusText = status === "busy" ? (agent.activity ?? "working") : status;
                     return (
                       <div
                         key={agent.id}
-                        className="panel-agent"
+                        className={`panel-agent panel-agent-${status}`}
                         title={`${agent.name} (${agent.model}${agent.account ? `, account: ${agent.account}` : ""})`}
                       >
                         <AgentAvatar agent={agent} size={22} />
                         <span className={`agent-status-dot agent-status-${status}`} />
-                        <span>{agent.name}</span>
+                        <span className="panel-agent-name">{agent.name}</span>
+                        {agent.effort && (
+                          <span className="agent-effort" title="Reasoning effort (/effort)">
+                            {agent.effort}
+                          </span>
+                        )}
                         {agent.account && <span className="agent-account">@{agent.account}</span>}
                         <span className={`agent-status-label agent-status-${status}`}>
-                          {status === "busy" ? "working" : status}
+                          {statusText}
                         </span>
                         <button
                           className="agent-clear"
@@ -1905,7 +782,30 @@ export function App() {
                     {activeWs.prTitle && <span className="pr-title">{activeWs.prTitle}</span>}
                   </a>
                 )}
+                <span className="ws-info-spacer" />
+                {activeWs.archivedAt == null ? (
+                  <button
+                    className="btn-ghost ws-archive-btn"
+                    title="Archive: unload history from memory and stop idle sessions"
+                    disabled={isAnyRunning}
+                    onClick={() => archiveWorkspace(activeWs.id)}
+                  >
+                    Archive
+                  </button>
+                ) : null}
               </div>
+              {activeWs.archivedAt != null && (
+                <div className="archived-banner">
+                  <span>
+                    Archived {formatRelative(activeWs.archivedAt)}
+                    {archiveAfterDays > 0 ? ` · idle for over ${archiveAfterDays} days` : ""}.
+                    Sending a message restores it.
+                  </span>
+                  <button className="btn-inline" onClick={() => unarchiveWorkspace(activeWs.id)}>
+                    Restore
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="messages" ref={messagesContainerRef} onScroll={onMessagesScrollTrack}>
@@ -2142,6 +1042,18 @@ export function App() {
           onCreate={createWorkspace}
           onListDirs={listDirs}
           dirSuggestions={dirSuggestions}
+          initialPath={createInPath}
+        />
+      )}
+
+      {showPurge && (
+        <ConfirmDialog
+          title="Delete archived workspaces"
+          body={`Permanently delete ${workspaces.filter((w) => w.archivedAt != null).length} archived workspace(s), including their message history and logs.`}
+          confirmLabel="Delete all"
+          danger
+          onConfirm={purgeArchived}
+          onClose={() => setShowPurge(false)}
         />
       )}
 

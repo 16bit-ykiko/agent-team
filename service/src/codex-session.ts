@@ -225,18 +225,21 @@ function parseStartedItem(item: ThreadItem): StreamEvent | null {
     case "command_execution":
       return {
         kind: "tool_use",
+        toolName: "Bash",
         content: `**Bash**\n\`\`\`bash\n${item.command}\n\`\`\``,
         toolUseId: item.id,
       };
     case "mcp_tool_call":
       return {
         kind: "tool_use",
+        toolName: "MCP",
         content: `**MCP** \`${item.server}.${item.tool}\``,
         toolUseId: item.id,
       };
     case "web_search":
       return {
         kind: "tool_use",
+        toolName: "WebSearch",
         content: `**WebSearch** ${item.query}`,
         toolUseId: item.id,
       };
@@ -280,14 +283,27 @@ function parseCompletedItem(item: ThreadItem): StreamEvent | null {
       const status = item.status === "failed" ? " (failed)" : "";
       return {
         kind: "tool_use",
+        toolName: "Edit",
         content: `**Edit**${status}\n\`\`\`\n${changes}\n\`\`\``,
         toolUseId: item.id,
       };
     }
 
+    case "web_search":
+      // Started with the query; completion carries no result payload, but
+      // closing the pair keeps the UI from showing it as still running.
+      return { kind: "tool_result", content: "done", toolUseId: item.id };
+
+    case "todo_list": {
+      const lines = item.items.map((t) => `- [${t.completed ? "x" : " "}] ${t.text}`);
+      return lines.length
+        ? { kind: "notice", level: "info", content: `**Plan**\n${lines.join("\n")}` }
+        : null;
+    }
+
     case "error":
       // Non-fatal item-level error: surface it without finalizing the turn.
-      return { kind: "compact", content: `Codex warning: ${item.message}` };
+      return { kind: "notice", level: "warning", content: `Codex: ${item.message}` };
 
     default:
       return null;

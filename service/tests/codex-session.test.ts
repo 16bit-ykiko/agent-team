@@ -149,7 +149,8 @@ describe("codex thread event mapping", () => {
       type: "item.completed",
       item: { id: "e1", type: "error", message: "transient thing" },
     });
-    expect(events[0].kind).toBe("compact");
+    expect(events[0].kind).toBe("notice");
+    expect(events[0].level).toBe("warning");
     expect(events[0].content).toContain("transient thing");
   });
 });

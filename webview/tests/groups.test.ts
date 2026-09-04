@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { groupWorkspaces, isGroupExpanded, STALE_MS } from "../src/groups";
+import {
+  groupWorkspaces,
+  isGroupExpanded,
+  STALE_MS,
+  archivedWorkspaces,
+  isArchived,
+} from "../src/groups";
 import { Workspace, Message, StreamEvent } from "../src/useServer";
 
 const NOW = 1_800_000_000_000;
@@ -96,5 +102,24 @@ describe("running state includes background subagents", () => {
     expect(groups[0].running).toBe(true);
     // Running keeps even a stale group expanded.
     expect(isGroupExpanded({ ...groups[0], lastActive: NOW - STALE_MS - 1 }, {}, NOW)).toBe(true);
+  });
+});
+
+describe("archived workspaces", () => {
+  it("keeps archived workspaces out of the folder groups", () => {
+    const live = ws("live", "/repo/a", NOW - 1000);
+    const old = { ...ws("old", "/repo/a", NOW - 20 * 86_400_000), archivedAt: NOW - 1000 };
+    const groups = groupWorkspaces([live, old]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].workspaces.map((w) => w.id)).toEqual(["live"]);
+    expect(isArchived(old)).toBe(true);
+    expect(isArchived(live)).toBe(false);
+  });
+
+  it("lists archived workspaces newest first, and drops the group when all are archived", () => {
+    const a = { ...ws("a", "/repo/x", NOW - 5000), archivedAt: NOW };
+    const b = { ...ws("b", "/repo/y", NOW - 1000), archivedAt: NOW };
+    expect(archivedWorkspaces([a, b]).map((w) => w.id)).toEqual(["b", "a"]);
+    expect(groupWorkspaces([a, b])).toEqual([]);
   });
 });

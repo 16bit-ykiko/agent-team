@@ -18,6 +18,14 @@ password = "changeme"
 session_secret = "generate-a-random-hex-string"
 max_age_days = 30
 
+# Workspace housekeeping
+[workspace]
+# Workspaces with no activity for this many days are archived automatically:
+# they move to the sidebar's "Archived" section, their history leaves memory
+# (still on disk, restored when opened) and idle CLI processes are shut down.
+# Sending a message to an archived workspace restores it. 0 disables.
+archive_after_days = 14
+
 # Hosts — currently only "local" type is supported
 [hosts.local]
 label = "Local"
@@ -35,22 +43,3 @@ type = "local"
 # [providers.deepseek]
 # api_key = "your-api-key"
 # base_url = "https://api.deepseek.com/anthropic"
-
-# Agent presets — define default agent configurations
-[agents.planner]
-backend = "claude"
-model = "claude-opus-4-6"
-effort = "max"
-permission_mode = "bypassPermissions"
-
-[agents.coder]
-backend = "claude"
-model = "claude-sonnet-4-6"
-effort = "high"
-permission_mode = "bypassPermissions"
-
-[agents.reviewer]
-backend = "claude"
-model = "claude-opus-4-6"
-effort = "max"
-permission_mode = "bypassPermissions"

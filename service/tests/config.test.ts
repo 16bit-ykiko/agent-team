@@ -116,3 +116,13 @@ describe("pickFailoverAccount", () => {
     expect(pickFailoverAccount(undefined, {})).toBeUndefined();
   });
 });
+
+describe("workspace housekeeping config", () => {
+  it("defaults archive_after_days to 14 and accepts an override (0 disables)", () => {
+    expect(loadConfig(dir).workspace.archive_after_days).toBe(14);
+    const d = writeConfig(`[workspace]\narchive_after_days = 0\n`);
+    expect(loadConfig(d).workspace.archive_after_days).toBe(0);
+    const d2 = writeConfig(`[workspace]\narchive_after_days = 30\n`);
+    expect(loadConfig(d2).workspace.archive_after_days).toBe(30);
+  });
+});

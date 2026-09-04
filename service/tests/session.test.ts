@@ -372,3 +372,242 @@ describe("rateLimit recovery signal", () => {
     expect(errors).toHaveLength(2);
   });
 });
+
+describe("CLI banners and activity", () => {
+  const sys = (subtype: string, over: Record<string, unknown> = {}) => ({
+    type: "system",
+    subtype,
+    session_id: "sess-1",
+    ...over,
+  });
+
+  function makeSessionWithChannels() {
+    const base = makeSession();
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    const activity: Array<string | null> = [];
+    const unhandled: unknown[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    session.on("activity", (a: string | null) => activity.push(a));
+    session.on("unhandled", (m: unknown) => unhandled.push(m));
+    const dispatch = (msg: unknown) =>
+      (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage(msg);
+    void base;
+    return { events, activity, unhandled, dispatch };
+  }
+
+  it("renders slash-command output as reply text", () => {
+    const { events, dispatch } = makeSessionWithChannels();
+    dispatch(sys("local_command_output", { content: "Total cost: $0.12" }));
+    expect(events).toEqual([{ kind: "text_delta", content: "Total cost: $0.12" }]);
+  });
+
+  it("maps informational/notification banners to notice events with a level", () => {
+    const { events, dispatch } = makeSessionWithChannels();
+    dispatch(sys("informational", { content: "hook said no", level: "warning" }));
+    dispatch(
+      sys("informational", { content: "stopping", level: "info", prevent_continuation: true }),
+    );
+    dispatch(sys("notification", { text: "heads up", priority: "immediate", key: "k" }));
+    dispatch(sys("notification", { text: "fyi", priority: "low", key: "k2" }));
+    dispatch(sys("informational", { content: "   ", level: "info" }));
+    expect(events.map((e) => [e.kind, e.level, e.content])).toEqual([
+      ["notice", "warning", "hook said no"],
+      ["notice", "warning", "stopping"],
+      ["notice", "warning", "heads up"],
+      ["notice", "notice", "fyi"],
+    ]);
+  });
+
+  it("surfaces API retries as a retry event and an activity label", () => {
+    const { events, activity, dispatch } = makeSessionWithChannels();
+    dispatch(
+      sys("api_retry", {
+        attempt: 2,
+        max_retries: 10,
+        retry_delay_ms: 5000,
+        error_status: 529,
+        error: "overloaded",
+      }),
+    );
+    expect(events[0].kind).toBe("retry");
+    expect(events[0].content).toContain("2/10");
+    expect(events[0].content).toContain("529");
+    expect(events[0].content).toContain("overloaded");
+    expect(activity).toEqual(["retrying (2/10)"]);
+  });
+
+  it("tracks compaction as activity and reports a failed compact", () => {
+    const { events, activity, dispatch } = makeSessionWithChannels();
+    dispatch(sys("status", { status: "compacting" }));
+    dispatch(sys("status", { status: null, compact_result: "failed", compact_error: "too big" }));
+    expect(activity).toEqual(["compacting context", null]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "notice", level: "warning" });
+    expect(events[0].content).toContain("too big");
+  });
+
+  it("reports permission denials with the tool name and reason", () => {
+    const { events, dispatch } = makeSessionWithChannels();
+    dispatch(
+      sys("permission_denied", {
+        tool_name: "Bash",
+        tool_use_id: "toolu_9",
+        decision_reason_type: "rule",
+        decision_reason: "rm -rf is blocked",
+      }),
+    );
+    expect(events[0]).toMatchObject({ kind: "notice", level: "warning", toolUseId: "toolu_9" });
+    expect(events[0].content).toContain("Bash");
+    expect(events[0].content).toContain("rm -rf is blocked");
+  });
+
+  it("shows hooks as activity and only reports failed ones", () => {
+    const { events, activity, dispatch } = makeSessionWithChannels();
+    dispatch(sys("hook_started", { hook_id: "h1", hook_name: "lint", hook_event: "PostToolUse" }));
+    dispatch(
+      sys("hook_response", {
+        hook_id: "h1",
+        hook_name: "lint",
+        hook_event: "PostToolUse",
+        outcome: "success",
+        output: "",
+        stdout: "",
+        stderr: "",
+      }),
+    );
+    dispatch(sys("hook_started", { hook_id: "h2", hook_name: "fmt", hook_event: "Stop" }));
+    dispatch(
+      sys("hook_response", {
+        hook_id: "h2",
+        hook_name: "fmt",
+        hook_event: "Stop",
+        outcome: "error",
+        output: "",
+        stdout: "",
+        stderr: "prettier not found",
+      }),
+    );
+    expect(activity).toEqual(["hook: lint", null, "hook: fmt", null]);
+    expect(events).toHaveLength(1);
+    expect(events[0].content).toContain("fmt");
+    expect(events[0].content).toContain("prettier not found");
+  });
+
+  it("turns long tool calls into an activity label, ignoring subagent progress", () => {
+    const { activity, dispatch } = makeSessionWithChannels();
+    dispatch({
+      type: "tool_progress",
+      tool_use_id: "t1",
+      tool_name: "Bash",
+      parent_tool_use_id: null,
+      elapsed_time_seconds: 42.4,
+      session_id: "sess-1",
+    });
+    dispatch({
+      type: "tool_progress",
+      tool_use_id: "t2",
+      tool_name: "Read",
+      parent_tool_use_id: "toolu_task",
+      elapsed_time_seconds: 3,
+      session_id: "sess-1",
+    });
+    expect(activity).toEqual(["Bash · 42s"]);
+  });
+
+  it("clears activity when the turn ends", () => {
+    const { activity, dispatch } = makeSessionWithChannels();
+    dispatch(sys("status", { status: "compacting" }));
+    dispatch({ type: "result", subtype: "success", result: "", session_id: "sess-1" });
+    expect(activity).toEqual(["compacting context", null]);
+  });
+
+  it("reports auth problems and conversation resets", () => {
+    const { events, dispatch } = makeSessionWithChannels();
+    dispatch({ type: "auth_status", isAuthenticating: false, output: [], error: "token expired" });
+    dispatch({ type: "conversation_reset", new_conversation_id: "new-id", session_id: "old" });
+    expect(events[0]).toMatchObject({ kind: "error" });
+    expect(events[0].content).toContain("token expired");
+    expect(events[1]).toMatchObject({ kind: "notice" });
+  });
+
+  it("routes unknown messages to the unhandled channel, and stays quiet on housekeeping", () => {
+    const { events, unhandled, dispatch } = makeSessionWithChannels();
+    dispatch({ type: "keep_alive" });
+    dispatch(sys("background_tasks_changed", { tasks: [] }));
+    dispatch(sys("some_future_subtype", { foo: 1 }));
+    dispatch({ type: "brand_new_type", session_id: "sess-1" });
+    expect(events).toHaveLength(0);
+    expect(
+      unhandled.map(
+        (m) => (m as { type: string; subtype?: string }).subtype ?? (m as { type: string }).type,
+      ),
+    ).toEqual(["some_future_subtype", "brand_new_type"]);
+  });
+
+  it("tags tool_use events with the tool name", () => {
+    const { events, dispatch } = makeSessionWithChannels();
+    dispatch({
+      type: "assistant",
+      session_id: "sess-1",
+      parent_tool_use_id: null,
+      message: {
+        content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/a" } }],
+      },
+    });
+    expect(events[0]).toMatchObject({ kind: "tool_use", toolName: "Read", toolUseId: "t1" });
+    expect(events[0]).not.toHaveProperty("raw");
+  });
+});
+
+describe("subagent output arriving before task_started", () => {
+  it("parks nested blocks and replays them once the task registers", () => {
+    const { events, dispatch } = makeSession();
+    // The Task tool's inner assistant turn shows up first...
+    dispatch({
+      type: "assistant",
+      session_id: "sess-1",
+      parent_tool_use_id: "toolu_1",
+      message: {
+        content: [
+          { type: "text", text: "looking around" },
+          { type: "tool_use", id: "inner_1", name: "Read", input: { file_path: "/x" } },
+        ],
+      },
+    });
+    dispatch({
+      type: "user",
+      session_id: "sess-1",
+      parent_tool_use_id: "toolu_1",
+      message: { content: [{ type: "tool_result", tool_use_id: "inner_1", content: "file body" }] },
+    });
+    expect(events).toHaveLength(0);
+
+    // ...then the task announces itself.
+    dispatch(taskStarted({ task_type: "local_agent", subagent_type: "Explore" }));
+
+    expect(events.map((e) => e.kind)).toEqual([
+      "subagent_start",
+      "subagent_progress",
+      "subagent_progress",
+      "subagent_progress",
+    ]);
+    const inner = events.slice(1).map((e) => e.subagent?._innerEvent);
+    expect(inner.map((i) => i?.kind)).toEqual(["text", "tool_use", "tool_result"]);
+    expect(inner[1]).toMatchObject({ toolName: "Read", toolUseId: "inner_1" });
+    expect(events.every((e) => e.subagent?.taskId === "task-1")).toBe(true);
+  });
+
+  it("drops parked output when the turn ends without a matching task", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "assistant",
+      session_id: "sess-1",
+      parent_tool_use_id: "toolu_orphan",
+      message: { content: [{ type: "text", text: "lost" }] },
+    });
+    dispatch({ type: "result", subtype: "success", result: "", session_id: "sess-1" });
+    dispatch(taskStarted({ task_type: "local_agent", tool_use_id: "toolu_orphan" }));
+    expect(events.map((e) => e.kind)).toEqual(["result", "subagent_start"]);
+  });
+});

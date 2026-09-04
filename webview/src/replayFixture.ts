@@ -110,6 +110,28 @@ export function buildFrames(): Frame[] {
     },
   });
 
+  // An archived sibling so the sidebar's Archived section shows up too.
+  frames.push({ type: "workspace_deleted", workspaceId: `${DEMO_WS_ID}-archived` });
+  frames.push({
+    type: "workspace_created",
+    workspace: {
+      id: `${DEMO_WS_ID}-archived`,
+      name: "old-experiment",
+      project: "replay-demo",
+      hostId: "local",
+      cwd: "/demo",
+      gitBranch: null,
+      prUrl: null,
+      prTitle: null,
+      agents: [],
+      messages: [],
+      createdAt: now - 40 * 86_400_000,
+      lastMessageAt: now - 30 * 86_400_000,
+      archivedAt: now - 16 * 86_400_000,
+      messagesLoaded: true,
+    },
+  });
+
   // ---- System + user messages -------------------------------------------
   frames.push({
     type: "new_message",
@@ -466,9 +488,41 @@ export function buildFrames(): Frame[] {
         "[Claude error] transient 529 — retried automatically (rendering check for error events)",
     }),
     ev(M1, { kind: "compact", content: "Context compacted (auto): 145000 → 60000 tokens, 8.2s" }),
+    ev(M1, {
+      kind: "notice",
+      level: "warning",
+      content: "Permission denied for Bash (rule): `rm -rf` is blocked by settings",
+    }),
+    ev(M1, {
+      kind: "retry",
+      level: "warning",
+      content: "API retry 1/10 in 2s — HTTP 529 (overloaded)",
+    }),
+    ev(M1, {
+      kind: "retry",
+      level: "warning",
+      content: "API retry 2/10 in 5s — HTTP 529 (overloaded)",
+    }),
+    ev(M1, {
+      kind: "notice",
+      level: "info",
+      content: "**Plan**\n- [x] read entry points\n- [ ] fan out subagents\n- [ ] summarize",
+    }),
   );
+  frames.push({
+    type: "agent_activity",
+    workspaceId: DEMO_WS_ID,
+    agentId: AGENT.id,
+    activity: "Bash · 42s",
+  });
 
   frames.push(...textDeltas(M1, m1p3));
+  frames.push({
+    type: "agent_activity",
+    workspaceId: DEMO_WS_ID,
+    agentId: AGENT.id,
+    activity: null,
+  });
   frames.push({
     type: "message_done",
     workspaceId: DEMO_WS_ID,

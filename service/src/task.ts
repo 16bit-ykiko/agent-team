@@ -45,6 +45,13 @@ export interface AgentInfo {
   account?: string;
 }
 
+// Wire form of an agent: info plus transient runtime state.
+export interface AgentRuntimeInfo extends AgentInfo {
+  busy: boolean;
+  activity: string | null;
+  effort: string | null;
+}
+
 export interface AgentState extends AgentInfo {
   session: SessionState;
 }
@@ -58,10 +65,13 @@ export interface WorkspaceInfo {
   gitBranch: string | null;
   prUrl: string | null;
   prTitle: string | null;
-  agents: AgentInfo[];
+  agents: AgentRuntimeInfo[];
   messages: Message[];
   createdAt: number;
   lastMessageAt?: number;
+  // Set while the workspace is archived (idle past the configured window or
+  // archived by hand). Archived workspaces keep their history on disk only.
+  archivedAt: number | null;
 }
 
 export interface WorkspaceState {
@@ -71,8 +81,12 @@ export interface WorkspaceState {
   hostId: string;
   cwd: string;
   agents: AgentState[];
-  messages: Message[];
+  // Absent when the workspace's history is not loaded in memory; the
+  // persistence layer then keeps whatever is already on disk.
+  messages?: Message[];
   createdAt: number;
+  lastActivityAt?: number;
+  archivedAt?: number | null;
 }
 
 export interface AgentEntry {
@@ -84,6 +98,8 @@ export interface AgentEntry {
   lastPrompt?: string;
   // While set (epoch ms), the queue holds and dequeueNext is a no-op.
   pausedUntil?: number;
+  // Transient "doing X right now" label from the session (see setActivity).
+  activity?: string | null;
 }
 
 export interface WorkspaceCallbacks {
@@ -104,6 +120,12 @@ export interface WorkspaceCallbacks {
     agentId: string,
     info: { rateLimitType?: string; resetsAt?: number },
   ) => void;
+  onAgentActivity?: (wsId: string, agentId: string, activity: string | null) => void;
+  // Persistent agent attributes changed (effort level...).
+  onAgentUpdated?: (wsId: string, agent: AgentRuntimeInfo) => void;
+  // An SDK message the session did not know how to render; logged so a
+  // missing rendering is diagnosable instead of silent.
+  onUnhandled?: (wsId: string, agentId: string, msg: unknown) => void;
 }
 
 export class Workspace {
@@ -115,6 +137,12 @@ export class Workspace {
   agents = new Map<string, AgentEntry>();
   messages: Message[] = [];
   createdAt: number;
+  // Timestamp of the newest message; maintained so it survives unloading.
+  lastActivityAt: number;
+  archivedAt: number | null = null;
+  // False once the history has been unloaded (archived workspace). Every
+  // path that touches `messages` must call ensureLoaded via the server first.
+  messagesLoaded = true;
   // Filled by the server's background git scanner; getInfo must never run
   // git itself (a synchronous call here used to block the whole event loop).
   cachedBranch: string | null = null;
@@ -140,7 +168,40 @@ export class Workspace {
     this.cwd = cwd;
     this.hostRegistry = hostRegistry;
     this.createdAt = Date.now();
+    this.lastActivityAt = this.createdAt;
     this.cb = cb;
+  }
+
+  get isArchived(): boolean {
+    return this.archivedAt !== null;
+  }
+
+  get isIdle(): boolean {
+    for (const a of this.agents.values()) {
+      if (a.session.isRunning) return false;
+    }
+    return !this.messages.some((m) => m.status === "queued" || m.status === "streaming");
+  }
+
+  private pushMessage(msg: Message): void {
+    this.messages.push(msg);
+    if (msg.timestamp > this.lastActivityAt) this.lastActivityAt = msg.timestamp;
+    this.cb?.onNewMessage(this.id, msg);
+  }
+
+  // Drop the history from memory (it stays on disk). Only meaningful for an
+  // idle workspace; the server persists before calling this.
+  unloadMessages(): void {
+    this.messages = [];
+    this.messagesLoaded = false;
+    for (const entry of this.agents.values()) entry.currentMsg = null;
+  }
+
+  setMessages(messages: Message[]): void {
+    this.messages = messages;
+    this.messagesLoaded = true;
+    const last = messages[messages.length - 1];
+    if (last && last.timestamp > this.lastActivityAt) this.lastActivityAt = last.timestamp;
   }
 
   private pushSystemMessage(content: string): void {
@@ -152,8 +213,7 @@ export class Workspace {
       timestamp: Date.now(),
       status: "done",
     };
-    this.messages.push(msg);
-    this.cb?.onNewMessage(this.id, msg);
+    this.pushMessage(msg);
   }
 
   private makeAgentMsg(agentId: string): Message {
@@ -172,8 +232,7 @@ export class Workspace {
   private ensureAgentMsg(entry: AgentEntry): Message {
     if (!entry.currentMsg) {
       entry.currentMsg = this.makeAgentMsg(entry.info.id);
-      this.messages.push(entry.currentMsg);
-      this.cb?.onNewMessage(this.id, entry.currentMsg);
+      this.pushMessage(entry.currentMsg);
     }
     return entry.currentMsg;
   }
@@ -337,6 +396,7 @@ export class Workspace {
         } else {
           msg.content += "\n\n" + event.content;
         }
+        event.contentOffset = msg.content.length;
         msg.events!.push(event);
         this.cb?.onStreamEvent(this.id, msg, event);
         this.cb?.onMessageDone(this.id, msg.id, "error", msg.content, msg.events);
@@ -346,6 +406,18 @@ export class Workspace {
       } else if (event.kind === "subagent_progress" || event.kind === "subagent_done") {
         const msg = this.ensureAgentMsg(entry);
         this.handleSubagentOnMsg(msg, event);
+      } else if (event.kind === "retry") {
+        // One retry banner per turn, updated in place.
+        const msg = this.ensureAgentMsg(entry);
+        const prev = msg.events!.findIndex((e) => e.kind === "retry");
+        if (prev >= 0) {
+          event.contentOffset = msg.events![prev].contentOffset;
+          msg.events![prev] = event;
+        } else {
+          event.contentOffset = msg.content.length;
+          msg.events!.push(event);
+        }
+        this.cb?.onStreamEvent(this.id, msg, event);
       } else if (event.kind === "tool_result" && event.toolUseId) {
         const msg = this.ensureAgentMsg(entry);
         const matchIdx = msg.events!.findIndex(
@@ -385,19 +457,31 @@ export class Workspace {
 
     const info: AgentInfo = { id, name, model, avatar, color, isDefault, account };
     const session = host.createSession(id, { cwd: this.cwd, model, ...config });
-    const handler = this.createEventHandler(id);
+    const handler = this.attachSession(id, session);
 
+    this.agents.set(id, { info, session, handler, currentMsg: null });
+    this.pushSystemMessage(`${avatar} **${name}** joined the team`);
+    return info;
+  }
+
+  private attachSession(agentId: string, session: HostSessionHandle): (e: StreamEvent) => void {
+    const handler = this.createEventHandler(agentId);
     session.on("event", handler);
     session.on("commands", (cmds: CommandInfo[]) => {
       this.cb?.onCommandsChanged?.(this.id, cmds);
     });
     session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) => {
-      this.cb?.onRateLimit?.(this.id, id, info);
+      this.cb?.onRateLimit?.(this.id, agentId, info);
     });
-
-    this.agents.set(id, { info, session, handler, currentMsg: null });
-    this.pushSystemMessage(`${avatar} **${name}** joined the team`);
-    return info;
+    session.on("activity", (activity: string | null) => {
+      const entry = this.agents.get(agentId);
+      if (entry) entry.activity = activity;
+      this.cb?.onAgentActivity?.(this.id, agentId, activity);
+    });
+    session.on("unhandled", (msg: unknown) => {
+      this.cb?.onUnhandled?.(this.id, agentId, msg);
+    });
+    return handler;
   }
 
   removeAgent(agentId: string): boolean {
@@ -495,6 +579,7 @@ export class Workspace {
     }
 
     agent.session.setEffort(level);
+    this.cb?.onAgentUpdated?.(this.id, this.agentInfo(agent));
     return `Effort for **${agent.info.name}** set to **${level}**${current ? ` (was ${current})` : ""}. Applies from the next message.`;
   }
 
@@ -526,14 +611,12 @@ export class Workspace {
         timestamp: Date.now(),
         status: "done",
       };
-      this.messages.push(userMsg);
-      this.cb?.onNewMessage(this.id, userMsg);
+      this.pushMessage(userMsg);
 
       const agentMsg = this.makeAgentMsg(agent.info.id);
       agentMsg.content = cmdResult;
       agentMsg.status = "done";
-      this.messages.push(agentMsg);
-      this.cb?.onNewMessage(this.id, agentMsg);
+      this.pushMessage(agentMsg);
       this.cb?.onMessageDone(this.id, agentMsg.id, "done", cmdResult);
       return;
     }
@@ -578,8 +661,7 @@ export class Workspace {
       forwardRef,
       ...(busy && { queuedFor: agent.info.id, queuedPrompt: prompt }),
     };
-    this.messages.push(userMsg);
-    this.cb?.onNewMessage(this.id, userMsg);
+    this.pushMessage(userMsg);
     if (busy) return;
 
     await this.dispatchPrompt(agent, prompt);
@@ -590,8 +672,7 @@ export class Workspace {
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
 
     agent.currentMsg = this.makeAgentMsg(agent.info.id);
-    this.messages.push(agent.currentMsg);
-    this.cb?.onNewMessage(this.id, agent.currentMsg);
+    this.pushMessage(agent.currentMsg);
 
     try {
       await agent.session.send(prompt);
@@ -681,8 +762,7 @@ export class Workspace {
       forwardRef,
       ...(busy && { queuedFor: agent.info.id, queuedPrompt: prompt }),
     };
-    this.messages.push(userMsg);
-    this.cb?.onNewMessage(this.id, userMsg);
+    this.pushMessage(userMsg);
     if (busy) return;
 
     await this.dispatchPrompt(agent, prompt);
@@ -751,8 +831,16 @@ export class Workspace {
     return true;
   }
 
+  agentInfo(a: AgentEntry): AgentRuntimeInfo {
+    return {
+      ...a.info,
+      busy: a.session.isRunning,
+      activity: a.activity ?? null,
+      effort: a.session.getState().config.effort ?? null,
+    };
+  }
+
   getInfo(includeMessages = true): WorkspaceInfo {
-    const lastMsg = this.messages[this.messages.length - 1];
     return {
       id: this.id,
       name: this.name,
@@ -762,13 +850,11 @@ export class Workspace {
       gitBranch: this.cachedBranch,
       prUrl: this.cachedPrUrl,
       prTitle: this.cachedPrTitle,
-      agents: [...this.agents.values()].map((a) => ({
-        ...a.info,
-        busy: a.session.isRunning,
-      })),
+      agents: [...this.agents.values()].map((a) => this.agentInfo(a)),
       messages: includeMessages ? this.messages : [],
       createdAt: this.createdAt,
-      lastMessageAt: lastMsg?.timestamp ?? this.createdAt,
+      lastMessageAt: this.lastActivityAt,
+      archivedAt: this.archivedAt,
     };
   }
 
@@ -787,8 +873,10 @@ export class Workspace {
         ...a.info,
         session: a.session.getState(),
       })),
-      messages: this.messages,
+      ...(this.messagesLoaded && { messages: this.messages }),
       createdAt: this.createdAt,
+      lastActivityAt: this.lastActivityAt,
+      archivedAt: this.archivedAt,
     };
   }
 
@@ -808,7 +896,8 @@ export class Workspace {
       cb,
     );
     ws.createdAt = state.createdAt;
-    ws.messages = state.messages.map((m) => {
+    ws.archivedAt = state.archivedAt ?? null;
+    ws.messages = (state.messages ?? []).map((m) => {
       const msg = {
         ...m,
         kind: m.kind ?? (m.agentId === null ? "user" : "agent"),
@@ -823,18 +912,17 @@ export class Workspace {
       }
       return msg;
     });
+    const lastMsg = ws.messages[ws.messages.length - 1];
+    ws.lastActivityAt = Math.max(
+      state.lastActivityAt ?? 0,
+      lastMsg?.timestamp ?? 0,
+      state.createdAt,
+    );
 
     const host = hostRegistry.get(hostId) ?? hostRegistry.getDefault()!;
     for (const agentState of state.agents) {
       const session = host.restoreSession(agentState.id, agentState.session);
-      const handler = ws.createEventHandler(agentState.id);
-      session.on("event", handler);
-      session.on("commands", (cmds: CommandInfo[]) => {
-        ws.cb?.onCommandsChanged?.(ws.id, cmds);
-      });
-      session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) => {
-        ws.cb?.onRateLimit?.(ws.id, agentState.id, info);
-      });
+      const handler = ws.attachSession(agentState.id, session);
       ws.agents.set(agentState.id, {
         info: {
           id: agentState.id,
@@ -843,6 +931,7 @@ export class Workspace {
           avatar: agentState.avatar,
           color: agentState.color,
           isDefault: agentState.isDefault,
+          account: agentState.account,
         },
         session,
         handler,

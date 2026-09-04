@@ -17,11 +17,21 @@ function lastActive(ws: Workspace): number {
   return ws.lastMessageAt ?? ws.createdAt;
 }
 
-// Two-level sidebar: workspaces grouped by folder, groups sorted by most
+export function isArchived(ws: Workspace): boolean {
+  return ws.archivedAt != null;
+}
+
+// Archived workspaces live in their own flat section, newest first.
+export function archivedWorkspaces(workspaces: Workspace[]): Workspace[] {
+  return workspaces.filter(isArchived).sort((a, b) => lastActive(b) - lastActive(a));
+}
+
+// Two-level sidebar: live workspaces grouped by folder, groups sorted by most
 // recent activity, workspaces within a group likewise.
 export function groupWorkspaces(workspaces: Workspace[]): WorkspaceGroup[] {
   const byCwd = new Map<string, Workspace[]>();
   for (const ws of workspaces) {
+    if (isArchived(ws)) continue;
     const key = ws.cwd || "(no path)";
     const list = byCwd.get(key);
     if (list) list.push(ws);

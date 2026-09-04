@@ -1,9 +1,16 @@
 import { StreamEvent } from "./useServer";
 
 export const SUBAGENT_KINDS = new Set(["subagent_start", "subagent_progress", "subagent_done"]);
+// One-line status banners that render inline rather than inside the
+// collapsed step box: compaction, CLI notices, API retries.
+export const BANNER_KINDS = new Set(["compact", "notice", "retry"]);
 
 export function isSubagentEvent(e: StreamEvent): boolean {
   return SUBAGENT_KINDS.has(e.kind);
+}
+
+export function isBannerEvent(e: StreamEvent): boolean {
+  return BANNER_KINDS.has(e.kind);
 }
 
 // A subagent's lifecycle arrives as separate start/progress/done events (the
@@ -14,8 +21,10 @@ export function isSubagentEvent(e: StreamEvent): boolean {
 export function splitEvents(events: StreamEvent[]): {
   regular: StreamEvent[];
   subagents: StreamEvent[];
+  banners: StreamEvent[];
 } {
-  const regular = events.filter((e) => !isSubagentEvent(e));
+  const regular = events.filter((e) => !isSubagentEvent(e) && !isBannerEvent(e));
+  const banners = events.filter(isBannerEvent);
   const merged = new Map<string, StreamEvent>();
   for (const e of events) {
     const taskId = e.subagent?.taskId;
@@ -37,7 +46,7 @@ export function splitEvents(events: StreamEvent[]): {
       });
     }
   }
-  return { regular, subagents: [...merged.values()] };
+  return { regular, subagents: [...merged.values()], banners };
 }
 
 // A message "still has work in flight" when any of its subagents hasn't

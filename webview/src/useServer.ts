@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { MOCK_WORKSPACES, MOCK_SYSTEM_STATUS, MOCK_PRESETS, MOCK_MODELS } from "./mockData";
+import { applyStreamBatch, PendingEvent } from "./stream";
 
 export interface ToolInput {
   tool: string;
@@ -21,9 +22,13 @@ export interface SubAgentInfo {
   events?: StreamEvent[];
 }
 
+export type NoticeLevel = "info" | "notice" | "warning" | "error";
+
 export interface StreamEvent {
   kind: string;
   content: string;
+  toolName?: string;
+  level?: NoticeLevel;
   toolInput?: ToolInput;
   step?: number;
   contentOffset?: number;
@@ -68,6 +73,10 @@ export interface AgentInfo {
   color: string;
   isDefault: boolean;
   busy?: boolean;
+  // Transient label of what the agent is doing (compacting, a long tool...).
+  activity?: string | null;
+  // Current reasoning effort level, when the model supports one.
+  effort?: string | null;
   account?: string;
 }
 
@@ -96,6 +105,7 @@ export interface Workspace {
   messages: Message[];
   createdAt: number;
   lastMessageAt?: number;
+  archivedAt?: number | null;
   hasMore?: boolean;
   messagesLoaded?: boolean;
 }
@@ -172,6 +182,7 @@ export function useServer() {
   const [hosts, setHosts] = useState<HostInfo[]>([]);
   const [hostConfigs, setHostConfigs] = useState<Record<string, HostConfig>>({});
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [archiveAfterDays, setArchiveAfterDays] = useState<number>(0);
   const [lastError, setLastError] = useState<string | null>(null);
   const [searchResults, setSearchResults] = useState<{ query: string; hits: SearchHit[] }>({
     query: "",
@@ -184,9 +195,7 @@ export function useServer() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  const pendingEventsRef = useRef<Array<{ wsId: string; messageId: string; event: StreamEvent }>>(
-    [],
-  );
+  const pendingEventsRef = useRef<PendingEvent[]>([]);
   const rafRef = useRef<number>(0);
 
   const flushStreamEvents = useCallback(() => {
@@ -194,154 +203,7 @@ export function useServer() {
     const batch = pendingEventsRef.current;
     if (batch.length === 0) return;
     pendingEventsRef.current = [];
-    setWorkspaces((prev) =>
-      prev.map((w) => {
-        const relevant = batch.filter((e) => e.wsId === w.id);
-        if (relevant.length === 0) return w;
-        return {
-          ...w,
-          messages: w.messages.map((m) => {
-            const evts = relevant.filter((e) => e.messageId === m.id);
-            if (evts.length === 0) return m;
-            const deltas = evts.filter(
-              (e) => e.event.kind === "text_delta" || e.event.kind === "thinking_delta",
-            );
-            const regular = evts.filter(
-              (e) => e.event.kind !== "text_delta" && e.event.kind !== "thinking_delta",
-            );
-            let content = m.content;
-            if (deltas.length > 0) {
-              const textDelta = deltas
-                .filter((e) => e.event.kind === "text_delta")
-                .map((e) => e.event.content)
-                .join("");
-              if (textDelta) content = (content || "") + textDelta;
-            }
-            if (regular.length === 0 && deltas.length > 0) {
-              return { ...m, content };
-            }
-            let events = [
-              ...(m.events ?? []).map((e) =>
-                e.subagent
-                  ? {
-                      ...e,
-                      subagent: {
-                        ...e.subagent,
-                        events: e.subagent.events ? [...e.subagent.events] : undefined,
-                      },
-                    }
-                  : e,
-              ),
-            ];
-            for (const r of regular) {
-              const ev = r.event;
-              if (ev.kind === "tool_result" && ev.toolUseId) {
-                const matchIdx = events.findIndex(
-                  (e) => e.kind === "tool_use" && e.toolUseId === ev.toolUseId,
-                );
-                if (matchIdx >= 0) {
-                  events[matchIdx] = {
-                    ...events[matchIdx],
-                    toolResult: ev.content,
-                    ...(ev.isMarkdown && { toolResultIsMarkdown: true }),
-                  };
-                  continue;
-                }
-              }
-              if (ev.kind === "subagent_progress" && ev.subagent?.taskId) {
-                const innerEv = (ev.subagent as unknown as Record<string, unknown>)?._innerEvent as
-                  StreamEvent | undefined;
-                if (innerEv) {
-                  const startIdx = events.findIndex(
-                    (e) =>
-                      e.kind === "subagent_start" && e.subagent?.taskId === ev.subagent?.taskId,
-                  );
-                  if (startIdx >= 0) {
-                    const sa = events[startIdx].subagent!;
-                    if (!sa.events) sa.events = [];
-                    if (innerEv.kind === "tool_result" && innerEv.toolUseId) {
-                      const innerMatchIdx = sa.events.findIndex(
-                        (e) => e.kind === "tool_use" && e.toolUseId === innerEv.toolUseId,
-                      );
-                      if (innerMatchIdx >= 0) {
-                        sa.events[innerMatchIdx] = {
-                          ...sa.events[innerMatchIdx],
-                          toolResult: innerEv.content,
-                        };
-                      } else {
-                        sa.events.push(innerEv);
-                      }
-                    } else if (innerEv.kind === "subagent_progress" && innerEv.subagent?.taskId) {
-                      // Nested subagent progress replaces the previous progress
-                      // entry for the same nested task (mirrors task.ts).
-                      const nid = innerEv.subagent.taskId;
-                      const pi = sa.events.findIndex(
-                        (e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid,
-                      );
-                      if (pi >= 0) sa.events[pi] = innerEv;
-                      else sa.events.push(innerEv);
-                    } else if (innerEv.kind === "subagent_done" && innerEv.subagent?.taskId) {
-                      const nid = innerEv.subagent.taskId;
-                      const pi = sa.events.findIndex(
-                        (e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid,
-                      );
-                      if (pi >= 0) sa.events.splice(pi, 1);
-                      const si = sa.events.findIndex(
-                        (e) => e.kind === "subagent_start" && e.subagent?.taskId === nid,
-                      );
-                      if (si >= 0) {
-                        sa.events[si] = {
-                          ...sa.events[si],
-                          subagent: {
-                            ...sa.events[si].subagent!,
-                            status: innerEv.subagent.status,
-                            summary: innerEv.subagent.summary,
-                            usage: innerEv.subagent.usage,
-                          },
-                        };
-                      }
-                      sa.events.push(innerEv);
-                    } else {
-                      sa.events.push(innerEv);
-                    }
-                  }
-                  continue;
-                }
-                const idx = events.findIndex(
-                  (e) =>
-                    e.kind === "subagent_progress" && e.subagent?.taskId === ev.subagent?.taskId,
-                );
-                if (idx >= 0) {
-                  events[idx] = ev;
-                  continue;
-                }
-              } else if (ev.kind === "subagent_done" && ev.subagent?.taskId) {
-                events = events.filter(
-                  (e) =>
-                    !(e.kind === "subagent_progress" && e.subagent?.taskId === ev.subagent?.taskId),
-                );
-                const startIdx = events.findIndex(
-                  (e) => e.kind === "subagent_start" && e.subagent?.taskId === ev.subagent?.taskId,
-                );
-                if (startIdx >= 0 && ev.subagent) {
-                  const existingEvents = events[startIdx].subagent?.events;
-                  events[startIdx] = {
-                    ...events[startIdx],
-                    subagent: {
-                      ...events[startIdx].subagent!,
-                      ...ev.subagent,
-                      events: existingEvents,
-                    },
-                  };
-                }
-              }
-              events.push(ev);
-            }
-            return { ...m, content, events };
-          }),
-        };
-      }),
-    );
+    setWorkspaces((prev) => applyStreamBatch(prev, batch));
   }, []);
 
   const handleServerMessage = useCallback(
@@ -376,9 +238,11 @@ export function useServer() {
           const cfgExtra = config as unknown as {
             accounts?: string[];
             defaultAccount?: string | null;
+            archiveAfterDays?: number;
           };
           setAccounts(cfgExtra.accounts ?? []);
           setDefaultAccountState(cfgExtra.defaultAccount ?? null);
+          setArchiveAfterDays(cfgExtra.archiveAfterDays ?? 0);
           if (config.commands) setCommands(config.commands);
           if (config.hosts) setHostConfigs(config.hosts);
           if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
@@ -424,6 +288,22 @@ export function useServer() {
           const agent = msg.agent as AgentInfo;
           setWorkspaces((prev) =>
             prev.map((w) => (w.id === wsId ? { ...w, agents: [...w.agents, agent] } : w)),
+          );
+          break;
+        }
+
+        case "agent_updated": {
+          const wsId = msg.workspaceId as string;
+          const agent = msg.agent as AgentInfo;
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === wsId
+                ? {
+                    ...w,
+                    agents: w.agents.map((a) => (a.id === agent.id ? { ...a, ...agent } : a)),
+                  }
+                : w,
+            ),
           );
           break;
         }
@@ -532,6 +412,45 @@ export function useServer() {
                   }
                 : w,
             ),
+          );
+          break;
+        }
+
+        case "agent_activity": {
+          const wsId = msg.workspaceId as string;
+          const agentId = msg.agentId as string;
+          const activity = (msg.activity as string | null) ?? null;
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === wsId
+                ? {
+                    ...w,
+                    agents: w.agents.map((a) => (a.id === agentId ? { ...a, activity } : a)),
+                  }
+                : w,
+            ),
+          );
+          break;
+        }
+
+        case "workspace_archived": {
+          const wsId = msg.workspaceId as string;
+          const archivedAt = msg.archivedAt as number;
+          // The server dropped the history; forget ours so reopening reloads.
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === wsId
+                ? { ...w, archivedAt, messages: [], messagesLoaded: false, hasMore: false }
+                : w,
+            ),
+          );
+          break;
+        }
+
+        case "workspace_unarchived": {
+          const wsId = msg.workspaceId as string;
+          setWorkspaces((prev) =>
+            prev.map((w) => (w.id === wsId ? { ...w, archivedAt: null } : w)),
           );
           break;
         }
@@ -681,6 +600,7 @@ export function useServer() {
     hosts,
     hostConfigs,
     systemStatus,
+    archiveAfterDays,
     lastError,
     clearError: useCallback(() => setLastError(null), []),
     loadMessages: useCallback(
@@ -778,5 +698,14 @@ export function useServer() {
       [send],
     ),
     restartServer: useCallback(() => send({ type: "restart_server" }), [send]),
+    archiveWorkspace: useCallback(
+      (wsId: string) => send({ type: "archive_workspace", workspaceId: wsId }),
+      [send],
+    ),
+    unarchiveWorkspace: useCallback(
+      (wsId: string) => send({ type: "unarchive_workspace", workspaceId: wsId }),
+      [send],
+    ),
+    purgeArchived: useCallback(() => send({ type: "purge_archived" }), [send]),
   };
 }

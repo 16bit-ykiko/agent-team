@@ -2,16 +2,18 @@ import * as fs from "fs";
 import * as path from "path";
 import TOML from "@iarna/toml";
 
-export interface AgentConfig {
-  backend: string;
-  model: string;
-  effort: string;
-  permission_mode: string;
-}
-
 export interface ServerConfig {
   remote_uploads_url?: string;
 }
+
+export interface WorkspaceConfig {
+  // Workspaces idle for this long are archived automatically: their messages
+  // leave memory, idle CLI processes are shut down and the sidebar folds them
+  // into an "Archived" section. 0 disables the sweep.
+  archive_after_days: number;
+}
+
+export const DEFAULT_ARCHIVE_AFTER_DAYS = 14;
 
 export interface AuthConfig {
   username: string;
@@ -38,8 +40,8 @@ export interface ProviderConfig {
 
 export interface AppConfig {
   server: ServerConfig;
+  workspace: WorkspaceConfig;
   auth: AuthConfig | null;
-  agents: Record<string, AgentConfig>;
   accounts: Record<string, AccountConfig>;
   hosts: Record<string, HostConfig>;
   providers: Record<string, ProviderConfig>;
@@ -55,25 +57,18 @@ export function loadConfig(baseDir: string): AppConfig {
   const raw = fs.readFileSync(configPath, "utf-8");
   const parsed = TOML.parse(raw) as Record<string, unknown>;
 
-  const agents: Record<string, AgentConfig> = {};
-  const rawAgents = parsed.agents;
-  if (rawAgents && typeof rawAgents === "object") {
-    for (const [role, cfg] of Object.entries(rawAgents as Record<string, unknown>)) {
-      if (cfg && typeof cfg === "object") {
-        const c = cfg as Record<string, string>;
-        agents[role] = {
-          backend: c.backend ?? "claude",
-          model: c.model ?? "",
-          effort: c.effort ?? "max",
-          permission_mode: c.permission_mode ?? "default",
-        };
-      }
-    }
-  }
-
   const serverSection = parsed.server as Record<string, unknown> | undefined;
   const server: ServerConfig = {
     remote_uploads_url: (serverSection?.remote_uploads_url as string) || undefined,
+  };
+
+  const wsSection = parsed.workspace as Record<string, unknown> | undefined;
+  const archiveDays = wsSection?.archive_after_days;
+  const workspace: WorkspaceConfig = {
+    archive_after_days:
+      typeof archiveDays === "number" && archiveDays >= 0
+        ? archiveDays
+        : DEFAULT_ARCHIVE_AFTER_DAYS,
   };
 
   const hosts: Record<string, HostConfig> = {};
@@ -126,7 +121,7 @@ export function loadConfig(baseDir: string): AppConfig {
     }
   }
 
-  return { server, auth, agents, hosts, providers, accounts };
+  return { server, workspace, auth, hosts, providers, accounts };
 }
 
 // Which account a session should run on: an explicit per-agent account wins,

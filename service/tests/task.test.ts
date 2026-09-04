@@ -368,3 +368,166 @@ describe("silent-turn diagnostics", () => {
     expect(agentMsgs()[0].events).toHaveLength(1);
   });
 });
+
+describe("banners, retries and activity", () => {
+  it("keeps a single retry event per turn, updated in place", () => {
+    const { ws, emit } = makeWorkspace();
+    emit({ kind: "text_delta", content: "hi" });
+    emit({ kind: "retry", level: "warning", content: "API retry 1/10" });
+    emit({ kind: "retry", level: "warning", content: "API retry 2/10" });
+    emit({ kind: "notice", level: "notice", content: "fyi" });
+    const events = ws.messages.filter((m) => m.kind === "agent")[0].events!;
+    expect(events.map((e) => [e.kind, e.content])).toEqual([
+      ["retry", "API retry 2/10"],
+      ["notice", "fyi"],
+    ]);
+    expect(events[0].contentOffset).toBe(2);
+  });
+
+  it("forwards session activity to the callback and exposes it on getInfo", () => {
+    const host = new FakeHost();
+    const registry = new HostRegistry();
+    registry.register(host);
+    const seen: Array<[string, string | null]> = [];
+    const cb: WorkspaceCallbacks = {
+      onNewMessage: () => {},
+      onStreamEvent: () => {},
+      onMessageDone: () => {},
+      onAgentActivity: (_ws, agentId, activity) => seen.push([agentId, activity]),
+    };
+    const ws = new Workspace("ws-1", "test", "proj", "local", "/tmp", registry, cb);
+    const agent = ws.addAgent("A", "claude-fable-5", "🤖", "#888", {});
+    host.lastSession!.emit("activity", "compacting context");
+    expect(seen).toEqual([[agent.id, "compacting context"]]);
+    expect(ws.getInfo(false).agents[0].activity).toBe("compacting context");
+    host.lastSession!.emit("activity", null);
+    expect(ws.getInfo(false).agents[0].activity).toBeNull();
+  });
+
+  it("forwards unhandled SDK messages for logging", () => {
+    const host = new FakeHost();
+    const registry = new HostRegistry();
+    registry.register(host);
+    const seen: unknown[] = [];
+    const cb: WorkspaceCallbacks = {
+      onNewMessage: () => {},
+      onStreamEvent: () => {},
+      onMessageDone: () => {},
+      onUnhandled: (_ws, _agent, msg) => seen.push(msg),
+    };
+    const ws = new Workspace("ws-1", "test", "proj", "local", "/tmp", registry, cb);
+    ws.addAgent("A", "claude-fable-5", "🤖", "#888", {});
+    host.lastSession!.emit("unhandled", { type: "mystery" });
+    expect(seen).toEqual([{ type: "mystery" }]);
+  });
+
+  it("restores the pinned account of a persisted agent", () => {
+    const { ws } = makeWorkspace();
+    const state = ws.getState();
+    state.agents[0].account = "work";
+    const registry = new HostRegistry();
+    registry.register(new FakeHost());
+    const restored = Workspace.fromState(state, registry);
+    expect(restored.getInfo(false).agents[0].account).toBe("work");
+  });
+});
+
+describe("archiving", () => {
+  it("tracks lastActivityAt from pushed messages and survives unloading", async () => {
+    const { ws, emit } = makeWorkspace();
+    const before = ws.lastActivityAt;
+    await ws.sendMessage("hello");
+    emit({ kind: "text_delta", content: "hi" });
+    emit({ kind: "result", content: "" });
+    expect(ws.lastActivityAt).toBeGreaterThanOrEqual(before);
+    const stamp = ws.lastActivityAt;
+
+    ws.unloadMessages();
+    expect(ws.messages).toEqual([]);
+    expect(ws.messagesLoaded).toBe(false);
+    expect(ws.lastActivityAt).toBe(stamp);
+    expect(ws.getInfo(false).lastMessageAt).toBe(stamp);
+    // Persisting an unloaded workspace must not claim an empty history.
+    expect(ws.getState().messages).toBeUndefined();
+  });
+
+  it("is idle only when no agent runs and nothing is queued", async () => {
+    const { ws, emit, session } = makeWorkspace();
+    expect(ws.isIdle).toBe(true);
+    await ws.sendMessage("go");
+    expect(ws.isIdle).toBe(false);
+    await ws.sendMessage("and this");
+    session.isRunning = false;
+    emit({ kind: "result", content: "" });
+    // The queued message is still pending until the next tick dispatches it.
+    expect(ws.isIdle).toBe(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(session.isRunning).toBe(true);
+    session.isRunning = false;
+    emit({ kind: "result", content: "" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ws.isIdle).toBe(true);
+  });
+
+  it("round-trips archivedAt and lastActivityAt through state", () => {
+    const { ws } = makeWorkspace();
+    ws.createdAt = 100;
+    ws.archivedAt = 123;
+    ws.lastActivityAt = 456;
+    const state = ws.getState();
+    expect(state).toMatchObject({ archivedAt: 123, lastActivityAt: 456 });
+    const registry = new HostRegistry();
+    registry.register(new FakeHost());
+    const restored = Workspace.fromState({ ...state, messages: undefined }, registry);
+    expect(restored.isArchived).toBe(true);
+    expect(restored.lastActivityAt).toBe(456);
+    expect(restored.getInfo(false).archivedAt).toBe(123);
+  });
+
+  it("derives lastActivityAt from messages for states written before the field existed", () => {
+    const { ws, emit } = makeWorkspace();
+    emit({ kind: "text_delta", content: "x" });
+    const state = ws.getState();
+    delete state.lastActivityAt;
+    const registry = new HostRegistry();
+    registry.register(new FakeHost());
+    const restored = Workspace.fromState(state, registry);
+    expect(restored.lastActivityAt).toBe(state.messages![state.messages!.length - 1].timestamp);
+  });
+});
+
+describe("error events", () => {
+  it("get a contentOffset so the interleaved view can place them", () => {
+    const { ws, emit } = makeWorkspace();
+    emit({ kind: "text_delta", content: "partial" });
+    emit({ kind: "error", content: "boom" });
+    const m = ws.messages.filter((x) => x.kind === "agent")[0];
+    expect(m.events![0]).toMatchObject({ kind: "error", contentOffset: m.content.length });
+  });
+});
+
+describe("effort on the wire", () => {
+  it("exposes the session's effort level and announces /effort changes", async () => {
+    const host = new FakeHost();
+    const registry = new HostRegistry();
+    registry.register(host);
+    const updates: Array<{ id: string; effort: string | null }> = [];
+    const cb: WorkspaceCallbacks = {
+      onNewMessage: () => {},
+      onStreamEvent: () => {},
+      onMessageDone: () => {},
+      onAgentUpdated: (_ws, a) => updates.push({ id: a.id, effort: a.effort }),
+    };
+    const ws = new Workspace("ws-1", "test", "proj", "local", "/tmp", registry, cb);
+    const agent = ws.addAgent("A", "claude-fable-5-1", "🤖", "#888", { effort: "high" });
+    expect(ws.getInfo(false).agents[0].effort).toBe("high");
+
+    const session = host.lastSession! as FakeSession & { setEffort?: (l: string) => void };
+    session.setEffort = (l: string) => {
+      (session.getState().config as { effort?: string }).effort = l;
+    };
+    await ws.sendMessage("/effort max");
+    expect(updates).toEqual([{ id: agent.id, effort: "max" }]);
+    expect(ws.getInfo(false).agents[0].effort).toBe("max");
+  });
+});

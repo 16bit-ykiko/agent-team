@@ -26,22 +26,33 @@ export interface ToolInput {
   new_string?: string;
 }
 
+export type StreamEventKind =
+  | "thinking"
+  | "thinking_delta"
+  | "text"
+  | "text_delta"
+  | "tool_use"
+  | "tool_result"
+  | "result"
+  | "error"
+  | "subagent_start"
+  | "subagent_progress"
+  | "subagent_done"
+  | "compact"
+  // One-line banner from the CLI loop: hook feedback, notifications,
+  // permission denials, compact failures, auth prompts.
+  | "notice"
+  // API retry in progress; replaces the previous retry event of the turn.
+  | "retry";
+
+export type NoticeLevel = "info" | "notice" | "warning" | "error";
+
 export interface StreamEvent {
-  kind:
-    | "thinking"
-    | "thinking_delta"
-    | "text"
-    | "text_delta"
-    | "tool_use"
-    | "tool_result"
-    | "result"
-    | "error"
-    | "subagent_start"
-    | "subagent_progress"
-    | "subagent_done"
-    | "compact";
+  kind: StreamEventKind;
   content: string;
-  raw?: unknown;
+  // Tool name for tool_use events (the content is the formatted markdown).
+  toolName?: string;
+  level?: NoticeLevel;
   toolInput?: ToolInput;
   step?: number;
   contentOffset?: number;
@@ -182,8 +193,14 @@ export class ClaudeSession extends EventEmitter {
   private nestedTaskToParent = new Map<string, string>(); // nested taskId → parentTaskId
   private taskToToolUse = new Map<string, string>(); // taskId → toolUseId (reverse lookup)
   private agentTaskIds = new Set<string>();
+  // Subagent output can arrive before its task_started (the CLI forwards
+  // assistant blocks with parent_tool_use_id as soon as the Task tool runs).
+  // Park those until the task registers, instead of dropping them.
+  private pendingNested = new Map<string, StreamEvent[]>();
   private lastRateLimitStatus: string | null = null;
   private intentionalAbort = false;
+  private activity: string | null = null;
+  private unhandledSeen = new Set<string>();
 
   constructor(config: SessionConfig) {
     super();
@@ -280,6 +297,7 @@ export class ClaudeSession extends EventEmitter {
           this.queryInstance = null;
           this.inputController = null;
           this.abortController = null;
+          this.setActivity(null);
         }
       }
     })();
@@ -304,7 +322,7 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
-  private handleRateLimitInfo(info: Record<string, unknown>, raw?: unknown): void {
+  private handleRateLimitInfo(info: Record<string, unknown>): void {
     const status = info.status as string;
     if (status === this.lastRateLimitStatus) return;
     this.lastRateLimitStatus = status;
@@ -320,7 +338,6 @@ export class ClaudeSession extends EventEmitter {
     this.emit("event", {
       kind: "error",
       content: `Usage limit reached (${label}).${resetStr}`,
-      raw,
     } as StreamEvent);
   }
 
@@ -355,6 +372,44 @@ export class ClaudeSession extends EventEmitter {
     this.nestedTaskToParent.clear();
     this.taskToToolUse.clear();
     this.agentTaskIds.clear();
+    this.pendingNested.clear();
+    this.setActivity(null);
+  }
+
+  // Transient "what is the agent doing right now" label (compacting, a long
+  // tool call, a hook...). Null clears it. Emitted only on change.
+  private setActivity(activity: string | null): void {
+    if (activity === this.activity) return;
+    this.activity = activity;
+    this.emit("activity", activity);
+  }
+
+  // Messages we deliberately do not render. Everything else that falls
+  // through is reported on the "unhandled" channel so it shows up in the
+  // logs instead of vanishing.
+  private static readonly SILENT_TYPES = new Set([
+    "keep_alive",
+    "tool_use_summary",
+    "prompt_suggestion",
+    "control_request",
+    "control_response",
+    "control_cancel_request",
+  ]);
+  private static readonly SILENT_SYSTEM_SUBTYPES = new Set([
+    "init",
+    "background_tasks_changed",
+    "task_updated",
+    "hook_progress",
+  ]);
+
+  private reportUnhandled(msg: SDKMessage): void {
+    const m = msg as unknown as Record<string, unknown>;
+    const key = `${m.type}${m.subtype ? "/" + m.subtype : ""}`;
+    if (!this.unhandledSeen.has(key)) {
+      this.unhandledSeen.add(key);
+      console.warn(`[session] unhandled SDK message: ${key}`);
+    }
+    this.emit("unhandled", msg);
   }
 
   private emitNestedEvent(parentTaskId: string, innerEvent: StreamEvent): void {
@@ -365,6 +420,22 @@ export class ClaudeSession extends EventEmitter {
       toolUseId: parentToolUseId,
       subagent: { taskId: parentTaskId, description: "", _innerEvent: innerEvent },
     } as StreamEvent);
+  }
+
+  private emitInner(parentToolUseId: string, taskId: string, inner: StreamEvent): void {
+    this.emit("event", {
+      kind: "subagent_progress",
+      content: "",
+      toolUseId: parentToolUseId,
+      subagent: { taskId, description: "", _innerEvent: inner },
+    } as StreamEvent);
+  }
+
+  private static readonly MAX_PARKED = 200;
+  private parkNested(parentToolUseId: string, inner: StreamEvent): void {
+    const list = this.pendingNested.get(parentToolUseId) ?? [];
+    if (list.length < ClaudeSession.MAX_PARKED) list.push(inner);
+    this.pendingNested.set(parentToolUseId, list);
   }
 
   private handleSDKMessage(msg: SDKMessage): void {
@@ -397,12 +468,50 @@ export class ClaudeSession extends EventEmitter {
       case "rate_limit_event": {
         const info = (msg as unknown as Record<string, unknown>).rate_limit_info as
           Record<string, unknown> | undefined;
-        if (info) this.handleRateLimitInfo(info, msg);
+        if (info) this.handleRateLimitInfo(info);
+        break;
+      }
+
+      case "tool_progress": {
+        const tp = msg as unknown as Record<string, unknown>;
+        // Subagent tool progress is covered by task_progress.
+        if (tp.parent_tool_use_id || tp.task_id) break;
+        const secs = Math.round((tp.elapsed_time_seconds as number) ?? 0);
+        this.setActivity(`${tp.tool_name as string} · ${secs}s`);
+        break;
+      }
+
+      case "auth_status": {
+        const a = msg as unknown as Record<string, unknown>;
+        if (a.error) {
+          this.emit("event", {
+            kind: "error",
+            content: `Authentication failed: ${a.error as string}`,
+          } as StreamEvent);
+        } else if (a.isAuthenticating) {
+          this.emit("event", {
+            kind: "notice",
+            level: "warning",
+            content: `Authenticating… ${((a.output as string[]) ?? []).join(" ")}`.trim(),
+          } as StreamEvent);
+        }
+        break;
+      }
+
+      case "conversation_reset": {
+        const r = msg as unknown as Record<string, unknown>;
+        if (r.new_conversation_id) this.sessionId = r.new_conversation_id as string;
+        this.emit("event", {
+          kind: "notice",
+          level: "notice",
+          content: "Conversation reset — the next message starts a fresh context.",
+        } as StreamEvent);
         break;
       }
 
       case "system": {
         const sys = msg as Record<string, unknown>;
+        if (this.handleSystemBanner(sys)) break;
         if (sys.subtype === "commands_changed" && Array.isArray(sys.commands)) {
           const commands: CommandInfo[] = (sys.commands as Array<Record<string, unknown>>).map(
             (c) => ({
@@ -431,10 +540,11 @@ export class ClaudeSession extends EventEmitter {
           }
           this.agentTaskIds.add(taskId);
           if (parentTaskId) this.nestedTaskToParent.set(taskId, parentTaskId);
+          const parked = toolUseId ? this.pendingNested.get(toolUseId) : undefined;
+          if (toolUseId) this.pendingNested.delete(toolUseId);
           const startEvent = {
             kind: "subagent_start",
             content: (sys.description as string) ?? "",
-            raw: msg,
             toolUseId,
             subagent: {
               taskId,
@@ -450,6 +560,7 @@ export class ClaudeSession extends EventEmitter {
           } else {
             this.emit("event", startEvent);
           }
+          for (const inner of parked ?? []) this.emitInner(toolUseId!, taskId, inner);
         } else if (sys.subtype === "task_progress") {
           const taskId = sys.task_id as string;
           if (!this.agentTaskIds.has(taskId)) break;
@@ -457,7 +568,6 @@ export class ClaudeSession extends EventEmitter {
           const progressEvent = {
             kind: "subagent_progress",
             content: (sys.summary as string) ?? "",
-            raw: msg,
             toolUseId: sys.tool_use_id as string | undefined,
             subagent: {
               taskId,
@@ -487,7 +597,6 @@ export class ClaudeSession extends EventEmitter {
           const doneEvent = {
             kind: "subagent_done",
             content: (sys.summary as string) ?? "",
-            raw: msg,
             toolUseId: sys.tool_use_id as string | undefined,
             subagent: {
               taskId,
@@ -532,12 +641,106 @@ export class ClaudeSession extends EventEmitter {
             kind: "compact",
             content: `Context compacted (${trigger}): ${pre} → ${post} tokens, ${(dur / 1000).toFixed(1)}s`,
           } as StreamEvent);
+        } else if (!ClaudeSession.SILENT_SYSTEM_SUBTYPES.has(sys.subtype as string)) {
+          this.reportUnhandled(msg);
         }
         break;
       }
 
       default:
+        if (!ClaudeSession.SILENT_TYPES.has((msg as { type: string }).type)) {
+          this.reportUnhandled(msg);
+        }
         break;
+    }
+  }
+
+  // System messages that map to a banner/activity rather than to the task
+  // machinery. Returns true when handled.
+  private handleSystemBanner(sys: Record<string, unknown>): boolean {
+    const notice = (content: string, level: NoticeLevel, extra: Partial<StreamEvent> = {}) =>
+      this.emit("event", { kind: "notice", level, content, ...extra } as StreamEvent);
+
+    switch (sys.subtype) {
+      case "local_command_output": {
+        // Output of a slash command run by the CLI (/compact, /cost...) —
+        // shown as the reply text, exactly like the terminal does.
+        const content = (sys.content as string) ?? "";
+        if (content.trim()) this.emit("event", { kind: "text_delta", content } as StreamEvent);
+        return true;
+      }
+      case "informational": {
+        const content = (sys.content as string) ?? "";
+        if (!content.trim()) return true;
+        const level = sys.prevent_continuation
+          ? "warning"
+          : ((sys.level as NoticeLevel | undefined) ?? "notice");
+        notice(content, level, { toolUseId: sys.tool_use_id as string | undefined });
+        return true;
+      }
+      case "notification": {
+        const text = (sys.text as string) ?? "";
+        if (!text.trim()) return true;
+        const priority = sys.priority as string;
+        notice(text, priority === "high" || priority === "immediate" ? "warning" : "notice");
+        return true;
+      }
+      case "api_retry": {
+        const attempt = sys.attempt as number;
+        const max = sys.max_retries as number;
+        const delay = Math.round(((sys.retry_delay_ms as number) ?? 0) / 1000);
+        const status = sys.error_status != null ? ` HTTP ${sys.error_status as number}` : "";
+        const reason = sys.error ? ` (${String(sys.error).replace(/_/g, " ")})` : "";
+        this.emit("event", {
+          kind: "retry",
+          level: "warning",
+          content: `API retry ${attempt}/${max} in ${delay}s —${status}${reason}`,
+        } as StreamEvent);
+        this.setActivity(`retrying (${attempt}/${max})`);
+        return true;
+      }
+      case "status": {
+        const status = sys.status as string | null;
+        if (sys.compact_result === "failed") {
+          notice(
+            `Context compaction failed: ${(sys.compact_error as string) ?? "unknown error"}`,
+            "warning",
+          );
+        }
+        if (status === "compacting") this.setActivity("compacting context");
+        else if (this.activity === "compacting context") this.setActivity(null);
+        return true;
+      }
+      case "permission_denied": {
+        const reason = sys.decision_reason ? `: ${sys.decision_reason as string}` : "";
+        const by = sys.decision_reason_type ? ` (${sys.decision_reason_type as string})` : "";
+        notice(`Permission denied for ${sys.tool_name as string}${by}${reason}`, "warning", {
+          toolUseId: sys.tool_use_id as string | undefined,
+        });
+        return true;
+      }
+      case "hook_started":
+        this.setActivity(`hook: ${sys.hook_name as string}`);
+        return true;
+      case "hook_response": {
+        if (this.activity?.startsWith("hook:")) this.setActivity(null);
+        if (sys.outcome === "error") {
+          const detail = ((sys.stderr as string) || (sys.output as string) || "").trim();
+          notice(
+            `Hook ${sys.hook_name as string} (${sys.hook_event as string}) failed${detail ? `: ${detail.slice(0, 400)}` : ""}`,
+            "warning",
+          );
+        }
+        return true;
+      }
+      case "session_state_changed": {
+        const state = sys.state as string;
+        if (state === "requires_action") this.setActivity("waiting for input");
+        else if (state === "idle") this.setActivity(null);
+        return true;
+      }
+      default:
+        return false;
     }
   }
 
@@ -549,7 +752,6 @@ export class ClaudeSession extends EventEmitter {
 
     if (parentToolUseId) {
       const taskId = this.subagentToolMap.get(parentToolUseId);
-      if (!taskId) return;
       for (const block of content) {
         const b = block as unknown as Record<string, unknown>;
         const blockType = b.type as string;
@@ -564,10 +766,11 @@ export class ClaudeSession extends EventEmitter {
           const innerToolId = b.id as string;
           // Mark this tool_use as belonging to a subagent so task_started
           // for it gets routed as a nested event, not a top-level subagent.
-          this.nestedToolUseToParent.set(innerToolId, taskId);
+          if (taskId) this.nestedToolUseToParent.set(innerToolId, taskId);
           ev = {
             kind: "tool_use",
             content: formatToolUse(b),
+            toolName: b.name as string,
             toolUseId: innerToolId,
             toolInput: extractToolInput(b),
           } as StreamEvent;
@@ -575,14 +778,9 @@ export class ClaudeSession extends EventEmitter {
           const rc = b.content as string;
           if (rc) ev = { kind: "tool_result", content: rc } as StreamEvent;
         }
-        if (ev) {
-          this.emit("event", {
-            kind: "subagent_progress",
-            content: "",
-            toolUseId: parentToolUseId,
-            subagent: { taskId, description: "", _innerEvent: ev },
-          } as StreamEvent);
-        }
+        if (!ev) continue;
+        if (taskId) this.emitInner(parentToolUseId, taskId, ev);
+        else this.parkNested(parentToolUseId, ev);
       }
       return;
     }
@@ -597,12 +795,12 @@ export class ClaudeSession extends EventEmitter {
       if (blockType === "thinking") {
         const text = b.thinking as string;
         if (text) {
-          this.emit("event", { kind: "thinking", content: text, raw: msg, step } as StreamEvent);
+          this.emit("event", { kind: "thinking", content: text, step } as StreamEvent);
         }
       } else if (blockType === "text") {
         const text = (b.text as string)?.trim();
         if (text) {
-          this.emit("event", { kind: "text", content: text, raw: msg, step } as StreamEvent);
+          this.emit("event", { kind: "text", content: text, step } as StreamEvent);
         }
       } else if (blockType === "tool_use") {
         const toolId = b.id as string;
@@ -610,7 +808,7 @@ export class ClaudeSession extends EventEmitter {
         this.emit("event", {
           kind: "tool_use",
           content: formatToolUse(b),
-          raw: msg,
+          toolName: b.name as string,
           toolInput,
           toolUseId: toolId,
           step,
@@ -621,7 +819,6 @@ export class ClaudeSession extends EventEmitter {
           this.emit("event", {
             kind: "tool_result",
             content: resultContent,
-            raw: msg,
             step,
           } as StreamEvent);
         }
@@ -653,18 +850,9 @@ export class ClaudeSession extends EventEmitter {
 
       if (parentToolUseId) {
         const taskId = this.subagentToolMap.get(parentToolUseId);
-        if (taskId) {
-          this.emit("event", {
-            kind: "subagent_progress",
-            content: "",
-            toolUseId: parentToolUseId,
-            subagent: {
-              taskId,
-              description: "",
-              _innerEvent: { kind: "tool_result", content: text, toolUseId } as StreamEvent,
-            },
-          } as StreamEvent);
-        }
+        const inner = { kind: "tool_result", content: text, toolUseId } as StreamEvent;
+        if (taskId) this.emitInner(parentToolUseId, taskId, inner);
+        else this.parkNested(parentToolUseId, inner);
       } else {
         const isSubagentResult = toolUseId ? this.subagentToolMap.has(toolUseId) : false;
         this.emit("event", {
@@ -694,12 +882,12 @@ export class ClaudeSession extends EventEmitter {
       if (deltaType === "thinking_delta") {
         const text = delta.thinking as string;
         if (text) {
-          this.emit("event", { kind: "thinking_delta", content: text, raw: msg } as StreamEvent);
+          this.emit("event", { kind: "thinking_delta", content: text } as StreamEvent);
         }
       } else if (deltaType === "text_delta") {
         const text = delta.text as string;
         if (text) {
-          this.emit("event", { kind: "text_delta", content: text, raw: msg } as StreamEvent);
+          this.emit("event", { kind: "text_delta", content: text } as StreamEvent);
         }
       }
     }
@@ -717,7 +905,7 @@ export class ClaudeSession extends EventEmitter {
       }
 
       const text = (result.result as string)?.trim() ?? "";
-      this.emit("event", { kind: "result", content: text, raw: msg } as StreamEvent);
+      this.emit("event", { kind: "result", content: text } as StreamEvent);
     } else {
       const errResult = msg as Record<string, unknown>;
       const errList = errResult.errors as string[] | undefined;
@@ -725,7 +913,7 @@ export class ClaudeSession extends EventEmitter {
         (errList?.length ? errList.join("\n") : undefined) ??
         (errResult.error as string) ??
         `Turn failed (${(errResult.subtype as string) ?? "unknown error"})`;
-      this.emit("event", { kind: "error", content: errMsg, raw: msg } as StreamEvent);
+      this.emit("event", { kind: "error", content: errMsg } as StreamEvent);
     }
 
     this.usage.turns++;
@@ -734,6 +922,8 @@ export class ClaudeSession extends EventEmitter {
       this.turnStartTime = 0;
     }
     this.processing = false;
+    this.pendingNested.clear();
+    this.setActivity(null);
   }
 
   async getContextUsage(): Promise<Record<string, unknown> | null> {

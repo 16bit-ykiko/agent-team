@@ -116,8 +116,8 @@ describe("MessageItem", () => {
 
     const item = container.querySelector(".subagent-item")!;
     expect(item).toBeTruthy();
-    expect(item.closest(".message-events")).toBeNull();
-    expect(container.querySelector(".message-events")).toBeTruthy();
+    expect(item.closest(".step-group")).toBeNull();
+    expect(container.querySelector(".step-group")).toBeTruthy();
   });
 
   it("interleaves text segments and event groups by contentOffset", () => {
@@ -317,5 +317,74 @@ describe("MessageItem queued state", () => {
     );
     expect(container.querySelector(".queued-badge")).toBeNull();
     expect(container.querySelector(".message")!.className).not.toContain("message-queued");
+  });
+});
+
+describe("MessageItem events without contentOffset", () => {
+  it("renders them after the text instead of dropping them", () => {
+    const agents: AgentInfo[] = [
+      { id: "a1", name: "A", model: "m", avatar: "x", color: "#fff", isDefault: true },
+    ];
+    const events: StreamEvent[] = [
+      { kind: "tool_use", content: "**Read** `a`", contentOffset: 0 } as StreamEvent,
+      { kind: "notice", level: "warning", content: "late banner" } as StreamEvent,
+      { kind: "error", content: "boom" } as StreamEvent,
+    ];
+    const msg: Message = {
+      id: "m",
+      kind: "agent",
+      agentId: "a1",
+      content: "Some text.",
+      timestamp: 0,
+      status: "done",
+      events,
+    };
+    const { container } = render(<MessageItem msg={msg} agents={agents} />);
+    expect(container.querySelector(".banner")!.textContent).toContain("late banner");
+    const stepGroups = container.querySelectorAll(".step-group");
+    expect(stepGroups).toHaveLength(2);
+    // The text sits between the leading tool call and the trailing events.
+    const body = container.querySelector(".message-content")!;
+    const order = [...body.querySelectorAll(".step-group, p, .banner")]
+      .filter((el) => el.tagName !== "P" || !el.closest(".banner"))
+      .map((el) =>
+        el.className.includes("banner") ? "banner" : el.tagName === "P" ? "text" : "step",
+      );
+    expect(order).toEqual(["step", "text", "step", "banner"]);
+  });
+});
+
+describe("MessageItem subagent lifecycle placement", () => {
+  it("keeps progress/done events with their start even without an offset", () => {
+    const agents: AgentInfo[] = [
+      { id: "a1", name: "A", model: "m", avatar: "x", color: "#fff", isDefault: true },
+    ];
+    const events: StreamEvent[] = [
+      {
+        kind: "subagent_start",
+        content: "",
+        contentOffset: 0,
+        subagent: { taskId: "t", description: "search", agentType: "Explore", status: "running" },
+      } as StreamEvent,
+      {
+        kind: "subagent_done",
+        content: "",
+        subagent: { taskId: "t", description: "", status: "completed" },
+      } as StreamEvent,
+    ];
+    const msg: Message = {
+      id: "m",
+      kind: "agent",
+      agentId: "a1",
+      content: "Delegating.",
+      timestamp: 0,
+      status: "done",
+      events,
+    };
+    const { container } = render(<MessageItem msg={msg} agents={agents} />);
+    const items = container.querySelectorAll(".subagent-item");
+    expect(items).toHaveLength(1);
+    expect(items[0].className).toContain("subagent-completed");
+    expect(items[0].querySelector(".subagent-label")!.textContent).toBe("Explore");
   });
 });

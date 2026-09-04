@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { WorkspaceState } from "./task";
+import { Message, WorkspaceState } from "./task";
 
 const DATA_DIR = ".agent-team";
 const CACHE_DIR = "cache";
@@ -47,13 +47,31 @@ function readJson<T>(file: string): T | null {
   }
 }
 
+// A state without `messages` describes an unloaded (archived) workspace:
+// write its metadata but keep the history already on disk.
 export function saveWorkspace(baseDir: string, ws: WorkspaceState): void {
-  writeJson(path.join(wsDir(baseDir), `${ws.id}.json`), ws);
+  const file = path.join(wsDir(baseDir), `${ws.id}.json`);
+  let state = ws;
+  if (!ws.messages) {
+    const existing = readJson<WorkspaceState>(file);
+    state = { ...ws, messages: existing?.messages ?? [] };
+  }
+  writeJson(file, state);
+}
+
+export function loadWorkspaceMessages(baseDir: string, workspaceId: string): Message[] {
+  const ws = readJson<WorkspaceState>(path.join(wsDir(baseDir), `${workspaceId}.json`));
+  if (!ws) return [];
+  stripLegacyRaw(ws);
+  return ws.messages ?? [];
 }
 
 export function deleteWorkspaceState(baseDir: string, workspaceId: string): void {
   const file = path.join(wsDir(baseDir), `${workspaceId}.json`);
   if (fs.existsSync(file)) fs.unlinkSync(file);
+  const logs = path.join(dataRoot(baseDir), LOGS_DIR, workspaceId);
+  fs.rmSync(logs, { recursive: true, force: true });
+  ensuredLogDirs.delete(logs);
 }
 
 export function saveIndex(baseDir: string, workspaceIds: string[]): void {
@@ -69,10 +87,33 @@ export function loadAll(baseDir: string): WorkspaceState[] {
 
   const results: WorkspaceState[] = [];
   for (const id of index.workspaceIds) {
-    const ws = readJson<WorkspaceState>(path.join(wsDir(baseDir), `${id}.json`));
-    if (ws) results.push(ws);
+    const file = path.join(wsDir(baseDir), `${id}.json`);
+    const ws = readJson<WorkspaceState>(file);
+    if (!ws) continue;
+    if (stripLegacyRaw(ws) > 0) writeJson(file, ws);
+    results.push(ws);
   }
   return results;
+}
+
+// Older builds stored the full SDK message on every event as `raw`, which
+// made state files tens of megabytes. Drop it on load (once — the rewrite
+// makes the next load clean). Returns the number of fields removed.
+export function stripLegacyRaw(ws: WorkspaceState): number {
+  let removed = 0;
+  const strip = (events: unknown[] | undefined) => {
+    for (const ev of events ?? []) {
+      const e = ev as Record<string, unknown>;
+      if ("raw" in e) {
+        delete e.raw;
+        removed++;
+      }
+      const sub = e.subagent as { events?: unknown[] } | undefined;
+      if (sub?.events) strip(sub.events);
+    }
+  };
+  for (const m of ws.messages ?? []) strip(m.events);
+  return removed;
 }
 
 function migrateIfNeeded(baseDir: string): WorkspaceState[] | null {

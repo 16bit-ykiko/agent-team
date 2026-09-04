@@ -91,3 +91,19 @@ describe("hasRunningSubagents", () => {
     expect(hasRunningSubagents(undefined)).toBe(false);
   });
 });
+
+describe("banner events", () => {
+  it("separates compact/notice/retry banners from regular events", () => {
+    const events = [
+      ev("thinking"),
+      ev("compact", { content: "compacted" }),
+      ev("notice", { content: "fyi", level: "notice" }),
+      ev("retry", { content: "retry" }),
+      ev("tool_use"),
+    ];
+    const { regular, banners, subagents } = splitEvents(events);
+    expect(regular.map((e) => e.kind)).toEqual(["thinking", "tool_use"]);
+    expect(banners.map((e) => e.kind)).toEqual(["compact", "notice", "retry"]);
+    expect(subagents).toEqual([]);
+  });
+});
