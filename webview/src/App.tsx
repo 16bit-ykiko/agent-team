@@ -12,6 +12,7 @@ import { Sidebar } from "./Sidebar";
 import { GitBar } from "./GitBar";
 import { HistoryHint } from "./HistoryHint";
 import { viewportVars } from "./viewport";
+import { ViewportTracker, healViewport } from "./viewportHeal";
 
 // Re-exported for tests and for anyone importing the old single-file layout.
 export { GitBar } from "./GitBar";
@@ -132,6 +133,27 @@ export function App() {
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
+    const tracker = new ViewportTracker(window.innerHeight);
+    let healTimer: ReturnType<typeof setTimeout> | undefined;
+    const heal = () => {
+      const keyboardOpen = !!viewportVars(vv.height, vv.offsetTop, window.innerHeight).height;
+      if (!tracker.needsHeal(window.innerHeight, keyboardOpen)) return;
+      healViewport(appRef.current, messagesContainerRef.current);
+    };
+    const scheduleHeal = () => {
+      clearTimeout(healTimer);
+      healTimer = setTimeout(heal, 140);
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) scheduleHeal();
+    };
+    document.addEventListener("focusout", onFocusOut);
+    const onWindowResize = () => {
+      tracker.observe(window.innerHeight);
+      scheduleHeal();
+    };
+    window.addEventListener("resize", onWindowResize);
     const apply = () => {
       // Pin the app to the keyboard-free visible strip: size it to the
       // visual viewport AND follow its pan offset. (Never call scrollTo here
@@ -153,8 +175,12 @@ export function App() {
     return () => {
       vv.removeEventListener("resize", apply);
       vv.removeEventListener("scroll", apply);
+      window.removeEventListener("resize", onWindowResize);
+      document.removeEventListener("focusout", onFocusOut);
+      clearTimeout(healTimer);
     };
   }, []);
+  const appRef = useRef<HTMLDivElement>(null);
 
   const [activeWsId, setActiveWsId] = useState<string | null>(() => {
     try {
@@ -668,7 +694,7 @@ export function App() {
   };
 
   return (
-    <div className="app">
+    <div className="app" ref={appRef}>
       {lastError && (
         <div className="error-toast" onClick={clearError} title="Dismiss">
           ⚠ {lastError}
