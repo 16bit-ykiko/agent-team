@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ClaudeSession, StreamEvent } from "../src/session";
+import { ClaudeSession, StreamEvent } from "../src/claude-session";
 
 // handleSDKMessage is the seam between the SDK's message stream and our
 // StreamEvent protocol. The constructor is inert (no SDK import, no process),

@@ -6,7 +6,7 @@ import {
   SessionState,
   StreamEvent,
   UsageStats,
-} from "./session";
+} from "./claude-session";
 import { CodexSession } from "./codex-session";
 
 export interface HostSessionHandle extends EventEmitter {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { CodexSession } from "../src/codex-session";
-import { StreamEvent } from "../src/session";
+import { StreamEvent } from "../src/claude-session";
 
 // handleThreadEvent maps @openai/codex-sdk ThreadEvents onto our StreamEvent
 // protocol. The constructor is inert, so we drive it directly.

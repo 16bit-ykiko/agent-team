@@ -5,7 +5,7 @@ import {
   CommandInfo,
   ContextUsage,
   RunState,
-} from "./session";
+} from "./claude-session";
 import type { GitInfo, PrInfo } from "./git";
 import { HostSessionHandle, HostRegistry } from "./host";
 import { effortLevelsForModel } from "./presets";

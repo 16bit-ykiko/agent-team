@@ -19,7 +19,7 @@ import {
 } from "./state";
 import { loadConfig, AppConfig, effectiveAccount, pickFailoverAccount } from "./config";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
-import { CommandInfo, StreamEvent } from "./session";
+import { CommandInfo, StreamEvent } from "./claude-session";
 import { gitStatus, getPrInfo, GitInfo, PrInfo } from "./git";
 import { completeDirs, resolveWorkspacePath } from "./dirs";
 import { searchMessages } from "./search";

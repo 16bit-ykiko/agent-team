@@ -1,7 +1,7 @@
 import { execSync } from "child_process";
 import { EventEmitter } from "events";
 import * as fs from "fs";
-import { StreamEvent, UsageStats, SessionConfig, SessionState } from "./session";
+import { StreamEvent, UsageStats, SessionConfig, SessionState } from "./claude-session";
 import type { Codex, ThreadEvent, ThreadItem, ThreadOptions } from "@openai/codex-sdk";
 
 // The SDK ships a vendored binary per platform, but we may run against a
