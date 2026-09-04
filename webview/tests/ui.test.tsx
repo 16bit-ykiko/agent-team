@@ -176,6 +176,7 @@ describe("Sidebar archived section", () => {
     onCreate: vi.fn(),
     onCreateIn: vi.fn(),
     onReplayDemo: vi.fn(),
+    onDebugSnapshot: vi.fn(),
     onPurgeArchived: vi.fn(),
     onSetDefaultAccount: vi.fn(),
     ...over,
@@ -306,6 +307,7 @@ describe("Sidebar group quick-create", () => {
       onCreate: vi.fn(),
       onCreateIn: vi.fn(),
       onReplayDemo: vi.fn(),
+      onDebugSnapshot: vi.fn(),
       onPurgeArchived: vi.fn(),
       onSetDefaultAccount: vi.fn(),
     };

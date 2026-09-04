@@ -128,6 +128,8 @@ export interface SidebarProps {
   // Create a workspace in a group's folder (the "+" on the group header).
   onCreateIn: (cwd: string) => void;
   onReplayDemo: () => void;
+  // Save a layout snapshot on the server (see debugSnapshot.ts).
+  onDebugSnapshot: () => void;
   onPurgeArchived: () => void;
   onSetDefaultAccount: (account: string | null) => void;
 }
@@ -155,6 +157,13 @@ export function Sidebar(p: SidebarProps) {
           </button>
           <button title="New workspace" onClick={p.onCreate}>
             +
+          </button>
+          <button
+            className="sidebar-debug"
+            title="Save a layout debug snapshot (viewport, geometry, DOM) on the server"
+            onClick={p.onDebugSnapshot}
+          >
+            ⌗
           </button>
         </span>
       </div>

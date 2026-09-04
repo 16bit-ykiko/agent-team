@@ -1803,6 +1803,22 @@ pre .copy-btn:hover {
   color: var(--text-primary) !important;
 }
 
+.info-toast {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 1000;
+  max-width: 420px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: var(--shadow-lg);
+  word-break: break-all;
+}
 .error-toast {
   position: fixed;
   bottom: 16px;

@@ -13,6 +13,7 @@ import { GitBar } from "./GitBar";
 import { HistoryHint } from "./HistoryHint";
 import { viewportVars } from "./viewport";
 import { ViewportTracker, healViewport } from "./viewportHeal";
+import { uploadSnapshot } from "./debugSnapshot";
 
 // Re-exported for tests and for anyone importing the old single-file layout.
 export { GitBar } from "./GitBar";
@@ -117,6 +118,18 @@ export function App() {
     archiveAfterDays,
   } = useServer();
   const [showPurge, setShowPurge] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 8000);
+    return () => clearTimeout(t);
+  }, [notice]);
+  const takeSnapshot = useCallback(() => {
+    uploadSnapshot().then(
+      (p) => setNotice(`Snapshot saved: ${p}`),
+      (e) => setNotice(`Snapshot failed: ${e instanceof Error ? e.message : e}`),
+    );
+  }, []);
 
   // Server errors (busy agent, cancel failures...) were previously only
   // logged to the console; surface them as a dismissible toast.
@@ -695,6 +708,11 @@ export function App() {
 
   return (
     <div className="app" ref={appRef}>
+      {notice && (
+        <div className="info-toast" onClick={() => setNotice(null)} title="Dismiss">
+          {notice}
+        </div>
+      )}
       {lastError && (
         <div className="error-toast" onClick={clearError} title="Dismiss">
           ⚠ {lastError}
@@ -742,6 +760,7 @@ export function App() {
             setSidebarOpen(false);
           }}
           onPurgeArchived={() => setShowPurge(true)}
+          onDebugSnapshot={takeSnapshot}
           onSetDefaultAccount={setDefaultAccount}
         />
       </div>

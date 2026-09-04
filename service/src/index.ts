@@ -454,6 +454,11 @@ export class Server {
         }
       }
 
+      if (req.method === "POST" && pathname === "/debug/snapshot") {
+        this.handleSnapshot(req, res);
+        return;
+      }
+
       if (req.method === "POST" && pathname === "/upload") {
         const MAX_UPLOAD = 50 * 1024 * 1024;
         const chunks: Buffer[] = [];
@@ -576,6 +581,35 @@ export class Server {
       this.cachedBuildId = String(process.pid);
     }
     return this.cachedBuildId;
+  }
+
+  // Layout debug snapshots from the webview (see debugSnapshot.ts) land in
+  // .agent-team/debug/ so they can be inspected with the repo tools.
+  private handleSnapshot(req: http.IncomingMessage, res: http.ServerResponse): void {
+    const MAX = 8 * 1024 * 1024;
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > MAX) {
+        res.statusCode = 413;
+        res.end();
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => {
+      const dir = path.join(this.baseDir, ".agent-team", "debug");
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const file = path.join(dir, `snapshot-${stamp}.json`);
+      fs.writeFileSync(file, Buffer.concat(chunks));
+      const rel = path.relative(this.baseDir, file);
+      console.log(`[debug] snapshot saved ${rel} (${size} bytes)`);
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ path: rel }));
+    });
   }
 
   private sendJson(ws: WebSocket, msg: unknown): void {
