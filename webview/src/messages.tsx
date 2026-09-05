@@ -68,9 +68,9 @@ function chipLabelFor(toolName: string): string {
   return toolName === "ScheduleWakeup" ? "⏰ Wake-up" : toolName;
 }
 
-// Effort + context occupancy line under an agent message header.
+// Effort, fast mode and context occupancy line under an agent message header.
 export function MessageStatus({ msg }: { msg: Message }) {
-  if (!msg.effort && !msg.context) return null;
+  if (!msg.effort && !msg.fast && !msg.context) return null;
   const ctx = msg.context;
   const pct = ctx ? Math.min(100, Math.round((ctx.tokens / ctx.window) * 100)) : null;
   const tone = pct == null ? "" : pct >= 90 ? " ctx-high" : pct >= 70 ? " ctx-warn" : "";
@@ -79,6 +79,11 @@ export function MessageStatus({ msg }: { msg: Message }) {
       {msg.effort && (
         <span className="status-chip" title="Reasoning effort">
           effort {msg.effort}
+        </span>
+      )}
+      {msg.fast && (
+        <span className="status-chip fast-chip" title="Fast mode">
+          ⚡ fast
         </span>
       )}
       {ctx && pct != null && (

@@ -19,7 +19,7 @@ import {
   readSafeTop,
   type ViewportMetrics,
 } from "./viewport";
-import { ViewportTracker, healViewport } from "./viewportHeal";
+import { ViewportTracker, healViewport, isTextInput } from "./viewportHeal";
 import { uploadSnapshot } from "./debugSnapshot";
 
 // Re-exported for tests and for anyone importing the old single-file layout.
@@ -170,7 +170,10 @@ export function App() {
     let healTimer: ReturnType<typeof setTimeout> | undefined;
     const heal = () => {
       const f = facts();
-      if (!tracker.needsHeal(window.innerHeight, keyboardOpen(f))) return;
+      // A focused field means the keyboard is up or animating in, whatever
+      // the viewport numbers say at this instant; the focusout heal follows.
+      const keyboard = keyboardOpen(f) || isTextInput(document.activeElement);
+      if (!tracker.needsHeal(window.innerHeight, keyboard)) return;
       healViewport(appRef.current, messagesContainerRef.current);
     };
     const scheduleHeal = () => {
@@ -821,6 +824,16 @@ export function App() {
                         <span className={`agent-status-dot agent-status-${status}`} />
                         <span className="panel-agent-name">{agent.name}</span>
                         {agent.account && <span className="agent-account">@{agent.account}</span>}
+                        {agent.fast && (
+                          <span className="agent-mode agent-fast" title="Fast mode on">
+                            ⚡
+                          </span>
+                        )}
+                        {agent.goal && (
+                          <span className="agent-mode agent-goal" title={`Goal: ${agent.goal}`}>
+                            🎯
+                          </span>
+                        )}
                         <span className={`agent-status-label agent-status-${status}`}>
                           {statusText}
                         </span>

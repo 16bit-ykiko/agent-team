@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ViewportTracker, healViewport } from "../src/viewportHeal";
+import { ViewportTracker, healViewport, isTextInput } from "../src/viewportHeal";
 
 describe("ViewportTracker", () => {
   it("remembers the tallest viewport seen and flags a lasting shrink", () => {
@@ -32,5 +32,18 @@ describe("healViewport", () => {
     expect(shell.style.display).toBe("");
     expect(scroller.scrollTop).toBe(120);
     expect(() => healViewport(null, null)).not.toThrow();
+  });
+});
+
+describe("isTextInput", () => {
+  it("recognises the fields that summon the software keyboard", () => {
+    expect(isTextInput(document.createElement("textarea"))).toBe(true);
+    expect(isTextInput(document.createElement("input"))).toBe(true);
+    const editable = document.createElement("div");
+    Object.defineProperty(editable, "isContentEditable", { value: true });
+    expect(isTextInput(editable)).toBe(true);
+    expect(isTextInput(document.createElement("button"))).toBe(false);
+    expect(isTextInput(document.body)).toBe(false);
+    expect(isTextInput(null)).toBe(false);
   });
 });

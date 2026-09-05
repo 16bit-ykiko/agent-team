@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Message, WorkspaceState } from "./task";
+import type { CommandInfo } from "./claude-session";
 
 const DATA_DIR = ".agent-team";
 const CACHE_DIR = "cache";
@@ -157,6 +158,8 @@ export function appendLog(baseDir: string, workspaceId: string, entry: unknown):
 // user-owned): currently just the default-account override.
 export interface RuntimeSettings {
   defaultAccount?: string | null;
+  // Last slash-command list reported by the Claude SDK (see Server.commands).
+  commands?: CommandInfo[];
 }
 
 function settingsPath(baseDir: string): string {

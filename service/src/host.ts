@@ -15,9 +15,13 @@ export interface HostSessionHandle extends EventEmitter {
   readonly isRunning: boolean;
   // Richer than isRunning; sessions that don't track it fall back to it.
   readonly runState?: RunState;
+  // Effort in force when none was set explicitly (backend default).
+  readonly effectiveEffort?: string | null;
   send(message: string): Promise<void>;
   abort(): void;
   setEffort?(level: string): void;
+  setFastMode?(on: boolean): void;
+  setGoal?(goal: string | null): void;
   stopTask?(taskId: string): Promise<void>;
   simulateRateLimit?(info: { rateLimitType?: string; resetsAt?: number }): void;
   setProviderEnv?(env: Record<string, string> | undefined): void;

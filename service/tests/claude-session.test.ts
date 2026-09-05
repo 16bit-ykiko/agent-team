@@ -616,21 +616,41 @@ describe("subagent output arriving before task_started", () => {
 });
 
 describe("context usage and wake-ups", () => {
-  it("reports context occupancy on the result event from usage + modelUsage", () => {
+  it("reports context occupancy on the result event from the last call + modelUsage", () => {
     const session = new ClaudeSession({ cwd: "/tmp", model: "claude-fable-5-1[1m]" });
     const events: StreamEvent[] = [];
     session.on("event", (e: StreamEvent) => events.push(e));
-    (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage({
+    const dispatch = (m: unknown) =>
+      (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage(m);
+    dispatch({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        role: "assistant",
+        content: [],
+        usage: {
+          input_tokens: 4000,
+          cache_read_input_tokens: 80000,
+          cache_creation_input_tokens: 0,
+        },
+      },
+    });
+    dispatch({
       type: "result",
       subtype: "success",
       result: "ok",
       session_id: "s",
-      usage: { input_tokens: 4000, cache_read_input_tokens: 80000, cache_creation_input_tokens: 0 },
+      // Turn total across calls: larger than any single request.
+      usage: {
+        input_tokens: 9000,
+        cache_read_input_tokens: 200000,
+        cache_creation_input_tokens: 0,
+      },
       modelUsage: {
         "claude-fable-5-1": { contextWindow: 1000000, inputTokens: 1, outputTokens: 1 },
       },
     });
-    expect(events[0]).toMatchObject({
+    expect(events.find((e) => e.kind === "result")).toMatchObject({
       kind: "result",
       context: { tokens: 84000, window: 1000000 },
     });
@@ -1004,5 +1024,87 @@ describe("subagent output while waiting", () => {
     expect(wake).toHaveLength(1);
     expect(wake[0].content).toContain("background task");
     expect(states).toEqual(["working", "waiting", "working"]);
+  });
+});
+
+describe("per-turn status: context size and effort", () => {
+  const assistant = (usage: Record<string, number>, parent: string | null = null) => ({
+    type: "assistant",
+    parent_tool_use_id: parent,
+    message: { role: "assistant", content: [{ type: "text", text: "…" }], usage },
+  });
+  const result = (usage: Record<string, number>) => ({
+    type: "result",
+    subtype: "success",
+    result: "done",
+    usage,
+    modelUsage: { "claude-fable-5-1": { contextWindow: 1_000_000 } },
+  });
+
+  it("reports the last request's prompt size, not the turn total", () => {
+    const { events, dispatch } = makeSession();
+    // Three calls of ~150k each: the turn total (450k) is not the context.
+    dispatch(
+      assistant({
+        input_tokens: 1000,
+        cache_read_input_tokens: 140_000,
+        cache_creation_input_tokens: 9_000,
+      }),
+    );
+    dispatch(
+      assistant({
+        input_tokens: 1200,
+        cache_read_input_tokens: 149_000,
+        cache_creation_input_tokens: 4_000,
+      }),
+    );
+    // A subagent's call must not count as the main loop's context.
+    dispatch(
+      assistant(
+        { input_tokens: 50, cache_read_input_tokens: 20_000, cache_creation_input_tokens: 0 },
+        "tool-1",
+      ),
+    );
+    dispatch(
+      assistant({
+        input_tokens: 800,
+        cache_read_input_tokens: 153_000,
+        cache_creation_input_tokens: 6_200,
+      }),
+    );
+    dispatch(
+      result({
+        input_tokens: 3000,
+        cache_read_input_tokens: 442_000,
+        cache_creation_input_tokens: 19_200,
+        output_tokens: 900,
+      }),
+    );
+    const res = events.find((e) => e.kind === "result")!;
+    expect(res.context).toEqual({ tokens: 160_000, window: 1_000_000 });
+  });
+
+  it("carries the effort the CLI says it runs at when none was chosen", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "system",
+      subtype: "init",
+      session_id: "s",
+      model: "claude-fable-5-1",
+      effort: "high",
+    });
+    dispatch(
+      assistant({ input_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }),
+    );
+    dispatch(result({ input_tokens: 10, output_tokens: 1 }));
+    expect(events.find((e) => e.kind === "result")!.effort).toBe("high");
+  });
+
+  it("omits the context when no main-loop call carried usage", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(result({ input_tokens: 10, output_tokens: 1 }));
+    const res = events.find((e) => e.kind === "result")!;
+    expect(res.context).toBeUndefined();
+    expect(res.effort).toBeUndefined();
   });
 });

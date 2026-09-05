@@ -16,9 +16,10 @@ import {
   appendLog,
   loadSettings,
   saveSettings,
+  RuntimeSettings,
 } from "./state";
 import { loadConfig, AppConfig, effectiveAccount, pickFailoverAccount } from "./config";
-import { AGENT_PRESETS, MODEL_OPTIONS } from "./presets";
+import { AGENT_PRESETS, MODEL_OPTIONS, backendForModel } from "./presets";
 import { CommandInfo, StreamEvent } from "./claude-session";
 import { gitStatus, getPrInfo, GitInfo, PrInfo } from "./git";
 import { completeDirs, resolveWorkspacePath } from "./dirs";
@@ -36,6 +37,18 @@ const LOCAL_COMMANDS: CommandInfo[] = [
     description: "Show or set the model reasoning effort level",
     argumentHint: "[low|medium|high|xhigh|max|ultra]",
   },
+  {
+    name: "fast",
+    description: "Toggle fast mode (quicker responses, higher usage)",
+    argumentHint: "[on|off]",
+  },
+  {
+    name: "goal",
+    description: "Set, show, or clear a Codex goal the agent keeps working toward",
+    argumentHint: "[objective|show|clear]",
+  },
+  { name: "context", description: "Show context window usage", argumentHint: "" },
+  { name: "usage", description: "Show session token usage and cost", argumentHint: "" },
 ];
 
 function mergeLocalCommands(commands: CommandInfo[]): CommandInfo[] {
@@ -71,6 +84,9 @@ interface QuotaEntry {
   sevenDay: QuotaWindow | null;
   fetchedAt: number;
 }
+
+// Protocol-level ping cadence; a client that misses one round is dropped.
+const HEARTBEAT_INTERVAL_MS = 30_000;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -111,6 +127,11 @@ export class Server {
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private lastAccountSwitchAt = 0;
   private archiveTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  // Clients that answered the last protocol-level ping. Mobile browsers drop
+  // sockets without a close frame (screen off, network switch); without this
+  // the server keeps writing into a dead socket forever.
+  private alive = new WeakSet<WebSocket>();
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
@@ -118,10 +139,15 @@ export class Server {
     this.uploadsDir = path.join(baseDir, "uploads");
     if (!fs.existsSync(this.uploadsDir)) fs.mkdirSync(this.uploadsDir, { recursive: true });
     this.config = loadConfig(baseDir);
-    this.defaultAccount = loadSettings(baseDir).defaultAccount ?? null;
+    const settings = loadSettings(baseDir);
+    this.defaultAccount = settings.defaultAccount ?? null;
     if (this.defaultAccount && !this.config.accounts[this.defaultAccount]) {
       this.defaultAccount = null;
     }
+    // The SDK only reports its slash commands once a Claude session runs a
+    // turn; until then (and forever on codex-only teams) the list would be
+    // empty, so start from the last one seen.
+    this.commands = mergeLocalCommands(settings.commands ?? []);
     this.hostRegistry = this.initHosts();
     this.watchConfig();
 
@@ -134,6 +160,7 @@ export class Server {
       perMessageDeflate: { threshold: 1024 },
     });
     this.wss.on("connection", (ws) => this.onConnect(ws));
+    this.heartbeatTimer = setInterval(() => this.sweepDeadClients(), HEARTBEAT_INTERVAL_MS);
 
     this.restoreState();
     this.initCpuBaseline();
@@ -612,6 +639,12 @@ export class Server {
     });
   }
 
+  // settings.json holds several independent values; patch rather than
+  // overwrite so one writer does not wipe the others.
+  private updateSettings(patch: Partial<RuntimeSettings>): void {
+    saveSettings(this.baseDir, { ...loadSettings(this.baseDir), ...patch });
+  }
+
   private sendJson(ws: WebSocket, msg: unknown): void {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   }
@@ -623,8 +656,21 @@ export class Server {
     }
   }
 
+  private sweepDeadClients(): void {
+    for (const ws of this.uiClients) {
+      if (!this.alive.has(ws)) {
+        ws.terminate();
+        continue;
+      }
+      this.alive.delete(ws);
+      ws.ping();
+    }
+  }
+
   private onConnect(ws: WebSocket): void {
     this.uiClients.add(ws);
+    this.alive.add(ws);
+    ws.on("pong", () => this.alive.add(ws));
 
     ws.on("message", (raw) => {
       try {
@@ -675,6 +721,9 @@ export class Server {
             workspaceId: workspace.id,
             messages: summarizeMessages(page),
             hasMore: filtered.length > limit,
+            // Echoed so the client can tell an older page from a resync of
+            // the newest one (the latter replaces, the former prepends).
+            before: before === Infinity ? null : before,
           });
         }
         return;
@@ -871,6 +920,12 @@ export class Server {
         this.restartServer();
         return;
 
+      // Application-level liveness probe: browsers cannot see ws ping/pong
+      // frames, so the client sends its own and expects a reply.
+      case "ping":
+        this.sendJson(ws, { type: "pong" });
+        return;
+
       default:
         this.sendJson(ws, { type: "error", message: `Unknown message type: ${msg.type}` });
     }
@@ -935,7 +990,7 @@ export class Server {
     }
 
     const preset = MODEL_OPTIONS.find((m) => m.id === model);
-    const backend = preset?.backend ?? (model.startsWith("gpt-") ? "codex" : "claude");
+    const backend = backendForModel(model);
 
     try {
       if (account && !this.config.accounts[account]) {
@@ -995,7 +1050,7 @@ export class Server {
       return;
     }
     this.defaultAccount = account;
-    saveSettings(this.baseDir, { defaultAccount: account });
+    this.updateSettings({ defaultAccount: account });
     this.reapplyAccountEnv();
     this.broadcastUI({ type: "default_account", account });
   }
@@ -1017,7 +1072,7 @@ export class Server {
       }
       if (this.defaultAccount && !this.config.accounts[this.defaultAccount]) {
         this.defaultAccount = null;
-        saveSettings(this.baseDir, { defaultAccount: null });
+        this.updateSettings({ defaultAccount: null });
         this.broadcastUI({ type: "default_account", account: null });
       }
       this.reapplyAccountEnv();
@@ -1312,7 +1367,7 @@ systemctl --user restart agent-team-server
 
     this.lastAccountSwitchAt = Date.now();
     this.defaultAccount = next;
-    saveSettings(this.baseDir, { defaultAccount: next });
+    this.updateSettings({ defaultAccount: next });
     this.reapplyAccountEnv();
     this.broadcastUI({ type: "default_account", account: next });
     ws.postSystemMessage(
@@ -1371,6 +1426,7 @@ systemctl --user restart agent-team-server
       },
       onCommandsChanged: (_wsId, commands) => {
         this.commands = mergeLocalCommands(commands);
+        this.updateSettings({ commands });
         this.broadcastUI({ type: "commands_update", commands: this.commands });
       },
       onRateLimit: (wsId, agentId, info) => this.handleRateLimit(wsId, agentId, info),
@@ -1463,6 +1519,7 @@ systemctl --user restart agent-team-server
   }
 
   close(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     fs.unwatchFile(path.join(this.baseDir, "config.toml"));
     for (const t of this.retryTimers.values()) clearTimeout(t);
     if (this.statusTimer) clearInterval(this.statusTimer);

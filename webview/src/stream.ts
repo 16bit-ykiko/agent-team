@@ -179,6 +179,50 @@ export function mergeDetailEvents(
   });
 }
 
+// Reconcile a freshly fetched newest page with what the client already
+// holds. Used after a reconnect: anything that finished, failed or was
+// removed while the socket was down is only visible in the server's copy.
+// Older pages the client scrolled back to are kept; the window covered by the
+// incoming page is replaced by it, message by message.
+export function mergeLatestPage(existing: Message[], incoming: Message[]): Message[] {
+  if (incoming.length === 0) return incoming;
+  const incomingIds = new Set(incoming.map((m) => m.id));
+  const oldest = incoming[0].timestamp;
+  const byId = new Map(existing.map((m) => [m.id, m]));
+  const retained = existing.filter((m) => !incomingIds.has(m.id) && m.timestamp < oldest);
+  const page = incoming.map((next) => {
+    const cur = byId.get(next.id);
+    return cur ? reconcileMessage(cur, next) : next;
+  });
+  return [...retained, ...page];
+}
+
+// Messages whose bodies the client had (streamed live or expanded) but that
+// came back from the resync as summaries. Their full events must be
+// re-fetched, or what the user was reading turns into "tap to load".
+export function downgradedMessageIds(existing: Message[], merged: Message[]): string[] {
+  const hadBodies = new Set(
+    existing.filter((m) => m.detail !== "summary" && m.events?.length).map((m) => m.id),
+  );
+  return merged.filter((m) => m.detail === "summary" && hadBodies.has(m.id)).map((m) => m.id);
+}
+
+const SETTLED = new Set<Message["status"]>(["done", "error"]);
+
+// The server sends summaries; keep the client's full bodies only when the
+// message is settled on both sides, so nothing the user expanded reloads.
+// Anything still streaming when the socket dropped takes the server's copy —
+// the client's events stop wherever the connection did.
+function reconcileMessage(cur: Message, next: Message): Message {
+  const unchanged = SETTLED.has(cur.status) && cur.status === next.status;
+  if (unchanged && cur.detail !== "summary" && cur.events?.length) {
+    const { detail: _summary, ...rest } = next;
+    return { ...rest, events: cur.events };
+  }
+  if (!next.events) return next;
+  return { ...next, events: mergeDetailEvents(cur.events, next.events) };
+}
+
 // Tool name of a tool_use event. New servers tag it explicitly; older
 // persisted events only carry the "**Name** ..." markdown prefix.
 export function toolNameOf(ev: StreamEvent): string | null {

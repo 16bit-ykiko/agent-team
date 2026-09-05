@@ -27,6 +27,18 @@ export class ViewportTracker {
   }
 }
 
+// The keyboard is on its way in (or up) whenever a text field has focus. The
+// viewport numbers lag the keyboard animation by a few hundred ms, so during
+// that window innerHeight is already short while visualViewport still looks
+// keyboard-free — exactly what needsHeal() takes for the standalone bug.
+// Healing then re-measures the viewport mid-animation and WebKit is left
+// painting the app against a stale geometry until the keyboard closes.
+export function isTextInput(el: Element | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "TEXTAREA" || tag === "INPUT" || (el as HTMLElement).isContentEditable === true;
+}
+
 // Toggle display on the app shell (must be full viewport height) so WebKit
 // recomputes the viewport; keep the message list's scroll position across it.
 export function healViewport(shell: HTMLElement | null, scroller: HTMLElement | null): void {

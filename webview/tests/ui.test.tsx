@@ -371,6 +371,13 @@ describe("message status row and timestamps", () => {
     expect(container.querySelector(".message-status")!.textContent).not.toContain("effort");
   });
 
+  it("marks turns that ran in fast mode", () => {
+    const { container } = render(<MessageItem msg={{ ...base, fast: true }} agents={[agent]} />);
+    const chip = container.querySelector(".fast-chip")!;
+    expect(chip.textContent).toContain("fast");
+    expect(container.querySelector(".message-status")!.textContent).not.toContain("effort");
+  });
+
   it("renders nothing for messages without effort or context, and never for user messages", () => {
     const { container, rerender } = render(<MessageItem msg={base} agents={[agent]} />);
     expect(container.querySelector(".message-status")).toBeNull();

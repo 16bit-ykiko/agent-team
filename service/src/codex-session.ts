@@ -1,8 +1,17 @@
 import { execSync } from "child_process";
 import { EventEmitter } from "events";
 import * as fs from "fs";
-import { StreamEvent, UsageStats, SessionConfig, SessionState } from "./claude-session";
+import * as os from "os";
+import * as path from "path";
+import {
+  ContextUsage,
+  StreamEvent,
+  UsageStats,
+  SessionConfig,
+  SessionState,
+} from "./claude-session";
 import type { Codex, ThreadEvent, ThreadItem, ThreadOptions } from "@openai/codex-sdk";
+import { codexContextWindow, codexFastTier, codexModelId, defaultEffortForModel } from "./presets";
 
 // The SDK ships a vendored binary per platform, but we may run against a
 // system-installed codex — resolve it ourselves and pass codexPathOverride.
@@ -45,6 +54,7 @@ export class CodexSession extends EventEmitter {
   };
 
   private codex: Codex | null = null;
+  private rolloutPath: string | null = null;
   private busy = false;
   private abortController: AbortController | null = null;
   private turnFinalized = false;
@@ -58,10 +68,62 @@ export class CodexSession extends EventEmitter {
     return this.busy;
   }
 
+  get effectiveEffort(): string | null {
+    return (
+      this.config.effort ?? (this.config.model ? defaultEffortForModel(this.config.model) : null)
+    );
+  }
+
+  // Context occupancy after the turn. `codex exec` only reports the turn's
+  // token totals, but the rollout it writes carries per-request
+  // `token_count` snapshots with the last request's usage and the window.
+  private readContext(): ContextUsage | undefined {
+    if (!this.sessionId) return undefined;
+    if (!this.rolloutPath || !fs.existsSync(this.rolloutPath)) {
+      this.rolloutPath = findRollout(codexHome(), this.sessionId);
+    }
+    if (!this.rolloutPath) return undefined;
+    return readRolloutContext(this.rolloutPath);
+  }
+
+  private emitResult(): void {
+    this.emit("event", {
+      kind: "result",
+      content: "",
+      context: this.readContext(),
+      effort: this.effectiveEffort ?? undefined,
+    } as StreamEvent);
+  }
+
   setEffort(level: string): void {
     // Thread options are per-turn (each run resumes by id), so the new level
     // applies from the next message.
     this.config.effort = level;
+  }
+
+  setFastMode(on: boolean): void {
+    this.config.fast = on || undefined;
+    // The service tier is a client-level config override; rebuild the client
+    // so the next turn picks it up.
+    this.codex = null;
+  }
+
+  setGoal(goal: string | null): void {
+    this.config.goal = goal ?? undefined;
+  }
+
+  // `--config` overrides for the CLI: the 1M context window and Fast mode
+  // are config values rather than thread options.
+  codexConfig(): Record<string, string | number | boolean> {
+    const config: Record<string, string | number | boolean> = {};
+    const model = this.config.model;
+    const window = model ? codexContextWindow(model) : null;
+    if (window) config.model_context_window = window;
+    if (this.config.fast && model) {
+      const tier = codexFastTier(model);
+      if (tier) config.service_tier = tier;
+    }
+    return config;
   }
 
   abort(): void {
@@ -78,8 +140,10 @@ export class CodexSession extends EventEmitter {
     if (this.codex) return this.codex;
     const { Codex } = await import("@openai/codex-sdk");
     const providerEnv = this.config.providerEnv ?? {};
+    const config = this.codexConfig();
     this.codex = new Codex({
       codexPathOverride: getCodexBin(),
+      ...(Object.keys(config).length > 0 && { config }),
       ...(providerEnv["OPENAI_API_KEY"] && { apiKey: providerEnv["OPENAI_API_KEY"] }),
       ...(providerEnv["OPENAI_BASE_URL"] && { baseUrl: providerEnv["OPENAI_BASE_URL"] }),
     });
@@ -92,7 +156,7 @@ export class CodexSession extends EventEmitter {
       sandboxMode: "danger-full-access",
       approvalPolicy: "never",
       skipGitRepoCheck: true,
-      ...(this.config.model && { model: this.config.model }),
+      ...(this.config.model && { model: codexModelId(this.config.model) }),
       ...(this.config.effort && {
         modelReasoningEffort: this.config.effort as ThreadOptions["modelReasoningEffort"],
       }),
@@ -122,7 +186,7 @@ export class CodexSession extends EventEmitter {
       // Stream ended without turn.completed/turn.failed (e.g. process died):
       // still close the message so the UI doesn't stay "working" forever.
       if (!this.turnFinalized && !this.abortController.signal.aborted) {
-        this.emit("event", { kind: "result", content: "" } as StreamEvent);
+        this.emitResult();
       }
     } catch (err) {
       if (!this.abortController.signal.aborted && !this.turnFinalized) {
@@ -176,7 +240,7 @@ export class CodexSession extends EventEmitter {
           this.usage.cache_creation_tokens += ev.usage.cache_write_input_tokens ?? 0;
         }
         this.turnFinalized = true;
-        this.emit("event", { kind: "result", content: "" } as StreamEvent);
+        this.emitResult();
         break;
 
       // Real failure streams carry BOTH a stream-level "error" and a
@@ -308,4 +372,90 @@ function parseCompletedItem(item: ThreadItem): StreamEvent | null {
     default:
       return null;
   }
+}
+
+export function codexHome(): string {
+  return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+}
+
+// ~/.codex/sessions/YYYY/MM/DD/rollout-<stamp>-<threadId>.jsonl; the day is
+// the thread's start, so scan newest days first.
+export function findRollout(home: string, threadId: string): string | null {
+  const root = path.join(home, "sessions");
+  const dirs = (d: string) => {
+    try {
+      return fs
+        .readdirSync(d, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .sort()
+        .reverse();
+    } catch {
+      return [];
+    }
+  };
+  for (const y of dirs(root)) {
+    for (const m of dirs(path.join(root, y))) {
+      for (const d of dirs(path.join(root, y, m))) {
+        const day = path.join(root, y, m, d);
+        let names: string[];
+        try {
+          names = fs.readdirSync(day);
+        } catch {
+          continue;
+        }
+        const hit = names.find((n) => n.endsWith(`-${threadId}.jsonl`));
+        if (hit) return path.join(day, hit);
+      }
+    }
+  }
+  return null;
+}
+
+const ROLLOUT_TAIL_BYTES = 256 * 1024;
+
+// Last `token_count` event of a rollout: the previous request's usage and
+// the effective window (codex reports the window minus its compaction
+// reserve, which is the honest denominator).
+export function readRolloutContext(file: string): ContextUsage | undefined {
+  let text: string;
+  try {
+    const size = fs.statSync(file).size;
+    const fd = fs.openSync(file, "r");
+    try {
+      const start = Math.max(0, size - ROLLOUT_TAIL_BYTES);
+      const buf = Buffer.alloc(size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      text = buf.toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return undefined;
+  }
+  const lines = text.split("\n").filter((l) => l.includes('"token_count"'));
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const row = JSON.parse(lines[i]) as {
+        payload?: {
+          type?: string;
+          info?: {
+            last_token_usage?: { total_tokens?: number; reasoning_output_tokens?: number };
+            model_context_window?: number;
+          };
+        };
+      };
+      const info = row.payload?.type === "token_count" ? row.payload.info : undefined;
+      const last = info?.last_token_usage;
+      const window = info?.model_context_window;
+      if (!last?.total_tokens || !window) continue;
+      // Same figure codex's own status line uses: everything in the last
+      // request minus reasoning, which is not kept in context.
+      const tokens = last.total_tokens - (last.reasoning_output_tokens ?? 0);
+      return { tokens, window };
+    } catch {
+      // partial line at the tail boundary
+    }
+  }
+  return undefined;
 }

@@ -3,6 +3,8 @@ import {
   applyEventsToMessage,
   applyStreamBatch,
   mergeDetailEvents,
+  mergeLatestPage,
+  downgradedMessageIds,
   toolNameOf,
   toolSummary,
 } from "../src/stream";
@@ -138,5 +140,108 @@ describe("mergeDetailEvents", () => {
     expect(merged[1].subagent!.events).toHaveLength(1);
     expect(merged[1].subagent!.description).toBe("d");
     expect(mergeDetailEvents(undefined, server)).toBe(server);
+  });
+});
+
+describe("mergeLatestPage", () => {
+  it("takes the server's status for a message that finished while disconnected", () => {
+    const live = msg({ id: "m2", timestamp: 2, status: "streaming", content: "par" });
+    const done = msg({
+      id: "m2",
+      timestamp: 2,
+      status: "done",
+      content: "partial then done",
+      events: [ev("tool_use", { toolName: "Read" })],
+      detail: "summary",
+    });
+    const out = mergeLatestPage([msg({ id: "m1", timestamp: 1, status: "done" }), live], [done]);
+    expect(out.map((m) => m.id)).toEqual(["m1", "m2"]);
+    expect(out[1].status).toBe("done");
+    expect(out[1].content).toBe("partial then done");
+    expect(out[1].detail).toBe("summary");
+  });
+
+  it("appends messages that arrived while disconnected, in order", () => {
+    const out = mergeLatestPage(
+      [msg({ id: "m1", timestamp: 1, status: "done" })],
+      [
+        msg({ id: "m1", timestamp: 1, status: "done" }),
+        msg({ id: "m2", timestamp: 2, status: "done" }),
+        msg({ id: "m3", timestamp: 3, status: "streaming" }),
+      ],
+    );
+    expect(out.map((m) => m.id)).toEqual(["m1", "m2", "m3"]);
+  });
+
+  it("keeps older pages the client scrolled back to and drops removed messages", () => {
+    const out = mergeLatestPage(
+      [
+        msg({ id: "old", timestamp: 0, status: "done" }),
+        msg({ id: "m1", timestamp: 1, status: "done" }),
+        msg({ id: "gone", timestamp: 2, status: "queued" }),
+      ],
+      [msg({ id: "m1", timestamp: 1, status: "done" }), msg({ id: "m3", timestamp: 3 })],
+    );
+    expect(out.map((m) => m.id)).toEqual(["old", "m1", "m3"]);
+  });
+
+  it("keeps full bodies the user already expanded when nothing changed", () => {
+    const full = [ev("thinking", { content: "long body" })];
+    const cur = msg({ id: "m1", timestamp: 1, status: "done", events: full });
+    const summary = msg({
+      id: "m1",
+      timestamp: 1,
+      status: "done",
+      events: [ev("thinking", { contentLength: 9 })],
+      detail: "summary",
+    });
+    const out = mergeLatestPage([cur], [summary]);
+    expect(out[0].events).toBe(full);
+    expect(out[0].detail).toBeUndefined();
+  });
+
+  it("carries client-loaded subagent transcripts across a resync", () => {
+    const inner = [ev("tool_use", { toolName: "Grep" })];
+    const cur = msg({
+      id: "m1",
+      timestamp: 1,
+      status: "streaming",
+      events: [
+        ev("subagent_start", { subagent: { taskId: "t", description: "d", events: inner } }),
+      ],
+    });
+    const next = msg({
+      id: "m1",
+      timestamp: 1,
+      status: "done",
+      events: [
+        ev("subagent_done", { subagent: { taskId: "t", description: "d", status: "completed" } }),
+      ],
+      detail: "summary",
+    });
+    const out = mergeLatestPage([cur], [next]);
+    expect(out[0].status).toBe("done");
+    expect(out[0].events?.[0].subagent?.events).toBe(inner);
+  });
+
+  it("an empty newest page means the workspace has no messages", () => {
+    expect(mergeLatestPage([msg({ id: "m1" })], [])).toEqual([]);
+  });
+});
+
+describe("downgradedMessageIds", () => {
+  it("names messages that had bodies and came back as summaries", () => {
+    const existing = [
+      msg({ id: "live", status: "streaming", events: [ev("thinking", { content: "body" })] }),
+      msg({ id: "page", status: "done", events: [ev("thinking")], detail: "summary" }),
+      msg({ id: "empty", status: "done", events: [] }),
+    ];
+    const merged = [
+      msg({ id: "live", status: "done", events: [ev("thinking")], detail: "summary" }),
+      msg({ id: "page", status: "done", events: [ev("thinking")], detail: "summary" }),
+      msg({ id: "empty", status: "done", events: [] }),
+      msg({ id: "new", status: "done", events: [ev("thinking")], detail: "summary" }),
+    ];
+    expect(downgradedMessageIds(existing, merged)).toEqual(["live"]);
   });
 });

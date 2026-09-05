@@ -58,6 +58,8 @@ export interface StreamEvent {
   // On result events: size of the context sent on the turn's last request
   // and the model's window, for the per-message usage row.
   context?: ContextUsage;
+  // On result events: the effort the turn actually ran at.
+  effort?: string;
   toolInput?: ToolInput;
   step?: number;
   contentOffset?: number;
@@ -113,6 +115,10 @@ export interface SessionConfig {
   backend?: "claude" | "codex";
   model?: string;
   effort?: string;
+  // Fast mode (Claude: SDK fastMode; codex: the model's fast service tier).
+  fast?: boolean;
+  // Codex goal objective in force for this thread (see /goal).
+  goal?: string;
   permissionMode?: string;
   systemPrompt?: string;
   providerEnv?: Record<string, string>;
@@ -200,6 +206,12 @@ export class ClaudeSession extends EventEmitter {
     turns: 0,
     duration_ms: 0,
   };
+  // Effort the CLI reports it will send (init frame), for display when no
+  // explicit level was chosen.
+  effectiveEffort: string | null = null;
+  // Usage of the main loop's latest API call this turn: the context size is
+  // this request's prompt, not the turn total (which sums every call).
+  private lastCallUsage: Record<string, number> | null = null;
 
   private queryInstance: Query | null = null;
   private inputController: InputController | null = null;
@@ -536,7 +548,12 @@ export class ClaudeSession extends EventEmitter {
         // Subagent output (parent_tool_use_id set) streams while the main
         // agent may be idle-but-waiting; only the main agent's own blocks
         // mean a turn is in progress.
-        if (!(msg as SDKAssistantMessage).parent_tool_use_id) this.setProcessing();
+        if (!(msg as SDKAssistantMessage).parent_tool_use_id) {
+          this.setProcessing();
+          const usage = (msg as SDKAssistantMessage).message?.usage as unknown as
+            Record<string, number> | undefined;
+          if (usage?.input_tokens != null) this.lastCallUsage = usage;
+        }
         this.handleAssistantMessage(msg as SDKAssistantMessage);
         break;
 
@@ -614,6 +631,20 @@ export class ClaudeSession extends EventEmitter {
           break;
         }
         if (this.handleSystemBanner(sys)) break;
+        if (sys.subtype === "init" && "effort" in sys) {
+          this.effectiveEffort = (sys.effort as string | null) ?? null;
+        }
+        if (sys.subtype === "init" && this.config.fast && sys.fast_mode_state !== "on") {
+          // Asked for fast mode but the CLI is not running it; say why
+          // rather than silently billing at standard speed.
+          const reason = (sys.fast_mode_disabled_reason as string | undefined) ?? "unavailable";
+          const state = (sys.fast_mode_state as string | undefined) ?? "off";
+          this.emit("event", {
+            kind: "notice",
+            level: "warning",
+            content: `Fast mode is ${state} for this session (${reason}).`,
+          } as StreamEvent);
+        }
         if (sys.subtype === "commands_changed" && Array.isArray(sys.commands)) {
           const commands: CommandInfo[] = (sys.commands as Array<Record<string, unknown>>).map(
             (c) => ({
@@ -1032,8 +1063,12 @@ export class ClaudeSession extends EventEmitter {
       }
 
       const text = (result.result as string)?.trim() ?? "";
-      const context = usage ? this.contextUsageFrom(usage, result.modelUsage) : undefined;
-      this.emit("event", { kind: "result", content: text, context } as StreamEvent);
+      const context = this.lastCallUsage
+        ? this.contextUsageFrom(this.lastCallUsage, result.modelUsage)
+        : undefined;
+      this.lastCallUsage = null;
+      const effort = this.config.effort ?? this.effectiveEffort ?? undefined;
+      this.emit("event", { kind: "result", content: text, context, effort } as StreamEvent);
     } else {
       const errResult = msg as Record<string, unknown>;
       const errList = errResult.errors as string[] | undefined;
@@ -1090,8 +1125,10 @@ export class ClaudeSession extends EventEmitter {
     } as StreamEvent);
   }
 
-  // Context occupancy after this turn: what the last request carried
-  // (fresh input + cached prefix) against the model's window from modelUsage.
+  // Context occupancy after this turn: what the last request carried (fresh
+  // input + cached prefix + newly cached) against the model's window from
+  // modelUsage. Never derive this from the result's usage: that is the sum
+  // over every call of the turn, so a 10-step turn reads as 10x the context.
   private contextUsageFrom(
     usage: Record<string, number>,
     modelUsage: unknown,
@@ -1141,6 +1178,15 @@ export class ClaudeSession extends EventEmitter {
     // Effort is passed as a CLI flag when the query starts, so close the
     // current query; the next send() restarts it with the new level and
     // resumes the conversation by session ID.
+    if (this.queryInstance) {
+      this.abort();
+    }
+  }
+
+  // Same lifecycle as effort: an option of the query, so the running query
+  // is closed and the next send() resumes with fast mode toggled.
+  setFastMode(on: boolean): void {
+    this.config.fast = on || undefined;
     if (this.queryInstance) {
       this.abort();
     }
@@ -1213,6 +1259,11 @@ export class ClaudeSession extends EventEmitter {
     }
     if (this.config.effort) {
       opts.effort = this.config.effort as EffortLevel;
+    }
+    if (this.config.fast) {
+      // Fast mode is a settings key rather than a query option; the flag
+      // settings layer outranks the user's settings.json.
+      opts.settings = { fastMode: true };
     }
     if (this.config.permissionMode) {
       opts.permissionMode = this.config.permissionMode as PermissionMode;

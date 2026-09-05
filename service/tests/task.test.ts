@@ -30,6 +30,12 @@ class FakeSession extends EventEmitter implements HostSessionHandle {
   async stopTask(taskId: string): Promise<void> {
     this.stoppedTasks.push(taskId);
   }
+  setFastMode(on: boolean): void {
+    this.config.fast = on || undefined;
+  }
+  setGoal(goal: string | null): void {
+    this.config.goal = goal ?? undefined;
+  }
   getState(): SessionState {
     return { sessionId: this.sessionId, config: this.config, usage: this.usage };
   }
@@ -55,7 +61,7 @@ class FakeHost implements Host {
   }
 }
 
-function makeWorkspace() {
+function makeWorkspace(model = "claude-fable-5") {
   const host = new FakeHost();
   const registry = new HostRegistry();
   registry.register(host);
@@ -66,7 +72,9 @@ function makeWorkspace() {
     onMessageDone: (_wsId, msgId, status) => done.push({ msgId, status }),
   };
   const ws = new Workspace("ws-1", "test", "proj", "local", "/tmp", registry, cb);
-  const agentInfo = ws.addAgent("A", "claude-fable-5", "🤖", "#888", {});
+  const agentInfo = ws.addAgent("A", model, "🤖", "#888", {
+    backend: model.startsWith("gpt-") ? "codex" : "claude",
+  });
   const session = host.lastSession!;
   const emit = (e: Partial<StreamEvent>) => session.emit("event", e as StreamEvent);
   const agentMsgs = () => ws.messages.filter((m): m is Message => m.kind === "agent");
@@ -585,5 +593,67 @@ describe("agent run state on the wire", () => {
     expect(ws.isIdle).toBe(false);
     host.lastSession!.emit("runState", "idle");
     expect(ws.isIdle).toBe(true);
+  });
+});
+
+describe("fast mode and goal commands", () => {
+  const lastReply = (ws: Workspace) => ws.messages.filter((m) => m.kind === "agent").at(-1)!;
+
+  it("/fast toggles the session and marks the following turns", async () => {
+    const { ws, session, emit, agentMsgs } = makeWorkspace("gpt-6-astra[1m]");
+    await ws.sendMessage("/fast");
+    expect(lastReply(ws).content).toContain("turned **on**");
+    expect(session.getState().config.fast).toBe(true);
+    expect(ws.agentInfo(ws.resolveAgent("A")!).fast).toBe(true);
+
+    await ws.sendMessage("hello");
+    emit({ kind: "text_delta", content: "hi" });
+    expect(agentMsgs().at(-1)!.fast).toBe(true);
+
+    await ws.sendMessage("/fast off");
+    expect(lastReply(ws).content).toContain("turned **off**");
+    expect(session.getState().config.fast).toBeUndefined();
+    await ws.sendMessage("/fast off");
+    expect(lastReply(ws).content).toContain("already **off**");
+  });
+
+  it("/fast is refused for models without fast mode", async () => {
+    const { ws, session } = makeWorkspace("deepseek-v4-pro");
+    await ws.sendMessage("/fast on");
+    expect(lastReply(ws).content).toContain("does not support fast mode");
+    expect(session.sent).toEqual([]);
+  });
+
+  it("/goal records the objective and asks the codex agent to create it", async () => {
+    const { ws, session } = makeWorkspace("gpt-6-astra");
+    await ws.sendMessage("/goal");
+    expect(lastReply(ws).content).toContain("no active goal");
+
+    await ws.sendMessage("/goal make the tests green");
+    expect(session.sent).toHaveLength(1);
+    expect(session.sent[0]).toContain("create_goal");
+    expect(session.sent[0]).toContain("make the tests green");
+    expect(session.getState().config.goal).toBe("make the tests green");
+    expect(ws.agentInfo(ws.resolveAgent("A")!).goal).toBe("make the tests green");
+    // The visible user message keeps what was typed, not the rewritten prompt.
+    expect(ws.messages.filter((m) => m.kind === "user").at(-1)!.content).toBe(
+      "/goal make the tests green",
+    );
+
+    session.isRunning = false;
+    await ws.sendMessage("/goal show");
+    expect(lastReply(ws).content).toContain("make the tests green");
+
+    await ws.sendMessage("/goal clear");
+    expect(session.sent).toHaveLength(2);
+    expect(session.sent[1]).toContain("update_goal");
+    expect(session.getState().config.goal).toBeUndefined();
+  });
+
+  it("/goal is a codex feature", async () => {
+    const { ws, session } = makeWorkspace();
+    await ws.sendMessage("/goal anything");
+    expect(lastReply(ws).content).toContain("Codex feature");
+    expect(session.sent).toEqual([]);
   });
 });

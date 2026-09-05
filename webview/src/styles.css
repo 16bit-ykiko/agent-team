@@ -733,6 +733,12 @@ button {
 .agent-status-label.agent-status-offline {
   color: var(--error);
 }
+/* Per-agent mode markers next to the name: fast mode, active goal. */
+.agent-mode {
+  font-size: 11px;
+  line-height: 14px;
+  cursor: default;
+}
 .agent-account {
   font-size: 10px;
   color: var(--warning);

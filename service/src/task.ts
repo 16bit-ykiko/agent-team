@@ -8,7 +8,7 @@ import {
 } from "./claude-session";
 import type { GitInfo, PrInfo } from "./git";
 import { HostSessionHandle, HostRegistry } from "./host";
-import { effortLevelsForModel } from "./presets";
+import { backendForModel, effortLevelsForModel, supportsFastMode } from "./presets";
 
 export type MessageStatus = "streaming" | "done" | "error" | "queued";
 export type MessageKind = "user" | "agent" | "system";
@@ -40,9 +40,10 @@ export interface Message {
   // prompt to dispatch (kept on the message so queues survive restarts).
   queuedFor?: string;
   queuedPrompt?: string;
-  // Agent replies: reasoning effort the turn ran with, and the context
-  // occupancy reported when it finished.
+  // Agent replies: reasoning effort the turn ran with, whether it ran in
+  // fast mode, and the context occupancy reported when it finished.
   effort?: string;
+  fast?: boolean;
   context?: ContextUsage;
   // "summary" when the events carry only chips/counts (history pages); the
   // full events arrive via load_message_details.
@@ -66,6 +67,9 @@ export interface AgentRuntimeInfo extends AgentInfo {
   state: RunState;
   activity: string | null;
   effort: string | null;
+  fast: boolean;
+  // Codex goal objective in force, if one was set with /goal.
+  goal: string | null;
 }
 
 export interface AgentState extends AgentInfo {
@@ -104,6 +108,8 @@ export interface WorkspaceState {
   archivedAt?: number | null;
 }
 
+type CommandOutcome = string | { forward: string } | null;
+
 export interface AgentEntry {
   info: AgentInfo;
   session: HostSessionHandle;
@@ -127,7 +133,7 @@ export interface WorkspaceCallbacks {
     status: MessageStatus,
     content: string,
     events?: StreamEvent[],
-    patch?: Partial<Pick<Message, "context">>,
+    patch?: Partial<Pick<Message, "context" | "effort">>,
   ) => void;
   onAgentBusy?: (wsId: string, agentId: string) => void;
   onAgentIdle?: (wsId: string, agentId: string) => void;
@@ -235,7 +241,9 @@ export class Workspace {
   }
 
   private makeAgentMsg(agentId: string): Message {
-    const effort = this.agents.get(agentId)?.session.getState().config.effort;
+    const session = this.agents.get(agentId)?.session;
+    const config = session?.getState().config;
+    const effort = config?.effort ?? session?.effectiveEffort ?? undefined;
     return {
       id: genId("msg"),
       kind: "agent",
@@ -246,6 +254,7 @@ export class Workspace {
       events: [],
       turnId: genId("turn"),
       ...(effort && { effort }),
+      ...(config?.fast && { fast: true }),
     };
   }
 
@@ -398,13 +407,18 @@ export class Workspace {
           }
           entry.currentMsg.status = "done";
           if (event.context) entry.currentMsg.context = event.context;
+          if (event.effort) entry.currentMsg.effort = event.effort;
+          const patch = {
+            ...(event.context && { context: event.context }),
+            ...(event.effort && { effort: event.effort }),
+          };
           this.cb?.onMessageDone(
             this.id,
             entry.currentMsg.id,
             "done",
             entry.currentMsg.content,
             entry.currentMsg.events,
-            event.context ? { context: event.context } : undefined,
+            Object.keys(patch).length ? patch : undefined,
           );
         }
         entry.currentMsg = null;
@@ -557,7 +571,9 @@ export class Workspace {
     return first.done ? null : first.value;
   }
 
-  private async tryHandleCommand(text: string, agent: AgentEntry): Promise<string | null> {
+  // A slash command handled here answers locally (string), rewrites the
+  // prompt that goes to the agent ({ forward }), or is not ours (null).
+  private async tryHandleCommand(text: string, agent: AgentEntry): Promise<CommandOutcome> {
     if (text === "/usage" || text === "/cost") {
       const data = await agent.session.getUsageInfo?.();
       if (!data) return "No active session — send a message first to start a session.";
@@ -571,7 +587,69 @@ export class Workspace {
     if (text === "/effort" || text.startsWith("/effort ")) {
       return this.handleEffortCommand(text.slice("/effort".length).trim(), agent);
     }
+    if (text === "/fast" || text.startsWith("/fast ")) {
+      return this.handleFastCommand(text.slice("/fast".length).trim(), agent);
+    }
+    if (text === "/goal" || text.startsWith("/goal ")) {
+      return this.handleGoalCommand(text.slice("/goal".length).trim(), agent);
+    }
     return null;
+  }
+
+  private handleFastCommand(arg: string, agent: AgentEntry): string {
+    const model = agent.info.model;
+    const name = agent.info.name;
+    if (!supportsFastMode(model) || !agent.session.setFastMode) {
+      return `**${name}** (${model}) does not support fast mode.`;
+    }
+    const current = Boolean(agent.session.getState().config.fast);
+    const want = arg === "" ? !current : arg.toLowerCase();
+    if (want !== true && want !== false && want !== "on" && want !== "off") {
+      return `Usage: \`/fast [on|off]\` — fast mode for **${name}** is currently **${current ? "on" : "off"}**.`;
+    }
+    const on = want === true || want === "on";
+    if (on === current) {
+      return `Fast mode for **${name}** is already **${on ? "on" : "off"}**.`;
+    }
+    agent.session.setFastMode(on);
+    this.cb?.onAgentUpdated?.(this.id, this.agentInfo(agent));
+    const cost = on ? " Faster responses at higher usage." : "";
+    return `Fast mode for **${name}** turned **${on ? "on" : "off"}**.${cost} Applies from the next message.`;
+  }
+
+  // Codex goals: the objective lives in the codex thread (create_goal /
+  // update_goal tools), so setting or clearing one is a prompt to the agent;
+  // the server only remembers the text for display.
+  private handleGoalCommand(arg: string, agent: AgentEntry): CommandOutcome {
+    const name = agent.info.name;
+    if (backendForModel(agent.info.model) !== "codex" || !agent.session.setGoal) {
+      return `**${name}** (${agent.info.model}) does not support goals; they are a Codex feature.`;
+    }
+    const current = agent.session.getState().config.goal ?? null;
+    if (arg === "" || arg.toLowerCase() === "show") {
+      return current
+        ? `**${name}** is pursuing the goal:\n\n> ${current.replace(/\n/g, "\n> ")}\n\nUse \`/goal <objective>\` to replace it or \`/goal clear\` to end it.`
+        : `**${name}** has no active goal. Use \`/goal <objective>\` to set one.`;
+    }
+    if (arg.toLowerCase() === "clear") {
+      if (!current) return `**${name}** has no active goal.`;
+      agent.session.setGoal(null);
+      this.cb?.onAgentUpdated?.(this.id, this.agentInfo(agent));
+      return {
+        forward:
+          "The user ended the current goal. Mark it complete with the update_goal tool " +
+          "(if this thread has no goal, just say so), summarise where things stand, and stop.",
+      };
+    }
+    agent.session.setGoal(arg);
+    this.cb?.onAgentUpdated?.(this.id, this.agentInfo(agent));
+    return {
+      forward:
+        "Start a goal for this thread with the create_goal tool using the objective below, " +
+        "then begin working toward it. If the create_goal tool is not available, say so and " +
+        "treat the objective as your standing task for this session instead.\n\n" +
+        `Objective:\n${arg}`,
+    };
   }
 
   private handleEffortCommand(arg: string, agent: AgentEntry): string {
@@ -628,7 +706,11 @@ export class Workspace {
     if (!agent)
       throw new Error(resolvedTarget ? `Agent not found: ${resolvedTarget}` : "No default agent");
 
-    const cmdResult = await this.tryHandleCommand(cleanContent.trim(), agent);
+    let cmdResult = await this.tryHandleCommand(cleanContent.trim(), agent);
+    if (cmdResult !== null && typeof cmdResult !== "string") {
+      cleanContent = cmdResult.forward;
+      cmdResult = null;
+    }
     if (cmdResult !== null) {
       const userMsg: Message = {
         id: genId("msg"),
@@ -869,6 +951,8 @@ export class Workspace {
       state: this.agentState(a),
       activity: a.activity ?? null,
       effort: a.session.getState().config.effort ?? null,
+      fast: Boolean(a.session.getState().config.fast),
+      goal: a.session.getState().config.goal ?? null,
     };
   }
 

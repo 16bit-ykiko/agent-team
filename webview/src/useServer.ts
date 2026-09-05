@@ -1,6 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { MOCK_WORKSPACES, MOCK_SYSTEM_STATUS, MOCK_PRESETS, MOCK_MODELS } from "./mockData";
-import { applyStreamBatch, mergeDetailEvents, PendingEvent } from "./stream";
+import {
+  applyStreamBatch,
+  downgradedMessageIds,
+  mergeDetailEvents,
+  mergeLatestPage,
+  PendingEvent,
+} from "./stream";
+
+// Liveness probing. Mobile browsers freeze the page when the screen turns off
+// or the app goes to the background and the socket often dies underneath it
+// without a close event, so the UI would sit on "working" forever. Probe on
+// every return to the foreground and on a slow timer while visible; a probe
+// with no answer means the socket is dead and gets replaced.
+export const PROBE_TIMEOUT_MS = 5_000;
+export const HEARTBEAT_MS = 30_000;
+const RECONNECT_DELAY_MS = 2_000;
 
 export interface ToolInput {
   tool: string;
@@ -93,6 +108,7 @@ export interface Message {
   forwardRef?: ForwardRef;
   queuedFor?: string;
   effort?: string;
+  fast?: boolean;
   context?: ContextUsage;
   // History pages arrive as summaries; full events load on first expand.
   detail?: "summary";
@@ -111,6 +127,9 @@ export interface AgentInfo {
   activity?: string | null;
   // Current reasoning effort level, when the model supports one.
   effort?: string | null;
+  // Fast mode on (/fast) and the Codex goal being pursued (/goal).
+  fast?: boolean;
+  goal?: string | null;
   account?: string;
 }
 
@@ -230,6 +249,22 @@ export function useServer() {
   const wsRef = useRef<WebSocket | null>(null);
   const buildIdRef = useRef<string | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Pending liveness probe; cleared by any frame from the server.
+  const probeRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Detail re-fetches owed after a resync ("ws/msg" keys). Collected inside
+  // the state updater (which React runs lazily, at render) and sent from an
+  // effect after the commit, once each even under StrictMode's double run.
+  const detailRefetchRef = useRef<Set<string>>(new Set());
+
+  const flushDetailRefetches = useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    for (const key of detailRefetchRef.current) {
+      const [workspaceId, messageId] = key.split("/");
+      ws.send(JSON.stringify({ type: "load_message_details", workspaceId, messageId }));
+    }
+    detailRefetchRef.current.clear();
+  }, []);
 
   const pendingEventsRef = useRef<PendingEvent[]>([]);
   const rafRef = useRef<number>(0);
@@ -305,6 +340,8 @@ export function useServer() {
           const wsId = msg.workspaceId as string;
           const incoming = msg.messages as Message[];
           const hasMore = msg.hasMore as boolean;
+          // Set on older-page replies; null/absent on a fetch of the newest page.
+          const before = (msg.before as number | null | undefined) ?? null;
           setWorkspaces((prev) =>
             prev.map((w) => {
               if (w.id !== wsId) return w;
@@ -317,9 +354,29 @@ export function useServer() {
                   loadingOlder: false,
                 };
               }
-              const existingIds = new Set(w.messages.map((m) => m.id));
-              const newMsgs = incoming.filter((m) => !existingIds.has(m.id));
-              return { ...w, messages: [...newMsgs, ...w.messages], hasMore, loadingOlder: false };
+              if (before != null) {
+                const existingIds = new Set(w.messages.map((m) => m.id));
+                const newMsgs = incoming.filter((m) => !existingIds.has(m.id));
+                return {
+                  ...w,
+                  messages: [...newMsgs, ...w.messages],
+                  hasMore,
+                  loadingOlder: false,
+                };
+              }
+              // Newest page again (reconnect resync): reconcile in place so
+              // turns that finished while we were away stop showing as live.
+              const messages = mergeLatestPage(w.messages, incoming);
+              for (const id of downgradedMessageIds(w.messages, messages)) {
+                detailRefetchRef.current.add(`${wsId}/${id}`);
+              }
+              const keptOlder = messages.length > incoming.length;
+              return {
+                ...w,
+                messages,
+                hasMore: keptOlder ? w.hasMore : hasMore,
+                loadingOlder: false,
+              };
             }),
           );
           break;
@@ -401,6 +458,7 @@ export function useServer() {
           const content = msg.content as string;
           const events = msg.events as StreamEvent[] | undefined;
           const context = msg.context as ContextUsage | undefined;
+          const effort = msg.effort as string | undefined;
           pendingEventsRef.current = pendingEventsRef.current.filter(
             (e) => !(e.wsId === wsId && e.messageId === messageId),
           );
@@ -418,6 +476,7 @@ export function useServer() {
                     content,
                     ...(merged ? { events: merged } : {}),
                     ...(context ? { context } : {}),
+                    ...(effort ? { effort } : {}),
                   };
                 }),
               };
@@ -608,6 +667,10 @@ export function useServer() {
           });
           break;
 
+        case "pong":
+          // Answer to a liveness probe; receipt alone clears the timer.
+          break;
+
         case "error":
           console.error("[server]", msg.message);
           setLastError(String(msg.message));
@@ -617,19 +680,54 @@ export function useServer() {
     [flushStreamEvents],
   );
 
+  useEffect(() => {
+    if (detailRefetchRef.current.size > 0) flushDetailRefetches();
+  }, [workspaces, flushDetailRefetches]);
+
   const connect = useCallback(() => {
     const ws = new WebSocket(resolveWsUrl());
     wsRef.current = ws;
 
     ws.onopen = () => setConnected(true);
     ws.onclose = () => {
+      // A socket we already gave up on (failed probe) must not schedule a
+      // second reconnect on top of the replacement.
+      if (wsRef.current !== ws) return;
       setConnected(false);
       wsRef.current = null;
-      reconnectRef.current = setTimeout(connect, 2000);
+      clearTimeout(probeRef.current);
+      probeRef.current = undefined;
+      reconnectRef.current = setTimeout(connect, RECONNECT_DELAY_MS);
     };
     ws.onerror = () => ws.close();
-    ws.onmessage = (e) => handleServerMessage(JSON.parse(e.data));
+    ws.onmessage = (e) => {
+      clearTimeout(probeRef.current);
+      probeRef.current = undefined;
+      handleServerMessage(JSON.parse(e.data));
+    };
   }, [handleServerMessage]);
+
+  // Check that the socket still carries traffic; reconnect right away if it
+  // is gone rather than waiting for the browser to notice.
+  const probe = useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws) {
+      // Between attempts: skip the rest of the back-off.
+      clearTimeout(reconnectRef.current);
+      connect();
+      return;
+    }
+    if (ws.readyState !== WebSocket.OPEN || probeRef.current) return;
+    ws.send(JSON.stringify({ type: "ping" }));
+    probeRef.current = setTimeout(() => {
+      probeRef.current = undefined;
+      if (wsRef.current !== ws) return;
+      wsRef.current = null;
+      ws.close();
+      setConnected(false);
+      connect();
+    }, PROBE_TIMEOUT_MS);
+  }, [connect]);
 
   const useMock = import.meta.env.DEV && new URLSearchParams(window.location.search).has("mock");
   const useReplay =
@@ -654,9 +752,28 @@ export function useServer() {
     connect();
     return () => {
       clearTimeout(reconnectRef.current);
+      clearTimeout(probeRef.current);
       wsRef.current?.close();
     };
   }, [connect, useMock, useReplay, handleServerMessage]);
+
+  useEffect(() => {
+    if (useMock || useReplay) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") probe();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    // Back/forward cache restores and network changes bypass visibilitychange.
+    window.addEventListener("pageshow", onVisible);
+    window.addEventListener("online", onVisible);
+    const timer = setInterval(onVisible, HEARTBEAT_MS);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+      window.removeEventListener("online", onVisible);
+      clearInterval(timer);
+    };
+  }, [probe, useMock, useReplay]);
 
   const send = useCallback((data: unknown) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

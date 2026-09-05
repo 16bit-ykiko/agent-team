@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { CodexSession } from "../src/codex-session";
+import { describe, it, expect, afterEach } from "vitest";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import { CodexSession, findRollout, readRolloutContext } from "../src/codex-session";
 import { StreamEvent } from "../src/claude-session";
 
 // handleThreadEvent maps @openai/codex-sdk ThreadEvents onto our StreamEvent
@@ -162,5 +165,99 @@ describe("setProviderEnv", () => {
     session.setProviderEnv({ OPENAI_API_KEY: "sk-x" });
     expect((session as unknown as { codex: unknown }).codex).toBeNull();
     expect(session.config.providerEnv?.OPENAI_API_KEY).toBe("sk-x");
+  });
+});
+
+describe("codex CLI configuration", () => {
+  type Internals = { threadOptions(): { model?: string } };
+  it("strips the 1M suffix from the model and configures the window instead", () => {
+    const session = new CodexSession({ cwd: "/tmp", backend: "codex", model: "gpt-6-astra[1m]" });
+    expect((session as unknown as Internals).threadOptions().model).toBe("gpt-6-astra");
+    expect(session.codexConfig()).toEqual({ model_context_window: 872_000 });
+  });
+
+  it("leaves the default window alone for plain ids", () => {
+    const session = new CodexSession({ cwd: "/tmp", backend: "codex", model: "gpt-6-astra" });
+    expect((session as unknown as Internals).threadOptions().model).toBe("gpt-6-astra");
+    expect(session.codexConfig()).toEqual({});
+  });
+
+  it("switches the service tier with fast mode and persists it in the state", () => {
+    const session = new CodexSession({ cwd: "/tmp", backend: "codex", model: "gpt-5.5" });
+    session.setFastMode(true);
+    expect(session.codexConfig()).toEqual({ service_tier: "priority" });
+    expect(session.getState().config.fast).toBe(true);
+    session.setFastMode(false);
+    expect(session.codexConfig()).toEqual({});
+    expect(session.getState().config.fast).toBeUndefined();
+  });
+
+  it("remembers the goal objective for display", () => {
+    const session = new CodexSession({ cwd: "/tmp", backend: "codex", model: "gpt-5.5" });
+    session.setGoal("ship the release");
+    expect(CodexSession.fromState(session.getState()).getState().config.goal).toBe(
+      "ship the release",
+    );
+    session.setGoal(null);
+    expect(session.getState().config.goal).toBeUndefined();
+  });
+});
+
+describe("codex context from the rollout", () => {
+  const tokenCount = (last: Record<string, number>, window: number) =>
+    JSON.stringify({
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: { total_tokens: 9_999_999 },
+          last_token_usage: last,
+          model_context_window: window,
+        },
+      },
+    });
+  let home: string;
+  afterEach(() => {
+    delete process.env.CODEX_HOME;
+    if (home) fs.rmSync(home, { recursive: true, force: true });
+  });
+  const writeRollout = (threadId: string, lines: string[]) => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "codex-home-"));
+    const day = path.join(home, "sessions", "2026", "09", "05");
+    fs.mkdirSync(day, { recursive: true });
+    const file = path.join(day, `rollout-2026-09-05T12-41-28-${threadId}.jsonl`);
+    fs.writeFileSync(file, lines.join("\n") + "\n");
+    return file;
+  };
+
+  it("finds the thread's rollout and reads the last request's usage", () => {
+    const file = writeRollout("thr_abc", [
+      JSON.stringify({ type: "session_meta", payload: {} }),
+      tokenCount({ total_tokens: 50_000, reasoning_output_tokens: 1_000 }, 264_600),
+      tokenCount({ total_tokens: 111_036, reasoning_output_tokens: 460 }, 828_400),
+    ]);
+    expect(findRollout(home, "thr_abc")).toBe(file);
+    expect(findRollout(home, "thr_missing")).toBeNull();
+    expect(readRolloutContext(file)).toEqual({ tokens: 110_576, window: 828_400 });
+  });
+
+  it("attaches context and the model's default effort to the result", () => {
+    writeRollout("thr_1", [
+      tokenCount({ total_tokens: 4_000, reasoning_output_tokens: 0 }, 264_600),
+    ]);
+    process.env.CODEX_HOME = home;
+    const session = new CodexSession({ cwd: "/tmp", backend: "codex", model: "gpt-6-astra" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    const dispatch = (ev: unknown) =>
+      (session as unknown as { handleThreadEvent(e: unknown): void }).handleThreadEvent(ev);
+    dispatch({ type: "thread.started", thread_id: "thr_1" });
+    dispatch({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
+    const res = events.find((e) => e.kind === "result")!;
+    expect(res.context).toEqual({ tokens: 4_000, window: 264_600 });
+    expect(res.effort).toBe("medium");
+    expect(session.effectiveEffort).toBe("medium");
+    session.setEffort("xhigh");
+    expect(session.effectiveEffort).toBe("xhigh");
   });
 });
