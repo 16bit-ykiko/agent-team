@@ -3,6 +3,7 @@
   "description": "Multi-agent orchestration panel",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "workspaces": [
     "service",
     "webview"
