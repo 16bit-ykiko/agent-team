@@ -1160,6 +1160,28 @@ pre .copy-btn:hover {
 .message-content li {
   margin: 2px 0;
 }
+/* The global reset zeroes list padding; every other markdown container
+   (tool bodies, thinking, subagent prompts/summaries, banners) gets it back
+   here, or the markers hang outside the box over the step border. */
+.event-content ul,
+.event-content ol,
+.subagent-prompt ul,
+.subagent-prompt ol,
+.subagent-summary ul,
+.subagent-summary ol,
+.banner-text ul,
+.banner-text ol,
+.system-message ul,
+.system-message ol {
+  padding-left: 20px;
+  margin: 3px 0;
+}
+.event-content li,
+.subagent-prompt li,
+.subagent-summary li,
+.banner-text li {
+  margin: 2px 0;
+}
 .message-content .table-scroll-wrapper {
   overflow-x: auto;
   margin: 8px 0;
@@ -1425,10 +1447,6 @@ pre .copy-btn:hover {
 .banner-text p {
   margin: 0;
 }
-.banner-text ul {
-  margin: 2px 0 0;
-  padding-left: 18px;
-}
 .banner-compact {
   color: var(--warning);
   border-color: rgba(229, 192, 123, 0.3);
@@ -1519,10 +1537,6 @@ pre .copy-btn:hover {
   margin-right: 8px;
 }
 /* Unfolded prompts read as documents: block paragraphs, indented lists. */
-.banner-text ol {
-  margin: 2px 0 0;
-  padding-left: 20px;
-}
 .banner-text p + p,
 .banner-text pre,
 .banner-text blockquote {
@@ -1677,11 +1691,6 @@ pre .copy-btn:hover {
 }
 .subagent-prompt p {
   margin: 2px 0;
-}
-.subagent-prompt ul,
-.subagent-prompt ol {
-  padding-left: 20px;
-  margin: 3px 0;
 }
 .subagent-prompt code {
   font-size: 11px;
