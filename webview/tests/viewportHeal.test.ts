@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { ViewportTracker, healViewport, isTextInput } from "../src/viewportHeal";
+import { vi } from "vitest";
+import {
+  ViewportTracker,
+  healViewport,
+  isAtBottom,
+  isTextInput,
+  settleScroller,
+} from "../src/viewportHeal";
 
 describe("ViewportTracker", () => {
   it("remembers the tallest viewport seen and flags a lasting shrink", () => {
@@ -45,5 +52,52 @@ describe("isTextInput", () => {
     expect(isTextInput(document.createElement("button"))).toBe(false);
     expect(isTextInput(document.body)).toBe(false);
     expect(isTextInput(null)).toBe(false);
+  });
+});
+
+// jsdom has no layout; fake a scroller's metrics.
+function fakeScroller(scrollTop: number, scrollHeight: number, clientHeight: number) {
+  const el = document.createElement("div");
+  let top = scrollTop;
+  Object.defineProperty(el, "scrollHeight", { value: scrollHeight });
+  Object.defineProperty(el, "clientHeight", { value: clientHeight });
+  Object.defineProperty(el, "scrollTop", {
+    get: () => top,
+    // Browsers clamp assignments into range; so does the fake.
+    set: (v: number) => {
+      top = Math.max(0, Math.min(v, scrollHeight - clientHeight));
+    },
+  });
+  return el;
+}
+
+describe("settleScroller", () => {
+  it("pulls an offset left past the maximum back into range, via a one-pixel nudge", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+    // Keyboard closed: the box grew from 285 to 621, the offset stayed at the
+    // old maximum (2000 - 285 = 1715), which is 336px past the new one.
+    const el = fakeScroller(1715, 2000, 621);
+    settleScroller(el, false);
+    expect(el.scrollTop).toBe(1378);
+    frames.forEach((f) => f(0));
+    expect(el.scrollTop).toBe(1379);
+    vi.unstubAllGlobals();
+  });
+
+  it("sticks to the end when asked, and leaves layout-less elements alone", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => frames.push(cb));
+    const el = fakeScroller(100, 2000, 621);
+    settleScroller(el, true);
+    expect(el.scrollTop).toBe(1378);
+    frames.forEach((f) => f(0));
+    expect(el.scrollTop).toBe(1379);
+    expect(isAtBottom(el)).toBe(true);
+
+    const none = fakeScroller(50, 0, 0);
+    settleScroller(none, true);
+    expect(none.scrollTop).toBe(50);
+    vi.unstubAllGlobals();
   });
 });

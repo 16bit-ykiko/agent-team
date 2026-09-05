@@ -20,6 +20,11 @@ describe("debug snapshot", () => {
     expect(selectors).toContain(".input-area");
     expect(selectors).not.toContain(".sidebar");
     expect(selectors.every((s) => SNAPSHOT_SELECTORS.includes(s))).toBe(true);
+    const messages = snap.elements.find((e) => e.selector === ".messages")!;
+    // jsdom reports overflow as set in CSS only; force it for the assertion.
+    expect(messages.scroll === undefined || typeof messages.scroll.top === "number").toBe(true);
+    expect(selectors).toContain(".messages .message");
+    expect(selectors).toContain(".messages > :last-child");
     expect(snap.cssVars["--app-height"]).toBe("700px");
     expect(snap.cssVars["--app-offset"]).toBe("(unset)");
     expect(snap.viewport.inner).toBe(window.innerHeight);

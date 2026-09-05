@@ -39,13 +39,39 @@ export function isTextInput(el: Element | null): boolean {
   return tag === "TEXTAREA" || tag === "INPUT" || (el as HTMLElement).isContentEditable === true;
 }
 
+export function isAtBottom(el: HTMLElement, slack = 4): boolean {
+  return el.scrollHeight - el.clientHeight - el.scrollTop <= slack;
+}
+
+// When a scroller's box changes size (keyboard in/out, the viewport heal),
+// WebKit's asynchronous scrolling tree can keep the old offset even though
+// it now lies past the new maximum: the visible strip maps to nothing, the
+// transcript looks empty, and the first finger-scroll re-clamps it. Pinning
+// scrollTop to scrollHeight while the keyboard is up (so the composer's
+// context stays in view) makes that offset the largest possible one. So
+// after each such change re-assert an in-range offset from the main thread,
+// and move it by a pixel across two frames so the compositor re-tiles.
+export function settleScroller(el: HTMLElement | null, stickToBottom: boolean): void {
+  if (!el || el.clientHeight === 0) return;
+  const max = Math.max(0, el.scrollHeight - el.clientHeight);
+  const target = stickToBottom ? max : Math.min(Math.max(0, el.scrollTop), max);
+  el.scrollTop = target === max ? Math.max(0, target - 1) : target + 1;
+  requestAnimationFrame(() => {
+    el.scrollTop = target;
+  });
+}
+
 // Toggle display on the app shell (must be full viewport height) so WebKit
 // recomputes the viewport; keep the message list's scroll position across it.
 export function healViewport(shell: HTMLElement | null, scroller: HTMLElement | null): void {
   if (!shell) return;
   const top = scroller?.scrollTop ?? 0;
+  const bottom = scroller ? scroller.clientHeight > 0 && isAtBottom(scroller) : false;
   shell.style.display = "none";
   void shell.offsetHeight;
   shell.style.display = "";
-  if (scroller) scroller.scrollTop = top;
+  if (scroller) {
+    scroller.scrollTop = top;
+    settleScroller(scroller, bottom);
+  }
 }

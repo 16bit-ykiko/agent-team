@@ -15,6 +15,9 @@ export interface ElementGeometry {
   paddingBottom: string;
   bottom: string;
   overflow: string;
+  // Scrollers only: distinguishes "scrolled past the content" from "not
+  // painted" when the transcript shows up empty.
+  scroll?: { top: number; height: number; client: number };
 }
 
 export interface DebugSnapshot {
@@ -41,6 +44,9 @@ export const SNAPSHOT_SELECTORS = [
   ".input-row",
   ".chat-input",
   ".empty-state",
+  // First and last transcript entries: where the content actually sits.
+  ".messages .message",
+  ".messages > :last-child",
 ];
 
 function geometry(selector: string): ElementGeometry | null {
@@ -49,8 +55,12 @@ function geometry(selector: string): ElementGeometry | null {
   const r = el.getBoundingClientRect();
   const cs = getComputedStyle(el);
   const round = (n: number) => Math.round(n * 10) / 10;
+  const scrolls = cs.overflowY === "auto" || cs.overflowY === "scroll";
   return {
     selector,
+    ...(scrolls && {
+      scroll: { top: round(el.scrollTop), height: el.scrollHeight, client: el.clientHeight },
+    }),
     rect: {
       top: round(r.top),
       bottom: round(r.bottom),

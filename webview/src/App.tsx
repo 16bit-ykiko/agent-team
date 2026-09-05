@@ -19,7 +19,13 @@ import {
   readSafeTop,
   type ViewportMetrics,
 } from "./viewport";
-import { ViewportTracker, healViewport, isTextInput } from "./viewportHeal";
+import {
+  ViewportTracker,
+  healViewport,
+  isAtBottom,
+  isTextInput,
+  settleScroller,
+} from "./viewportHeal";
 import { uploadSnapshot } from "./debugSnapshot";
 
 // Re-exported for tests and for anyone importing the old single-file layout.
@@ -191,19 +197,29 @@ export function App() {
       scheduleHeal();
     };
     window.addEventListener("resize", onWindowResize);
+    let keyboardWasOpen = keyboardOpen(facts());
     const apply = () => {
       // Pin the app to the keyboard-free visible strip: size it to the
       // visual viewport AND follow its pan offset. (Never call scrollTo here
       // — that fights the browser's own scroll-into-view and pushes the
       // composer back under the keyboard.)
       const el = document.documentElement;
-      const vars = viewportVars(facts());
+      const f = facts();
+      const keyboard = keyboardOpen(f);
+      const scroller = messagesContainerRef.current;
+      const focused = document.activeElement === textareaRef.current;
+      // Measured before the box changes: whether to stay glued to the end.
+      const atBottom = scroller ? scroller.clientHeight > 0 && isAtBottom(scroller) : false;
+      const vars = viewportVars(f);
       if (vars.height) el.style.setProperty("--app-height", vars.height);
       else el.style.removeProperty("--app-height");
       if (vars.offset) el.style.setProperty("--app-offset", vars.offset);
       else el.style.removeProperty("--app-offset");
-      if (document.activeElement === textareaRef.current && messagesContainerRef.current) {
-        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+      if (focused && scroller) scroller.scrollTop = scroller.scrollHeight;
+      if (keyboard !== keyboardWasOpen) {
+        // The scroller's box just changed height: see settleScroller.
+        keyboardWasOpen = keyboard;
+        requestAnimationFrame(() => settleScroller(scroller, atBottom || focused));
       }
     };
     apply();
