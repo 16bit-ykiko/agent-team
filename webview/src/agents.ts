@@ -20,6 +20,18 @@ export function agentQueues(a: AgentInfo): boolean {
   return agentState(a) === "working";
 }
 
+// Label for the header pill: one word per state. Working keeps its short
+// activity ("compacting context"); what a sleeping agent waits for is in
+// the transcript, not squeezed into the pill.
+export function pillLabel(a: AgentInfo, connected: boolean): string {
+  const s = agentState(a);
+  if (s === "working") return a.activity ?? "working";
+  if (s === "waiting") return "waiting";
+  if (s === "sleeping") return "sleeping";
+  return connected ? "online" : "offline";
+}
+
+// Full label for the message header: includes the activity text.
 export function stateLabel(a: AgentInfo, connected: boolean): string {
   const s = agentState(a);
   if (s === "working") return a.activity ?? "working";

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import { useServer, Message } from "./useServer";
 import { groupWorkspaces } from "./groups";
-import { agentQueues, agentState, isAgentActive, stateLabel } from "./agents";
+import { agentQueues, agentState, isAgentActive, pillLabel, stateLabel } from "./agents";
 import { extractImageFiles, installMacCtrlClipboard } from "./clipboard";
 import { isImeKeyEvent } from "./ime";
 import { AgentAvatar } from "./avatar";
@@ -813,7 +813,8 @@ export function App() {
                             ? "online"
                             : "offline"
                           : s;
-                    const statusText = stateLabel(agent, connected);
+                    const statusText = pillLabel(agent, connected);
+                    const statusTitle = stateLabel(agent, connected);
                     return (
                       <div
                         key={agent.id}
@@ -834,7 +835,10 @@ export function App() {
                             🎯
                           </span>
                         )}
-                        <span className={`agent-status-label agent-status-${status}`}>
+                        <span
+                          className={`agent-status-label agent-status-${status}`}
+                          title={statusTitle}
+                        >
                           {statusText}
                         </span>
                         <button

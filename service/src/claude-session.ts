@@ -1101,9 +1101,11 @@ export class ClaudeSession extends EventEmitter {
     this.pendingNested.clear();
     this.setActivity(null);
     if (this.pendingWake && !this.pendingWake.stop) {
-      const { at, reason } = this.pendingWake;
+      const { at } = this.pendingWake;
       this.sleeping = true;
-      this.setActivity(`sleeping until ${formatClock(at)}${reason ? ` · ${reason}` : ""}`);
+      // Time only: the reason is already in the SCHEDULED banner, and the
+      // label must fit an agent pill and a message header on a phone.
+      this.setActivity(`sleeping until ${formatClock(at)}`);
     }
     this.pendingWake = null;
     this.updateRunState();

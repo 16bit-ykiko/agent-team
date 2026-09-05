@@ -906,7 +906,8 @@ describe("scheduled wake-up banner and sleeping label", () => {
     });
     s.handleSDKMessage({ type: "result", subtype: "success", result: "", session_id: "s" });
     expect(activity).toHaveLength(1);
-    expect(activity[0]).toMatch(/^sleeping until \d{2}:\d{2}.* · r$/);
+    // Time only; the reason lives in the SCHEDULED banner.
+    expect(activity[0]).toMatch(/^sleeping until \d{2}:\d{2}( [AP]M)?$/);
     // the wake-up turn
     s.handleSDKMessage({
       type: "assistant",

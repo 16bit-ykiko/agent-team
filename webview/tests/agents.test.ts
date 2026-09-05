@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { agentState, isAgentActive, agentQueues, stateLabel } from "../src/agents";
+import { agentState, isAgentActive, agentQueues, pillLabel, stateLabel } from "../src/agents";
 import { AgentInfo } from "../src/useServer";
 
 const a = (over: Partial<AgentInfo> = {}): AgentInfo => ({
@@ -26,6 +26,19 @@ describe("agent state helpers", () => {
     expect(agentQueues(a({ state: "working" }))).toBe(true);
     expect(agentQueues(a({ state: "waiting" }))).toBe(false);
     expect(agentQueues(a({ state: "sleeping" }))).toBe(false);
+  });
+
+  it("keeps the header pill to one word per state", () => {
+    expect(pillLabel(a(), true)).toBe("online");
+    expect(pillLabel(a({ state: "working", activity: "compacting context" }), true)).toBe(
+      "compacting context",
+    );
+    expect(pillLabel(a({ state: "waiting", activity: "2 background tasks" }), true)).toBe(
+      "waiting",
+    );
+    expect(pillLabel(a({ state: "sleeping", activity: "sleeping until 03:01 AM" }), true)).toBe(
+      "sleeping",
+    );
   });
 
   it("labels each state, preferring the activity text", () => {
