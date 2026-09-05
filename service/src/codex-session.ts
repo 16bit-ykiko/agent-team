@@ -58,6 +58,13 @@ export class CodexSession extends EventEmitter {
   private busy = false;
   private abortController: AbortController | null = null;
   private turnFinalized = false;
+  // Terminal event of the turn (result or error), held until the stream has
+  // closed. `codex exec` keeps its stdout open for a few seconds after
+  // turn.completed; emitting on the event itself made the message finish
+  // while isRunning was still true, so anything queued in that window was
+  // never dispatched (nothing re-triggers the queue when busy finally
+  // clears) and a reconnecting client saw the agent as working.
+  private terminal: StreamEvent | null = null;
 
   constructor(config: SessionConfig) {
     super();
@@ -86,13 +93,13 @@ export class CodexSession extends EventEmitter {
     return readRolloutContext(this.rolloutPath);
   }
 
-  private emitResult(): void {
-    this.emit("event", {
+  private resultEvent(): StreamEvent {
+    return {
       kind: "result",
       content: "",
       context: this.readContext(),
       effort: this.effectiveEffort ?? undefined,
-    } as StreamEvent);
+    } as StreamEvent;
   }
 
   setEffort(level: string): void {
@@ -182,32 +189,37 @@ export class CodexSession extends EventEmitter {
       for await (const ev of events) {
         this.handleThreadEvent(ev);
       }
-
-      // Stream ended without turn.completed/turn.failed (e.g. process died):
-      // still close the message so the UI doesn't stay "working" forever.
-      if (!this.turnFinalized && !this.abortController.signal.aborted) {
-        this.emitResult();
-      }
     } catch (err) {
       if (!this.abortController.signal.aborted && !this.turnFinalized) {
+        this.turnFinalized = true;
         const msg = err instanceof Error ? err.message : String(err);
         // A failed resume usually means the thread is gone from
         // ~/.codex/sessions — reset so the next message starts fresh.
         if (this.sessionId && /resume|session|thread|not found|No such/i.test(msg)) {
           this.sessionId = null;
-          this.emit("event", {
+          this.terminal = {
             kind: "error",
             content: `[Codex error] ${msg}\n\nThe stored Codex session could not be resumed; the next message will start a fresh session.`,
-          } as StreamEvent);
+          } as StreamEvent;
         } else {
-          this.emit("event", { kind: "error", content: `[Codex error] ${msg}` } as StreamEvent);
+          this.terminal = { kind: "error", content: `[Codex error] ${msg}` } as StreamEvent;
         }
       }
     } finally {
       this.usage.turns++;
       this.usage.duration_ms += Date.now() - startTime;
+      const aborted = this.abortController?.signal.aborted ?? false;
       this.busy = false;
       this.abortController = null;
+      if (!aborted) {
+        // Stream ended without turn.completed/turn.failed (e.g. process
+        // died): still close the message so the UI doesn't stay "working".
+        const terminal = this.terminal ?? this.resultEvent();
+        this.terminal = null;
+        this.emit("event", terminal);
+      } else {
+        this.terminal = null;
+      }
     }
   }
 
@@ -240,7 +252,7 @@ export class CodexSession extends EventEmitter {
           this.usage.cache_creation_tokens += ev.usage.cache_write_input_tokens ?? 0;
         }
         this.turnFinalized = true;
-        this.emitResult();
+        this.terminal = this.resultEvent();
         break;
 
       // Real failure streams carry BOTH a stream-level "error" and a
@@ -251,19 +263,19 @@ export class CodexSession extends EventEmitter {
       case "turn.failed":
         if (this.turnFinalized) break;
         this.turnFinalized = true;
-        this.emit("event", {
+        this.terminal = {
           kind: "error",
           content: `[Codex error] ${ev.error?.message ?? "Turn failed"}`,
-        } as StreamEvent);
+        } as StreamEvent;
         break;
 
       case "error":
         if (this.turnFinalized) break;
         this.turnFinalized = true;
-        this.emit("event", {
+        this.terminal = {
           kind: "error",
           content: `[Codex error] ${ev.message ?? "Unknown stream error"}`,
-        } as StreamEvent);
+        } as StreamEvent;
         break;
 
       case "item.started": {

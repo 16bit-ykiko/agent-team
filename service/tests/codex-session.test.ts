@@ -6,14 +6,33 @@ import { CodexSession, findRollout, readRolloutContext } from "../src/codex-sess
 import { StreamEvent } from "../src/claude-session";
 
 // handleThreadEvent maps @openai/codex-sdk ThreadEvents onto our StreamEvent
-// protocol. The constructor is inert, so we drive it directly.
-function makeSession() {
-  const session = new CodexSession({ cwd: "/tmp", backend: "codex", model: "gpt-5.5" });
+// protocol. The constructor is inert, so we drive it directly; `run` plays a
+// whole stream through send() with a stand-in client, which is where the
+// terminal result/error is released (only once the stream has closed).
+function makeSession(model = "gpt-5.5") {
+  const session = new CodexSession({ cwd: "/tmp", backend: "codex", model });
   const events: StreamEvent[] = [];
   session.on("event", (e: StreamEvent) => events.push(e));
   const dispatch = (ev: unknown) =>
     (session as unknown as { handleThreadEvent(e: unknown): void }).handleThreadEvent(ev);
-  return { session, events, dispatch };
+  const run = async (stream: unknown[] | (() => AsyncGenerator<unknown>)) => {
+    const thread = {
+      runStreamed: async () => ({
+        events:
+          typeof stream === "function"
+            ? stream()
+            : (async function* () {
+                for (const ev of stream) yield ev;
+              })(),
+      }),
+    };
+    (session as unknown as { codex: unknown }).codex = {
+      startThread: () => thread,
+      resumeThread: () => thread,
+    };
+    await session.send("prompt");
+  };
+  return { session, events, dispatch, run };
 }
 
 describe("codex thread event mapping", () => {
@@ -24,21 +43,23 @@ describe("codex thread event mapping", () => {
     expect(session.getState().sessionId).toBe("thr_123");
   });
 
-  it("emits agent messages as text deltas and finalizes on turn.completed", () => {
-    const { session, events, dispatch } = makeSession();
-    dispatch({
-      type: "item.completed",
-      item: { id: "i1", type: "agent_message", text: "Here is the answer." },
-    });
-    dispatch({
-      type: "turn.completed",
-      usage: {
-        input_tokens: 100,
-        cached_input_tokens: 40,
-        output_tokens: 25,
-        reasoning_output_tokens: 5,
+  it("emits agent messages as text deltas and finalizes on turn.completed", async () => {
+    const { session, events, run } = makeSession();
+    await run([
+      {
+        type: "item.completed",
+        item: { id: "i1", type: "agent_message", text: "Here is the answer." },
       },
-    });
+      {
+        type: "turn.completed",
+        usage: {
+          input_tokens: 100,
+          cached_input_tokens: 40,
+          output_tokens: 25,
+          reasoning_output_tokens: 5,
+        },
+      },
+    ]);
 
     // text_delta is what task.ts accumulates into message content; the
     // "result" event is what flips the message out of the streaming state.
@@ -49,28 +70,67 @@ describe("codex thread event mapping", () => {
     expect(session.usage.output_tokens).toBe(25);
   });
 
-  it("surfaces turn.failed and stream errors instead of swallowing them", () => {
-    const { events, dispatch } = makeSession();
-    dispatch({ type: "turn.failed", error: { message: "usage limit reached" } });
+  it("releases the result only once the stream has closed, with isRunning already false", async () => {
+    const { session, events, run } = makeSession();
+    let runningAtResult: boolean | null = null;
+    session.on("event", (e: StreamEvent) => {
+      if (e.kind === "result") runningAtResult = session.isRunning;
+    });
+    let drained = false;
+    await run(async function* () {
+      yield { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } };
+      // codex exec keeps stdout open a while after turn.completed.
+      expect(events.some((e) => e.kind === "result")).toBe(false);
+      drained = true;
+    });
+    expect(drained).toBe(true);
+    expect(events.map((e) => e.kind)).toEqual(["result"]);
+    expect(runningAtResult).toBe(false);
+  });
+
+  it("surfaces turn.failed and stream errors instead of swallowing them", async () => {
+    const { events, run } = makeSession();
+    await run([{ type: "turn.failed", error: { message: "usage limit reached" } }]);
     expect(events.map((e) => e.kind)).toEqual(["error"]);
     expect(events[0].content).toContain("usage limit reached");
   });
 
-  it("emits a single error for a real failure stream (error + turn.failed pair)", () => {
+  it("emits a single error for a real failure stream (error + turn.failed pair)", async () => {
     // Captured live from codex-cli 0.144.1 with a revoked auth token: the
     // stream reports the same fault twice, then the SDK generator throws.
-    const { events, dispatch } = makeSession();
-    dispatch({ type: "thread.started", thread_id: "thr_live" });
-    dispatch({ type: "turn.started" });
-    dispatch({ type: "error", message: "Your session has ended. Please log in again." });
-    dispatch({
-      type: "turn.failed",
-      error: { message: "Your session has ended. Please log in again." },
+    const { events, run } = makeSession();
+    await run(async function* () {
+      yield { type: "thread.started", thread_id: "thr_live" };
+      yield { type: "turn.started" };
+      yield { type: "error", message: "Your session has ended. Please log in again." };
+      yield {
+        type: "turn.failed",
+        error: { message: "Your session has ended. Please log in again." },
+      };
+      throw new Error("codex exited with code 1");
     });
 
-    const errors = events.filter((e) => e.kind === "error");
-    expect(errors).toHaveLength(1);
-    expect(errors[0].content).toContain("log in again");
+    expect(events.filter((e) => e.kind === "error")).toHaveLength(1);
+    expect(events.filter((e) => e.kind === "result")).toHaveLength(0);
+    expect(events[0].content).toContain("log in again");
+  });
+
+  it("closes the message when the stream ends without a terminal event", async () => {
+    const { events, run } = makeSession();
+    await run([{ type: "thread.started", thread_id: "thr_x" }]);
+    expect(events.map((e) => e.kind)).toEqual(["result"]);
+  });
+
+  it("resets the thread when a resume fails so the next message starts fresh", async () => {
+    const { session, events, run } = makeSession();
+    session.sessionId = "thr_gone";
+    await run(async function* () {
+      throw new Error("thread not found");
+      yield undefined;
+    });
+    expect(session.sessionId).toBeNull();
+    expect(events[0].kind).toBe("error");
+    expect(events[0].content).toContain("fresh session");
   });
 
   it("pairs command executions as tool_use/tool_result by item id", () => {
@@ -241,18 +301,16 @@ describe("codex context from the rollout", () => {
     expect(readRolloutContext(file)).toEqual({ tokens: 110_576, window: 828_400 });
   });
 
-  it("attaches context and the model's default effort to the result", () => {
+  it("attaches context and the model's default effort to the result", async () => {
     writeRollout("thr_1", [
       tokenCount({ total_tokens: 4_000, reasoning_output_tokens: 0 }, 264_600),
     ]);
     process.env.CODEX_HOME = home;
-    const session = new CodexSession({ cwd: "/tmp", backend: "codex", model: "gpt-6-astra" });
-    const events: StreamEvent[] = [];
-    session.on("event", (e: StreamEvent) => events.push(e));
-    const dispatch = (ev: unknown) =>
-      (session as unknown as { handleThreadEvent(e: unknown): void }).handleThreadEvent(ev);
-    dispatch({ type: "thread.started", thread_id: "thr_1" });
-    dispatch({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
+    const { session, events, run } = makeSession("gpt-6-astra");
+    await run([
+      { type: "thread.started", thread_id: "thr_1" },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
     const res = events.find((e) => e.kind === "result")!;
     expect(res.context).toEqual({ tokens: 4_000, window: 264_600 });
     expect(res.effort).toBe("medium");
