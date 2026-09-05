@@ -969,9 +969,16 @@ export class ClaudeSession extends EventEmitter {
     if (msg.isReplay) return;
 
     // A user turn the CLI started on its own (scheduled wake-up, /loop) is
-    // plain text rather than tool results. Show it so the reply that follows
-    // has a visible cause. Our own prompt is not echoed, but guard anyway.
-    if (!parentToolUseId) {
+    // plain text rather than tool results, and it arrives between turns.
+    // Show it so the reply that follows has a visible cause. Our own prompt
+    // is not echoed, but guard anyway. Text the CLI injects mid-turn — a
+    // skill's instructions after a Skill call, the "[Image: ...]" note next
+    // to an image tool_result, reminders — is part of the running turn, not
+    // a wake-up.
+    const hasToolResult =
+      Array.isArray(content) &&
+      (content as Array<Record<string, unknown>>).some((c) => c.type === "tool_result");
+    if (!parentToolUseId && !this.processing && !hasToolResult && !msg.isSynthetic) {
       const text =
         typeof content === "string"
           ? content

@@ -737,6 +737,48 @@ describe("self-initiated turns", () => {
     message: { content: [{ type: "text", text }] },
   });
 
+  it("does not mistake text the CLI injects mid-turn for a wake-up", () => {
+    const { events, dispatch } = makeSession();
+    // Turn in progress: the model called Skill and Read on an image.
+    dispatch({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "t1", name: "Skill", input: { skill: "docs" } }],
+      },
+    });
+    // Skill expansion: plain text, no tool_result, mid-turn.
+    dispatch({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: { role: "user", content: [{ type: "text", text: "# docs skill\nTranslate…" }] },
+    });
+    // Image note riding along with the tool_result.
+    dispatch({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t1", content: "ok" },
+          { type: "text", text: "[Image: original 1400x2200, displayed at 1273x2000.]" },
+        ],
+      },
+    });
+    // Synthetic messages are never user turns either.
+    dispatch({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      isSynthetic: true,
+      message: { role: "user", content: "synthetic" },
+    });
+    expect(events.filter((e) => e.level === "wakeup")).toHaveLength(0);
+  });
+
   it("flags a turn that starts without a pushed prompt as a wake-up", () => {
     const session = new ClaudeSession({ cwd: "/tmp" });
     const events: StreamEvent[] = [];
