@@ -929,6 +929,10 @@ button {
 .messages {
   flex: 1;
   overflow-y: auto;
+  /* overflow-y:auto alone makes the x axis auto too: one unbreakable path
+     in any message and the whole transcript pans sideways on a phone. Code
+     blocks and tables scroll inside their own wrappers. */
+  overflow-x: hidden;
   padding: 12px 0 16px;
   display: flex;
   flex-direction: column;
@@ -1070,6 +1074,7 @@ button {
 .message-content {
   position: relative;
   word-break: break-word;
+  overflow-wrap: anywhere;
   font-size: 13px;
 }
 .message-content p {
@@ -1373,6 +1378,17 @@ pre .copy-btn:hover {
   font-size: 12px;
   color: var(--text-secondary);
   margin-top: 3px;
+  min-width: 0;
+}
+/* Long paths and identifiers in thinking, tool bodies, prompts and banners
+   wrap instead of widening the box past the viewport. */
+.event-content,
+.subagent-prompt,
+.subagent-summary,
+.banner-text,
+.system-message {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .event-thinking .event-content {
   color: var(--text-secondary);
