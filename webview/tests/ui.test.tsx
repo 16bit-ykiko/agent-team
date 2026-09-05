@@ -54,6 +54,42 @@ describe("EventItem", () => {
   });
 });
 
+describe("BannerItem folding", () => {
+  const long =
+    "Wake up in 25m (01:23 AM) — codex migration run takes tens of minutes\n\n> Check on the background codex migration run: tail the log, check the report, and git log for new commits.";
+
+  it("folds wake-up, schedule and skill prompts to their first line until opened", () => {
+    const { container, getByText } = render(
+      <BannerItem ev={ev("notice", { level: "schedule", content: long })} />,
+    );
+    expect(container.querySelector(".banner-label")!.textContent).toBe("Scheduled");
+    expect(container.querySelector(".banner-first-line")!.textContent).toBe(
+      "Wake up in 25m (01:23 AM) — codex migration run takes tens of minutes",
+    );
+    expect(container.textContent).not.toContain("tail the log");
+    fireEvent.click(getByText("more"));
+    expect(container.textContent).toContain("tail the log");
+    expect(container.querySelector("blockquote")).not.toBeNull();
+    fireEvent.click(getByText("less"));
+    expect(container.textContent).not.toContain("tail the log");
+  });
+
+  it("labels a skill expansion and leaves short banners unfolded", () => {
+    const { container } = render(
+      <BannerItem
+        ev={ev("notice", { level: "skill", content: "Base directory for this skill: /x\n# Docs" })}
+      />,
+    );
+    expect(container.querySelector(".banner-label")!.textContent).toBe("Skill");
+    expect(container.querySelector(".banner-toggle")).not.toBeNull();
+    const { container: short } = render(
+      <BannerItem ev={ev("notice", { level: "wakeup", content: "Scheduled wake-up fired." })} />,
+    );
+    expect(short.querySelector(".banner-toggle")).toBeNull();
+    expect(short.textContent).toContain("Scheduled wake-up fired.");
+  });
+});
+
 describe("BannerItem", () => {
   it("renders notices with their level and markdown content", () => {
     const { container } = render(
@@ -438,6 +474,9 @@ describe("scheduled banner", () => {
     expect(el.className).toContain("banner-schedule");
     expect(el.querySelector(".banner-label")!.textContent).toBe("Scheduled");
     expect(el.textContent).toContain("Wake up in 8m");
+    // The planned prompt is behind the fold.
+    expect(el.querySelector("blockquote")).toBeNull();
+    fireEvent.click(el.querySelector(".banner-toggle")!);
     expect(el.querySelector("blockquote")!.textContent).toContain("check CI");
   });
 });

@@ -28,9 +28,31 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
   );
 }
 
+// Banners that carry a whole prompt (a wake-up's text, a scheduled
+// wake-up's instructions, a skill's body) start folded to their first line.
+const FOLDING_LEVELS = new Set(["wakeup", "schedule", "skill"]);
+const FOLD_OVER_CHARS = 160;
+const BANNER_LABEL: Record<string, string> = {
+  wakeup: "Woke up",
+  schedule: "Scheduled",
+  skill: "Skill",
+};
+
+export function bannerFirstLine(content: string): string {
+  const line = content.split("\n").find((l) => l.trim()) ?? "";
+  const plain = line.replace(/[*_`#>]/g, "").trim();
+  return plain.length > FOLD_OVER_CHARS ? plain.slice(0, FOLD_OVER_CHARS - 1) + "…" : plain;
+}
+
+export function bannerFolds(level: string, content: string): boolean {
+  if (!FOLDING_LEVELS.has(level)) return false;
+  return content.trim().includes("\n") || content.length > FOLD_OVER_CHARS;
+}
+
 // Inline status line: compaction, CLI notices, API retries. Rendered as a
 // sibling of the step box so it is visible without expanding anything.
 export const BannerItem = memo(function BannerItem({ ev }: { ev: StreamEvent }) {
+  const [open, setOpen] = useState(false);
   const level =
     ev.kind === "compact" ? "compact" : ev.kind === "retry" ? "retry" : (ev.level ?? "notice");
   const icon =
@@ -40,17 +62,34 @@ export const BannerItem = memo(function BannerItem({ ev }: { ev: StreamEvent }) 
         ? "↻"
         : level === "wakeup" || level === "schedule"
           ? "⏰"
-          : level === "warning" || level === "error"
-            ? "!"
-            : "i";
+          : level === "skill"
+            ? "✦"
+            : level === "warning" || level === "error"
+              ? "!"
+              : "i";
+  const folds = bannerFolds(level, ev.content);
+  const label = BANNER_LABEL[level];
   return (
-    <div className={`banner banner-${level}`} data-kind={ev.kind}>
+    <div
+      className={`banner banner-${level}${folds && !open ? " banner-folded" : ""}`}
+      data-kind={ev.kind}
+    >
       <span className="banner-icon">{icon}</span>
       <div className="banner-text">
-        {level === "wakeup" && <span className="banner-label">Woke up</span>}
-        {level === "schedule" && <span className="banner-label">Scheduled</span>}
-        {ev.kind === "notice" ? <MdBlock>{ev.content}</MdBlock> : ev.content}
+        {label && <span className="banner-label">{label}</span>}
+        {folds && !open ? (
+          <span className="banner-first-line">{bannerFirstLine(ev.content)}</span>
+        ) : ev.kind === "notice" ? (
+          <MdBlock>{ev.content}</MdBlock>
+        ) : (
+          ev.content
+        )}
       </div>
+      {folds && (
+        <button className="btn-inline banner-toggle" onClick={() => setOpen((v) => !v)}>
+          {open ? "less" : "more"}
+        </button>
+      )}
     </div>
   );
 });

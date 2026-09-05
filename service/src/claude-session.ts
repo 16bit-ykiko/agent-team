@@ -47,7 +47,9 @@ export type StreamEventKind =
 
 // "schedule": the agent scheduled its own wake-up (what it will do, when).
 // "wakeup": that wake-up (or a background task) fired and started a turn.
-export type NoticeLevel = "info" | "notice" | "warning" | "error" | "schedule" | "wakeup";
+// "skill": the CLI expanded a slash command we sent (a skill's instructions)
+// into the user turn; shown collapsed so the reply has its context.
+export type NoticeLevel = "info" | "notice" | "warning" | "error" | "schedule" | "wakeup" | "skill";
 
 export interface StreamEvent {
   kind: StreamEventKind;
@@ -990,10 +992,13 @@ export class ClaudeSession extends EventEmitter {
             : "";
       const trimmed = text.trim();
       if (trimmed && trimmed !== this.lastPushed?.trim()) {
+        // We pushed a prompt and the turn has not started: this is the CLI's
+        // expansion of it (a /skill), not something that woke the session.
+        const level: NoticeLevel = this.expectingTurn ? "skill" : "wakeup";
         // Suppress the generic banner: the injected text is the better one.
         this.expectingTurn = true;
         this.setProcessing();
-        this.emit("event", { kind: "notice", level: "wakeup", content: trimmed } as StreamEvent);
+        this.emit("event", { kind: "notice", level, content: trimmed } as StreamEvent);
       }
     }
     if (!Array.isArray(content)) return;

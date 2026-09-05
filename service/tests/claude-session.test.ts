@@ -779,6 +779,36 @@ describe("self-initiated turns", () => {
     expect(events.filter((e) => e.level === "wakeup")).toHaveLength(0);
   });
 
+  it("shows a slash command the CLI expanded as a skill notice, not a wake-up", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    const s = session as unknown as {
+      handleSDKMessage(m: unknown): void;
+      lastPushed: string | null;
+      expectingTurn: boolean;
+    };
+    // As after send(): our prompt is out, the turn has not started yet.
+    s.lastPushed = "/codex review the diff";
+    s.expectingTurn = true;
+    s.handleSDKMessage({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "Base directory for this skill: /x\n# Codex Delegation" }],
+      },
+    });
+    expect(events).toEqual([
+      {
+        kind: "notice",
+        level: "skill",
+        content: "Base directory for this skill: /x\n# Codex Delegation",
+      },
+    ]);
+  });
+
   it("flags a turn that starts without a pushed prompt as a wake-up", () => {
     const session = new ClaudeSession({ cwd: "/tmp" });
     const events: StreamEvent[] = [];

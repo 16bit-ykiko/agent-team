@@ -638,6 +638,10 @@ button {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  /* A long status ("sleeping until … · reason") must ellipsize inside the
+     pill, not push the row past the header edge. */
+  min-width: 0;
+  max-width: 100%;
 }
 .panel-agent {
   display: flex;
@@ -977,6 +981,8 @@ button {
 .message-time {
   font-size: 10.5px;
   color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .streaming-dot {
   width: 6px;
@@ -1459,15 +1465,43 @@ pre .copy-btn:hover {
   opacity: 0.75;
 }
 .banner-wakeup,
-.banner-schedule {
+.banner-schedule,
+.banner-skill {
   color: var(--text-primary);
   border-color: rgba(198, 120, 221, 0.35);
   background: rgba(198, 120, 221, 0.06);
 }
 .banner-wakeup .banner-icon,
-.banner-schedule .banner-icon {
+.banner-schedule .banner-icon,
+.banner-skill .banner-icon {
   background: transparent;
   font-size: 12px;
+}
+.banner-skill {
+  color: var(--text-secondary);
+}
+/* Folded: label + first line on one row, the toggle at the right edge. */
+.banner-first-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.banner-folded .banner-text {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+.banner-folded .banner-text > .banner-label {
+  flex-shrink: 0;
+}
+.banner-folded .banner-text > .banner-first-line {
+  min-width: 0;
+  flex: 1;
+}
+.banner-toggle {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-left: 4px;
 }
 .banner-schedule .banner-text blockquote {
   margin: 4px 0 0;
@@ -1484,9 +1518,21 @@ pre .copy-btn:hover {
   color: var(--purple);
   margin-right: 8px;
 }
-.banner-wakeup .banner-text p,
-.banner-schedule .banner-text > p:first-child {
-  display: inline;
+/* Unfolded prompts read as documents: block paragraphs, indented lists. */
+.banner-text ol {
+  margin: 2px 0 0;
+  padding-left: 20px;
+}
+.banner-text p + p,
+.banner-text pre,
+.banner-text blockquote {
+  margin-top: 6px;
+}
+.banner-text h1,
+.banner-text h2,
+.banner-text h3 {
+  font-size: 12.5px;
+  margin: 8px 0 2px;
 }
 .agent-status-label.agent-status-sleeping {
   color: var(--purple);
@@ -1631,6 +1677,17 @@ pre .copy-btn:hover {
 }
 .subagent-prompt p {
   margin: 2px 0;
+}
+.subagent-prompt ul,
+.subagent-prompt ol {
+  padding-left: 20px;
+  margin: 3px 0;
+}
+.subagent-prompt code {
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
 }
 /* The card already carries a status tint; anything inside renders flat. */
 .subagent-details .event,
@@ -2346,6 +2403,10 @@ pre .copy-btn:hover {
   }
   .panel-agent {
     max-width: 100%;
+    min-width: 0;
+  }
+  .agent-status-label {
+    max-width: 44vw;
   }
   .panel-title {
     font-size: 12px;

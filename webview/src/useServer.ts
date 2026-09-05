@@ -39,7 +39,7 @@ export interface SubAgentInfo {
   summaryLength?: number;
 }
 
-export type NoticeLevel = "info" | "notice" | "warning" | "error" | "schedule" | "wakeup";
+export type NoticeLevel = "info" | "notice" | "warning" | "error" | "schedule" | "wakeup" | "skill";
 
 export type RunState = "idle" | "working" | "waiting" | "sleeping";
 
