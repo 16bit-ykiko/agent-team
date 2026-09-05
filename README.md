@@ -18,12 +18,21 @@ the CLIs.
   tool calls, sub-agent runs, and a per-message row with effort level and
   context usage. Long histories page in lazily.
 - **Run state per agent** — idle, working, waiting on you, or sleeping until a
-  scheduled wake-up, shown in the sidebar.
+  scheduled wake-up, shown in the sidebar. The context figure is the size of
+  the turn's last request against the model's window (for Codex, read from
+  the thread's rollout), not a running total.
+- **Slash commands** handled by the panel itself, on top of whatever the
+  Claude CLI offers: `/effort <level>`, `/fast [on|off]` (Claude fast mode /
+  Codex priority tier), `/goal <objective>` (Codex goals: the agent keeps
+  working toward it across turns; `/goal clear` ends it), `/context`,
+  `/usage`. The CLI's own command list is remembered across restarts.
 - **Scheduled wake-ups** — an agent can put itself to sleep and come back
   later; the banner says what it is waiting for and when it returns.
 - **Git awareness** — branch, dirty count and open PRs per folder.
 - **Mobile-first UI** — installable PWA, safe-area aware, composer pinned above
-  the keyboard.
+  the keyboard. Coming back from the background re-syncs the open transcript
+  and replaces a socket the phone silently dropped, so a turn that finished
+  while the screen was off shows as finished.
 - **Housekeeping** — workspaces idle past `archive_after_days` are archived:
   history leaves memory (still on disk) and idle CLI processes shut down.
   Sending a message restores them.
@@ -110,10 +119,16 @@ State (workspaces, transcripts, debug snapshots) lives under
 ## Available models
 
 The model list is maintained by hand in
-[`service/src/presets.ts`](service/src/presets.ts) — ids, labels, backend, and
-which reasoning-effort levels each one accepts. Adding a model means adding an
-entry there **and** making sure the CLI on your `PATH` is new enough to know
-the id.
+[`service/src/presets.ts`](service/src/presets.ts) — ids, labels, backend,
+which reasoning-effort levels each one accepts, the default effort, and for
+Codex the context window and fast service tier. Adding a model means adding
+an entry there **and** making sure the CLI on your `PATH` is new enough to
+know the id.
+
+A `[1m]` suffix selects the large context window: for Claude it is part of
+the model id the CLI accepts; for Codex (`gpt-6-astra[1m]`, `gpt-5.6-*[1m]`)
+the id is stripped and the 872K window is set through `model_context_window`.
+The numbers come from `~/.codex/models_cache.json`.
 
 Agent identities (name, avatar, colour) are presets in the same file.
 
@@ -131,6 +146,11 @@ Restart=always
 If you expose it beyond localhost, put it behind TLS and keep `[auth]` on —
 agents here run with full filesystem access to the folders you give them.
 
+To redeploy from inside a session — an agent working on this repo cannot
+restart the server mid-turn without killing itself —
+`scripts/deploy-deferred.sh [seconds]` builds and restarts after a delay,
+detached from the caller; it logs to `~/.cache/agent-team-deploy.log`.
+
 ## Layout
 
 ```
@@ -138,7 +158,7 @@ service/src/     Node server: HTTP + WebSocket, sessions, config, git, state
   claude-session.ts / codex-session.ts   one adapter per CLI backend
   presets.ts                             agent + model lists (hand-maintained)
 webview/src/     React UI (Vite), one panel per workspace
-scripts/         start script and one-off maintenance tools
+scripts/         start script, deferred deploy, one-off maintenance tools
 ```
 
 ## License
