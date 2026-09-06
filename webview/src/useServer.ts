@@ -130,7 +130,17 @@ export interface AgentInfo {
   // Fast mode on (/fast) and the Codex goal being pursued (/goal).
   fast?: boolean;
   goal?: string | null;
+  // Background work the agent is waiting on (background Bash, subagents,
+  // Monitor); the CLI reports back on its own when it finishes.
+  backgroundTasks?: BackgroundTask[];
   account?: string;
+}
+
+export interface BackgroundTask {
+  id: string;
+  type: string;
+  description: string;
+  since: number;
 }
 
 export interface HostInfo {

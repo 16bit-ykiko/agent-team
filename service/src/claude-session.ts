@@ -132,15 +132,21 @@ export interface SessionState {
   usage: UsageStats;
 }
 
-const DISALLOWED_TOOLS = [
-  "AskUserQuestion",
-  "Monitor",
-  "TaskOutput",
-  "TaskStop",
-  "CronCreate",
-  "CronDelete",
-  "CronList",
-];
+// AskUserQuestion needs an answer round-trip the panel does not implement;
+// cron jobs would run invisibly (only ScheduleWakeup is modelled). The
+// background-task tools (Monitor, TaskOutput, TaskStop) are allowed: the
+// session tracks background work as the "waiting" state and surfaces the
+// task list, so the agent may start, read and stop such tasks itself.
+const DISALLOWED_TOOLS = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"];
+
+// A live background task of the CLI (background Bash, subagent, Monitor).
+export interface BackgroundTask {
+  id: string;
+  type: string;
+  description: string;
+  // Epoch ms when the panel first saw it.
+  since: number;
+}
 
 type InputController = {
   push(msg: SDKUserMessage): void;
@@ -251,6 +257,7 @@ export class ClaudeSession extends EventEmitter {
   // Live, non-ambient background tasks as reported by background_tasks_changed
   // (id → description). Level signal: replaced wholesale on every message.
   private backgroundTasks = new Map<string, string>();
+  private bgTaskMeta = new Map<string, { type: string; since: number }>();
   private bgDrainedAt = 0;
   runState: RunState = "idle";
 
@@ -261,6 +268,32 @@ export class ClaudeSession extends EventEmitter {
 
   get isRunning(): boolean {
     return this.processing;
+  }
+
+  get backgroundTaskList(): BackgroundTask[] {
+    return [...this.backgroundTasks].map(([id, description]) => {
+      const meta = this.bgTaskMeta.get(id);
+      return { id, type: meta?.type ?? "", description, since: meta?.since ?? 0 };
+    });
+  }
+
+  // Replace the live set (the SDK sends the full membership each time);
+  // true when it changed. Callers announce after updating the run state so
+  // the snapshot listeners take carries the matching activity label.
+  private setBackgroundTasks(
+    tasks: Array<{ id: string; type: string; description: string }>,
+  ): boolean {
+    const before = [...this.backgroundTasks.keys()].join("\u0000");
+    this.backgroundTasks = new Map();
+    const now = Date.now();
+    for (const t of tasks) {
+      this.backgroundTasks.set(t.id, t.description);
+      if (!this.bgTaskMeta.has(t.id)) this.bgTaskMeta.set(t.id, { type: t.type, since: now });
+    }
+    for (const id of [...this.bgTaskMeta.keys()]) {
+      if (!this.backgroundTasks.has(id)) this.bgTaskMeta.delete(id);
+    }
+    return before !== [...this.backgroundTasks.keys()].join("\u0000");
   }
 
   private updateRunState(): void {
@@ -302,7 +335,7 @@ export class ClaudeSession extends EventEmitter {
     const { iterable, controller } = createInputStream();
     this.inputController = controller;
     this.abortController = new AbortController();
-    this.backgroundTasks.clear();
+    if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
 
     const options = this.buildOptions();
 
@@ -377,7 +410,7 @@ export class ClaudeSession extends EventEmitter {
           this.queryInstance = null;
           this.inputController = null;
           this.abortController = null;
-          this.backgroundTasks.clear();
+          if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
           this.sleeping = false;
           this.setActivity(null);
           this.updateRunState();
@@ -473,7 +506,7 @@ export class ClaudeSession extends EventEmitter {
     this.setActivity(null);
     this.sleeping = false;
     this.pendingWake = null;
-    this.backgroundTasks.clear();
+    if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
     this.updateRunState();
   }
 
@@ -623,13 +656,18 @@ export class ClaudeSession extends EventEmitter {
         const sys = msg as Record<string, unknown>;
         if (sys.subtype === "background_tasks_changed") {
           const had = this.backgroundTasks.size > 0;
-          this.backgroundTasks.clear();
-          for (const t of (sys.tasks as Array<Record<string, unknown>>) ?? []) {
-            if (t.ambient) continue;
-            this.backgroundTasks.set(t.task_id as string, (t.description as string) ?? "");
-          }
+          const changed = this.setBackgroundTasks(
+            ((sys.tasks as Array<Record<string, unknown>>) ?? [])
+              .filter((t) => !t.ambient)
+              .map((t) => ({
+                id: t.task_id as string,
+                type: (t.task_type as string) ?? "",
+                description: (t.description as string) ?? "",
+              })),
+          );
           if (had && this.backgroundTasks.size === 0) this.bgDrainedAt = Date.now();
           this.updateRunState();
+          if (changed) this.emit("backgroundTasks", this.backgroundTaskList);
           break;
         }
         if (this.handleSystemBanner(sys)) break;

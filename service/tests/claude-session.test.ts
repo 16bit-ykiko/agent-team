@@ -1181,3 +1181,46 @@ describe("per-turn status: context size and effort", () => {
     expect(res.effort).toBeUndefined();
   });
 });
+
+describe("background task list", () => {
+  it("exposes live tasks with kind and start time and announces changes", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const changes: unknown[] = [];
+    session.on("backgroundTasks", (l: unknown) => changes.push(l));
+    const s = session as unknown as { handleSDKMessage(m: unknown): void };
+    const before = Date.now();
+    s.handleSDKMessage({
+      type: "system",
+      subtype: "background_tasks_changed",
+      session_id: "s",
+      tasks: [
+        { task_id: "b1", task_type: "local_bash", description: "codex exec" },
+        { task_id: "amb", task_type: "local_bash", description: "watcher", ambient: true },
+      ],
+    });
+    expect(session.backgroundTaskList).toMatchObject([
+      { id: "b1", type: "local_bash", description: "codex exec" },
+    ]);
+    expect(session.backgroundTaskList[0].since).toBeGreaterThanOrEqual(before);
+    expect(session.runState).toBe("waiting");
+    // Same membership again: no announcement, start time kept.
+    const since = session.backgroundTaskList[0].since;
+    s.handleSDKMessage({
+      type: "system",
+      subtype: "background_tasks_changed",
+      session_id: "s",
+      tasks: [{ task_id: "b1", task_type: "local_bash", description: "codex exec" }],
+    });
+    expect(changes).toHaveLength(1);
+    expect(session.backgroundTaskList[0].since).toBe(since);
+    s.handleSDKMessage({
+      type: "system",
+      subtype: "background_tasks_changed",
+      session_id: "s",
+      tasks: [],
+    });
+    expect(changes).toHaveLength(2);
+    expect(session.backgroundTaskList).toEqual([]);
+    expect(session.runState).toBe("idle");
+  });
+});

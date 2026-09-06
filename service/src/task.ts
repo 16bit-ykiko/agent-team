@@ -5,6 +5,7 @@ import {
   CommandInfo,
   ContextUsage,
   RunState,
+  BackgroundTask,
 } from "./claude-session";
 import type { GitInfo, PrInfo } from "./git";
 import { HostSessionHandle, HostRegistry } from "./host";
@@ -70,6 +71,8 @@ export interface AgentRuntimeInfo extends AgentInfo {
   fast: boolean;
   // Codex goal objective in force, if one was set with /goal.
   goal: string | null;
+  // Background work the agent is waiting on (see RunState "waiting").
+  backgroundTasks: BackgroundTask[];
 }
 
 export interface AgentState extends AgentInfo {
@@ -508,6 +511,10 @@ export class Workspace {
     });
     session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) => {
       this.cb?.onRateLimit?.(this.id, agentId, info);
+    });
+    session.on("backgroundTasks", () => {
+      const entry = this.agents.get(agentId);
+      if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry));
     });
     session.on("runState", (state: RunState) => {
       const entry = this.agents.get(agentId);
@@ -953,6 +960,7 @@ export class Workspace {
       effort: a.session.getState().config.effort ?? null,
       fast: Boolean(a.session.getState().config.fast),
       goal: a.session.getState().config.goal ?? null,
+      backgroundTasks: a.session.backgroundTaskList ?? [],
     };
   }
 

@@ -6,6 +6,7 @@ import {
   SessionState,
   StreamEvent,
   UsageStats,
+  BackgroundTask,
 } from "./claude-session";
 import { CodexSession } from "./codex-session";
 
@@ -17,6 +18,8 @@ export interface HostSessionHandle extends EventEmitter {
   readonly runState?: RunState;
   // Effort in force when none was set explicitly (backend default).
   readonly effectiveEffort?: string | null;
+  // Live background tasks (Claude: background Bash, subagents, Monitor).
+  readonly backgroundTaskList?: BackgroundTask[];
   send(message: string): Promise<void>;
   abort(): void;
   setEffort?(level: string): void;
