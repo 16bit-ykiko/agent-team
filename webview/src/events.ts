@@ -95,11 +95,9 @@ export function timelineBlocks(events: StreamEvent[]): TimelineBlock[] {
   const placed = new Set<string>();
   const blocks: TimelineBlock[] = [];
   let run: StreamEvent[] = [];
-  let runStep: number | undefined;
   const flush = () => {
     if (run.length > 0) blocks.push({ kind: "steps", events: run });
     run = [];
-    runStep = undefined;
   };
   for (const e of events) {
     if (isSubagentEvent(e)) {
@@ -112,10 +110,8 @@ export function timelineBlocks(events: StreamEvent[]): TimelineBlock[] {
       flush();
       blocks.push({ kind: "banner", ev: e });
     } else if (isOrdinary(e, spawns)) {
-      // A new model step (assistant turn in the tool loop) is a boundary too,
-      // so two tool-only steps do not merge into one box with summed counts.
-      if (e.step != null && runStep != null && e.step !== runStep) flush();
-      if (e.step != null) runStep = e.step;
+      // `step` is per content block, not per model step, so it is not a
+      // boundary: cutting on it gave one box per thinking/tool event.
       run.push(e);
     }
   }

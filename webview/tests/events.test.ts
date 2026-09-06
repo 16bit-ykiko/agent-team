@@ -163,18 +163,17 @@ describe("timelineBlocks details", () => {
     });
   });
 
-  it("hides the tool_use that spawned a card and cuts a run at a new model step", () => {
+  it("hides the tool_use that spawned a card; per-block step numbers are not boundaries", () => {
     const events = [
       ev("tool_use", { toolName: "Agent", toolUseId: "t1", step: 1 }),
       ev("subagent_start", { toolUseId: "t1", subagent: { taskId: "a", description: "d" } }),
       ev("tool_use", { toolName: "Read", step: 2 }),
-      ev("tool_use", { toolName: "Read", step: 2 }),
-      ev("tool_use", { toolName: "Bash", step: 3 }),
+      ev("thinking", { step: 3 }),
+      ev("tool_use", { toolName: "Bash", step: 4 }),
     ];
     const blocks = timelineBlocks(events);
-    expect(blocks.map((b) => b.kind)).toEqual(["subagent", "steps", "steps"]);
-    expect((blocks[1] as { events: unknown[] }).events).toHaveLength(2);
-    expect((blocks[2] as { events: unknown[] }).events).toHaveLength(1);
+    expect(blocks.map((b) => b.kind)).toEqual(["subagent", "steps"]);
+    expect((blocks[1] as { events: unknown[] }).events).toHaveLength(3);
     expect(splitEvents(events).regular).toHaveLength(3);
   });
 });
