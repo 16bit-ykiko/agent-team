@@ -15,6 +15,7 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 - **Never restart, kill, or redeploy the production server directly.** It is `agent-team-server.service` (systemd --user, port 9800) and the session running your request is one of its children. The only allowed path is `scripts/deploy-deferred.sh` (deploy skill), and only when the user asked for a restart in this turn.
 - **Never skip, weaken, or `.skip` a failing test.** Fix the cause. Every UI change ships with a vitest test; every event-pipeline change is checked against the recorded SDK fixtures.
 - **Never guess the shape of an SDK stream.** If a fix depends on frame order or fields, capture the scenario (capture-sdk skill) and add the recording as a fixture.
+- **Never start many real Claude/Codex sessions in a short time.** Captures and smoke tests hit the user's own account; bursts of sessions look like abuse and can get the account banned. Capture only the scenarios you need, one at a time, spaced out; never loop captures or run them in parallel.
 - **Never push unverified code.** `npm run check && npm test && npm run build` locally before every push. Commit only when asked; push only when asked.
 - Never `pkill -f` a pattern that can match your own shell (the server command line, `codex exec`, ...). Kill specific PIDs.
 

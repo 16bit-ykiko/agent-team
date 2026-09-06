@@ -83,7 +83,8 @@ stream-debug, add-model, review).
 The Claude event mapping is tested against recorded real streams:
 `service/tests/fixtures/sdk/*.jsonl` are raw SDK message logs (foreground and
 background shells, subagents, nested subagents, skills, images) captured with
-`node scripts/capture-sdk.ts [scenario ...]` (uses your own Claude login), and
+`node scripts/capture-sdk.ts <scenario ...>` (uses your own Claude login; a few
+scenarios at a time, spaced out — bursts of sessions can get an account banned), and
 `node scripts/summarize-capture.ts` prints one line per frame.
 `service/tests/sdk-captures.test.ts` replays them through the session, the
 workspace aggregation and the client aggregation, which must agree. When the

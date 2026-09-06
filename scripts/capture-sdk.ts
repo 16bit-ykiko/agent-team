@@ -1,7 +1,7 @@
 // Capture raw @anthropic-ai/claude-agent-sdk message streams for real
 // scenarios (foreground/background shells, subagents, skills, images) so the
 // session mapping is written against what the CLI actually emits.
-// Usage: node scripts/capture-sdk.ts [scenario ...]   (default: all)
+// Usage: node scripts/capture-sdk.ts <scenario ...>   (a few at a time, never all)
 // Output: ~/.cache/agent-team-captures/<scenario>.jsonl
 import fs from "node:fs";
 import os from "node:os";
@@ -160,13 +160,31 @@ async function run(name: string, prompts: string[]) {
   console.log(`${name}: ${frames} frames -> ${file}`);
 }
 
+// Each scenario is a real session on the user's account; bursts of sessions
+// risk an account ban, so scenarios run one at a time with a pause between.
+const PAUSE_MS = 30_000;
+const MAX_PER_RUN = 4;
+
 const args = process.argv.slice(2);
-const names = args.length ? args : Object.keys(SCENARIOS);
-for (const n of names) {
+if (args.length === 0) {
+  console.error(`pick scenarios (max ${MAX_PER_RUN} per run): ${Object.keys(SCENARIOS).join(" ")}`);
+  process.exit(2);
+}
+if (args.length > MAX_PER_RUN) {
+  console.error(`too many scenarios (${args.length}); capture at most ${MAX_PER_RUN} per run`);
+  process.exit(2);
+}
+let first = true;
+for (const n of args) {
   const prompts = SCENARIOS[n];
   if (!prompts) {
     console.error("unknown scenario", n);
     continue;
   }
+  if (!first) {
+    console.log(`pausing ${PAUSE_MS / 1000}s before ${n}`);
+    await new Promise((r) => setTimeout(r, PAUSE_MS));
+  }
+  first = false;
   await run(n, prompts);
 }

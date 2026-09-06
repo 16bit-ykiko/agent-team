@@ -7,15 +7,19 @@ description: Record real Claude SDK streams for a scenario, inspect them, and tu
 
 The Claude CLI's frame shapes and order are not documented well enough to code against from memory; several past bugs (foreground shells rendered as cards, Skill invocations shown as wake-ups, empty nested-subagent transcripts) came from guessing. The rule: **if a fix depends on what the stream looks like, capture it first.**
 
+## Rate limit — read first
+
+Every capture is a real session on the user's account. Bursts of sessions can get the account **banned**. Rules: capture only the scenarios the current bug needs (usually one or two), never all of them at once; one session at a time, never in parallel; the script waits 30 s between scenarios — do not shorten it; at most a handful of sessions per hour, and never loop captures to "try again". Reuse existing fixtures whenever one already shows the frame you need.
+
 ## Record
 
 ```bash
 mkdir -p /tmp/sdk-capture/.claude/skills/hello
 printf -- '---\nname: hello\ndescription: say hello\n---\nReply with the single word hello.\n' > /tmp/sdk-capture/.claude/skills/hello/SKILL.md
-node scripts/capture-sdk.ts bash-long agent-bg        # or no args = all scenarios
+node scripts/capture-sdk.ts bash-long agent-bg        # only what you need, max 4 per run
 ```
 
-- Uses your own Claude login; model `claude-sonnet-5` (`CAPTURE_MODEL` to override — Sonnet is cheap and emits the same frames).
+- Uses the user's own Claude login; model `claude-sonnet-5` (`CAPTURE_MODEL` to override — Sonnet is cheap and emits the same frames).
 - Scenarios live in `SCENARIOS` in `scripts/capture-sdk.ts`: `bash-quick`, `bash-long`, `bash-bg`, `agent`, `agent-bg`, `nested-agent`, `skill`, `skill-tool`, `image`, `two-turns`. Add a new one as a prompt list; the prompt must force the exact tool usage (say "foreground" / "run_in_background true", "do not poll").
 - Output: `~/.cache/agent-team-captures/<scenario>.jsonl`, one `{t, msg}` per frame, strings trimmed to 400 chars, base64 replaced. The watchdog ends the session 4 s after the last result once no non-ambient background tasks remain, 150 s hard cap.
 - `image` needs `CAPTURE_IMAGE=<png>`; `skill*` need the hello skill above under the capture cwd.
