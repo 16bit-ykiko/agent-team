@@ -290,6 +290,25 @@ describe("ConfirmDialog", () => {
   });
 });
 
+describe("StepGroup timeline", () => {
+  it("renders a subagent card between the tool calls that surround it", () => {
+    const events = [
+      ev("tool_use", { toolName: "Read", content: "**Read** `a`" }),
+      ev("tool_use", { toolName: "Read", content: "**Read** `b`" }),
+      ev("subagent_start", {
+        subagent: { taskId: "t", description: "review", agentType: "shell", status: "running" },
+      }),
+      ev("tool_use", { toolName: "Bash", content: "**Bash** ls" }),
+    ];
+    const { container } = render(<StepGroup group={{ step: 0, events }} />);
+    const kids = [...container.children].map((el) => el.className.split(" ")[0]);
+    expect(kids).toEqual(["step-group", "subagent-item", "step-group"]);
+    const summaries = [...container.querySelectorAll(".step-summary")].map((e) => e.textContent);
+    expect(summaries).toEqual(["2 tool calls", "1 tool call"]);
+    expect(container.querySelector(".subagent-label")!.textContent).toBe("shell");
+  });
+});
+
 describe("StepGroup summary", () => {
   it("counts only what is inside the box, naming errors", () => {
     const events = [

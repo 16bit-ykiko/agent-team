@@ -18,13 +18,8 @@ export function isBannerEvent(e: StreamEvent): boolean {
 // interleaving still works). For display we fold them into one entry per
 // taskId, preferring the most final event but keeping the start's description
 // and accumulated inner events.
-export function splitEvents(events: StreamEvent[]): {
-  regular: StreamEvent[];
-  subagents: StreamEvent[];
-  banners: StreamEvent[];
-} {
-  const regular = events.filter((e) => !isSubagentEvent(e) && !isBannerEvent(e));
-  const banners = events.filter(isBannerEvent);
+// One entry per taskId, in order of first appearance.
+function foldSubagents(events: StreamEvent[]): Map<string, StreamEvent> {
   const merged = new Map<string, StreamEvent>();
   for (const e of events) {
     const taskId = e.subagent?.taskId;
@@ -46,7 +41,53 @@ export function splitEvents(events: StreamEvent[]): {
       });
     }
   }
-  return { regular, subagents: [...merged.values()], banners };
+  return merged;
+}
+
+export function splitEvents(events: StreamEvent[]): {
+  regular: StreamEvent[];
+  subagents: StreamEvent[];
+  banners: StreamEvent[];
+} {
+  const regular = events.filter((e) => !isSubagentEvent(e) && !isBannerEvent(e));
+  const banners = events.filter(isBannerEvent);
+  return { regular, subagents: [...foldSubagents(events).values()], banners };
+}
+
+// The transcript in timeline order: runs of ordinary events become one
+// collapsible step box each, and every card (a subagent, a banner) is a
+// boundary that sits where it happened. A subagent sits where it started;
+// its later progress/done events fold into that card.
+export type TimelineBlock =
+  | { kind: "steps"; events: StreamEvent[] }
+  | { kind: "banner"; ev: StreamEvent }
+  | { kind: "subagent"; ev: StreamEvent };
+
+export function timelineBlocks(events: StreamEvent[]): TimelineBlock[] {
+  const folded = foldSubagents(events);
+  const placed = new Set<string>();
+  const blocks: TimelineBlock[] = [];
+  let run: StreamEvent[] = [];
+  const flush = () => {
+    if (run.length > 0) blocks.push({ kind: "steps", events: run });
+    run = [];
+  };
+  for (const e of events) {
+    if (isSubagentEvent(e)) {
+      const taskId = e.subagent?.taskId;
+      if (!taskId || placed.has(taskId)) continue;
+      placed.add(taskId);
+      flush();
+      blocks.push({ kind: "subagent", ev: folded.get(taskId)! });
+    } else if (isBannerEvent(e)) {
+      flush();
+      blocks.push({ kind: "banner", ev: e });
+    } else {
+      run.push(e);
+    }
+  }
+  flush();
+  return blocks;
 }
 
 // A message "still has work in flight" when any of its subagents hasn't

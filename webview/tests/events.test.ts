@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitEvents, hasRunningSubagents } from "../src/events";
+import { splitEvents, timelineBlocks, hasRunningSubagents } from "../src/events";
 import { StreamEvent } from "../src/useServer";
 
 const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent =>
@@ -105,5 +105,41 @@ describe("banner events", () => {
     expect(regular.map((e) => e.kind)).toEqual(["thinking", "tool_use"]);
     expect(banners.map((e) => e.kind)).toEqual(["compact", "notice", "retry"]);
     expect(subagents).toEqual([]);
+  });
+});
+
+describe("timelineBlocks", () => {
+  it("splits runs of ordinary events at every card, in timeline order", () => {
+    const events = [
+      ev("thinking"),
+      ev("tool_use", { toolName: "Read" }),
+      ev("subagent_start", { subagent: { taskId: "a", description: "review" } }),
+      ev("tool_use", { toolName: "Bash" }),
+      ev("retry", { content: "API retry 1/10" }),
+      ev("subagent_progress", { subagent: { taskId: "a", description: "", lastTool: "Grep" } }),
+      ev("tool_use", { toolName: "Edit" }),
+      ev("subagent_done", { subagent: { taskId: "a", description: "", status: "completed" } }),
+      ev("tool_use", { toolName: "Bash" }),
+    ];
+    const blocks = timelineBlocks(events);
+    expect(blocks.map((b) => b.kind)).toEqual(["steps", "subagent", "steps", "banner", "steps"]);
+    // Each step box counts only its own run.
+    expect((blocks[0] as { events: unknown[] }).events).toHaveLength(2);
+    expect((blocks[2] as { events: unknown[] }).events).toHaveLength(1);
+    expect((blocks[4] as { events: unknown[] }).events).toHaveLength(2);
+    // The card sits where the subagent started and carries its final state.
+    const card = (blocks[1] as { ev: StreamEvent }).ev;
+    expect(card.subagent?.status).toBe("completed");
+    expect(card.subagent?.description).toBe("review");
+  });
+
+  it("keeps consecutive cards as separate blocks and no empty step boxes", () => {
+    const events = [
+      ev("subagent_start", { subagent: { taskId: "a", description: "one" } }),
+      ev("subagent_start", { subagent: { taskId: "b", description: "two" } }),
+      ev("notice", { content: "n" }),
+    ];
+    expect(timelineBlocks(events).map((b) => b.kind)).toEqual(["subagent", "subagent", "banner"]);
+    expect(timelineBlocks([])).toEqual([]);
   });
 });

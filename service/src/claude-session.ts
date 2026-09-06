@@ -697,13 +697,15 @@ export class ClaudeSession extends EventEmitter {
           this.emit("commands", commands);
         } else if (sys.subtype === "task_started") {
           // task_started fires for every SDK task type: Task-tool subagents
-          // (local_agent), background Bash commands (local_bash), workflow
-          // runs (local_workflow)... Only real subagents get an agent bubble;
-          // for the rest the originating tool_use is already shown. Untracked
-          // task ids are dropped by the agentTaskIds guard below.
+          // (local_agent), background Bash commands (local_bash), Monitor
+          // watches (local_monitor), workflow runs... Every one gets a card
+          // in the transcript with a Cancel button — background work is
+          // what the agent is waiting on. The card's label is the subagent
+          // type for agents and the task kind ("shell", "monitor") otherwise.
+          // Housekeeping tasks (skip_transcript) stay out of the transcript.
+          if (sys.skip_transcript) break;
           const taskType = sys.task_type as string | undefined;
           const isAgentTask = taskType ? taskType === "local_agent" : sys.subagent_type != null;
-          if (!isAgentTask || sys.skip_transcript) break;
           const taskId = sys.task_id as string;
           const toolUseId = sys.tool_use_id as string | undefined;
           const parentTaskId = toolUseId ? this.nestedToolUseToParent.get(toolUseId) : undefined;
@@ -723,7 +725,9 @@ export class ClaudeSession extends EventEmitter {
               taskId,
               description: (sys.description as string) ?? "",
               prompt: sys.prompt as string | undefined,
-              agentType: sys.subagent_type as string | undefined,
+              agentType: isAgentTask
+                ? (sys.subagent_type as string | undefined)
+                : backgroundTaskLabel(taskType),
               status: "running",
               events: [],
             },
@@ -1355,6 +1359,20 @@ function extractToolInput(block: Record<string, unknown>): ToolInput | undefined
     };
   }
   return undefined;
+}
+
+// Card label for a non-agent background task ("local_bash" → "shell").
+export function backgroundTaskLabel(taskType: string | undefined): string {
+  switch (taskType) {
+    case "local_bash":
+      return "shell";
+    case "local_monitor":
+      return "monitor";
+    case "local_workflow":
+      return "workflow";
+    default:
+      return taskType?.replace(/^local_/, "") || "task";
+  }
 }
 
 function formatToolUse(block: Record<string, unknown>): string {

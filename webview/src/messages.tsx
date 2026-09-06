@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, memo } from "react";
 import type { Message, AgentInfo, StreamEvent } from "./useServer";
-import { splitEvents } from "./events";
+import { splitEvents, timelineBlocks } from "./events";
 import { toolNameOf, toolSummary } from "./stream";
 import { copySelectionAsMarkdown } from "./clipboard";
 import { MdBlock } from "./markdown";
@@ -420,6 +420,51 @@ function stepTools(regular: StreamEvent[]): string[] {
   return seen;
 }
 
+// One collapsible box for a run of ordinary events (thinking, tool calls).
+function StepBox({
+  events,
+  onLoadDetails,
+  defaultOpen = false,
+}: {
+  events: StreamEvent[];
+  onLoadDetails?: () => void;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const toggle = () => {
+    if (!open) onLoadDetails?.();
+    setOpen((v) => !v);
+  };
+  const tools = stepTools(events);
+  return (
+    <div className={`step-group${open ? " open" : ""}`}>
+      <div className="step-header" onClick={toggle}>
+        <span className="events-toggle">{open ? "▾" : "▸"}</span>
+        <span className="step-summary">{stepSummary(events)}</span>
+        {!open && tools.length > 0 && (
+          <span className="step-tools">
+            {tools.slice(0, 6).map((t) => (
+              <span key={t} className={`event-chip chip-mini ${chipClassFor(t, "tool_use")}`}>
+                {chipLabelFor(t)}
+              </span>
+            ))}
+            {tools.length > 6 && <span className="step-tools-more">+{tools.length - 6}</span>}
+          </span>
+        )}
+      </div>
+      {open && (
+        <div className="events-list">
+          {events.map((ev, i) => (
+            <EventItem key={i} ev={ev} onLoadDetails={onLoadDetails} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A segment's events in timeline order: each subagent card and banner is a
+// boundary, so the step boxes between them count only what happened there.
 export function StepGroup({
   group,
   onLoadEvents,
@@ -433,55 +478,31 @@ export function StepGroup({
   onLoadDetails?: () => void;
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
-  const toggle = () => {
-    if (!open) onLoadDetails?.();
-    setOpen((v) => !v);
-  };
-  const { regular: regularEvents, subagents, banners } = splitEvents(group.events);
-  const tools = stepTools(regularEvents);
-
-  // Subagents and banners render as their own top-level blocks, siblings of
-  // the collapsed step box — not nested inside it.
+  const blocks = timelineBlocks(group.events);
   return (
     <>
-      {regularEvents.length > 0 && (
-        <div className={`step-group${open ? " open" : ""}`}>
-          <div className="step-header" onClick={toggle}>
-            <span className="events-toggle">{open ? "▾" : "▸"}</span>
-            <span className="step-summary">{stepSummary(regularEvents)}</span>
-            {!open && tools.length > 0 && (
-              <span className="step-tools">
-                {tools.slice(0, 6).map((t) => (
-                  <span key={t} className={`event-chip chip-mini ${chipClassFor(t, "tool_use")}`}>
-                    {chipLabelFor(t)}
-                  </span>
-                ))}
-                {tools.length > 6 && <span className="step-tools-more">+{tools.length - 6}</span>}
-              </span>
-            )}
-          </div>
-          {open && (
-            <div className="events-list">
-              {regularEvents.map((ev, i) => (
-                <EventItem key={i} ev={ev} onLoadDetails={onLoadDetails} />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      {banners.map((ev, i) => (
-        <BannerItem key={`b${i}`} ev={ev} />
-      ))}
-      {subagents.map((ev) => (
-        <SubAgentItem
-          key={ev.subagent!.taskId}
-          ev={ev}
-          onLoadEvents={onLoadEvents}
-          onCancel={onCancelSubagent}
-          onLoadDetails={onLoadDetails}
-        />
-      ))}
+      {blocks.map((block, i) => {
+        if (block.kind === "steps") {
+          return (
+            <StepBox
+              key={`s${i}`}
+              events={block.events}
+              onLoadDetails={onLoadDetails}
+              defaultOpen={defaultOpen}
+            />
+          );
+        }
+        if (block.kind === "banner") return <BannerItem key={`b${i}`} ev={block.ev} />;
+        return (
+          <SubAgentItem
+            key={block.ev.subagent!.taskId}
+            ev={block.ev}
+            onLoadEvents={onLoadEvents}
+            onCancel={onCancelSubagent}
+            onLoadDetails={onLoadDetails}
+          />
+        );
+      })}
     </>
   );
 }
@@ -700,34 +721,14 @@ export const MessageItem = memo(function MessageItem({
           </div>
         ) : (
           <>
-            {hasDetails &&
-              (() => {
-                const { regular: regEvts, subagents: saList, banners } = splitEvents(detailEvents);
-                return (
-                  <>
-                    {(regEvts.length > 0 || streaming) && (
-                      <StepGroup
-                        group={{ step: 0, events: regEvts }}
-                        onLoadEvents={handleLoadEvents}
-                        onCancelSubagent={handleCancelSubagent}
-                        onLoadDetails={handleLoadDetails}
-                      />
-                    )}
-                    {banners.map((ev, i) => (
-                      <BannerItem key={`b${i}`} ev={ev} />
-                    ))}
-                    {saList.map((ev) => (
-                      <SubAgentItem
-                        key={ev.subagent!.taskId}
-                        ev={ev}
-                        onLoadEvents={handleLoadEvents}
-                        onCancel={handleCancelSubagent}
-                        onLoadDetails={handleLoadDetails}
-                      />
-                    ))}
-                  </>
-                );
-              })()}
+            {hasDetails && detailEvents.length > 0 && (
+              <StepGroup
+                group={{ step: 0, events: detailEvents }}
+                onLoadEvents={handleLoadEvents}
+                onCancelSubagent={handleCancelSubagent}
+                onLoadDetails={handleLoadDetails}
+              />
+            )}
 
             {msg.content && (
               <div className="message-content" onCopy={copySelectionAsMarkdown}>

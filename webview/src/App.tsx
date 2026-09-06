@@ -26,7 +26,6 @@ import {
   isTextInput,
   settleScroller,
 } from "./viewportHeal";
-import { BackgroundTasksBar } from "./BackgroundTasks";
 import { uploadSnapshot } from "./debugSnapshot";
 
 // Re-exported for tests and for anyone importing the old single-file layout.
@@ -831,7 +830,10 @@ export function App() {
                             : "offline"
                           : s;
                     const statusText = pillLabel(agent, connected);
-                    const statusTitle = stateLabel(agent, connected);
+                    const bg = (agent.backgroundTasks ?? []).map((t) => t.description);
+                    const statusTitle = bg.length
+                      ? `${stateLabel(agent, connected)}\n${bg.map((d) => `• ${d}`).join("\n")}`
+                      : stateLabel(agent, connected);
                     return (
                       <div
                         key={agent.id}
@@ -969,7 +971,6 @@ export function App() {
             </div>
 
             <div className="input-area">
-              <BackgroundTasksBar agents={activeWs.agents} />
               {quotedMsg &&
                 (() => {
                   const qa = activeWs.agents.find((a) => a.id === quotedMsg.agentId);

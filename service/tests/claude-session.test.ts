@@ -73,20 +73,26 @@ describe("task_started → subagent classification", () => {
     });
   });
 
-  it("does not render a background local_bash task as a subagent", () => {
+  it("renders a background local_bash task as a cancellable shell card", () => {
     const { events, dispatch } = makeSession();
     dispatch(taskStarted({ task_type: "local_bash" }));
     dispatch(taskProgress());
     dispatch(taskNotification());
 
-    expect(events).toHaveLength(0);
+    expect(events.map((e) => e.kind)).toEqual([
+      "subagent_start",
+      "subagent_progress",
+      "subagent_done",
+    ]);
+    expect(events[0].subagent?.agentType).toBe("shell");
   });
 
-  it("does not render a local_workflow task as a subagent", () => {
+  it("renders a local_workflow task as a workflow card", () => {
     const { events, dispatch } = makeSession();
     dispatch(taskStarted({ task_type: "local_workflow", workflow_name: "review" }));
 
-    expect(events).toHaveLength(0);
+    expect(events).toHaveLength(1);
+    expect(events[0].subagent?.agentType).toBe("workflow");
   });
 
   it("hides skip_transcript housekeeping tasks", () => {
@@ -103,9 +109,12 @@ describe("task_started → subagent classification", () => {
     dispatch(taskStarted({ subagent_type: "general-purpose" }));
     dispatch(taskStarted({ task_id: "task-2", tool_use_id: "toolu_2" }));
 
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(2);
     expect(events[0].kind).toBe("subagent_start");
     expect(events[0].subagent?.taskId).toBe("task-1");
+    expect(events[0].subagent?.agentType).toBe("general-purpose");
+    // Untyped, non-agent: still a card, with the generic label.
+    expect(events[1].subagent?.agentType).toBe("task");
   });
 
   it("ignores progress/notification for tasks never registered as subagents", () => {
@@ -184,7 +193,7 @@ describe("subagent lifecycle", () => {
     expect(nested[0].subagent?._innerEvent?.toolUseId).toBe("toolu_inner");
   });
 
-  it("routes a nested agent task under its parent, and drops nested bash tasks", () => {
+  it("routes nested agent and shell tasks under their parent", () => {
     const { events, dispatch } = makeSession();
     dispatch(taskStarted({ task_type: "local_agent", subagent_type: "general-purpose" }));
     // The subagent itself calls Agent (toolu_inner) and a background Bash (toolu_bash).
@@ -214,12 +223,17 @@ describe("subagent lifecycle", () => {
       taskStarted({ task_id: "task-bash", tool_use_id: "toolu_bash", task_type: "local_bash" }),
     );
 
-    expect(events).toHaveLength(before + 1);
-    const nestedStart = events[events.length - 1];
+    expect(events).toHaveLength(before + 2);
+    const nestedStart = events[events.length - 2];
     expect(nestedStart.kind).toBe("subagent_progress");
     expect(nestedStart.subagent?.taskId).toBe("task-1");
     expect(nestedStart.subagent?._innerEvent?.kind).toBe("subagent_start");
     expect(nestedStart.subagent?._innerEvent?.subagent?.taskId).toBe("task-nested");
+    // The subagent's own background shell shows as a card inside its card.
+    const nestedShell = events[events.length - 1];
+    expect(nestedShell.subagent?.taskId).toBe("task-1");
+    expect(nestedShell.subagent?._innerEvent?.subagent?.taskId).toBe("task-bash");
+    expect(nestedShell.subagent?._innerEvent?.subagent?.agentType).toBe("shell");
   });
 });
 
@@ -1222,5 +1236,48 @@ describe("background task list", () => {
     expect(changes).toHaveLength(2);
     expect(session.backgroundTaskList).toEqual([]);
     expect(session.runState).toBe("idle");
+  });
+});
+
+describe("background tasks as cards", () => {
+  it("gives a background shell task a subagent card that the notification closes", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "system",
+      subtype: "task_started",
+      session_id: "s",
+      task_id: "b1",
+      task_type: "local_bash",
+      tool_use_id: "toolu_b",
+      description: "Run sleep command in background",
+    });
+    dispatch({
+      type: "system",
+      subtype: "task_started",
+      session_id: "s",
+      task_id: "hk",
+      task_type: "local_bash",
+      description: "housekeeping",
+      skip_transcript: true,
+    });
+    dispatch({
+      type: "system",
+      subtype: "task_notification",
+      session_id: "s",
+      task_id: "b1",
+      tool_use_id: "toolu_b",
+      status: "completed",
+      summary: "Background task completed (exit code 0).",
+      output_file: "/tmp/x",
+    });
+    expect(events.map((e) => e.kind)).toEqual(["subagent_start", "subagent_done"]);
+    expect(events[0].subagent).toMatchObject({
+      taskId: "b1",
+      agentType: "shell",
+      description: "Run sleep command in background",
+      status: "running",
+    });
+    expect(events[1].subagent).toMatchObject({ taskId: "b1", status: "completed" });
+    expect(events[1].subagent?.summary).toContain("exit code 0");
   });
 });

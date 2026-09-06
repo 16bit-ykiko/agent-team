@@ -350,7 +350,8 @@ describe("MessageItem events without contentOffset", () => {
       .map((el) =>
         el.className.includes("banner") ? "banner" : el.tagName === "P" ? "text" : "step",
       );
-    expect(order).toEqual(["step", "text", "step", "banner"]);
+    // Trailing events keep their own order: the banner came before the error.
+    expect(order).toEqual(["step", "text", "banner", "step"]);
   });
 });
 
