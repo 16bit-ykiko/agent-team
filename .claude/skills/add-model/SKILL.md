@@ -21,7 +21,7 @@ If the id is missing: `npm install @anthropic-ai/claude-agent-sdk@latest -w serv
 Smoke test through the same path the server uses:
 
 ```bash
-node scripts/smoke-claude.ts claude-fable-5-1 high     # prints init model/effort + PONG
+npm run smoke:claude -- claude-fable-5-1 high     # prints init model/effort + PONG
 ```
 
 Then the preset: id, label, `backend: "claude"`, `defaultEffort`, whether it `supportsFastMode` (only models the SDK reports `fast_mode_state` for). Effort levels come from the picker; check `defaultEffortForModel`.
@@ -43,7 +43,7 @@ Codex has a machine-readable list Claude lacks: `~/.codex/models_cache.json` (re
 Smoke test:
 
 ```bash
-node scripts/smoke-codex.ts gpt-6-astra high            # prints binary path/version + PONG
+npm run smoke:codex -- gpt-6-astra high            # prints binary path/version + PONG
 ```
 
 Preset fields for Codex: `codexModelId` strips the `[1m]` suffix; `[1m]` variants set `contextWindow: 872_000` and are passed as `model_context_window`; `fastTier: "priority"` backs `/fast`.

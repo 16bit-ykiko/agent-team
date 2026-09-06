@@ -1,12 +1,12 @@
 // Prove a Codex model slug works through the binary the server resolves
 // (`which codex` first, like service/src/codex-session.ts).
-// Usage: node scripts/smoke-codex.ts <slug> [effort]
+// Usage: npm run smoke:codex -- <slug> [effort]
 import { execSync } from "node:child_process";
 import { Codex, type ThreadOptions } from "@openai/codex-sdk";
 
 const [slug, effort] = process.argv.slice(2);
 if (!slug) {
-  console.error("usage: node scripts/smoke-codex.ts <slug> [effort]");
+  console.error("usage: npm run smoke:codex -- <slug> [effort]");
   process.exit(2);
 }
 

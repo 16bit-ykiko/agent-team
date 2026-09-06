@@ -1,5 +1,5 @@
-// Compact view of a capture: one line per frame with the fields that drive
-// the session mapping. Usage: node scripts/summarize-capture.ts file.jsonl
+// Compact view of a snap recording: one line per entry with the fields that
+// drive the session mapping. Usage: npm run summarize -- <file.jsonl>
 import fs from "node:fs";
 
 type Obj = Record<string, unknown>;
@@ -30,11 +30,8 @@ function blockLabel(b: Obj): string {
   return s;
 }
 
-function summarizeFrame(t: unknown, m: Obj): string {
-  const parts = [
-    String(t).padStart(6) + "ms",
-    str(m.type) + (m.subtype ? "/" + str(m.subtype) : ""),
-  ];
+function claudeFrame(m: Obj, parts: string[]): void {
+  parts.push(str(m.type) + (m.subtype ? "/" + str(m.subtype) : ""));
   if (m.parent_tool_use_id) parts.push(`parent=${tail(m.parent_tool_use_id)}`);
   if (m.type === "assistant" || m.type === "user") {
     const c = obj(m.message).content;
@@ -75,14 +72,43 @@ function summarizeFrame(t: unknown, m: Obj): string {
     if (m.patch) parts.push("patch=" + JSON.stringify(m.patch));
   } else if (m.type === "result") {
     parts.push(`subtype=${str(m.subtype)} turns=${str(m.num_turns)}`);
+    if (m.origin) parts.push(`origin=${JSON.stringify(m.origin)}`);
   }
-  return parts.join("  ");
+}
+
+function codexFrame(m: Obj, parts: string[]): void {
+  parts.push(str(m.type));
+  const item = obj(m.item);
+  if (item.type) parts.push(`${str(item.type)}#${tail(item.id)}`);
+  if (item.command) parts.push(`cmd=${JSON.stringify(str(item.command).slice(0, 50))}`);
+  if (item.exit_code != null) parts.push(`exit=${str(item.exit_code)}`);
+  if (item.text) parts.push(`text=${JSON.stringify(str(item.text).slice(0, 60))}`);
+  if (m.usage) parts.push(`usage=${JSON.stringify(m.usage)}`);
+  if (m.error) parts.push(`error=${JSON.stringify(m.error)}`);
+  if (m.message) parts.push(`message=${JSON.stringify(m.message)}`);
 }
 
 for (const file of process.argv.slice(2)) {
-  console.log(`== ${file}`);
-  for (const line of fs.readFileSync(file, "utf8").split("\n").filter(Boolean)) {
-    const { t, msg } = obj(JSON.parse(line));
-    console.log(summarizeFrame(t, obj(msg)));
+  const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
+  const header = obj(obj(JSON.parse(lines[0])).header);
+  console.log(`== ${file}  ${str(header.backend)} ${str(header.model)} cli=${str(header.cli)}`);
+  console.log(`   ${str(header.description)}`);
+  for (const line of lines.slice(1)) {
+    const e = obj(JSON.parse(line));
+    const parts = [String(e.t).padStart(6) + "ms"];
+    if (e.step) {
+      const s = obj(e.step);
+      parts.push(
+        `>> step ${str(s.i)} ${str(s.op)}` +
+          (s.text ? ` ${JSON.stringify(str(s.text).slice(0, 70))}` : "") +
+          (s.for != null ? ` ${str(s.for)}` : ""),
+      );
+    } else if (e.frame) {
+      if (header.backend === "codex") codexFrame(obj(e.frame), parts);
+      else claudeFrame(obj(e.frame), parts);
+    } else if (e.error) parts.push(`!! error ${str(e.error)}`);
+    else if (e.close) parts.push("-- stream closed");
+    else if (e.rollout) parts.push(`rollout ${JSON.stringify(e.rollout)}`);
+    console.log(parts.join("  "));
   }
 }

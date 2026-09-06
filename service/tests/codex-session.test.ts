@@ -37,40 +37,6 @@ function makeSession(model = "gpt-5.5") {
 }
 
 describe("codex thread event mapping", () => {
-  it("captures the thread id for resume", () => {
-    const { session, dispatch } = makeSession();
-    dispatch({ type: "thread.started", thread_id: "thr_123" });
-    expect(session.sessionId).toBe("thr_123");
-    expect(session.getState().sessionId).toBe("thr_123");
-  });
-
-  it("emits agent messages as text deltas and finalizes on turn.completed", async () => {
-    const { session, events, run } = makeSession();
-    await run([
-      {
-        type: "item.completed",
-        item: { id: "i1", type: "agent_message", text: "Here is the answer." },
-      },
-      {
-        type: "turn.completed",
-        usage: {
-          input_tokens: 100,
-          cached_input_tokens: 40,
-          output_tokens: 25,
-          reasoning_output_tokens: 5,
-        },
-      },
-    ]);
-
-    // text_delta is what task.ts accumulates into message content; the
-    // "result" event is what flips the message out of the streaming state.
-    expect(events.map((e) => e.kind)).toEqual(["text_delta", "result"]);
-    expect(events[0].content).toBe("Here is the answer.");
-    expect(session.usage.input_tokens).toBe(100);
-    expect(session.usage.cache_read_tokens).toBe(40);
-    expect(session.usage.output_tokens).toBe(25);
-  });
-
   it("releases the result only once the stream has closed, with isRunning already false", async () => {
     const { session, events, run } = makeSession();
     let runningAtResult: boolean | null = null;
@@ -96,26 +62,6 @@ describe("codex thread event mapping", () => {
     expect(events[0].content).toContain("usage limit reached");
   });
 
-  it("emits a single error for a real failure stream (error + turn.failed pair)", async () => {
-    // Captured live from codex-cli 0.144.1 with a revoked auth token: the
-    // stream reports the same fault twice, then the SDK generator throws.
-    const { events, run } = makeSession();
-    await run(function* () {
-      yield { type: "thread.started", thread_id: "thr_live" };
-      yield { type: "turn.started" };
-      yield { type: "error", message: "Your session has ended. Please log in again." };
-      yield {
-        type: "turn.failed",
-        error: { message: "Your session has ended. Please log in again." },
-      };
-      throw new Error("codex exited with code 1");
-    });
-
-    expect(events.filter((e) => e.kind === "error")).toHaveLength(1);
-    expect(events.filter((e) => e.kind === "result")).toHaveLength(0);
-    expect(events[0].content).toContain("log in again");
-  });
-
   it("closes the message when the stream ends without a terminal event", async () => {
     const { events, run } = makeSession();
     await run([{ type: "thread.started", thread_id: "thr_x" }]);
@@ -132,54 +78,6 @@ describe("codex thread event mapping", () => {
     expect(session.sessionId).toBeNull();
     expect(events[0].kind).toBe("error");
     expect(events[0].content).toContain("fresh session");
-  });
-
-  it("pairs command executions as tool_use/tool_result by item id", () => {
-    const { events, dispatch } = makeSession();
-    dispatch({
-      type: "item.started",
-      item: {
-        id: "cmd1",
-        type: "command_execution",
-        command: "ls -la",
-        aggregated_output: "",
-        status: "in_progress",
-      },
-    });
-    dispatch({
-      type: "item.completed",
-      item: {
-        id: "cmd1",
-        type: "command_execution",
-        command: "ls -la",
-        aggregated_output: "file.txt\n",
-        exit_code: 0,
-        status: "completed",
-      },
-    });
-
-    expect(events[0].kind).toBe("tool_use");
-    expect(events[0].toolUseId).toBe("cmd1");
-    expect(events[0].content).toContain("ls -la");
-    expect(events[1].kind).toBe("tool_result");
-    expect(events[1].toolUseId).toBe("cmd1");
-    expect(events[1].content).toBe("file.txt\n");
-  });
-
-  it("flags non-zero exit codes in the command result", () => {
-    const { events, dispatch } = makeSession();
-    dispatch({
-      type: "item.completed",
-      item: {
-        id: "cmd2",
-        type: "command_execution",
-        command: "false",
-        aggregated_output: "boom",
-        exit_code: 1,
-        status: "failed",
-      },
-    });
-    expect(events[0].content).toContain("(exit code 1)");
   });
 
   it("maps reasoning to thinking and file changes to an edit summary", () => {
@@ -205,17 +103,6 @@ describe("codex thread event mapping", () => {
     expect(events[1].kind).toBe("tool_use");
     expect(events[1].content).toContain("~ src/a.ts");
     expect(events[1].content).toContain("+ src/b.ts");
-  });
-
-  it("keeps non-fatal item errors from finalizing the turn", () => {
-    const { events, dispatch } = makeSession();
-    dispatch({
-      type: "item.completed",
-      item: { id: "e1", type: "error", message: "transient thing" },
-    });
-    expect(events[0].kind).toBe("notice");
-    expect(events[0].level).toBe("warning");
-    expect(events[0].content).toContain("transient thing");
   });
 });
 
@@ -322,30 +209,6 @@ describe("codex context from the rollout", () => {
 });
 
 describe("codex item edge cases", () => {
-  it("separates consecutive agent messages and completes silent commands", async () => {
-    const { events, run } = makeSession();
-    await run([
-      { type: "item.completed", item: { id: "m1", type: "agent_message", text: "First." } },
-      { type: "item.completed", item: { id: "m2", type: "agent_message", text: "Second." } },
-      {
-        type: "item.completed",
-        item: {
-          id: "c1",
-          type: "command_execution",
-          command: "true",
-          aggregated_output: "",
-          exit_code: 0,
-        },
-      },
-      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
-    ]);
-    const text = events.filter((e) => e.kind === "text_delta").map((e) => e.content);
-    expect(text).toEqual(["First.", "\n\nSecond."]);
-    const result = events.find((e) => e.kind === "tool_result")!;
-    expect(result.toolUseId).toBe("c1");
-    expect(result.content).toBe("(no output)");
-  });
-
   it("keeps an error terminal when turn.completed follows it", async () => {
     const { events, run } = makeSession();
     await run([

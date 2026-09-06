@@ -1,0 +1,17 @@
+{"header":{"backend":"codex","fixture":"two-turns","description":"a second prompt resumes the same thread: two replies, two results, one thread id","model":"gpt-6-astra","cli":"codex-cli 0.153.4","recordedAt":"2026-09-06T15:33:48.356Z"}}
+{"t":85,"step":{"i":0,"op":"send","text":"Reply with the single word one."}}
+{"t":3058,"frame":{"type":"thread.started","thread_id":"01a0775a-5bf6-7ea3-8aa4-6c1048e7820a"}}
+{"t":3082,"frame":{"type":"turn.started"}}
+{"t":11559,"frame":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"one"}}}
+{"t":11721,"frame":{"type":"turn.completed","usage":{"input_tokens":15442,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}}
+{"t":14823,"close":true}
+{"t":14823,"rollout":{"threadId":"01a0775a-5bf6-7ea3-8aa4-6c1048e7820a","tokens":15447,"window":258400}}
+{"t":14823,"step":{"i":1,"op":"wait","for":"idle"}}
+{"t":14823,"step":{"i":2,"op":"send","text":"Reply with the single word two."}}
+{"t":15116,"frame":{"type":"thread.started","thread_id":"01a0775a-5bf6-7ea3-8aa4-6c1048e7820a"}}
+{"t":15141,"frame":{"type":"turn.started"}}
+{"t":22398,"frame":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"two"}}}
+{"t":22546,"frame":{"type":"turn.completed","usage":{"input_tokens":16022,"cached_input_tokens":15232,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}}
+{"t":25734,"close":true}
+{"t":25735,"rollout":{"threadId":"01a0775a-5bf6-7ea3-8aa4-6c1048e7820a","tokens":16027,"window":258400}}
+{"t":25735,"step":{"i":3,"op":"wait","for":"idle"}}

@@ -11,5 +11,5 @@
     "noEmit": true
   },
   "include": ["src/**/*", "tests/**/*"],
-  "exclude": ["node_modules", "tests/sdk-captures.test.ts"]
+  "exclude": ["node_modules", "tests/snap"]
 }

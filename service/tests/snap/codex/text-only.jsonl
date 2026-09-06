@@ -1,0 +1,9 @@
+{"header":{"backend":"codex","fixture":"text-only","description":"a plain reply: one agent message finalized by turn.completed, with context read from the rollout and the model's default effort","model":"gpt-6-astra","cli":"codex-cli 0.153.4","recordedAt":"2026-09-06T15:31:54.452Z"}}
+{"t":324,"step":{"i":0,"op":"send","text":"Reply with the single word PONG."}}
+{"t":2999,"frame":{"type":"thread.started","thread_id":"01a07758-cf10-7712-a01d-fc881718aa77"}}
+{"t":3040,"frame":{"type":"turn.started"}}
+{"t":9890,"frame":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"PONG"}}}
+{"t":10072,"frame":{"type":"turn.completed","usage":{"input_tokens":15443,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":6,"reasoning_output_tokens":0}}}
+{"t":13246,"close":true}
+{"t":13247,"rollout":{"threadId":"01a07758-cf10-7712-a01d-fc881718aa77","tokens":15449,"window":258400}}
+{"t":13247,"step":{"i":1,"op":"wait","for":"idle"}}

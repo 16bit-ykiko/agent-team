@@ -265,6 +265,9 @@ export class ClaudeSession extends EventEmitter {
   // Bash commands by tool_use id, so a background shell card can show what
   // it is running (task_started only carries the description).
   private toolCommands = new Map<string, string>();
+  // Agent tool calls this turn: their results are the subagent's markdown
+  // report, and a foreground task is cleaned up before its result arrives.
+  private agentToolUseIds = new Set<string>();
   // Every non-agent task the CLI announced, card or not, so a foreground
   // command moved to the background later can still get its card.
   private taskInfo = new Map<
@@ -344,8 +347,11 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
+  // Replaced by the snap tests with a player of recorded frames.
+  static sdk: { query: typeof import("@anthropic-ai/claude-agent-sdk").query } | null = null;
+
   private async startQuery(message: string): Promise<void> {
-    const { query } = await import("@anthropic-ai/claude-agent-sdk");
+    const { query } = ClaudeSession.sdk ?? (await import("@anthropic-ai/claude-agent-sdk"));
 
     const { iterable, controller } = createInputStream();
     this.inputController = controller;
@@ -522,6 +528,7 @@ export class ClaudeSession extends EventEmitter {
     this.agentTaskIds.clear();
     this.taskInfo.clear();
     this.toolCommands.clear();
+    this.agentToolUseIds.clear();
     this.pendingNested.clear();
     this.setActivity(null);
     this.sleeping = false;
@@ -568,6 +575,7 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private noteCommand(toolUseId: string, block: Record<string, unknown>): void {
+    if (block.name === "Agent" || block.name === "Task") this.agentToolUseIds.add(toolUseId);
     if (block.name !== "Bash") return;
     const command = (block.input as Record<string, unknown> | undefined)?.command;
     if (typeof command === "string") this.toolCommands.set(toolUseId, command);
@@ -1180,7 +1188,9 @@ export class ClaudeSession extends EventEmitter {
         if (taskId) this.emitInner(parentToolUseId, taskId, inner);
         else this.parkNested(parentToolUseId, inner);
       } else {
-        const isSubagentResult = toolUseId ? this.subagentToolMap.has(toolUseId) : false;
+        const isSubagentResult = toolUseId
+          ? this.subagentToolMap.has(toolUseId) || this.agentToolUseIds.has(toolUseId)
+          : false;
         this.emit("event", {
           kind: "tool_result",
           content: text,

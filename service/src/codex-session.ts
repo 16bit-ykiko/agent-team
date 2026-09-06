@@ -82,10 +82,20 @@ export class CodexSession extends EventEmitter {
     );
   }
 
+  // Replaced by the snap tests: a client that plays recorded thread events,
+  // and the rollout usage recorded with them.
+  static hooks: {
+    codex?: () => Codex;
+    readContext?: (threadId: string) => ContextUsage | undefined;
+  } | null = null;
+
   // Context occupancy after the turn. `codex exec` only reports the turn's
   // token totals, but the rollout it writes carries per-request
   // `token_count` snapshots with the last request's usage and the window.
   private readContext(): ContextUsage | undefined {
+    if (CodexSession.hooks?.readContext && this.sessionId) {
+      return CodexSession.hooks.readContext(this.sessionId);
+    }
     if (!this.sessionId) return undefined;
     if (!this.rolloutPath || !fs.existsSync(this.rolloutPath)) {
       this.rolloutPath = findRollout(codexHome(), this.sessionId);
@@ -146,6 +156,7 @@ export class CodexSession extends EventEmitter {
 
   private async getCodex(): Promise<Codex> {
     if (this.codex) return this.codex;
+    if (CodexSession.hooks?.codex) return CodexSession.hooks.codex();
     const { Codex } = await import("@openai/codex-sdk");
     const providerEnv = this.config.providerEnv ?? {};
     const config = this.codexConfig();

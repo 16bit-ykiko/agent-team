@@ -56,62 +56,6 @@ function taskNotification(over: Record<string, unknown> = {}): Record<string, un
 }
 
 describe("task_started → subagent classification", () => {
-  it("renders a local_agent task as a subagent", () => {
-    const { events, dispatch } = makeSession();
-    dispatch(
-      taskStarted({ task_type: "local_agent", subagent_type: "Explore", prompt: "look around" }),
-    );
-
-    expect(events).toHaveLength(1);
-    expect(events[0].kind).toBe("subagent_start");
-    expect(events[0].subagent).toMatchObject({
-      taskId: "task-1",
-      description: "investigate the bug",
-      agentType: "Explore",
-      prompt: "look around",
-      status: "running",
-    });
-  });
-
-  it("shows a foreground local_bash task only as its tool call, not a card", () => {
-    const { events, dispatch } = makeSession();
-    dispatch(taskStarted({ task_type: "local_bash", is_backgrounded: false }));
-    dispatch(taskProgress());
-    dispatch(taskNotification());
-    expect(events).toHaveLength(0);
-  });
-
-  it("renders a backgrounded local_bash task as a shell card showing its command", () => {
-    const { events, dispatch } = makeSession();
-    dispatch({
-      type: "assistant",
-      session_id: "s",
-      parent_tool_use_id: null,
-      message: {
-        content: [
-          {
-            type: "tool_use",
-            id: "toolu_1",
-            name: "Bash",
-            input: { command: "sleep 45; echo finished", run_in_background: true },
-          },
-        ],
-      },
-    });
-    dispatch(taskStarted({ task_type: "local_bash", is_backgrounded: true }));
-    dispatch(taskProgress());
-    dispatch(taskNotification());
-
-    expect(events.map((e) => e.kind)).toEqual([
-      "tool_use",
-      "subagent_start",
-      "subagent_progress",
-      "subagent_done",
-    ]);
-    expect(events[1].subagent).toMatchObject({ agentType: "shell", taskType: "local_bash" });
-    expect(events[1].subagent?.prompt).toContain("sleep 45; echo finished");
-  });
-
   it("opens the card when a running command is moved to the background later", () => {
     const { events, dispatch } = makeSession();
     dispatch(taskStarted({ task_type: "local_bash", is_backgrounded: false }));
@@ -174,98 +118,26 @@ describe("task_started → subagent classification", () => {
 });
 
 describe("subagent lifecycle", () => {
-  it("emits progress with mapped usage and done with final status", () => {
+  it("drops progress for a task after its notification", () => {
     const { events, dispatch } = makeSession();
     dispatch(taskStarted({ task_type: "local_agent", subagent_type: "Explore" }));
-    dispatch(taskProgress());
     dispatch(taskNotification());
-
-    expect(events.map((e) => e.kind)).toEqual([
-      "subagent_start",
-      "subagent_progress",
-      "subagent_done",
-    ]);
-    expect(events[1].subagent?.usage).toEqual({ totalTokens: 1200, toolUses: 3, durationMs: 4500 });
-    expect(events[2].subagent?.status).toBe("completed");
-    expect(events[2].subagent?.summary).toBe("all done");
-
-    // Task is cleaned up after notification; further progress is dropped.
     dispatch(taskProgress());
-    expect(events).toHaveLength(3);
+    expect(events.map((e) => e.kind)).toEqual(["subagent_start", "subagent_done"]);
   });
 
-  it("marks the Task tool_result as markdown, but not a plain tool_result", () => {
-    const { events, dispatch } = makeSession();
-    dispatch(taskStarted({ task_type: "local_agent", subagent_type: "Explore" }));
-
-    const toolResult = (toolUseId: string) => ({
-      type: "user",
-      message: {
-        role: "user",
-        content: [{ type: "tool_result", tool_use_id: toolUseId, content: "# Report\ndetails" }],
-      },
-      session_id: "sess-1",
-    });
-    dispatch(toolResult("toolu_1"));
-    dispatch(toolResult("toolu_other"));
-
-    const results = events.filter((e) => e.kind === "tool_result");
-    expect(results).toHaveLength(2);
-    expect(results[0].isMarkdown).toBe(true);
-    expect(results[1].isMarkdown).toBeUndefined();
-  });
-
-  it("routes a subagent's inner activity as nested events", () => {
-    const { events, dispatch } = makeSession();
-    dispatch(taskStarted({ task_type: "local_agent", subagent_type: "Explore" }));
-
-    // Assistant turn inside the subagent: a tool_use block.
-    dispatch({
-      type: "assistant",
-      parent_tool_use_id: "toolu_1",
-      message: {
-        role: "assistant",
-        content: [
-          { type: "tool_use", id: "toolu_inner", name: "Read", input: { file_path: "/a" } },
-        ],
-      },
-      session_id: "sess-1",
-    });
-
-    const nested = events.filter((e) => e.subagent?._innerEvent);
-    expect(nested).toHaveLength(1);
-    expect(nested[0].kind).toBe("subagent_progress");
-    expect(nested[0].subagent?.taskId).toBe("task-1");
-    expect(nested[0].subagent?._innerEvent?.kind).toBe("tool_use");
-    expect(nested[0].subagent?._innerEvent?.toolUseId).toBe("toolu_inner");
-  });
-
-  it("routes nested agent and backgrounded shell tasks under their parent", () => {
+  it("routes a subagent's backgrounded shell task as a card inside its card", () => {
     const { events, dispatch } = makeSession();
     dispatch(taskStarted({ task_type: "local_agent", subagent_type: "general-purpose" }));
-    // The subagent itself calls Agent (toolu_inner) and a background Bash (toolu_bash).
     dispatch({
       type: "assistant",
       parent_tool_use_id: "toolu_1",
       message: {
         role: "assistant",
-        content: [
-          { type: "tool_use", id: "toolu_inner", name: "Agent", input: {} },
-          { type: "tool_use", id: "toolu_bash", name: "Bash", input: {} },
-        ],
+        content: [{ type: "tool_use", id: "toolu_bash", name: "Bash", input: {} }],
       },
       session_id: "sess-1",
     });
-    const before = events.length;
-
-    dispatch(
-      taskStarted({
-        task_id: "task-nested",
-        tool_use_id: "toolu_inner",
-        task_type: "local_agent",
-        subagent_type: "Explore",
-      }),
-    );
     dispatch(
       taskStarted({
         task_id: "task-bash",
@@ -275,15 +147,10 @@ describe("subagent lifecycle", () => {
       }),
     );
 
-    expect(events).toHaveLength(before + 2);
-    const nestedStart = events[events.length - 2];
-    expect(nestedStart.kind).toBe("subagent_progress");
-    expect(nestedStart.subagent?.taskId).toBe("task-1");
-    expect(nestedStart.subagent?._innerEvent?.kind).toBe("subagent_start");
-    expect(nestedStart.subagent?._innerEvent?.subagent?.taskId).toBe("task-nested");
-    // The subagent's own background shell shows as a card inside its card.
     const nestedShell = events[events.length - 1];
+    expect(nestedShell.kind).toBe("subagent_progress");
     expect(nestedShell.subagent?.taskId).toBe("task-1");
+    expect(nestedShell.subagent?._innerEvent?.kind).toBe("subagent_start");
     expect(nestedShell.subagent?._innerEvent?.subagent?.taskId).toBe("task-bash");
     expect(nestedShell.subagent?._innerEvent?.subagent?.agentType).toBe("shell");
   });
@@ -616,20 +483,6 @@ describe("CLI banners and activity", () => {
       ),
     ).toEqual(["some_future_subtype", "brand_new_type"]);
   });
-
-  it("tags tool_use events with the tool name", () => {
-    const { events, dispatch } = makeSession();
-    dispatch({
-      type: "assistant",
-      session_id: "sess-1",
-      parent_tool_use_id: null,
-      message: {
-        content: [{ type: "tool_use", id: "t1", name: "Read", input: { file_path: "/a" } }],
-      },
-    });
-    expect(events[0]).toMatchObject({ kind: "tool_use", toolName: "Read", toolUseId: "t1" });
-    expect(events[0]).not.toHaveProperty("raw");
-  });
 });
 
 describe("subagent output arriving before task_started", () => {
@@ -806,48 +659,6 @@ describe("self-initiated turns", () => {
     message: { content: [{ type: "text", text }] },
   });
 
-  it("does not mistake text the CLI injects mid-turn for a wake-up", () => {
-    const { events, dispatch } = makeSession();
-    // Turn in progress: the model called Skill and Read on an image.
-    dispatch({
-      type: "assistant",
-      parent_tool_use_id: null,
-      message: {
-        role: "assistant",
-        content: [{ type: "tool_use", id: "t1", name: "Skill", input: { skill: "docs" } }],
-      },
-    });
-    // Skill expansion: plain text, no tool_result, mid-turn.
-    dispatch({
-      type: "user",
-      session_id: "s",
-      parent_tool_use_id: null,
-      message: { role: "user", content: [{ type: "text", text: "# docs skill\nTranslate…" }] },
-    });
-    // Image note riding along with the tool_result.
-    dispatch({
-      type: "user",
-      session_id: "s",
-      parent_tool_use_id: null,
-      message: {
-        role: "user",
-        content: [
-          { type: "tool_result", tool_use_id: "t1", content: "ok" },
-          { type: "text", text: "[Image: original 1400x2200, displayed at 1273x2000.]" },
-        ],
-      },
-    });
-    // Synthetic messages are never user turns either.
-    dispatch({
-      type: "user",
-      session_id: "s",
-      parent_tool_use_id: null,
-      isSynthetic: true,
-      message: { role: "user", content: "synthetic" },
-    });
-    expect(events.filter((e) => e.level === "wakeup")).toHaveLength(0);
-  });
-
   it("shows a slash command the CLI expanded as a skill notice, not a wake-up", () => {
     const session = new ClaudeSession({ cwd: "/tmp" });
     const events: StreamEvent[] = [];
@@ -880,39 +691,6 @@ describe("self-initiated turns", () => {
         content: "Base directory for this skill: /x\n# Codex Delegation",
       },
     ]);
-  });
-
-  it("flags a turn that starts without a pushed prompt as a wake-up", () => {
-    const session = new ClaudeSession({ cwd: "/tmp" });
-    const events: StreamEvent[] = [];
-    session.on("event", (e: StreamEvent) => events.push(e));
-    const s = session as unknown as {
-      handleSDKMessage(m: unknown): void;
-      expectingTurn: boolean;
-      processing: boolean;
-    };
-    // Our own prompt: pushMessage marks the turn as expected.
-    s.expectingTurn = true;
-    s.processing = true;
-    s.handleSDKMessage(assistantText("scheduled"));
-    s.handleSDKMessage({
-      type: "result",
-      subtype: "success",
-      result: "scheduled",
-      session_id: "s",
-    });
-    // A minute later the CLI starts a turn on its own.
-    s.handleSDKMessage(assistantText("AWAKE"));
-    s.handleSDKMessage({ type: "result", subtype: "success", result: "AWAKE", session_id: "s" });
-
-    expect(events.map((e) => [e.kind, e.level ?? ""])).toEqual([
-      ["text", ""],
-      ["result", ""],
-      ["notice", "wakeup"],
-      ["text", ""],
-      ["result", ""],
-    ]);
-    expect(session.isRunning).toBe(false);
   });
 
   it("does not double-flag when the CLI also emits the injected prompt text", () => {
@@ -1111,68 +889,6 @@ describe("run state", () => {
   });
 });
 
-describe("subagent output while waiting", () => {
-  it("does not count nested assistant output as a main-agent turn", () => {
-    const session = new ClaudeSession({ cwd: "/tmp" });
-    const events: StreamEvent[] = [];
-    const states: string[] = [];
-    session.on("event", (e: StreamEvent) => events.push(e));
-    session.on("runState", (s: string) => states.push(s));
-    const s = session as unknown as { handleSDKMessage(m: unknown): void; expectingTurn: boolean };
-    s.expectingTurn = true;
-    // Main turn launches a background subagent and ends.
-    s.handleSDKMessage({
-      type: "assistant",
-      session_id: "s",
-      parent_tool_use_id: null,
-      message: {
-        content: [
-          { type: "tool_use", id: "toolu_1", name: "Agent", input: { run_in_background: true } },
-        ],
-      },
-    });
-    s.handleSDKMessage(taskStarted({ task_type: "local_agent", subagent_type: "claude" }));
-    s.handleSDKMessage({
-      type: "system",
-      subtype: "background_tasks_changed",
-      session_id: "s",
-      tasks: [{ task_id: "task-1", task_type: "local_agent", description: "bg" }],
-    });
-    s.handleSDKMessage({ type: "result", subtype: "success", result: "launched", session_id: "s" });
-    expect(session.runState).toBe("waiting");
-
-    // The subagent streams its own blocks; the main agent stays waiting.
-    s.handleSDKMessage({
-      type: "stream_event",
-      session_id: "s",
-      parent_tool_use_id: "toolu_1",
-      event: { type: "content_block_delta", delta: { type: "text_delta", text: "working…" } },
-    });
-    s.handleSDKMessage({
-      type: "assistant",
-      session_id: "s",
-      parent_tool_use_id: "toolu_1",
-      message: { content: [{ type: "text", text: "DONE" }] },
-    });
-    expect(session.runState).toBe("waiting");
-    expect(session.isRunning).toBe(false);
-    expect(events.filter((e) => e.level === "wakeup")).toHaveLength(0);
-
-    // The CLI re-invokes the main agent with the result.
-    s.handleSDKMessage({
-      type: "assistant",
-      session_id: "s",
-      parent_tool_use_id: null,
-      message: { content: [{ type: "text", text: "BG DONE" }] },
-    });
-    expect(session.runState).toBe("working");
-    const wake = events.filter((e) => e.level === "wakeup");
-    expect(wake).toHaveLength(1);
-    expect(wake[0].content).toContain("background task");
-    expect(states).toEqual(["working", "waiting", "working"]);
-  });
-});
-
 describe("per-turn status: context size and effort", () => {
   const assistant = (usage: Record<string, number>, parent: string | null = null) => ({
     type: "assistant",
@@ -1185,49 +901,6 @@ describe("per-turn status: context size and effort", () => {
     result: "done",
     usage,
     modelUsage: { "claude-fable-5-1": { contextWindow: 1_000_000 } },
-  });
-
-  it("reports the last request's prompt size, not the turn total", () => {
-    const { events, dispatch } = makeSession();
-    // Three calls of ~150k each: the turn total (450k) is not the context.
-    dispatch(
-      assistant({
-        input_tokens: 1000,
-        cache_read_input_tokens: 140_000,
-        cache_creation_input_tokens: 9_000,
-      }),
-    );
-    dispatch(
-      assistant({
-        input_tokens: 1200,
-        cache_read_input_tokens: 149_000,
-        cache_creation_input_tokens: 4_000,
-      }),
-    );
-    // A subagent's call must not count as the main loop's context.
-    dispatch(
-      assistant(
-        { input_tokens: 50, cache_read_input_tokens: 20_000, cache_creation_input_tokens: 0 },
-        "tool-1",
-      ),
-    );
-    dispatch(
-      assistant({
-        input_tokens: 800,
-        cache_read_input_tokens: 153_000,
-        cache_creation_input_tokens: 6_200,
-      }),
-    );
-    dispatch(
-      result({
-        input_tokens: 3000,
-        cache_read_input_tokens: 442_000,
-        cache_creation_input_tokens: 19_200,
-        output_tokens: 900,
-      }),
-    );
-    const res = events.find((e) => e.kind === "result")!;
-    expect(res.context).toEqual({ tokens: 160_000, window: 1_000_000 });
   });
 
   it("carries the effort the CLI says it runs at when none was chosen", () => {
@@ -1298,88 +971,7 @@ describe("background task list", () => {
   });
 });
 
-describe("background tasks as cards", () => {
-  it("gives a background shell task a subagent card that the notification closes", () => {
-    const { events, dispatch } = makeSession();
-    dispatch({
-      type: "system",
-      subtype: "task_started",
-      session_id: "s",
-      task_id: "b1",
-      task_type: "local_bash",
-      tool_use_id: "toolu_b",
-      is_backgrounded: true,
-      description: "Run sleep command in background",
-    });
-    dispatch({
-      type: "system",
-      subtype: "task_started",
-      session_id: "s",
-      task_id: "hk",
-      task_type: "local_bash",
-      description: "housekeeping",
-      skip_transcript: true,
-    });
-    dispatch({
-      type: "system",
-      subtype: "task_notification",
-      session_id: "s",
-      task_id: "b1",
-      tool_use_id: "toolu_b",
-      status: "completed",
-      summary: "Background task completed (exit code 0).",
-      output_file: "/tmp/x",
-    });
-    expect(events.map((e) => e.kind)).toEqual(["subagent_start", "subagent_done"]);
-    expect(events[0].subagent).toMatchObject({
-      taskId: "b1",
-      agentType: "shell",
-      description: "Run sleep command in background",
-      status: "running",
-    });
-    expect(events[1].subagent).toMatchObject({ taskId: "b1", status: "completed" });
-    expect(events[1].subagent?.summary).toContain("exit code 0");
-  });
-});
-
-describe("nested subagent transcripts", () => {
-  it("routes a grandchild's own events through both ancestors", () => {
-    const { events, dispatch } = makeSession();
-    dispatch(taskStarted({ task_type: "local_agent", subagent_type: "general-purpose" }));
-    // The subagent calls Agent; the CLI reports the nested task.
-    dispatch({
-      type: "assistant",
-      session_id: "s",
-      parent_tool_use_id: "toolu_1",
-      message: { content: [{ type: "tool_use", id: "toolu_inner", name: "Agent", input: {} }] },
-    });
-    dispatch(
-      taskStarted({
-        task_id: "task-nested",
-        tool_use_id: "toolu_inner",
-        task_type: "local_agent",
-        subagent_type: "Explore",
-      }),
-    );
-    // The grandchild reads a file.
-    dispatch({
-      type: "assistant",
-      session_id: "s",
-      parent_tool_use_id: "toolu_inner",
-      message: {
-        content: [{ type: "tool_use", id: "toolu_read", name: "Read", input: { file_path: "/a" } }],
-      },
-    });
-    const last = events[events.length - 1];
-    expect(last.kind).toBe("subagent_progress");
-    expect(last.subagent?.taskId).toBe("task-1");
-    const inner = last.subagent?._innerEvent;
-    expect(inner?.kind).toBe("subagent_progress");
-    expect(inner?.subagent?.taskId).toBe("task-nested");
-    expect(inner?.subagent?._innerEvent?.kind).toBe("tool_use");
-    expect(inner?.subagent?._innerEvent?.toolName).toBe("Read");
-  });
-
+describe("other frames", () => {
   it("does not finalize the turn on a model fallback", () => {
     const { events, dispatch } = makeSession();
     dispatch({

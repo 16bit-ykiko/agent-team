@@ -1,0 +1,10 @@
+{"header":{"backend":"codex","fixture":"bad-model","description":"a rejected model: the failure stream (error + turn.failed) yields exactly one error and the message ends in error","model":"gpt-nonexistent-model","cli":"codex-cli 0.153.4","recordedAt":"2026-09-06T15:34:32.060Z"}}
+{"t":88,"step":{"i":0,"op":"send","text":"Reply with the single word PONG."}}
+{"t":394,"frame":{"type":"thread.started","thread_id":"01a0775b-2af9-71a0-96c1-e6527e1362d0"}}
+{"t":413,"frame":{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-nonexistent-model` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}}
+{"t":439,"frame":{"type":"turn.started"}}
+{"t":12360,"frame":{"type":"error","message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-nonexistent-model' model is not supported when using Codex with a ChatGPT account.\"}}"}}
+{"t":12369,"frame":{"type":"turn.failed","error":{"message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-nonexistent-model' model is not supported when using Codex with a ChatGPT account.\"}}"}}}
+{"t":13698,"error":"Codex Exec exited with code 1: Reading prompt from stdin...\n"}
+{"t":13698,"close":true}
+{"t":13699,"step":{"i":1,"op":"wait","for":"idle"}}

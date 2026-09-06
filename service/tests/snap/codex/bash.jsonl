@@ -1,0 +1,16 @@
+{"header":{"backend":"codex","fixture":"bash","description":"shell commands pair as tool_use/tool_result by item id; a silent success still completes and a non-zero exit is flagged","model":"gpt-6-astra","cli":"codex-cli 0.153.4","recordedAt":"2026-09-06T15:32:52.614Z"}}
+{"t":90,"step":{"i":0,"op":"send","text":"Run these three shell commands one at a time, each as its own command: `echo hi`, then `true`, then `exit 3`. Do not fix anything. Then reply with the single word done."}}
+{"t":372,"frame":{"type":"thread.started","thread_id":"01a07759-6e06-7330-9ceb-777561f2e551"}}
+{"t":410,"frame":{"type":"turn.started"}}
+{"t":8493,"frame":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll run the three commands separately, in order."}}}
+{"t":8977,"frame":{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/bash -lc 'echo hi'","aggregated_output":"","exit_code":null,"status":"in_progress"}}}
+{"t":8979,"frame":{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/bash -lc 'echo hi'","aggregated_output":"hi\n","exit_code":0,"status":"completed"}}}
+{"t":14930,"frame":{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/bin/bash -lc true","aggregated_output":"","exit_code":null,"status":"in_progress"}}}
+{"t":14933,"frame":{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/bin/bash -lc true","aggregated_output":"","exit_code":0,"status":"completed"}}}
+{"t":19504,"frame":{"type":"item.started","item":{"id":"item_3","type":"command_execution","command":"/bin/bash -lc 'exit 3'","aggregated_output":"","exit_code":null,"status":"in_progress"}}}
+{"t":19505,"frame":{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"/bin/bash -lc 'exit 3'","aggregated_output":"","exit_code":3,"status":"failed"}}}
+{"t":23190,"frame":{"type":"item.completed","item":{"id":"item_4","type":"agent_message","text":"done"}}}
+{"t":23364,"frame":{"type":"turn.completed","usage":{"input_tokens":61684,"cached_input_tokens":57728,"cache_write_input_tokens":0,"output_tokens":89,"reasoning_output_tokens":0}}}
+{"t":28154,"close":true}
+{"t":28155,"rollout":{"threadId":"01a07759-6e06-7330-9ceb-777561f2e551","tokens":15550,"window":258400}}
+{"t":28155,"step":{"i":1,"op":"wait","for":"idle"}}

@@ -80,15 +80,13 @@ and pull request. Agent-facing project rules live in `.claude/CLAUDE.md`, with
 task-specific playbooks under `.claude/skills/` (deploy, capture-sdk,
 stream-debug, add-model, review).
 
-The Claude event mapping is tested against recorded real streams:
-`service/tests/fixtures/sdk/*.jsonl` are raw SDK message logs (foreground and
-background shells, subagents, nested subagents, skills, images) captured with
-`node scripts/capture-sdk.ts <scenario ...>` (uses your own Claude login; a few
-scenarios at a time, spaced out — bursts of sessions can get an account banned), and
-`node scripts/summarize-capture.ts` prints one line per frame.
-`service/tests/sdk-captures.test.ts` replays them through the session, the
-workspace aggregation and the client aggregation, which must agree. When the
-CLI changes shape, re-capture rather than guess.
+Both backends' event mappings are tested against recorded real interactions
+(`service/tests/snap/{claude,codex}/`): each fixture is a script (`<name>.ts`,
+which also states what it verifies), the recording it produced
+(`<name>.jsonl`) and the transcript the replay pins (`<name>.snap.md`).
+`npm run capture -- <backend> <name>` records a fixture with your own login;
+`npm run summarize -- <file.jsonl>` prints one line per frame. When a CLI
+changes shape, re-record rather than guess.
 
 ## Configuration
 

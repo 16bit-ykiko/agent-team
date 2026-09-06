@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
-    "types": ["node", "vite/client"]
+    "types": ["node", "vite/client"],
+    "allowImportingTsExtensions": true
   },
-  "include": ["scripts/**/*.ts", "service/tests/sdk-captures.test.ts"]
+  "include": ["scripts/**/*.ts", "service/tests/snap/**/*.ts"]
 }
