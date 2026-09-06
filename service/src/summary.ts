@@ -48,6 +48,7 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
           taskId: sa.taskId,
           description: sa.description,
           ...(sa.agentType && { agentType: sa.agentType }),
+          ...(sa.taskType && { taskType: sa.taskType }),
           ...(sa.status && { status: sa.status }),
           ...(sa.lastTool && { lastTool: sa.lastTool }),
           ...(sa.usage && { usage: sa.usage }),

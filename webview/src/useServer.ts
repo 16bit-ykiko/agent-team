@@ -29,6 +29,8 @@ export interface SubAgentInfo {
   description: string;
   prompt?: string;
   agentType?: string;
+  // SDK task type; absent on older records (all agents).
+  taskType?: string;
   status?: "running" | "completed" | "failed" | "stopped";
   lastTool?: string;
   usage?: { totalTokens: number; toolUses: number; durationMs: number };

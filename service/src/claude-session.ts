@@ -100,6 +100,9 @@ export interface SubAgentInfo {
   events?: StreamEvent[];
   hasPrompt?: boolean;
   summaryLength?: number;
+  // SDK task type ("local_agent", "local_bash", "local_monitor"...). Absent
+  // on older records, which were all agents.
+  taskType?: string;
   _innerEvent?: StreamEvent;
 }
 
@@ -259,6 +262,15 @@ export class ClaudeSession extends EventEmitter {
   private sleeping = false;
   // Live, non-ambient background tasks as reported by background_tasks_changed
   // (id → description). Level signal: replaced wholesale on every message.
+  // Bash commands by tool_use id, so a background shell card can show what
+  // it is running (task_started only carries the description).
+  private toolCommands = new Map<string, string>();
+  // Every non-agent task the CLI announced, card or not, so a foreground
+  // command moved to the background later can still get its card.
+  private taskInfo = new Map<
+    string,
+    { toolUseId?: string; type: string; description: string; parent?: string }
+  >();
   private backgroundTasks = new Map<string, string>();
   private bgTaskMeta = new Map<string, { type: string; since: number }>();
   private bgDrainedAt = 0;
@@ -491,6 +503,7 @@ export class ClaudeSession extends EventEmitter {
 
   private cleanupTask(taskId: string): void {
     this.agentTaskIds.delete(taskId);
+    this.taskInfo.delete(taskId);
     this.nestedTaskToParent.delete(taskId);
     const toolUseId = this.taskToToolUse.get(taskId);
     if (toolUseId) {
@@ -506,6 +519,8 @@ export class ClaudeSession extends EventEmitter {
     this.nestedTaskToParent.clear();
     this.taskToToolUse.clear();
     this.agentTaskIds.clear();
+    this.taskInfo.clear();
+    this.toolCommands.clear();
     this.pendingNested.clear();
     this.setActivity(null);
     this.sleeping = false;
@@ -549,6 +564,44 @@ export class ClaudeSession extends EventEmitter {
       console.warn(`[session] unhandled SDK message: ${key}`);
     }
     this.emit("unhandled", msg);
+  }
+
+  private noteCommand(toolUseId: string, block: Record<string, unknown>): void {
+    if (block.name !== "Bash") return;
+    const command = (block.input as Record<string, unknown> | undefined)?.command;
+    if (typeof command === "string") this.toolCommands.set(toolUseId, command);
+  }
+
+  // Open a card for a non-agent task the CLI announced (background shell,
+  // Monitor...). Idempotent: nothing happens for unknown or carded tasks.
+  private startTaskCard(taskId: string): void {
+    const info = this.taskInfo.get(taskId);
+    if (!info || this.agentTaskIds.has(taskId)) return;
+    const { toolUseId, type, description, parent } = info;
+    if (toolUseId) {
+      this.subagentToolMap.set(toolUseId, taskId);
+      this.taskToToolUse.set(taskId, toolUseId);
+    }
+    this.agentTaskIds.add(taskId);
+    if (parent) this.nestedTaskToParent.set(taskId, parent);
+    const command = toolUseId ? this.toolCommands.get(toolUseId) : undefined;
+    const startEvent = {
+      kind: "subagent_start",
+      content: description,
+      toolUseId,
+      subagent: {
+        taskId,
+        description,
+        // The card must stand on its own: the command it is running.
+        ...(command && { prompt: "```bash\n" + command + "\n```" }),
+        agentType: backgroundTaskLabel(type),
+        taskType: type,
+        status: "running",
+        events: [],
+      },
+    } as StreamEvent;
+    if (parent) this.emitNestedEvent(parent, startEvent);
+    else this.emit("event", startEvent);
   }
 
   // Wrap an inner event once per ancestor so the outermost carrier always
@@ -673,6 +726,11 @@ export class ClaudeSession extends EventEmitter {
 
       case "system": {
         const sys = msg as Record<string, unknown>;
+        if (sys.subtype === "task_updated") {
+          const patch = sys.patch as Record<string, unknown> | undefined;
+          if (patch?.is_backgrounded === true) this.startTaskCard(sys.task_id as string);
+          break;
+        }
         if (sys.subtype === "background_tasks_changed") {
           const had = this.backgroundTasks.size > 0;
           const changed = this.setBackgroundTasks(
@@ -685,6 +743,9 @@ export class ClaudeSession extends EventEmitter {
               })),
           );
           if (had && this.backgroundTasks.size === 0) this.bgDrainedAt = Date.now();
+          // Whatever is live in the background has a card (a command moved
+          // there after it started included).
+          for (const id of this.backgroundTasks.keys()) this.startTaskCard(id);
           this.updateRunState();
           if (changed) this.emit("backgroundTasks", this.backgroundTaskList);
           break;
@@ -728,6 +789,24 @@ export class ClaudeSession extends EventEmitter {
           const taskId = sys.task_id as string;
           const toolUseId = sys.tool_use_id as string | undefined;
           const parentTaskId = toolUseId ? this.nestedToolUseToParent.get(toolUseId) : undefined;
+          if (!isAgentTask) {
+            // A foreground command is an ordinary tool call, already shown
+            // with its command and output; only work the agent left running
+            // in the background (or a watcher) is a card.
+            this.taskInfo.set(taskId, {
+              toolUseId,
+              type: taskType ?? "",
+              description: (sys.description as string) ?? "",
+              parent: parentTaskId,
+            });
+            const background =
+              sys.is_backgrounded === true ||
+              taskType === "local_monitor" ||
+              taskType === "local_workflow";
+            if (!background) break;
+            this.startTaskCard(taskId);
+            break;
+          }
           if (toolUseId) {
             this.subagentToolMap.set(toolUseId, taskId);
             this.taskToToolUse.set(taskId, toolUseId);
@@ -744,9 +823,8 @@ export class ClaudeSession extends EventEmitter {
               taskId,
               description: (sys.description as string) ?? "",
               prompt: sys.prompt as string | undefined,
-              agentType: isAgentTask
-                ? (sys.subagent_type as string | undefined)
-                : backgroundTaskLabel(taskType),
+              agentType: sys.subagent_type as string | undefined,
+              taskType: taskType ?? "local_agent",
               status: "running",
               events: [],
             },
@@ -967,6 +1045,7 @@ export class ClaudeSession extends EventEmitter {
           // Mark this tool_use as belonging to a subagent so task_started
           // for it gets routed as a nested event, not a top-level subagent.
           if (taskId) this.nestedToolUseToParent.set(innerToolId, taskId);
+          this.noteCommand(innerToolId, b);
           ev = {
             kind: "tool_use",
             content: formatToolUse(b),
@@ -1011,6 +1090,7 @@ export class ClaudeSession extends EventEmitter {
       } else if (blockType === "tool_use") {
         const toolId = b.id as string;
         const toolInput = extractToolInput(b);
+        this.noteCommand(toolId, b);
         this.emit("event", {
           kind: "tool_use",
           content: formatToolUse(b),
@@ -1167,7 +1247,8 @@ export class ClaudeSession extends EventEmitter {
     this.awaitingFirstOutput = false;
     this.pendingNested.clear();
     // Every tool_use a subagent made this turn was recorded for nesting;
-    // the tasks are done, so the map would only grow.
+    // the tasks are done, so the map would only grow. Commands stay: a
+    // background task may still be promoted to a card after the turn.
     this.nestedToolUseToParent.clear();
     this.setActivity(null);
     if (this.pendingWake && !this.pendingWake.stop) {

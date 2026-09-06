@@ -42,6 +42,7 @@ function foldSubagents(events: StreamEvent[]): Map<string, StreamEvent> {
           // a summarised done event says 0, which would hide the transcript.
           description: prev?.description || next.description,
           agentType: next.agentType ?? prev?.agentType,
+          taskType: next.taskType ?? prev?.taskType,
           prompt: next.prompt ?? prev?.prompt,
           hasPrompt: next.hasPrompt ?? prev?.hasPrompt,
           lastTool: next.lastTool ?? prev?.lastTool,
@@ -56,10 +57,14 @@ function foldSubagents(events: StreamEvent[]): Map<string, StreamEvent> {
 
 // The tool_use that spawned a subagent (same toolUseId as its card) shows the
 // same prompt and result as the card; the card is the richer of the two.
+// A background shell's tool call stays: its command and "running in the
+// background" result are the record of what was run.
 function spawnToolUseIds(events: StreamEvent[]): Set<string> {
   const ids = new Set<string>();
   for (const e of events) {
-    if (e.kind === "subagent_start" && e.toolUseId) ids.add(e.toolUseId);
+    if (e.kind !== "subagent_start" || !e.toolUseId) continue;
+    const type = e.subagent?.taskType;
+    if (type == null || type === "local_agent") ids.add(e.toolUseId);
   }
   return ids;
 }

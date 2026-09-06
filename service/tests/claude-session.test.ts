@@ -73,18 +73,66 @@ describe("task_started → subagent classification", () => {
     });
   });
 
-  it("renders a background local_bash task as a cancellable shell card", () => {
+  it("shows a foreground local_bash task only as its tool call, not a card", () => {
     const { events, dispatch } = makeSession();
-    dispatch(taskStarted({ task_type: "local_bash" }));
+    dispatch(taskStarted({ task_type: "local_bash", is_backgrounded: false }));
+    dispatch(taskProgress());
+    dispatch(taskNotification());
+    expect(events).toHaveLength(0);
+  });
+
+  it("renders a backgrounded local_bash task as a shell card showing its command", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_1",
+            name: "Bash",
+            input: { command: "sleep 45; echo finished", run_in_background: true },
+          },
+        ],
+      },
+    });
+    dispatch(taskStarted({ task_type: "local_bash", is_backgrounded: true }));
     dispatch(taskProgress());
     dispatch(taskNotification());
 
     expect(events.map((e) => e.kind)).toEqual([
+      "tool_use",
       "subagent_start",
       "subagent_progress",
       "subagent_done",
     ]);
+    expect(events[1].subagent).toMatchObject({ agentType: "shell", taskType: "local_bash" });
+    expect(events[1].subagent?.prompt).toContain("sleep 45; echo finished");
+  });
+
+  it("opens the card when a running command is moved to the background later", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(taskStarted({ task_type: "local_bash", is_backgrounded: false }));
+    expect(events).toHaveLength(0);
+    dispatch({
+      type: "system",
+      subtype: "background_tasks_changed",
+      session_id: "s",
+      tasks: [{ task_id: "task-1", task_type: "local_bash", description: "investigate the bug" }],
+    });
+    expect(events.map((e) => e.kind)).toEqual(["subagent_start"]);
     expect(events[0].subagent?.agentType).toBe("shell");
+    // Idempotent: the level signal repeats, the card does not.
+    dispatch({
+      type: "system",
+      subtype: "task_updated",
+      session_id: "s",
+      task_id: "task-1",
+      patch: { is_backgrounded: true },
+    });
+    expect(events).toHaveLength(1);
   });
 
   it("renders a local_workflow task as a workflow card", () => {
@@ -109,12 +157,11 @@ describe("task_started → subagent classification", () => {
     dispatch(taskStarted({ subagent_type: "general-purpose" }));
     dispatch(taskStarted({ task_id: "task-2", tool_use_id: "toolu_2" }));
 
-    expect(events).toHaveLength(2);
+    // Untyped and not backgrounded: an ordinary tool call, no card.
+    expect(events).toHaveLength(1);
     expect(events[0].kind).toBe("subagent_start");
     expect(events[0].subagent?.taskId).toBe("task-1");
     expect(events[0].subagent?.agentType).toBe("general-purpose");
-    // Untyped, non-agent: still a card, with the generic label.
-    expect(events[1].subagent?.agentType).toBe("task");
   });
 
   it("ignores progress/notification for tasks never registered as subagents", () => {
@@ -193,7 +240,7 @@ describe("subagent lifecycle", () => {
     expect(nested[0].subagent?._innerEvent?.toolUseId).toBe("toolu_inner");
   });
 
-  it("routes nested agent and shell tasks under their parent", () => {
+  it("routes nested agent and backgrounded shell tasks under their parent", () => {
     const { events, dispatch } = makeSession();
     dispatch(taskStarted({ task_type: "local_agent", subagent_type: "general-purpose" }));
     // The subagent itself calls Agent (toolu_inner) and a background Bash (toolu_bash).
@@ -220,7 +267,12 @@ describe("subagent lifecycle", () => {
       }),
     );
     dispatch(
-      taskStarted({ task_id: "task-bash", tool_use_id: "toolu_bash", task_type: "local_bash" }),
+      taskStarted({
+        task_id: "task-bash",
+        tool_use_id: "toolu_bash",
+        task_type: "local_bash",
+        is_backgrounded: true,
+      }),
     );
 
     expect(events).toHaveLength(before + 2);
@@ -1254,6 +1306,7 @@ describe("background tasks as cards", () => {
       task_id: "b1",
       task_type: "local_bash",
       tool_use_id: "toolu_b",
+      is_backgrounded: true,
       description: "Run sleep command in background",
     });
     dispatch({

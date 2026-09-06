@@ -177,3 +177,22 @@ describe("timelineBlocks details", () => {
     expect(splitEvents(events).regular).toHaveLength(3);
   });
 });
+
+describe("shell cards keep their tool call", () => {
+  it("hides only the tool_use behind an agent card", () => {
+    const events = [
+      ev("tool_use", { toolName: "Bash", toolUseId: "b1" }),
+      ev("subagent_start", {
+        toolUseId: "b1",
+        subagent: { taskId: "s", description: "bg", taskType: "local_bash", agentType: "shell" },
+      }),
+      ev("tool_use", { toolName: "Agent", toolUseId: "a1" }),
+      ev("subagent_start", {
+        toolUseId: "a1",
+        subagent: { taskId: "t", description: "review", taskType: "local_agent" },
+      }),
+    ];
+    expect(splitEvents(events).regular.map((e) => e.toolUseId)).toEqual(["b1"]);
+    expect(timelineBlocks(events).map((b) => b.kind)).toEqual(["steps", "subagent", "subagent"]);
+  });
+});
