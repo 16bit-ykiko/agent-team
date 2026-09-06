@@ -866,7 +866,17 @@ export class ClaudeSession extends EventEmitter {
           }
         } else if (sys.subtype === "task_notification") {
           const taskId = sys.task_id as string;
-          if (!this.agentTaskIds.has(taskId)) break;
+          if (!this.agentTaskIds.has(taskId)) {
+            if (sys.status === "stopped" && !this.taskInfo.has(taskId)) {
+              this.emit("event", {
+                kind: "notice",
+                level: "warning",
+                content:
+                  "A background task from the previous session was found stopped (the process that ran it is gone); its result was not delivered.",
+              });
+            }
+            break;
+          }
           const parentTaskId = this.nestedTaskToParent.get(taskId);
           const doneEvent = {
             kind: "subagent_done",
@@ -1210,8 +1220,16 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private handleResult(msg: SDKResultMessage): void {
+    const result = msg as Record<string, unknown>;
+    // Resuming a session whose previous process left a background task
+    // behind: the CLI queues a task-notification turn ahead of our prompt
+    // and closes it with an empty result (num_turns 0, origin set) before
+    // the real turn starts. Finalizing on it would render our prompt as
+    // "no output" and the actual reply as a wake-up.
+    if (result.num_turns === 0 && result.origin && this.expectingTurn && this.awaitingFirstOutput) {
+      return;
+    }
     if (msg.subtype === "success") {
-      const result = msg as Record<string, unknown>;
       const usage = result.usage as Record<string, number> | undefined;
       if (usage) {
         this.usage.input_tokens += usage.input_tokens ?? 0;

@@ -20,17 +20,23 @@ import { applyEventsToMessage } from "../../webview/src/stream";
 
 const FIXTURES = path.join(__dirname, "fixtures", "sdk");
 
-function frames(name: string): unknown[] {
-  return fs
+// A fixture may hold several sessions (a resume scenario); `session` picks
+// one. Capture markers are not SDK frames.
+function frames(name: string, session = 0): unknown[] {
+  const all = fs
     .readFileSync(path.join(FIXTURES, `${name}.jsonl`), "utf8")
     .split("\n")
     .filter(Boolean)
-    .map((l) => (JSON.parse(l) as { msg: unknown }).msg);
+    .map((l) => (JSON.parse(l) as { msg: { type: string } }).msg);
+  const starts = all.flatMap((m, i) => (m.type === "capture_session" ? [i] : []));
+  const from = starts[session] ?? 0;
+  const to = starts[session + 1] ?? all.length;
+  return all.slice(from, to).filter((m) => !m.type.startsWith("capture_"));
 }
 
 // Everything the panel would see for one fixture: the StreamEvents the
 // session emitted, and the messages the workspace built from them.
-function replay(name: string, prompt: string) {
+function replay(name: string, prompt: string, sessionIndex = 0) {
   const session = new ClaudeSession({ cwd: "/tmp/sdk-capture" });
   const s = session as unknown as {
     handleSDKMessage(m: unknown): void;
@@ -55,7 +61,7 @@ function replay(name: string, prompt: string) {
   session.on("runState", (st: string) => fake.emit("runState", st));
   fake.isRunning = true;
   void ws.sendMessage(prompt);
-  for (const f of frames(name)) s.handleSDKMessage(f);
+  for (const f of frames(name, sessionIndex)) s.handleSDKMessage(f);
   return { session, events, states, ws, messages: ws.messages.filter((m) => m.kind === "agent") };
 }
 
@@ -279,16 +285,32 @@ describe("real SDK streams", () => {
     expect(messages[0].content.length).toBeGreaterThan(0);
   });
 
+  it("resume-orphan-bg: resuming past a stopped background task does not end our turn early", () => {
+    const { messages, events } = replay("resume-orphan-bg", "Reply with the single word two.", 1);
+    // One reply to our prompt, not an empty one plus a wake-up.
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content.trim()).toBe("two");
+    expect(messages[0].status).toBe("done");
+    expect(events.filter((e) => e.kind === "result")).toHaveLength(1);
+    expect(events.some((e) => e.kind === "notice" && e.level === "wakeup")).toBe(false);
+    // The orphaned task is mentioned, folded, not a card.
+    const notice = messages[0].events!.find((e) => e.kind === "notice")!;
+    expect(notice).toMatchObject({ level: "warning" });
+    expect(notice.content).toContain("previous session");
+    expect(messages[0].events!.some((e) => e.kind === "subagent_start")).toBe(false);
+  });
+
   it("the client aggregation converges on the server transcript for every fixture", () => {
-    for (const [name, prompt] of [
-      ["bash-quick", "a"],
-      ["bash-long", "b"],
-      ["bash-bg", "c"],
-      ["agent", "d"],
-      ["agent-bg", "e"],
-      ["nested-agent", "f"],
+    for (const [name, prompt, session] of [
+      ["bash-quick", "a", 0],
+      ["bash-long", "b", 0],
+      ["bash-bg", "c", 0],
+      ["agent", "d", 0],
+      ["agent-bg", "e", 0],
+      ["nested-agent", "f", 0],
+      ["resume-orphan-bg", "g", 1],
     ] as const) {
-      const { messages, events } = replay(name, prompt);
+      const { messages, events } = replay(name, prompt, session);
       const client = clientView(prompt, events);
       expect(client.length, name).toBe(messages.length);
       messages.forEach((m, i) => {

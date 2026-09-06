@@ -20,7 +20,7 @@ node scripts/capture-sdk.ts bash-long agent-bg        # only what you need, max 
 ```
 
 - Uses the user's own Claude login; model `claude-sonnet-5` (`CAPTURE_MODEL` to override — Sonnet is cheap and emits the same frames).
-- Scenarios live in `SCENARIOS` in `scripts/capture-sdk.ts`: `bash-quick`, `bash-long`, `bash-bg`, `agent`, `agent-bg`, `nested-agent`, `skill`, `skill-tool`, `image`, `two-turns`. Add a new one as a prompt list; the prompt must force the exact tool usage (say "foreground" / "run_in_background true", "do not poll").
+- Scenarios live in `SCENARIOS` in `scripts/capture-sdk.ts`: `bash-quick`, `bash-long`, `bash-bg`, `agent`, `agent-bg`, `nested-agent`, `skill`, `skill-tool`, `image`, `two-turns`, `resume-orphan-bg` (two sessions: the first is ended right after its result with a background task still running, the second resumes it). Add a new one as a prompt list, or as `{ prompts, resume }` for a resume scenario; the prompt must force the exact tool usage (say "foreground" / "run_in_background true", "do not poll").
 - Output: `~/.cache/agent-team-captures/<scenario>.jsonl`, one `{t, msg}` per frame, strings trimmed to 400 chars, base64 replaced. The watchdog ends the session 4 s after the last result once no non-ambient background tasks remain, 150 s hard cap.
 - `image` needs `CAPTURE_IMAGE=<png>`; `skill*` need the hello skill above under the capture cwd.
 

@@ -13,7 +13,14 @@ const CWD = process.env.CAPTURE_CWD ?? "/tmp/sdk-capture";
 const OUT = path.join(os.homedir(), ".cache", "agent-team-captures");
 const IMAGE = process.env.CAPTURE_IMAGE ?? path.join(CWD, "sample.png");
 
-const SCENARIOS: Record<string, string[]> = {
+interface Scenario {
+  prompts: string[];
+  // End the session right after the first result even if background tasks
+  // are still running, then resume it with these prompts in a new session.
+  resume?: string[];
+}
+
+const SCENARIOS: Record<string, string[] | Scenario> = {
   "bash-quick": ["Run `echo hi` with the Bash tool, then reply with the single word done."],
   "bash-long": [
     "Run `sleep 8; echo slow` with the Bash tool in the foreground (do NOT use run_in_background), wait for it, then reply with the single word done.",
@@ -38,6 +45,12 @@ const SCENARIOS: Record<string, string[]> = {
     `Read the image file ${IMAGE} with the Read tool and describe it in at most eight words.`,
   ],
   "two-turns": ["Reply with the single word one.", "Reply with the single word two."],
+  "resume-orphan-bg": {
+    prompts: [
+      "Run `sleep 120; echo late` with the Bash tool with run_in_background set to true. Do not wait for it and do not poll it; reply with the single word started right away.",
+    ],
+    resume: ["Reply with the single word two."],
+  },
 };
 
 function trim(v: unknown): unknown {
@@ -89,21 +102,28 @@ function inputStream() {
   };
 }
 
-async function run(name: string, prompts: string[]) {
-  fs.mkdirSync(OUT, { recursive: true });
-  const file = path.join(OUT, `${name}.jsonl`);
-  const out = fs.createWriteStream(file);
-  const t0 = Date.now();
+interface SessionOpts {
+  prompts: string[];
+  resume?: string;
+  endAfterFirstResult?: boolean;
+}
+
+// Returns the session id so a follow-up session can resume it.
+async function runSession(out: fs.WriteStream, t0: number, opts: SessionOpts): Promise<string> {
+  const { prompts } = opts;
   const log = (msg: unknown) =>
     out.write(JSON.stringify({ t: Date.now() - t0, msg: trim(msg) }) + "\n");
+  log({ type: "capture_session", resume: opts.resume ?? null });
   const input = inputStream();
   const abort = new AbortController();
+  let sessionId = "";
   const q = query({
     prompt: input.iterable,
     options: {
       cwd: CWD,
       model: MODEL,
       abortController: abort,
+      ...(opts.resume && { resume: opts.resume }),
       systemPrompt: { type: "preset", preset: "claude_code" },
       skills: "all",
       includePartialMessages: true,
@@ -131,7 +151,8 @@ async function run(name: string, prompts: string[]) {
   const deadline = Date.now() + 150_000;
   const watchdog = setInterval(() => {
     const idle = Date.now() - lastAt;
-    const turnDone = results > 0 && pending.length === 0 && bg === 0;
+    const turnDone =
+      results > 0 && pending.length === 0 && (bg === 0 || opts.endAfterFirstResult === true);
     if ((turnDone && idle > 4000) || Date.now() > deadline) {
       clearInterval(watchdog);
       input.end();
@@ -142,6 +163,7 @@ async function run(name: string, prompts: string[]) {
     for await (const msg of q) {
       lastAt = Date.now();
       log(msg);
+      if ("session_id" in msg && msg.session_id) sessionId = msg.session_id;
       if (msg.type === "system" && msg.subtype === "background_tasks_changed") {
         bg = msg.tasks.filter((t) => !t.ambient).length;
       }
@@ -154,8 +176,25 @@ async function run(name: string, prompts: string[]) {
     log({ type: "capture_error", message: e instanceof Error ? e.message : String(e) });
   } finally {
     clearInterval(watchdog);
-    out.end();
   }
+  return sessionId;
+}
+
+async function run(name: string, scenario: string[] | Scenario) {
+  fs.mkdirSync(OUT, { recursive: true });
+  const file = path.join(OUT, `${name}.jsonl`);
+  const out = fs.createWriteStream(file);
+  const t0 = Date.now();
+  const sc = Array.isArray(scenario) ? { prompts: scenario } : scenario;
+  const sessionId = await runSession(out, t0, {
+    prompts: sc.prompts,
+    endAfterFirstResult: sc.resume !== undefined,
+  });
+  if (sc.resume) {
+    await new Promise((r) => setTimeout(r, 3000));
+    await runSession(out, t0, { prompts: sc.resume, resume: sessionId });
+  }
+  out.end();
   const frames = fs.readFileSync(file, "utf8").split("\n").filter(Boolean).length;
   console.log(`${name}: ${frames} frames -> ${file}`);
 }
@@ -176,8 +215,8 @@ if (args.length > MAX_PER_RUN) {
 }
 let first = true;
 for (const n of args) {
-  const prompts = SCENARIOS[n];
-  if (!prompts) {
+  const scenario = SCENARIOS[n];
+  if (!scenario) {
     console.error("unknown scenario", n);
     continue;
   }
@@ -186,5 +225,5 @@ for (const n of args) {
     await new Promise((r) => setTimeout(r, PAUSE_MS));
   }
   first = false;
-  await run(n, prompts);
+  await run(n, scenario);
 }
