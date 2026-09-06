@@ -1148,6 +1148,13 @@ pre .copy-btn {
 pre:hover .copy-btn {
   opacity: 1;
 }
+/* No hover on touch screens: keep the button faintly visible so a tap has a
+   target and "Copied" has somewhere to show. */
+@media (hover: none) {
+  pre .copy-btn {
+    opacity: 0.6;
+  }
+}
 pre .copy-btn:hover {
   color: var(--text-primary);
 }
@@ -1187,23 +1194,27 @@ pre .copy-btn:hover {
 .banner-text li {
   margin: 2px 0;
 }
-.message-content .table-scroll-wrapper {
+/* Tables render in every markdown container (answers, tool bodies, subagent
+   prompts/summaries, banners): scroll inside their wrapper, never widen the
+   transcript. */
+.table-scroll-wrapper {
   overflow-x: auto;
   margin: 8px 0;
+  max-width: 100%;
 }
-.message-content table {
+.table-scroll-wrapper table {
   border-collapse: collapse;
   min-width: 100%;
   font-size: 12px;
   white-space: nowrap;
 }
-.message-content th,
-.message-content td {
+.table-scroll-wrapper th,
+.table-scroll-wrapper td {
   border: 1px solid var(--border);
   padding: 5px 10px;
   text-align: left;
 }
-.message-content th {
+.table-scroll-wrapper th {
   background: var(--bg-tertiary);
   font-weight: 600;
 }
@@ -1312,6 +1323,12 @@ pre .copy-btn:hover {
 .event-chip {
   flex-shrink: 0;
   display: inline-block;
+  /* MCP tool names can be very long; the row must not scroll off-screen. */
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
   font-size: 10.5px;
   font-weight: 600;
   line-height: 16px;
@@ -1462,6 +1479,19 @@ pre .copy-btn:hover {
 }
 .banner-text p {
   margin: 0;
+}
+/* compact/retry banners carry raw text, not markdown: keep their lines. */
+.banner[data-kind="compact"] .banner-text,
+.banner[data-kind="retry"] .banner-text {
+  white-space: pre-wrap;
+}
+.message-render-error {
+  margin: 4px 20px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--error);
+  border: 1px dashed var(--error);
+  border-radius: var(--radius-sm);
 }
 .banner-compact {
   color: var(--warning);

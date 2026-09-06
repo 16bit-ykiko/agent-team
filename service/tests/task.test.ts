@@ -657,3 +657,94 @@ describe("fast mode and goal commands", () => {
     expect(session.sent).toEqual([]);
   });
 });
+
+describe("events between turns and late results", () => {
+  it("turns a banner that arrives while idle into a system line, not a streaming bubble", () => {
+    const { ws, emit, session } = makeWorkspace();
+    session.isRunning = false;
+    emit({ kind: "notice", level: "notice", content: "Session compacted" });
+    const last = ws.messages[ws.messages.length - 1];
+    expect(last.kind).toBe("system");
+    expect(last.status).toBe("done");
+    expect(last.content).toContain("Session compacted");
+    expect(ws.messages.some((m) => m.status === "streaming")).toBe(false);
+  });
+
+  it("attaches a late tool result to the call that made it", async () => {
+    const { ws, emit, session, agentMsgs, done } = makeWorkspace();
+    await ws.sendMessage("run it");
+    emit({ kind: "tool_use", content: "**Bash** sleep", toolUseId: "t1", toolName: "Bash" });
+    emit({ kind: "result", content: "" });
+    session.isRunning = false;
+    const first = agentMsgs()[0];
+    expect(first.status).toBe("done");
+    emit({ kind: "tool_result", content: "finished", toolUseId: "t1" });
+    expect(agentMsgs()).toHaveLength(1);
+    expect(first.events![0].toolResult).toBe("finished");
+    // The owner is re-announced so open clients pick up the result.
+    expect(done.filter((d) => d.msgId === first.id).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("drops the retry banner once the turn finishes and keeps errors out of the text", async () => {
+    const { ws, emit, agentMsgs } = makeWorkspace();
+    await ws.sendMessage("go");
+    emit({ kind: "retry", content: "API retry 1/10 in 1s" });
+    emit({ kind: "text_delta", content: "answer" });
+    emit({ kind: "result", content: "" });
+    expect(agentMsgs()[0].events!.some((e) => e.kind === "retry")).toBe(false);
+    await ws.sendMessage("again");
+    emit({ kind: "text_delta", content: "partial" });
+    emit({ kind: "error", content: "boom" });
+    const failed = agentMsgs()[1];
+    expect(failed.status).toBe("error");
+    expect(failed.content).toBe("partial");
+    expect(failed.events!.at(-1)).toMatchObject({ kind: "error", content: "boom" });
+  });
+
+  it("applies a grandchild's events inside the nested card and drops ownerless carriers", async () => {
+    const { ws, emit, agentMsgs } = makeWorkspace();
+    await ws.sendMessage("go");
+    emit(subagentStart("outer"));
+    emit({
+      kind: "subagent_progress",
+      content: "",
+      subagent: {
+        taskId: "outer",
+        description: "",
+        _innerEvent: subagentStart("inner") as StreamEvent,
+      },
+    });
+    emit({
+      kind: "subagent_progress",
+      content: "",
+      subagent: {
+        taskId: "outer",
+        description: "",
+        _innerEvent: {
+          kind: "subagent_progress",
+          content: "",
+          subagent: {
+            taskId: "inner",
+            description: "",
+            _innerEvent: { kind: "tool_use", content: "**Read** `/a`", toolUseId: "r1" },
+          },
+        } as StreamEvent,
+      },
+    });
+    // A carrier for a task nobody started: dropped, no phantom card.
+    emit({
+      kind: "subagent_progress",
+      content: "",
+      subagent: {
+        taskId: "ghost",
+        description: "",
+        _innerEvent: { kind: "thinking", content: "…" },
+      },
+    });
+    const events = agentMsgs()[0].events!;
+    expect(events.map((e) => e.kind)).toEqual(["subagent_start"]);
+    const inner = events[0].subagent!.events!;
+    expect(inner.map((e) => e.kind)).toEqual(["subagent_start"]);
+    expect(inner[0].subagent!.events!.map((e) => e.kind)).toEqual(["tool_use"]);
+  });
+});

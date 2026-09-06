@@ -143,3 +143,38 @@ describe("timelineBlocks", () => {
     expect(timelineBlocks([])).toEqual([]);
   });
 });
+
+describe("timelineBlocks details", () => {
+  it("folds a summarised done event without losing the start's count or type", () => {
+    const events = [
+      ev("subagent_start", {
+        subagent: { taskId: "a", description: "review", agentType: "Explore", eventCount: 36 },
+      }),
+      ev("subagent_done", {
+        subagent: { taskId: "a", description: "", status: "completed", eventCount: 0 },
+      }),
+    ];
+    const card = (timelineBlocks(events)[0] as { ev: StreamEvent }).ev;
+    expect(card.subagent).toMatchObject({
+      status: "completed",
+      eventCount: 36,
+      agentType: "Explore",
+      description: "review",
+    });
+  });
+
+  it("hides the tool_use that spawned a card and cuts a run at a new model step", () => {
+    const events = [
+      ev("tool_use", { toolName: "Agent", toolUseId: "t1", step: 1 }),
+      ev("subagent_start", { toolUseId: "t1", subagent: { taskId: "a", description: "d" } }),
+      ev("tool_use", { toolName: "Read", step: 2 }),
+      ev("tool_use", { toolName: "Read", step: 2 }),
+      ev("tool_use", { toolName: "Bash", step: 3 }),
+    ];
+    const blocks = timelineBlocks(events);
+    expect(blocks.map((b) => b.kind)).toEqual(["subagent", "steps", "steps"]);
+    expect((blocks[1] as { events: unknown[] }).events).toHaveLength(2);
+    expect((blocks[2] as { events: unknown[] }).events).toHaveLength(1);
+    expect(splitEvents(events).regular).toHaveLength(3);
+  });
+});

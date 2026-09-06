@@ -155,6 +155,71 @@ export interface WorkspaceCallbacks {
   onUnhandled?: (wsId: string, agentId: string, msg: unknown) => void;
 }
 
+// Persisted events from older versions may lack fields the renderer
+// indexes (content), and running tasks cannot survive a restart — at any
+// nesting depth.
+export function normalizeEvents(events: StreamEvent[]): void {
+  for (const ev of events) {
+    if (typeof ev.content !== "string") ev.content = "";
+    const sa = ev.subagent;
+    if (!sa) continue;
+    if (ev.kind === "subagent_start" && (sa.status === "running" || sa.status == null)) {
+      sa.status = "stopped";
+    } else if (sa.status === "running") {
+      sa.status = "stopped";
+    }
+    if (sa.events) normalizeEvents(sa.events);
+  }
+}
+
+// Apply an inner event to a subagent's transcript. Carriers nest: a
+// grandchild's event arrives as progress(child, _innerEvent: progress(grand,
+// _innerEvent: ev)), so recurse into the nested start's own transcript.
+function applyInnerEvent(saEvents: StreamEvent[], innerEvent: StreamEvent): void {
+  if (innerEvent.kind === "tool_result" && innerEvent.toolUseId) {
+    const i = saEvents.findIndex(
+      (e) => e.kind === "tool_use" && e.toolUseId === innerEvent.toolUseId,
+    );
+    if (i >= 0) {
+      saEvents[i].toolResult = innerEvent.content;
+      return;
+    }
+  }
+  if (innerEvent.kind === "subagent_progress" && innerEvent.subagent?.taskId) {
+    const nid = innerEvent.subagent.taskId;
+    const nested = innerEvent.subagent._innerEvent;
+    if (nested) {
+      const si = saEvents.findIndex(
+        (e) => e.kind === "subagent_start" && e.subagent?.taskId === nid,
+      );
+      if (si >= 0) applyInnerEvent((saEvents[si].subagent!.events ??= []), nested);
+      // No start here: the carrier has nowhere to go; drop it.
+      return;
+    }
+    const i = saEvents.findIndex(
+      (e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid,
+    );
+    if (i >= 0) {
+      saEvents[i] = innerEvent;
+      return;
+    }
+  }
+  if (innerEvent.kind === "subagent_done" && innerEvent.subagent?.taskId) {
+    const nid = innerEvent.subagent.taskId;
+    const pi = saEvents.findIndex(
+      (e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid,
+    );
+    if (pi >= 0) saEvents.splice(pi, 1);
+    const si = saEvents.findIndex((e) => e.kind === "subagent_start" && e.subagent?.taskId === nid);
+    if (si >= 0) {
+      saEvents[si].subagent!.status = innerEvent.subagent.status;
+      saEvents[si].subagent!.summary = innerEvent.subagent.summary;
+      saEvents[si].subagent!.usage = innerEvent.subagent.usage;
+    }
+  }
+  saEvents.push(innerEvent);
+}
+
 export class Workspace {
   id: string;
   name: string;
@@ -225,6 +290,7 @@ export class Workspace {
   }
 
   setMessages(messages: Message[]): void {
+    for (const m of messages) if (m.events) normalizeEvents(m.events);
     this.messages = messages;
     this.messagesLoaded = true;
     const last = messages[messages.length - 1];
@@ -283,47 +349,16 @@ export class Workspace {
 
       if (innerEvent && startIdx >= 0) {
         const saEvents = (msg.events[startIdx].subagent!.events ??= []);
-        if (innerEvent.kind === "tool_result" && innerEvent.toolUseId) {
-          const i = saEvents.findIndex(
-            (e) => e.kind === "tool_use" && e.toolUseId === innerEvent.toolUseId,
-          );
-          if (i >= 0) {
-            saEvents[i].toolResult = innerEvent.content;
-            this.cb?.onStreamEvent(this.id, msg, event);
-            return;
-          }
-        }
-        if (innerEvent.kind === "subagent_progress" && innerEvent.subagent?.taskId) {
-          const i = saEvents.findIndex(
-            (e) =>
-              e.kind === "subagent_progress" && e.subagent?.taskId === innerEvent.subagent?.taskId,
-          );
-          if (i >= 0) {
-            saEvents[i] = innerEvent;
-            this.cb?.onStreamEvent(this.id, msg, event);
-            return;
-          }
-        }
-        if (innerEvent.kind === "subagent_done" && innerEvent.subagent?.taskId) {
-          const nid = innerEvent.subagent.taskId;
-          const pi = saEvents.findIndex(
-            (e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid,
-          );
-          if (pi >= 0) saEvents.splice(pi, 1);
-          const si = saEvents.findIndex(
-            (e) => e.kind === "subagent_start" && e.subagent?.taskId === nid,
-          );
-          if (si >= 0) {
-            saEvents[si].subagent!.status = innerEvent.subagent.status;
-            saEvents[si].subagent!.summary = innerEvent.subagent.summary;
-            saEvents[si].subagent!.usage = innerEvent.subagent.usage;
-          }
-        }
-        saEvents.push(innerEvent);
+        applyInnerEvent(saEvents, innerEvent);
         this.cb?.onStreamEvent(this.id, msg, event);
         return;
       }
-      delete event.subagent?._innerEvent;
+      if (innerEvent) {
+        // A carrier for a task whose start this message does not hold: not
+        // renderable on its own, and pushing it made a phantom, permanently
+        // running card. Drop it.
+        return;
+      }
 
       if (startIdx >= 0) event.contentOffset = msg.events[startIdx].contentOffset;
       const prev = msg.events.findIndex(
@@ -352,6 +387,14 @@ export class Workspace {
 
   // Subagent events can arrive after the message containing subagent_start is
   // finalized. Search backwards to find the message that owns this subagent.
+  private findToolUseOwner(toolUseId: string): Message | null {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i];
+      if (m.events?.some((e) => e.kind === "tool_use" && e.toolUseId === toolUseId)) return m;
+    }
+    return null;
+  }
+
   private findSubagentOwner(taskId: string): Message | null {
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const m = this.messages[i];
@@ -378,6 +421,30 @@ export class Workspace {
             this.handleSubagentOnMsg(ownerMsg, event);
             return;
           }
+        }
+      }
+
+      // Nothing in flight: a late tool result belongs to the call that
+      // made it, and a banner (CLI notice, post-turn compaction, hook
+      // failure) is a system line — opening an agent bubble for either left
+      // a "streaming" message nothing would ever finish.
+      if (!entry.currentMsg && !entry.session.isRunning) {
+        if (event.kind === "tool_result" && event.toolUseId) {
+          const owner = this.findToolUseOwner(event.toolUseId);
+          if (owner) {
+            const call = owner.events!.find(
+              (e) => e.kind === "tool_use" && e.toolUseId === event.toolUseId,
+            )!;
+            call.toolResult = event.content;
+            if (event.isMarkdown) call.toolResultIsMarkdown = true;
+            this.cb?.onStreamEvent(this.id, owner, event);
+            this.cb?.onMessageDone(this.id, owner.id, owner.status, owner.content, owner.events);
+            return;
+          }
+        }
+        if (event.kind === "notice" || event.kind === "compact" || event.kind === "retry") {
+          this.pushSystemMessage(event.content);
+          return;
         }
       }
 
@@ -409,6 +476,10 @@ export class Workspace {
               "*(no output — the session ended without producing anything; check network/credentials or server logs)*";
           }
           entry.currentMsg.status = "done";
+          // The retry succeeded; "API retry 2/10 in 5s" is no longer true.
+          if (entry.currentMsg.events?.some((e) => e.kind === "retry")) {
+            entry.currentMsg.events = entry.currentMsg.events.filter((e) => e.kind !== "retry");
+          }
           if (event.context) entry.currentMsg.context = event.context;
           if (event.effort) entry.currentMsg.effort = event.effort;
           const patch = {
@@ -428,13 +499,10 @@ export class Workspace {
         this.cb?.onAgentIdle?.(this.id, agentId);
         setTimeout(() => this.dequeueNext(agentId), 0);
       } else if (event.kind === "error") {
+        // The error is an event (rendered as a red banner where it
+        // happened); appending it to the text as well showed it twice.
         const msg = this.ensureAgentMsg(entry);
         msg.status = "error";
-        if (!msg.content) {
-          msg.content = event.content;
-        } else {
-          msg.content += "\n\n" + event.content;
-        }
         event.contentOffset = msg.content.length;
         msg.events!.push(event);
         this.cb?.onStreamEvent(this.id, msg, event);
@@ -1026,13 +1094,7 @@ export class Workspace {
         kind: m.kind ?? (m.agentId === null ? "user" : "agent"),
         status: m.status === "streaming" ? ("done" as MessageStatus) : m.status,
       };
-      if (msg.events) {
-        for (const ev of msg.events) {
-          if (ev.subagent?.status === "running") {
-            ev.subagent.status = "stopped";
-          }
-        }
-      }
+      if (msg.events) normalizeEvents(msg.events);
       return msg;
     });
     const lastMsg = ws.messages[ws.messages.length - 1];

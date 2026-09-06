@@ -3,7 +3,7 @@ import { StreamEvent } from "./useServer";
 export const SUBAGENT_KINDS = new Set(["subagent_start", "subagent_progress", "subagent_done"]);
 // One-line status banners that render inline rather than inside the
 // collapsed step box: compaction, CLI notices, API retries.
-export const BANNER_KINDS = new Set(["compact", "notice", "retry"]);
+export const BANNER_KINDS = new Set(["compact", "notice", "retry", "error"]);
 
 export function isSubagentEvent(e: StreamEvent): boolean {
   return SUBAGENT_KINDS.has(e.kind);
@@ -30,13 +30,23 @@ function foldSubagents(events: StreamEvent[]): Map<string, StreamEvent> {
       e.kind === "subagent_done" ||
       (e.kind === "subagent_progress" && existing.kind === "subagent_start")
     ) {
+      const prev = existing?.subagent;
+      const next = e.subagent!;
       merged.set(taskId, {
         ...e,
         subagent: {
-          ...(existing?.subagent ?? {}),
-          ...e.subagent!,
-          description: existing?.subagent?.description || e.subagent!.description,
-          events: existing?.subagent?.events ?? e.subagent!.events,
+          ...(prev ?? {}),
+          ...next,
+          // Later lifecycle events carry only their own fields: keep what the
+          // start knew (description, type, prompt) and the real inner count —
+          // a summarised done event says 0, which would hide the transcript.
+          description: prev?.description || next.description,
+          agentType: next.agentType ?? prev?.agentType,
+          prompt: next.prompt ?? prev?.prompt,
+          hasPrompt: next.hasPrompt ?? prev?.hasPrompt,
+          lastTool: next.lastTool ?? prev?.lastTool,
+          events: prev?.events ?? next.events,
+          eventCount: Math.max(prev?.eventCount ?? 0, next.eventCount ?? 0) || undefined,
         },
       });
     }
@@ -44,12 +54,28 @@ function foldSubagents(events: StreamEvent[]): Map<string, StreamEvent> {
   return merged;
 }
 
+// The tool_use that spawned a subagent (same toolUseId as its card) shows the
+// same prompt and result as the card; the card is the richer of the two.
+function spawnToolUseIds(events: StreamEvent[]): Set<string> {
+  const ids = new Set<string>();
+  for (const e of events) {
+    if (e.kind === "subagent_start" && e.toolUseId) ids.add(e.toolUseId);
+  }
+  return ids;
+}
+
+function isOrdinary(e: StreamEvent, spawns: Set<string>): boolean {
+  if (isSubagentEvent(e) || isBannerEvent(e)) return false;
+  return !(e.kind === "tool_use" && e.toolUseId != null && spawns.has(e.toolUseId));
+}
+
 export function splitEvents(events: StreamEvent[]): {
   regular: StreamEvent[];
   subagents: StreamEvent[];
   banners: StreamEvent[];
 } {
-  const regular = events.filter((e) => !isSubagentEvent(e) && !isBannerEvent(e));
+  const spawns = spawnToolUseIds(events);
+  const regular = events.filter((e) => isOrdinary(e, spawns));
   const banners = events.filter(isBannerEvent);
   return { regular, subagents: [...foldSubagents(events).values()], banners };
 }
@@ -65,12 +91,15 @@ export type TimelineBlock =
 
 export function timelineBlocks(events: StreamEvent[]): TimelineBlock[] {
   const folded = foldSubagents(events);
+  const spawns = spawnToolUseIds(events);
   const placed = new Set<string>();
   const blocks: TimelineBlock[] = [];
   let run: StreamEvent[] = [];
+  let runStep: number | undefined;
   const flush = () => {
     if (run.length > 0) blocks.push({ kind: "steps", events: run });
     run = [];
+    runStep = undefined;
   };
   for (const e of events) {
     if (isSubagentEvent(e)) {
@@ -82,7 +111,11 @@ export function timelineBlocks(events: StreamEvent[]): TimelineBlock[] {
     } else if (isBannerEvent(e)) {
       flush();
       blocks.push({ kind: "banner", ev: e });
-    } else {
+    } else if (isOrdinary(e, spawns)) {
+      // A new model step (assistant turn in the tool loop) is a boundary too,
+      // so two tool-only steps do not merge into one box with summed counts.
+      if (e.step != null && runStep != null && e.step !== runStep) flush();
+      if (e.step != null) runStep = e.step;
       run.push(e);
     }
   }

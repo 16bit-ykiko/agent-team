@@ -226,6 +226,9 @@ export class ClaudeSession extends EventEmitter {
   private abortController: AbortController | null = null;
   private iterating = false;
   private processing = false;
+  // Set by pushMessage, cleared by the turn's first main-agent frame. In
+  // that window a user text frame is the CLI expanding our prompt (/skill).
+  private awaitingFirstOutput = false;
   private turnStartTime = 0;
   private stepCounter = 0;
   // Subagent parent-child tracking: SDK only gives us flat task events, so we
@@ -374,6 +377,7 @@ export class ClaudeSession extends EventEmitter {
     };
     this.inputController!.push(userMsg);
     this.processing = true;
+    this.awaitingFirstOutput = true;
     this.turnStartTime = Date.now();
     this.stepCounter = 0;
     this.updateRunState();
@@ -547,23 +551,31 @@ export class ClaudeSession extends EventEmitter {
     this.emit("unhandled", msg);
   }
 
-  private emitNestedEvent(parentTaskId: string, innerEvent: StreamEvent): void {
-    const parentToolUseId = this.taskToToolUse.get(parentTaskId);
-    this.emit("event", {
-      kind: "subagent_progress",
-      content: "",
-      toolUseId: parentToolUseId,
-      subagent: { taskId: parentTaskId, description: "", _innerEvent: innerEvent },
-    } as StreamEvent);
+  // Wrap an inner event once per ancestor so the outermost carrier always
+  // names a task that has a top-level subagent_start. A grandchild's events
+  // addressed to the grandchild alone found no owner in the message and
+  // became a phantom, permanently running card.
+  private wrapToRoot(taskId: string, inner: StreamEvent): StreamEvent {
+    let ev = inner;
+    let id: string | undefined = taskId;
+    while (id) {
+      ev = {
+        kind: "subagent_progress",
+        content: "",
+        toolUseId: this.taskToToolUse.get(id),
+        subagent: { taskId: id, description: "", _innerEvent: ev },
+      } as StreamEvent;
+      id = this.nestedTaskToParent.get(id);
+    }
+    return ev;
   }
 
-  private emitInner(parentToolUseId: string, taskId: string, inner: StreamEvent): void {
-    this.emit("event", {
-      kind: "subagent_progress",
-      content: "",
-      toolUseId: parentToolUseId,
-      subagent: { taskId, description: "", _innerEvent: inner },
-    } as StreamEvent);
+  private emitNestedEvent(parentTaskId: string, innerEvent: StreamEvent): void {
+    this.emit("event", this.wrapToRoot(parentTaskId, innerEvent));
+  }
+
+  private emitInner(_parentToolUseId: string, taskId: string, inner: StreamEvent): void {
+    this.emit("event", this.wrapToRoot(taskId, inner));
   }
 
   private static readonly MAX_PARKED = 200;
@@ -584,6 +596,7 @@ export class ClaudeSession extends EventEmitter {
         // agent may be idle-but-waiting; only the main agent's own blocks
         // mean a turn is in progress.
         if (!(msg as SDKAssistantMessage).parent_tool_use_id) {
+          this.awaitingFirstOutput = false;
           this.setProcessing();
           const usage = (msg as SDKAssistantMessage).message?.usage as unknown as
             Record<string, number> | undefined;
@@ -597,7 +610,10 @@ export class ClaudeSession extends EventEmitter {
         break;
 
       case "stream_event":
-        if (!(msg as SDKPartialAssistantMessage).parent_tool_use_id) this.setProcessing();
+        if (!(msg as SDKPartialAssistantMessage).parent_tool_use_id) {
+          this.awaitingFirstOutput = false;
+          this.setProcessing();
+        }
         this.handlePartialMessage(msg as SDKPartialAssistantMessage);
         break;
 
@@ -627,8 +643,11 @@ export class ClaudeSession extends EventEmitter {
       case "auth_status": {
         const a = msg as unknown as Record<string, unknown>;
         if (a.error) {
+          // The CLI reports this and keeps going (re-auth, retry); the
+          // reply must not be finalized mid-turn.
           this.emit("event", {
-            kind: "error",
+            kind: "notice",
+            level: "error",
             content: `Authentication failed: ${a.error as string}`,
           } as StreamEvent);
         } else if (a.isAuthenticating) {
@@ -703,7 +722,7 @@ export class ClaudeSession extends EventEmitter {
           // what the agent is waiting on. The card's label is the subagent
           // type for agents and the task kind ("shell", "monitor") otherwise.
           // Housekeeping tasks (skip_transcript) stay out of the transcript.
-          if (sys.skip_transcript) break;
+          if (sys.skip_transcript || sys.ambient) break;
           const taskType = sys.task_type as string | undefined;
           const isAgentTask = taskType ? taskType === "local_agent" : sys.subagent_type != null;
           const taskId = sys.task_id as string;
@@ -798,8 +817,11 @@ export class ClaudeSession extends EventEmitter {
         } else if (sys.subtype === "model_refusal_fallback") {
           const from = (sys.original_model as string) ?? "unknown";
           const to = (sys.fallback_model as string) ?? "unknown";
+          // The turn continues on the fallback model: a banner, not an error
+          // that would finalize the reply and split it into two bubbles.
           this.emit("event", {
-            kind: "error",
+            kind: "notice",
+            level: "warning",
             content: `Model refused and fell back: ${from} → ${to}`,
           } as StreamEvent);
         } else if (sys.subtype === "model_refusal_no_fallback") {
@@ -953,8 +975,14 @@ export class ClaudeSession extends EventEmitter {
             toolInput: extractToolInput(b),
           } as StreamEvent;
         } else if (blockType === "tool_result") {
-          const rc = b.content as string;
-          if (rc) ev = { kind: "tool_result", content: rc } as StreamEvent;
+          const rc = toolResultText(b.content);
+          if (rc) {
+            ev = {
+              kind: "tool_result",
+              content: rc,
+              toolUseId: b.tool_use_id as string | undefined,
+            } as StreamEvent;
+          }
         }
         if (!ev) continue;
         if (taskId) this.emitInner(parentToolUseId, taskId, ev);
@@ -993,11 +1021,12 @@ export class ClaudeSession extends EventEmitter {
         } as StreamEvent);
         if (b.name === "ScheduleWakeup") this.noteSchedule(b.input as Record<string, unknown>);
       } else if (blockType === "tool_result") {
-        const resultContent = b.content as string;
+        const resultContent = toolResultText(b.content);
         if (resultContent) {
           this.emit("event", {
             kind: "tool_result",
             content: resultContent,
+            toolUseId: b.tool_use_id as string | undefined,
             step,
           } as StreamEvent);
         }
@@ -1022,7 +1051,10 @@ export class ClaudeSession extends EventEmitter {
     const hasToolResult =
       Array.isArray(content) &&
       (content as Array<Record<string, unknown>>).some((c) => c.type === "tool_result");
-    if (!parentToolUseId && !this.processing && !hasToolResult && !msg.isSynthetic) {
+    // shouldQuery=false frames are appended to the transcript without a turn.
+    const startsTurn = msg.shouldQuery !== false && !msg.isSynthetic;
+    const expansion = this.expectingTurn && this.awaitingFirstOutput;
+    if (!parentToolUseId && (!this.processing || expansion) && !hasToolResult && startsTurn) {
       const text =
         typeof content === "string"
           ? content
@@ -1036,7 +1068,7 @@ export class ClaudeSession extends EventEmitter {
       if (trimmed && trimmed !== this.lastPushed?.trim()) {
         // We pushed a prompt and the turn has not started: this is the CLI's
         // expansion of it (a /skill), not something that woke the session.
-        const level: NoticeLevel = this.expectingTurn ? "skill" : "wakeup";
+        const level: NoticeLevel = expansion ? "skill" : "wakeup";
         // Suppress the generic banner: the injected text is the better one.
         this.expectingTurn = true;
         this.setProcessing();
@@ -1049,15 +1081,7 @@ export class ClaudeSession extends EventEmitter {
       const b = block as Record<string, unknown>;
       if (b.type !== "tool_result") continue;
       const toolUseId = b.tool_use_id as string | undefined;
-      let text = "";
-      if (typeof b.content === "string") {
-        text = b.content;
-      } else if (Array.isArray(b.content)) {
-        text = (b.content as Array<Record<string, unknown>>)
-          .filter((c) => c.type === "text")
-          .map((c) => c.text as string)
-          .join("\n");
-      }
+      const text = toolResultText(b.content);
       if (!text) continue;
 
       if (parentToolUseId) {
@@ -1140,7 +1164,11 @@ export class ClaudeSession extends EventEmitter {
     }
     this.processing = false;
     this.expectingTurn = false;
+    this.awaitingFirstOutput = false;
     this.pendingNested.clear();
+    // Every tool_use a subagent made this turn was recorded for nesting;
+    // the tasks are done, so the map would only grow.
+    this.nestedToolUseToParent.clear();
     this.setActivity(null);
     if (this.pendingWake && !this.pendingWake.stop) {
       const { at } = this.pendingWake;
@@ -1359,6 +1387,18 @@ function extractToolInput(block: Record<string, unknown>): ToolInput | undefined
     };
   }
   return undefined;
+}
+
+// tool_result content is a string or a list of blocks; only text is shown.
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return (content as Array<Record<string, unknown>>)
+      .filter((c) => c.type === "text")
+      .map((c) => c.text as string)
+      .join("\n");
+  }
+  return "";
 }
 
 // Card label for a non-agent background task ("local_bash" → "shell").

@@ -1,4 +1,5 @@
-import { useState, useCallback, useMemo, memo } from "react";
+import { useState, useCallback, useMemo, memo, Component, useEffect } from "react";
+import type { ReactNode } from "react";
 import type { Message, AgentInfo, StreamEvent } from "./useServer";
 import { splitEvents, timelineBlocks } from "./events";
 import { toolNameOf, toolSummary } from "./stream";
@@ -36,25 +37,41 @@ const BANNER_LABEL: Record<string, string> = {
   wakeup: "Woke up",
   schedule: "Scheduled",
   skill: "Skill",
+  error: "Error",
 };
 
 export function bannerFirstLine(content: string): string {
-  const line = content.split("\n").find((l) => l.trim()) ?? "";
+  const line = (content ?? "").split("\n").find((l) => l.trim()) ?? "";
   const plain = line.replace(/[*_`#>]/g, "").trim();
   return plain.length > FOLD_OVER_CHARS ? plain.slice(0, FOLD_OVER_CHARS - 1) + "…" : plain;
 }
 
 export function bannerFolds(level: string, content: string): boolean {
   if (!FOLDING_LEVELS.has(level)) return false;
-  return content.trim().includes("\n") || content.length > FOLD_OVER_CHARS;
+  const text = content ?? "";
+  return text.trim().includes("\n") || text.length > FOLD_OVER_CHARS;
 }
 
 // Inline status line: compaction, CLI notices, API retries. Rendered as a
 // sibling of the step box so it is visible without expanding anything.
-export const BannerItem = memo(function BannerItem({ ev }: { ev: StreamEvent }) {
+export const BannerItem = memo(function BannerItem({
+  ev,
+  onLoadDetails,
+}: {
+  ev: StreamEvent;
+  // Summary pages cap banner bodies; opening one fetches the full message.
+  onLoadDetails?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const level =
-    ev.kind === "compact" ? "compact" : ev.kind === "retry" ? "retry" : (ev.level ?? "notice");
+    ev.kind === "compact"
+      ? "compact"
+      : ev.kind === "retry"
+        ? "retry"
+        : ev.kind === "error"
+          ? "error"
+          : (ev.level ?? "notice");
+  const truncated = (ev.contentLength ?? 0) > (ev.content ?? "").length;
   const icon =
     ev.kind === "compact"
       ? "⇢"
@@ -79,14 +96,20 @@ export const BannerItem = memo(function BannerItem({ ev }: { ev: StreamEvent }) 
         {label && <span className="banner-label">{label}</span>}
         {folds && !open ? (
           <span className="banner-first-line">{bannerFirstLine(ev.content)}</span>
-        ) : ev.kind === "notice" ? (
+        ) : ev.kind === "notice" || ev.kind === "error" ? (
           <MdBlock>{ev.content}</MdBlock>
         ) : (
           ev.content
         )}
       </div>
-      {folds && (
-        <button className="btn-inline banner-toggle" onClick={() => setOpen((v) => !v)}>
+      {(folds || truncated) && (
+        <button
+          className="btn-inline banner-toggle"
+          onClick={() => {
+            if (truncated) onLoadDetails?.();
+            setOpen((v) => !v);
+          }}
+        >
           {open ? "less" : "more"}
         </button>
       )}
@@ -111,7 +134,8 @@ function chipLabelFor(toolName: string): string {
 export function MessageStatus({ msg }: { msg: Message }) {
   if (!msg.effort && !msg.fast && !msg.context) return null;
   const ctx = msg.context;
-  const pct = ctx ? Math.min(100, Math.round((ctx.tokens / ctx.window) * 100)) : null;
+  const pct =
+    ctx && ctx.window > 0 ? Math.min(100, Math.round((ctx.tokens / ctx.window) * 100)) : null;
   const tone = pct == null ? "" : pct >= 90 ? " ctx-high" : pct >= 70 ? " ctx-warn" : "";
   return (
     <div className="message-status">
@@ -168,8 +192,8 @@ export const EventItem = memo(function EventItem({
   const [bodyOpen, setBodyOpen] = useState(false);
   const summarized = !!onLoadDetails;
 
-  if (ev.kind === "compact" || ev.kind === "notice" || ev.kind === "retry") {
-    return <BannerItem ev={ev} />;
+  if (ev.kind === "compact" || ev.kind === "notice" || ev.kind === "retry" || ev.kind === "error") {
+    return <BannerItem ev={ev} onLoadDetails={onLoadDetails} />;
   }
 
   const isResult = ev.kind === "tool_result";
@@ -222,7 +246,10 @@ export const EventItem = memo(function EventItem({
         )}
       </div>
       {(bodyMissing || (toolBodyMissing && !bodyOpen)) && (
-        <div className="event-content event-placeholder" onClick={toggleBody}>
+        <div
+          className="event-content event-placeholder"
+          onClick={isResult ? toggleResult : toggleBody}
+        >
           {formatSize(bodyMissing ? (ev.contentLength ?? 0) : bodyLen)} · tap to load
         </div>
       )}
@@ -297,8 +324,14 @@ export const SubAgentItem = memo(function SubAgentItem({
   const allInner = sa.events ?? [];
   // Subagents can spawn subagents of their own; fold their nested lifecycle
   // events into one entry each and render them as nested SubAgentItems.
-  const { regular: innerEvents, subagents: nestedAgents, banners } = splitEvents(allInner);
-  const needsLoad = allInner.length === 0 && (sa.eventCount ?? 0) > 0;
+  const { regular: innerEvents, subagents: nestedAgents } = splitEvents(allInner);
+  // The server holds more of the transcript than the client (a summary
+  // page, or a live tail that arrived after the summary).
+  const needsLoad = (sa.eventCount ?? 0) > allInner.length;
+  useEffect(() => {
+    if (open && needsLoad && onLoadEvents && sa.taskId) onLoadEvents(sa.taskId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, needsLoad]);
   const totalCount = allInner.length || sa.eventCount || 0;
   const thinkingEvts = innerEvents.filter((e) => e.kind === "thinking");
   const toolEvts = innerEvents.filter((e) => e.kind === "tool_use");
@@ -308,9 +341,6 @@ export const SubAgentItem = memo(function SubAgentItem({
     const willOpen = !open;
     setOpen(willOpen);
     if (willOpen && onLoadDetails) onLoadDetails();
-    if (willOpen && needsLoad && onLoadEvents && sa.taskId) {
-      onLoadEvents(sa.taskId);
-    }
   };
 
   const usageStr = sa.usage
@@ -366,24 +396,28 @@ export const SubAgentItem = memo(function SubAgentItem({
           {(needsLoad || (!sa.prompt && sa.hasPrompt) || (!sa.summary && sa.summaryLength)) && (
             <div className="subagent-loading">Loading…</div>
           )}
-          {(innerEvents.length > 0 || banners.length > 0) && (
+          {allInner.length > 0 && (
             <div className="subagent-events">
-              {allInner
-                .filter((e) => !e.subagent)
-                .map((ie, i) => (
-                  <EventItem key={i} ev={ie} onLoadDetails={onLoadDetails} />
-                ))}
+              {timelineBlocks(allInner).map((block, bi) => {
+                if (block.kind === "steps") {
+                  return block.events.map((ie, i) => (
+                    <EventItem key={`${bi}-${i}`} ev={ie} onLoadDetails={onLoadDetails} />
+                  ));
+                }
+                if (block.kind === "banner")
+                  return <BannerItem key={`b${bi}`} ev={block.ev} onLoadDetails={onLoadDetails} />;
+                return (
+                  <SubAgentItem
+                    key={block.ev.subagent!.taskId}
+                    ev={block.ev}
+                    onLoadEvents={onLoadEvents}
+                    onCancel={onCancel}
+                    onLoadDetails={onLoadDetails}
+                  />
+                );
+              })}
             </div>
           )}
-          {nestedAgents.map((ne) => (
-            <SubAgentItem
-              key={ne.subagent!.taskId}
-              ev={ne}
-              onLoadEvents={onLoadEvents}
-              onCancel={onCancel}
-              onLoadDetails={onLoadDetails}
-            />
-          ))}
           {sa.summary && (
             <div className="subagent-summary">
               <MdBlock>{sa.summary}</MdBlock>
@@ -401,10 +435,14 @@ function stepSummary(regular: StreamEvent[]): string {
   const thinkingCount = count("thinking");
   const toolCount = count("tool_use");
   const errorCount = count("error");
+  const resultCount = count("tool_result");
   const parts: string[] = [];
   if (thinkingCount > 0) parts.push(`${thinkingCount} thinking`);
   if (toolCount > 0) parts.push(`${toolCount} tool call${toolCount === 1 ? "" : "s"}`);
+  if (resultCount > 0) parts.push(`${resultCount} result${resultCount === 1 ? "" : "s"}`);
   if (errorCount > 0) parts.push(`${errorCount} error${errorCount === 1 ? "" : "s"}`);
+  const other = regular.length - thinkingCount - toolCount - resultCount - errorCount;
+  if (other > 0) parts.push(`${other} other`);
   if (parts.length === 0) parts.push(`${regular.length} event${regular.length === 1 ? "" : "s"}`);
   return parts.join(" · ");
 }
@@ -492,7 +530,8 @@ export function StepGroup({
             />
           );
         }
-        if (block.kind === "banner") return <BannerItem key={`b${i}`} ev={block.ev} />;
+        if (block.kind === "banner")
+          return <BannerItem key={`b${i}`} ev={block.ev} onLoadDetails={onLoadDetails} />;
         return (
           <SubAgentItem
             key={block.ev.subagent!.taskId}
@@ -505,6 +544,27 @@ export function StepGroup({
       })}
     </>
   );
+}
+
+// One broken message (an old persisted event missing a field, an unexpected
+// shape) must not blank the whole transcript.
+export class MessageBoundary extends Component<
+  { children: ReactNode; messageId: string },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true };
+  }
+  componentDidCatch(err: unknown): void {
+    console.error("[render] message", this.props.messageId, err);
+  }
+  render(): ReactNode {
+    if (this.state.failed) {
+      return <div className="message-render-error">This message could not be rendered.</div>;
+    }
+    return this.props.children;
+  }
 }
 
 export const MessageItem = memo(function MessageItem({
@@ -580,11 +640,20 @@ export const MessageItem = memo(function MessageItem({
         startOffsets.set(e.subagent.taskId, e.contentOffset);
       }
     }
-    const offsetOf = (e: StreamEvent): number => {
+    // Older logs carry no offsets at all: those events all happened before
+    // the answer, so they go first, not after it. Within newer logs an event
+    // without one (errors, some notices) sits with the event before it.
+    const anyOffset = detailEvents.some((e) => e.contentOffset != null);
+    const resolved = new Map<StreamEvent, number>();
+    let last = 0;
+    for (const e of detailEvents) {
       const taskId = e.subagent?.taskId;
-      if (taskId && startOffsets.has(taskId)) return startOffsets.get(taskId)!;
-      return e.contentOffset ?? msg.content.length;
-    };
+      const own = taskId && startOffsets.has(taskId) ? startOffsets.get(taskId)! : e.contentOffset;
+      const off = !anyOffset ? 0 : (own ?? last);
+      resolved.set(e, off);
+      last = off;
+    }
+    const offsetOf = (e: StreamEvent): number => resolved.get(e) ?? 0;
     const uniqueOffsets = [...new Set(detailEvents.map(offsetOf))].sort((a, b) => a - b);
 
     if (uniqueOffsets.length > 0) {

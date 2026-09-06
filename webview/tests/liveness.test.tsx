@@ -295,3 +295,79 @@ describe("message_done status patch", () => {
     expect(m.context).toEqual({ tokens: 4000, window: 264600 });
   });
 });
+
+describe("message_done ordering", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    FakeSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeSocket);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("applies events still waiting for a frame before finishing the message", () => {
+    const { result } = renderHook(() => useServer());
+    const ws = FakeSocket.instances[0];
+    const w = { id: "w", name: "w", project: "p", hostId: "h", cwd: "/", agents: [], messages: [] };
+    act(() => {
+      ws.open();
+      ws.receive({ ...init, workspaces: [{ ...w, createdAt: 0 }] });
+      ws.receive({
+        type: "new_message",
+        workspaceId: "w",
+        message: {
+          id: "m1",
+          kind: "agent",
+          agentId: "a",
+          content: "",
+          timestamp: 1,
+          status: "streaming",
+        },
+      });
+      ws.receive({
+        type: "stream_event",
+        workspaceId: "w",
+        messageId: "m1",
+        event: {
+          kind: "subagent_start",
+          content: "",
+          subagent: { taskId: "t", description: "d", events: [] },
+        },
+      });
+      ws.receive({
+        type: "stream_event",
+        workspaceId: "w",
+        messageId: "m1",
+        event: {
+          kind: "subagent_progress",
+          content: "",
+          subagent: {
+            taskId: "t",
+            description: "",
+            _innerEvent: { kind: "tool_use", content: "**Read** `a`" },
+          },
+        },
+      });
+      // No animation frame yet: message_done arrives with the stripped copy.
+      ws.receive({
+        type: "message_done",
+        workspaceId: "w",
+        messageId: "m1",
+        status: "done",
+        content: "ok",
+        events: [
+          {
+            kind: "subagent_start",
+            content: "",
+            subagent: { taskId: "t", description: "d", eventCount: 1 },
+          },
+        ],
+      });
+    });
+    const m = result.current.workspaces[0].messages[0];
+    expect(m.status).toBe("done");
+    expect(m.events?.[0].subagent?.events?.map((e) => e.kind)).toEqual(["tool_use"]);
+  });
+});

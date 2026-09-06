@@ -341,8 +341,9 @@ describe("MessageItem events without contentOffset", () => {
     };
     const { container } = render(<MessageItem msg={msg} agents={agents} />);
     expect(container.querySelector(".banner")!.textContent).toContain("late banner");
+    // The tool call is the only boxed event; notice and error are banners.
     const stepGroups = container.querySelectorAll(".step-group");
-    expect(stepGroups).toHaveLength(2);
+    expect(stepGroups).toHaveLength(1);
     // The text sits between the leading tool call and the trailing events.
     const body = container.querySelector(".message-content")!;
     const order = [...body.querySelectorAll(".step-group, p, .banner")]
@@ -350,8 +351,9 @@ describe("MessageItem events without contentOffset", () => {
       .map((el) =>
         el.className.includes("banner") ? "banner" : el.tagName === "P" ? "text" : "step",
       );
-    // Trailing events keep their own order: the banner came before the error.
-    expect(order).toEqual(["step", "text", "banner", "step"]);
+    // Offset-less events sit with the event before them (the tool call at
+    // offset 0), in their own order, and the text follows.
+    expect(order).toEqual(["step", "banner", "banner", "text"]);
   });
 });
 
@@ -387,5 +389,31 @@ describe("MessageItem subagent lifecycle placement", () => {
     expect(items).toHaveLength(1);
     expect(items[0].className).toContain("subagent-completed");
     expect(items[0].querySelector(".subagent-label")!.textContent).toBe("Explore");
+  });
+});
+
+describe("legacy messages without any contentOffset", () => {
+  it("renders the work before the answer, as it happened", () => {
+    const agents: AgentInfo[] = [
+      { id: "a1", name: "A", model: "m", avatar: "x", color: "#fff", isDefault: true },
+    ];
+    const msg: Message = {
+      id: "m",
+      kind: "agent",
+      agentId: "a1",
+      content: "The answer.",
+      timestamp: 0,
+      status: "done",
+      events: [
+        { kind: "thinking", content: "hmm" } as StreamEvent,
+        { kind: "tool_use", content: "**Read** `a`" } as StreamEvent,
+      ],
+    };
+    const { container } = render(<MessageItem msg={msg} agents={agents} />);
+    const body = container.querySelector(".message-content")!;
+    const order = [...body.querySelectorAll(".step-group, p")].map((el) =>
+      el.classList.contains("step-group") ? "step" : "text",
+    );
+    expect(order).toEqual(["step", "text"]);
   });
 });

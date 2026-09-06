@@ -26,17 +26,19 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
 
   switch (e.kind) {
     case "tool_use":
-      base.content = firstLine(e.content);
-      base.bodyLength = e.content.length;
+      base.content = firstLine(e.content ?? "");
+      base.bodyLength = (e.content ?? "").length;
       if (e.toolResult != null) base.resultLength = e.toolResult.length;
       break;
     case "compact":
     case "notice":
     case "retry":
-    case "error":
-      base.content =
-        e.content.length > BANNER_MAX ? e.content.slice(0, BANNER_MAX) + "…" : e.content;
+    case "error": {
+      const text = e.content ?? "";
+      base.content = text.length > BANNER_MAX ? text.slice(0, BANNER_MAX) + "…" : text;
+      if (text.length > BANNER_MAX) base.contentLength = text.length;
       break;
+    }
     case "subagent_start":
     case "subagent_progress":
     case "subagent_done":
@@ -57,7 +59,7 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
       break;
     default:
       // thinking, text, tool_result and anything else: body on demand.
-      base.contentLength = e.content.length;
+      base.contentLength = (e.content ?? "").length;
       break;
   }
   return base;

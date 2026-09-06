@@ -310,17 +310,21 @@ describe("StepGroup timeline", () => {
 });
 
 describe("StepGroup summary", () => {
-  it("counts only what is inside the box, naming errors", () => {
+  it("counts only what is inside the box; errors are banners outside it", () => {
     const events = [
+      ev("thinking", { content: "hmm" }),
       ev("error", { content: "boom" }),
       ev("notice", { level: "notice", content: "banner outside" }),
     ];
     const { container } = render(<StepGroup group={{ step: 0, events }} />);
-    expect(container.querySelector(".step-summary")!.textContent).toBe("1 error");
+    expect(container.querySelector(".step-summary")!.textContent).toBe("1 thinking");
+    const error = container.querySelector(".banner-error")!;
+    expect(error.querySelector(".banner-label")!.textContent).toBe("Error");
+    expect(error.textContent).toContain("boom");
     const { container: c2 } = render(
       <StepGroup group={{ step: 0, events: [ev("tool_result", { content: "x" })] }} />,
     );
-    expect(c2.querySelector(".step-summary")!.textContent).toBe("1 event");
+    expect(c2.querySelector(".step-summary")!.textContent).toBe("1 result");
   });
 });
 

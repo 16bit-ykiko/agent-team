@@ -6,7 +6,7 @@ import { extractImageFiles, installMacCtrlClipboard } from "./clipboard";
 import { isImeKeyEvent } from "./ime";
 import { AgentAvatar } from "./avatar";
 import { formatRelative } from "./format";
-import { MessageItem } from "./messages";
+import { MessageItem, MessageBoundary } from "./messages";
 import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs";
 import { Sidebar } from "./Sidebar";
 import { GitBar } from "./GitBar";
@@ -946,22 +946,25 @@ export function App() {
                         !!msg.turnId &&
                         msg.turnId === prev.turnId;
                       return (
-                        <MessageItem
-                          key={msg.id}
-                          msg={msg}
-                          agents={activeWs.agents}
-                          compact={compact}
-                          highlight={msg.id === highlightMsgId}
-                          onQuote={handleQuote}
-                          onLoadSubagentEvents={(messageId, taskId) =>
-                            loadSubagentEvents(activeWs.id, messageId, taskId)
-                          }
-                          onCancelSubagent={(agentId, taskId) =>
-                            cancelSubagent(activeWs.id, agentId, taskId)
-                          }
-                          onCancelQueued={(messageId) => cancelQueued(activeWs.id, messageId)}
-                          onLoadDetails={(messageId) => loadMessageDetails(activeWs.id, messageId)}
-                        />
+                        <MessageBoundary key={msg.id} messageId={msg.id}>
+                          <MessageItem
+                            msg={msg}
+                            agents={activeWs.agents}
+                            compact={compact}
+                            highlight={msg.id === highlightMsgId}
+                            onQuote={handleQuote}
+                            onLoadSubagentEvents={(messageId, taskId) =>
+                              loadSubagentEvents(activeWs.id, messageId, taskId)
+                            }
+                            onCancelSubagent={(agentId, taskId) =>
+                              cancelSubagent(activeWs.id, agentId, taskId)
+                            }
+                            onCancelQueued={(messageId) => cancelQueued(activeWs.id, messageId)}
+                            onLoadDetails={(messageId) =>
+                              loadMessageDetails(activeWs.id, messageId)
+                            }
+                          />
+                        </MessageBoundary>
                       );
                     })}
                   </>

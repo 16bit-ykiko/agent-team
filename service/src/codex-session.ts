@@ -65,6 +65,7 @@ export class CodexSession extends EventEmitter {
   // never dispatched (nothing re-triggers the queue when busy finally
   // clears) and a reconnecting client saw the agent as working.
   private terminal: StreamEvent | null = null;
+  private textEmitted = false;
 
   constructor(config: SessionConfig) {
     super();
@@ -174,6 +175,7 @@ export class CodexSession extends EventEmitter {
     if (this.busy) throw new Error("Session is busy");
     this.busy = true;
     this.turnFinalized = false;
+    this.textEmitted = false;
     const startTime = Date.now();
     this.abortController = new AbortController();
 
@@ -251,6 +253,9 @@ export class CodexSession extends EventEmitter {
           this.usage.cache_read_tokens += ev.usage.cached_input_tokens ?? 0;
           this.usage.cache_creation_tokens += ev.usage.cache_write_input_tokens ?? 0;
         }
+        // A recorded error (stream error / turn.failed) must not be
+        // overwritten by a trailing turn.completed.
+        if (this.turnFinalized) break;
         this.turnFinalized = true;
         this.terminal = this.resultEvent();
         break;
@@ -285,6 +290,17 @@ export class CodexSession extends EventEmitter {
       }
 
       case "item.completed": {
+        // Several agent_message items in one turn are separate paragraphs;
+        // task.ts concatenates deltas verbatim.
+        if (ev.item?.type === "agent_message") {
+          const parsed = parseCompletedItem(ev.item);
+          if (parsed) {
+            if (this.textEmitted) parsed.content = "\n\n" + parsed.content;
+            this.textEmitted = true;
+            this.emit("event", parsed);
+          }
+          break;
+        }
         const event = parseCompletedItem(ev.item);
         if (event) this.emit("event", event);
         break;
@@ -341,8 +357,13 @@ function parseCompletedItem(item: ThreadItem): StreamEvent | null {
       const status =
         item.exit_code === 0 || item.exit_code == null ? "" : ` (exit code ${item.exit_code})`;
       const output = item.aggregated_output ?? "";
-      if (!output && !status) return null;
-      return { kind: "tool_result", content: `${output}${status}`, toolUseId: item.id };
+      // A silent success still completes the call; without a result the
+      // card looks like a command that never returned.
+      return {
+        kind: "tool_result",
+        content: `${output || (status ? "" : "(no output)")}${status}`,
+        toolUseId: item.id,
+      };
     }
 
     case "mcp_tool_call": {

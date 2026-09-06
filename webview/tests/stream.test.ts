@@ -245,3 +245,33 @@ describe("downgradedMessageIds", () => {
     expect(downgradedMessageIds(existing, merged)).toEqual(["live"]);
   });
 });
+
+describe("robustness", () => {
+  it("tolerates events without content and keeps the start's description on done", () => {
+    expect(toolNameOf({ kind: "tool_use" } as StreamEvent)).toBeNull();
+    expect(toolSummary({ kind: "tool_use" } as StreamEvent)).toBe("");
+    const start = msg({
+      events: [
+        ev("subagent_start", {
+          subagent: { taskId: "a", description: "review", agentType: "Explore", events: [] },
+        }),
+      ],
+    });
+    const out = applyEventsToMessage(start, [
+      ev("subagent_done", { subagent: { taskId: "a", description: "", status: "completed" } }),
+    ]);
+    expect(out.events![0].subagent).toMatchObject({
+      status: "completed",
+      description: "review",
+      agentType: "Explore",
+    });
+  });
+
+  it("keeps a same-millisecond neighbour that is not on the incoming page", () => {
+    const out = mergeLatestPage(
+      [msg({ id: "old", timestamp: 5, status: "done" }), msg({ id: "m1", timestamp: 5 })],
+      [msg({ id: "m1", timestamp: 5, status: "done" })],
+    );
+    expect(out.map((m) => m.id)).toEqual(["old", "m1"]);
+  });
+});

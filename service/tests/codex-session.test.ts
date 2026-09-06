@@ -319,3 +319,38 @@ describe("codex context from the rollout", () => {
     expect(session.effectiveEffort).toBe("xhigh");
   });
 });
+
+describe("codex item edge cases", () => {
+  it("separates consecutive agent messages and completes silent commands", async () => {
+    const { events, run } = makeSession();
+    await run([
+      { type: "item.completed", item: { id: "m1", type: "agent_message", text: "First." } },
+      { type: "item.completed", item: { id: "m2", type: "agent_message", text: "Second." } },
+      {
+        type: "item.completed",
+        item: {
+          id: "c1",
+          type: "command_execution",
+          command: "true",
+          aggregated_output: "",
+          exit_code: 0,
+        },
+      },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    const text = events.filter((e) => e.kind === "text_delta").map((e) => e.content);
+    expect(text).toEqual(["First.", "\n\nSecond."]);
+    const result = events.find((e) => e.kind === "tool_result")!;
+    expect(result.toolUseId).toBe("c1");
+    expect(result.content).toBe("(no output)");
+  });
+
+  it("keeps an error terminal when turn.completed follows it", async () => {
+    const { events, run } = makeSession();
+    await run([
+      { type: "error", message: "boom" },
+      { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+    ]);
+    expect(events.map((e) => e.kind)).toEqual(["error"]);
+  });
+});

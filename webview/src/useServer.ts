@@ -469,9 +469,16 @@ export function useServer() {
           const events = msg.events as StreamEvent[] | undefined;
           const context = msg.context as ContextUsage | undefined;
           const effort = msg.effort as string | undefined;
+          // Events still waiting for the next frame belong to this message:
+          // apply them first. The completion payload strips subagent
+          // transcripts, so dropping them would lose the live tail.
+          const mine = pendingEventsRef.current.filter(
+            (e) => e.wsId === wsId && e.messageId === messageId,
+          );
           pendingEventsRef.current = pendingEventsRef.current.filter(
             (e) => !(e.wsId === wsId && e.messageId === messageId),
           );
+          if (mine.length > 0) setWorkspaces((prev) => applyStreamBatch(prev, mine));
           setWorkspaces((prev) =>
             prev.map((w) => {
               if (w.id !== wsId) return w;

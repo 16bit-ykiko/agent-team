@@ -543,7 +543,8 @@ describe("CLI banners and activity", () => {
     const { events, dispatch } = makeSessionWithChannels();
     dispatch({ type: "auth_status", isAuthenticating: false, output: [], error: "token expired" });
     dispatch({ type: "conversation_reset", new_conversation_id: "new-id", session_id: "old" });
-    expect(events[0]).toMatchObject({ kind: "error" });
+    // Non-fatal: the CLI re-authenticates and continues, so a banner.
+    expect(events[0]).toMatchObject({ kind: "notice", level: "error" });
     expect(events[0].content).toContain("token expired");
     expect(events[1]).toMatchObject({ kind: "notice" });
   });
@@ -801,10 +802,14 @@ describe("self-initiated turns", () => {
       handleSDKMessage(m: unknown): void;
       lastPushed: string | null;
       expectingTurn: boolean;
+      processing: boolean;
+      awaitingFirstOutput: boolean;
     };
-    // As after send(): our prompt is out, the turn has not started yet.
+    // As after pushMessage(): our prompt is out, processing, nothing back yet.
     s.lastPushed = "/codex review the diff";
     s.expectingTurn = true;
+    s.processing = true;
+    s.awaitingFirstOutput = true;
     s.handleSDKMessage({
       type: "user",
       session_id: "s",
@@ -1279,5 +1284,95 @@ describe("background tasks as cards", () => {
     });
     expect(events[1].subagent).toMatchObject({ taskId: "b1", status: "completed" });
     expect(events[1].subagent?.summary).toContain("exit code 0");
+  });
+});
+
+describe("nested subagent transcripts", () => {
+  it("routes a grandchild's own events through both ancestors", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(taskStarted({ task_type: "local_agent", subagent_type: "general-purpose" }));
+    // The subagent calls Agent; the CLI reports the nested task.
+    dispatch({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: "toolu_1",
+      message: { content: [{ type: "tool_use", id: "toolu_inner", name: "Agent", input: {} }] },
+    });
+    dispatch(
+      taskStarted({
+        task_id: "task-nested",
+        tool_use_id: "toolu_inner",
+        task_type: "local_agent",
+        subagent_type: "Explore",
+      }),
+    );
+    // The grandchild reads a file.
+    dispatch({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: "toolu_inner",
+      message: {
+        content: [{ type: "tool_use", id: "toolu_read", name: "Read", input: { file_path: "/a" } }],
+      },
+    });
+    const last = events[events.length - 1];
+    expect(last.kind).toBe("subagent_progress");
+    expect(last.subagent?.taskId).toBe("task-1");
+    const inner = last.subagent?._innerEvent;
+    expect(inner?.kind).toBe("subagent_progress");
+    expect(inner?.subagent?.taskId).toBe("task-nested");
+    expect(inner?.subagent?._innerEvent?.kind).toBe("tool_use");
+    expect(inner?.subagent?._innerEvent?.toolName).toBe("Read");
+  });
+
+  it("does not finalize the turn on a model fallback", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "system",
+      subtype: "model_refusal_fallback",
+      session_id: "s",
+      original_model: "a",
+      fallback_model: "b",
+    });
+    expect(events[0]).toMatchObject({ kind: "notice", level: "warning" });
+    expect(events[0].content).toContain("a → b");
+  });
+
+  it("pairs tool_result blocks that arrive inside assistant messages", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "assistant",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_x",
+            content: [
+              { type: "text", text: "line 1" },
+              { type: "text", text: "line 2" },
+            ],
+          },
+        ],
+      },
+    });
+    expect(events[0]).toMatchObject({ kind: "tool_result", toolUseId: "toolu_x" });
+    expect(events[0].content).toBe("line 1\nline 2");
+  });
+
+  it("ignores frames the CLI appends without a turn (shouldQuery=false)", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      shouldQuery: false,
+      message: { role: "user", content: "queued note" },
+    });
+    expect(events).toEqual([]);
+    expect(session.isRunning).toBe(false);
   });
 });

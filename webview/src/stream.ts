@@ -84,10 +84,19 @@ export function applyEventsToMessage(m: Message, evts: StreamEvent[]): Message {
         (e) => e.kind === "subagent_start" && e.subagent?.taskId === ev.subagent?.taskId,
       );
       if (startIdx >= 0 && ev.subagent) {
-        const existingEvents = events[startIdx].subagent?.events;
+        const start = events[startIdx].subagent!;
+        // The done event carries only terminal fields (status, summary,
+        // usage); an empty description there must not wipe the start's.
         events[startIdx] = {
           ...events[startIdx],
-          subagent: { ...events[startIdx].subagent!, ...ev.subagent, events: existingEvents },
+          subagent: {
+            ...start,
+            ...ev.subagent,
+            description: start.description || ev.subagent.description,
+            agentType: ev.subagent.agentType ?? start.agentType,
+            prompt: ev.subagent.prompt ?? start.prompt,
+            events: start.events,
+          },
         };
       }
     }
@@ -189,7 +198,10 @@ export function mergeLatestPage(existing: Message[], incoming: Message[]): Messa
   const incomingIds = new Set(incoming.map((m) => m.id));
   const oldest = incoming[0].timestamp;
   const byId = new Map(existing.map((m) => [m.id, m]));
-  const retained = existing.filter((m) => !incomingIds.has(m.id) && m.timestamp < oldest);
+  // Older history the client paged to. A tie on the page's first timestamp
+  // is still "older" when the id is not on the page (same-millisecond
+  // neighbours), otherwise a reconnect would drop a loaded message.
+  const retained = existing.filter((m) => !incomingIds.has(m.id) && m.timestamp <= oldest);
   const page = incoming.map((next) => {
     const cur = byId.get(next.id);
     return cur ? reconcileMessage(cur, next) : next;
@@ -227,14 +239,14 @@ function reconcileMessage(cur: Message, next: Message): Message {
 // persisted events only carry the "**Name** ..." markdown prefix.
 export function toolNameOf(ev: StreamEvent): string | null {
   if (ev.toolName) return ev.toolName;
-  const m = ev.content.match(/^\*\*([^*]+)\*\*/);
+  const m = (ev.content ?? "").match(/^\*\*([^*]+)\*\*/);
   return m ? m[1] : null;
 }
 
 // One-line summary for a tool_use row: the first line with the bold name
 // stripped, so "**Read** `a.ts`" shows as "a.ts".
 export function toolSummary(ev: StreamEvent): string {
-  const firstLine = ev.content.split("\n")[0] ?? "";
+  const firstLine = (ev.content ?? "").split("\n")[0] ?? "";
   return firstLine
     .replace(/^\*\*[^*]+\*\*\s*/, "")
     .replace(/`/g, "")
