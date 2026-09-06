@@ -19,7 +19,11 @@ describe("PWA metadata", () => {
   });
 
   it("ships a standalone manifest with relative paths and both icons", () => {
-    const manifest = JSON.parse(manifestRaw);
+    const manifest = JSON.parse(manifestRaw) as {
+      display: string;
+      start_url: string;
+      icons: Array<{ src: string }>;
+    };
     expect(manifest.display).toBe("standalone");
     expect(manifest.start_url).toBe("./");
     const shipped = Object.keys(icons).map((k) => k.replace("../public/", ""));

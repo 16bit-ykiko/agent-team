@@ -122,7 +122,7 @@ function migrateIfNeeded(baseDir: string): WorkspaceState[] | null {
   if (!fs.existsSync(oldFile)) return null;
 
   try {
-    const raw = JSON.parse(fs.readFileSync(oldFile, "utf-8"));
+    const raw = JSON.parse(fs.readFileSync(oldFile, "utf-8")) as { workspaces?: unknown } | null;
     if (!raw || !Array.isArray(raw.workspaces)) return null;
 
     const workspaces = raw.workspaces as WorkspaceState[];

@@ -45,7 +45,7 @@ export async function startReplay(dispatch: (msg: Record<string, unknown>) => vo
   for (const line of (await res.text()).split("\n")) {
     if (!line.trim()) continue;
     try {
-      entries.push(JSON.parse(line));
+      entries.push(JSON.parse(line) as LogEntry);
     } catch {
       // Skip malformed lines (e.g. a truncated tail write).
     }

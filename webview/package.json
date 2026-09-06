@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@types/turndown": "^5.0.6",

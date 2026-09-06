@@ -276,7 +276,7 @@ export const EventItem = memo(function EventItem({
           {hasResult && resultOpen && ev.toolResult != null && (
             <div className="event-content event-result">
               {ev.toolResultIsMarkdown ? (
-                <MdBlock>{ev.toolResult!}</MdBlock>
+                <MdBlock>{ev.toolResult}</MdBlock>
               ) : (
                 <pre>
                   <code>{ev.toolResult}</code>
@@ -303,6 +303,13 @@ export const SubAgentItem = memo(function SubAgentItem({
 }) {
   const [open, setOpen] = useState(false);
   const sa = ev.subagent;
+  // The server holds more of the transcript than the client (a summary
+  // page, or a live tail that arrived after the summary).
+  const needsLoad = !!sa && (sa.eventCount ?? 0) > (sa.events?.length ?? 0);
+  useEffect(() => {
+    if (open && needsLoad && onLoadEvents && sa?.taskId) onLoadEvents(sa.taskId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once per open/needsLoad flip; sa and onLoadEvents change identity on every stream update
+  }, [open, needsLoad]);
   if (!sa) return null;
 
   const isDone =
@@ -325,13 +332,6 @@ export const SubAgentItem = memo(function SubAgentItem({
   // Subagents can spawn subagents of their own; fold their nested lifecycle
   // events into one entry each and render them as nested SubAgentItems.
   const { regular: innerEvents, subagents: nestedAgents } = splitEvents(allInner);
-  // The server holds more of the transcript than the client (a summary
-  // page, or a live tail that arrived after the summary).
-  const needsLoad = (sa.eventCount ?? 0) > allInner.length;
-  useEffect(() => {
-    if (open && needsLoad && onLoadEvents && sa.taskId) onLoadEvents(sa.taskId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, needsLoad]);
   const totalCount = allInner.length || sa.eventCount || 0;
   const thinkingEvts = innerEvents.filter((e) => e.kind === "thinking");
   const toolEvts = innerEvents.filter((e) => e.kind === "tool_use");

@@ -100,7 +100,7 @@ export class CodexSession extends EventEmitter {
       content: "",
       context: this.readContext(),
       effort: this.effectiveEffort ?? undefined,
-    } as StreamEvent;
+    };
   }
 
   setEffort(level: string): void {
@@ -202,9 +202,9 @@ export class CodexSession extends EventEmitter {
           this.terminal = {
             kind: "error",
             content: `[Codex error] ${msg}\n\nThe stored Codex session could not be resumed; the next message will start a fresh session.`,
-          } as StreamEvent;
+          };
         } else {
-          this.terminal = { kind: "error", content: `[Codex error] ${msg}` } as StreamEvent;
+          this.terminal = { kind: "error", content: `[Codex error] ${msg}` };
         }
       }
     } finally {
@@ -271,7 +271,7 @@ export class CodexSession extends EventEmitter {
         this.terminal = {
           kind: "error",
           content: `[Codex error] ${ev.error?.message ?? "Turn failed"}`,
-        } as StreamEvent;
+        };
         break;
 
       case "error":
@@ -280,7 +280,7 @@ export class CodexSession extends EventEmitter {
         this.terminal = {
           kind: "error",
           content: `[Codex error] ${ev.message ?? "Unknown stream error"}`,
-        } as StreamEvent;
+        };
         break;
 
       case "item.started": {

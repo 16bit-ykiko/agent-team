@@ -136,7 +136,7 @@ describe("replay fixture integrity", () => {
 
 describe("cancelDemoSubagent", () => {
   it("emits the subagent_done(stopped) frame a real stopTask would produce", () => {
-    const dispatch = vi.fn();
+    const dispatch = vi.fn<(msg: Frame) => void>();
     cancelDemoSubagent(dispatch, "demo-sa-run");
     expect(dispatch).toHaveBeenCalledOnce();
     const frame = dispatch.mock.calls[0][0];

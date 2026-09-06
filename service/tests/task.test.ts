@@ -22,13 +22,15 @@ class FakeSession extends EventEmitter implements HostSessionHandle {
     super();
   }
   sent: string[] = [];
-  async send(prompt: string): Promise<void> {
+  send(prompt: string): Promise<void> {
     this.sent.push(prompt);
     this.isRunning = true;
+    return Promise.resolve();
   }
   abort(): void {}
-  async stopTask(taskId: string): Promise<void> {
+  stopTask(taskId: string): Promise<void> {
     this.stoppedTasks.push(taskId);
+    return Promise.resolve();
   }
   setFastMode(on: boolean): void {
     this.config.fast = on || undefined;
@@ -76,7 +78,7 @@ function makeWorkspace(model = "claude-fable-5") {
     backend: model.startsWith("gpt-") ? "codex" : "claude",
   });
   const session = host.lastSession!;
-  const emit = (e: Partial<StreamEvent>) => session.emit("event", e as StreamEvent);
+  const emit = (e: Partial<StreamEvent>) => session.emit("event", e);
   const agentMsgs = () => ws.messages.filter((m): m is Message => m.kind === "agent");
   return { ws, emit, done, agentMsgs, agentInfo, session };
 }
@@ -118,7 +120,7 @@ describe("Workspace event aggregation", () => {
       subagent: {
         taskId: "task-1",
         description: "",
-        _innerEvent: { kind: "tool_use", content: "Grep foo", toolUseId: "inner-1" } as StreamEvent,
+        _innerEvent: { kind: "tool_use", content: "Grep foo", toolUseId: "inner-1" },
       },
     });
     emit({
@@ -131,7 +133,7 @@ describe("Workspace event aggregation", () => {
           kind: "tool_result",
           content: "matches",
           toolUseId: "inner-1",
-        } as StreamEvent,
+        },
       },
     });
     emit({
@@ -303,7 +305,7 @@ describe("rate-limit retry mechanics", () => {
     expect(session.sent).toEqual(["do the thing"]);
 
     session.isRunning = false;
-    expect(ws.retryLast(session ? (ws.getState().agents[0].id as string) : "")).toBe(true);
+    expect(ws.retryLast(session ? ws.getState().agents[0].id : "")).toBe(true);
     await tick();
     expect(session.sent).toEqual(["do the thing", "do the thing"]);
   });
@@ -555,12 +557,12 @@ describe("per-message effort and context", () => {
     ws.addAgent("A", "claude-fable-5-1", "🤖", "#888", { effort: "xhigh" });
     await ws.sendMessage("hi");
     const session = host.lastSession!;
-    session.emit("event", { kind: "text_delta", content: "yo" } as StreamEvent);
+    session.emit("event", { kind: "text_delta", content: "yo" });
     session.emit("event", {
       kind: "result",
       content: "",
       context: { tokens: 42000, window: 200000 },
-    } as StreamEvent);
+    });
     const m = ws.messages.filter((x) => x.kind === "agent")[0];
     expect(m.effort).toBe("xhigh");
     expect(m.context).toEqual({ tokens: 42000, window: 200000 });
@@ -728,7 +730,7 @@ describe("events between turns and late results", () => {
             description: "",
             _innerEvent: { kind: "tool_use", content: "**Read** `/a`", toolUseId: "r1" },
           },
-        } as StreamEvent,
+        },
       },
     });
     // A carrier for a task nobody started: dropped, no phantom card.

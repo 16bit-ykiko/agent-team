@@ -864,8 +864,8 @@ export class Workspace {
       console.error("[dispatchPrompt]", err);
       agent.handler({
         kind: "error",
-        content: `[send failed] ${err instanceof Error ? err.message : err}`,
-      } as StreamEvent);
+        content: `[send failed] ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
   }
 

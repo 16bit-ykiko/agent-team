@@ -1,19 +1,19 @@
 // Capture raw @anthropic-ai/claude-agent-sdk message streams for real
 // scenarios (foreground/background shells, subagents, skills, images) so the
 // session mapping is written against what the CLI actually emits.
-// Usage: node scripts/capture-sdk.mjs [scenario ...]   (default: all)
+// Usage: node scripts/capture-sdk.ts [scenario ...]   (default: all)
 // Output: ~/.cache/agent-team-captures/<scenario>.jsonl
-import fs from "fs";
-import os from "os";
-import path from "path";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 const MODEL = process.env.CAPTURE_MODEL ?? "claude-sonnet-5";
 const CWD = process.env.CAPTURE_CWD ?? "/tmp/sdk-capture";
 const OUT = path.join(os.homedir(), ".cache", "agent-team-captures");
-const IMAGE = "/home/ykiko/workspace/agent-team/uploads/1788704744168-shjqyi.png";
+const IMAGE = process.env.CAPTURE_IMAGE ?? path.join(CWD, "sample.png");
 
-const SCENARIOS = {
+const SCENARIOS: Record<string, string[]> = {
   "bash-quick": ["Run `echo hi` with the Bash tool, then reply with the single word done."],
   "bash-long": [
     "Run `sleep 8; echo slow` with the Bash tool in the foreground (do NOT use run_in_background), wait for it, then reply with the single word done.",
@@ -40,15 +40,15 @@ const SCENARIOS = {
   "two-turns": ["Reply with the single word one.", "Reply with the single word two."],
 };
 
-function trim(v, depth = 0) {
+function trim(v: unknown): unknown {
   if (typeof v === "string") return v.length > 400 ? v.slice(0, 400) + `…(+${v.length - 400})` : v;
-  if (Array.isArray(v)) return v.map((x) => trim(x, depth + 1));
+  if (Array.isArray(v)) return v.map(trim);
   if (v && typeof v === "object") {
-    const o = {};
+    const o: Record<string, unknown> = {};
     for (const [k, val] of Object.entries(v)) {
       if (k === "data" && typeof val === "string" && val.length > 100)
         o[k] = `<base64 ${val.length}>`;
-      else o[k] = trim(val, depth + 1);
+      else o[k] = trim(val);
     }
     return o;
   }
@@ -56,45 +56,46 @@ function trim(v, depth = 0) {
 }
 
 function inputStream() {
-  let resolve = null;
-  const buffer = [];
+  let resolve: ((r: IteratorResult<SDKUserMessage>) => void) | null = null;
+  const buffer: SDKUserMessage[] = [];
   let done = false;
-  const iterable = {
+  const iterable: AsyncIterable<SDKUserMessage> = {
     [Symbol.asyncIterator]() {
       return {
-        next() {
-          if (buffer.length) return Promise.resolve({ value: buffer.shift(), done: false });
+        next(): Promise<IteratorResult<SDKUserMessage>> {
+          const head = buffer.shift();
+          if (head) return Promise.resolve({ value: head, done: false });
           if (done) return Promise.resolve({ value: undefined, done: true });
           return new Promise((r) => (resolve = r));
         },
       };
     },
   };
+  const wake = (r: IteratorResult<SDKUserMessage>) => {
+    const fn = resolve;
+    resolve = null;
+    fn?.(r);
+  };
   return {
     iterable,
-    push(msg) {
-      if (resolve) {
-        const r = resolve;
-        resolve = null;
-        r({ value: msg, done: false });
-      } else buffer.push(msg);
+    push(msg: SDKUserMessage) {
+      if (resolve) wake({ value: msg, done: false });
+      else buffer.push(msg);
     },
     end() {
       done = true;
-      if (resolve) {
-        const r = resolve;
-        resolve = null;
-        r({ value: undefined, done: true });
-      }
+      wake({ value: undefined, done: true });
     },
   };
 }
 
-async function run(name, prompts) {
+async function run(name: string, prompts: string[]) {
+  fs.mkdirSync(OUT, { recursive: true });
   const file = path.join(OUT, `${name}.jsonl`);
   const out = fs.createWriteStream(file);
   const t0 = Date.now();
-  const log = (msg) => out.write(JSON.stringify({ t: Date.now() - t0, msg: trim(msg) }) + "\n");
+  const log = (msg: unknown) =>
+    out.write(JSON.stringify({ t: Date.now() - t0, msg: trim(msg) }) + "\n");
   const input = inputStream();
   const abort = new AbortController();
   const q = query({
@@ -113,19 +114,18 @@ async function run(name, prompts) {
       disallowedTools: ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"],
     },
   });
-  let pending = [...prompts];
+  const pending = [...prompts];
   let bg = 0;
   let results = 0;
   let lastAt = Date.now();
   const send = () => {
     const text = pending.shift();
-    if (text == null) return false;
+    if (text == null) return;
     input.push({
       type: "user",
       message: { role: "user", content: text },
       parent_tool_use_id: null,
     });
-    return true;
   };
   send();
   const deadline = Date.now() + 150_000;
@@ -143,7 +143,7 @@ async function run(name, prompts) {
       lastAt = Date.now();
       log(msg);
       if (msg.type === "system" && msg.subtype === "background_tasks_changed") {
-        bg = (msg.tasks ?? []).filter((t) => !t.ambient).length;
+        bg = msg.tasks.filter((t) => !t.ambient).length;
       }
       if (msg.type === "result") {
         results++;
@@ -151,21 +151,22 @@ async function run(name, prompts) {
       }
     }
   } catch (e) {
-    log({ type: "capture_error", message: String(e?.message ?? e) });
+    log({ type: "capture_error", message: e instanceof Error ? e.message : String(e) });
   } finally {
     clearInterval(watchdog);
     out.end();
   }
-  console.log(
-    `${name}: ${fs.readFileSync(file, "utf8").split("\n").filter(Boolean).length} frames -> ${file}`,
-  );
+  const frames = fs.readFileSync(file, "utf8").split("\n").filter(Boolean).length;
+  console.log(`${name}: ${frames} frames -> ${file}`);
 }
 
-const names = process.argv.slice(2).length ? process.argv.slice(2) : Object.keys(SCENARIOS);
+const args = process.argv.slice(2);
+const names = args.length ? args : Object.keys(SCENARIOS);
 for (const n of names) {
-  if (!SCENARIOS[n]) {
+  const prompts = SCENARIOS[n];
+  if (!prompts) {
     console.error("unknown scenario", n);
     continue;
   }
-  await run(n, SCENARIOS[n]);
+  await run(n, prompts);
 }

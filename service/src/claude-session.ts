@@ -198,7 +198,7 @@ function createInputStream(): {
       if (resolve) {
         const r = resolve;
         resolve = null;
-        r({ value: undefined as unknown as SDKUserMessage, done: true });
+        r({ value: undefined, done: true });
       }
     },
   };
@@ -362,7 +362,8 @@ export class ClaudeSession extends EventEmitter {
     this.startIterating();
     this.pushMessage(message);
 
-    this.queryInstance!.supportedCommands()
+    this.queryInstance
+      .supportedCommands()
       .then((cmds) => {
         const commands: CommandInfo[] = cmds.map((c) => ({
           name: c.name,
@@ -401,7 +402,7 @@ export class ClaudeSession extends EventEmitter {
 
     const thisQuery = this.queryInstance;
 
-    (async () => {
+    void (async () => {
       try {
         for await (const msg of thisQuery!) {
           this.handleSDKMessage(msg);
@@ -414,12 +415,12 @@ export class ClaudeSession extends EventEmitter {
         // network failures throw "This operation was aborted" and every one
         // of them rendered as a silent empty reply.
         if (!this.intentionalAbort) {
-          this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` } as StreamEvent);
+          this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` });
         }
       } finally {
         if (this.queryInstance === thisQuery) {
           if (this.processing) {
-            this.emit("event", { kind: "result", content: "" } as StreamEvent);
+            this.emit("event", { kind: "result", content: "" });
           }
           this.iterating = false;
           this.processing = false;
@@ -452,7 +453,7 @@ export class ClaudeSession extends EventEmitter {
         : this.backgroundTasks.size > 0 || Date.now() - this.bgDrainedAt < 15_000
           ? "A background task reported back — resumed to handle its result."
           : "Resumed on its own — a wake-up or background task notification started this turn.";
-      this.emit("event", { kind: "notice", level: "wakeup", content: why } as StreamEvent);
+      this.emit("event", { kind: "notice", level: "wakeup", content: why });
     }
   }
 
@@ -484,7 +485,7 @@ export class ClaudeSession extends EventEmitter {
     this.emit("event", {
       kind: "error",
       content: `Usage limit reached (${label}).${resetStr}`,
-    } as StreamEvent);
+    });
   }
 
   // Debug-only (gated behind AGENT_TEAM_DEBUG on the server): inject the
@@ -558,7 +559,7 @@ export class ClaudeSession extends EventEmitter {
 
   private reportUnhandled(msg: SDKMessage): void {
     const m = msg as unknown as Record<string, unknown>;
-    const key = `${m.type}${m.subtype ? "/" + m.subtype : ""}`;
+    const key = `${String(m.type)}${typeof m.subtype === "string" && m.subtype ? "/" + m.subtype : ""}`;
     if (!this.unhandledSeen.has(key)) {
       this.unhandledSeen.add(key);
       console.warn(`[session] unhandled SDK message: ${key}`);
@@ -617,7 +618,7 @@ export class ClaudeSession extends EventEmitter {
         content: "",
         toolUseId: this.taskToToolUse.get(id),
         subagent: { taskId: id, description: "", _innerEvent: ev },
-      } as StreamEvent;
+      };
       id = this.nestedTaskToParent.get(id);
     }
     return ev;
@@ -648,30 +649,29 @@ export class ClaudeSession extends EventEmitter {
         // Subagent output (parent_tool_use_id set) streams while the main
         // agent may be idle-but-waiting; only the main agent's own blocks
         // mean a turn is in progress.
-        if (!(msg as SDKAssistantMessage).parent_tool_use_id) {
+        if (!msg.parent_tool_use_id) {
           this.awaitingFirstOutput = false;
           this.setProcessing();
-          const usage = (msg as SDKAssistantMessage).message?.usage as unknown as
-            Record<string, number> | undefined;
+          const usage = msg.message?.usage as unknown as Record<string, number> | undefined;
           if (usage?.input_tokens != null) this.lastCallUsage = usage;
         }
-        this.handleAssistantMessage(msg as SDKAssistantMessage);
+        this.handleAssistantMessage(msg);
         break;
 
       case "user":
-        this.handleUserMessage(msg as Record<string, unknown>);
+        this.handleUserMessage(msg);
         break;
 
       case "stream_event":
-        if (!(msg as SDKPartialAssistantMessage).parent_tool_use_id) {
+        if (!msg.parent_tool_use_id) {
           this.awaitingFirstOutput = false;
           this.setProcessing();
         }
-        this.handlePartialMessage(msg as SDKPartialAssistantMessage);
+        this.handlePartialMessage(msg);
         break;
 
       case "result":
-        this.handleResult(msg as SDKResultMessage);
+        this.handleResult(msg);
         break;
 
       // Subscription rate-limit info (claude.ai plans). The CLI emits these
@@ -702,13 +702,13 @@ export class ClaudeSession extends EventEmitter {
             kind: "notice",
             level: "error",
             content: `Authentication failed: ${a.error as string}`,
-          } as StreamEvent);
+          });
         } else if (a.isAuthenticating) {
           this.emit("event", {
             kind: "notice",
             level: "warning",
             content: `Authenticating… ${((a.output as string[]) ?? []).join(" ")}`.trim(),
-          } as StreamEvent);
+          });
         }
         break;
       }
@@ -720,7 +720,7 @@ export class ClaudeSession extends EventEmitter {
           kind: "notice",
           level: "notice",
           content: "Conversation reset — the next message starts a fresh context.",
-        } as StreamEvent);
+        });
         break;
       }
 
@@ -763,7 +763,7 @@ export class ClaudeSession extends EventEmitter {
             kind: "notice",
             level: "warning",
             content: `Fast mode is ${state} for this session (${reason}).`,
-          } as StreamEvent);
+          });
         }
         if (sys.subtype === "commands_changed" && Array.isArray(sys.commands)) {
           const commands: CommandInfo[] = (sys.commands as Array<Record<string, unknown>>).map(
@@ -901,13 +901,13 @@ export class ClaudeSession extends EventEmitter {
             kind: "notice",
             level: "warning",
             content: `Model refused and fell back: ${from} → ${to}`,
-          } as StreamEvent);
+          });
         } else if (sys.subtype === "model_refusal_no_fallback") {
           const category = (sys.category as string) ?? "";
           this.emit("event", {
             kind: "error",
             content: `Model refused${category ? ` (${category})` : ""} — no fallback configured`,
-          } as StreamEvent);
+          });
         } else if (sys.subtype === "compact_boundary") {
           const meta = sys.compact_metadata as Record<string, unknown> | undefined;
           const pre = (meta?.pre_tokens as number) ?? 0;
@@ -917,7 +917,7 @@ export class ClaudeSession extends EventEmitter {
           this.emit("event", {
             kind: "compact",
             content: `Context compacted (${trigger}): ${pre} → ${post} tokens, ${(dur / 1000).toFixed(1)}s`,
-          } as StreamEvent);
+          });
         } else if (!ClaudeSession.SILENT_SYSTEM_SUBTYPES.has(sys.subtype as string)) {
           this.reportUnhandled(msg);
         }
@@ -936,14 +936,14 @@ export class ClaudeSession extends EventEmitter {
   // machinery. Returns true when handled.
   private handleSystemBanner(sys: Record<string, unknown>): boolean {
     const notice = (content: string, level: NoticeLevel, extra: Partial<StreamEvent> = {}) =>
-      this.emit("event", { kind: "notice", level, content, ...extra } as StreamEvent);
+      this.emit("event", { kind: "notice", level, content, ...extra });
 
     switch (sys.subtype) {
       case "local_command_output": {
         // Output of a slash command run by the CLI (/compact, /cost...) —
         // shown as the reply text, exactly like the terminal does.
         const content = (sys.content as string) ?? "";
-        if (content.trim()) this.emit("event", { kind: "text_delta", content } as StreamEvent);
+        if (content.trim()) this.emit("event", { kind: "text_delta", content });
         return true;
       }
       case "informational": {
@@ -968,12 +968,12 @@ export class ClaudeSession extends EventEmitter {
         const delay = Math.round(((sys.retry_delay_ms as number) ?? 0) / 1000);
         const status = sys.error_status != null ? ` HTTP ${sys.error_status as number}` : "";
         const reason =
-          sys.error && sys.error !== "unknown" ? ` (${String(sys.error).replace(/_/g, " ")})` : "";
+          sys.error && sys.error !== "unknown" ? ` (${str(sys.error).replace(/_/g, " ")})` : "";
         this.emit("event", {
           kind: "retry",
           level: "warning",
           content: `API retry ${attempt}/${max} in ${delay}s —${status}${reason}`,
-        } as StreamEvent);
+        });
         this.setActivity(`retrying (${attempt}/${max})`);
         return true;
       }
@@ -1036,10 +1036,10 @@ export class ClaudeSession extends EventEmitter {
         let ev: StreamEvent | null = null;
         if (blockType === "thinking") {
           const text = b.thinking as string;
-          if (text) ev = { kind: "thinking", content: text } as StreamEvent;
+          if (text) ev = { kind: "thinking", content: text };
         } else if (blockType === "text") {
           const text = (b.text as string)?.trim();
-          if (text) ev = { kind: "text", content: text } as StreamEvent;
+          if (text) ev = { kind: "text", content: text };
         } else if (blockType === "tool_use") {
           const innerToolId = b.id as string;
           // Mark this tool_use as belonging to a subagent so task_started
@@ -1052,7 +1052,7 @@ export class ClaudeSession extends EventEmitter {
             toolName: b.name as string,
             toolUseId: innerToolId,
             toolInput: extractToolInput(b),
-          } as StreamEvent;
+          };
         } else if (blockType === "tool_result") {
           const rc = toolResultText(b.content);
           if (rc) {
@@ -1060,7 +1060,7 @@ export class ClaudeSession extends EventEmitter {
               kind: "tool_result",
               content: rc,
               toolUseId: b.tool_use_id as string | undefined,
-            } as StreamEvent;
+            };
           }
         }
         if (!ev) continue;
@@ -1080,12 +1080,12 @@ export class ClaudeSession extends EventEmitter {
       if (blockType === "thinking") {
         const text = b.thinking as string;
         if (text) {
-          this.emit("event", { kind: "thinking", content: text, step } as StreamEvent);
+          this.emit("event", { kind: "thinking", content: text, step });
         }
       } else if (blockType === "text") {
         const text = (b.text as string)?.trim();
         if (text) {
-          this.emit("event", { kind: "text", content: text, step } as StreamEvent);
+          this.emit("event", { kind: "text", content: text, step });
         }
       } else if (blockType === "tool_use") {
         const toolId = b.id as string;
@@ -1098,7 +1098,7 @@ export class ClaudeSession extends EventEmitter {
           toolInput,
           toolUseId: toolId,
           step,
-        } as StreamEvent);
+        });
         if (b.name === "ScheduleWakeup") this.noteSchedule(b.input as Record<string, unknown>);
       } else if (blockType === "tool_result") {
         const resultContent = toolResultText(b.content);
@@ -1108,7 +1108,7 @@ export class ClaudeSession extends EventEmitter {
             content: resultContent,
             toolUseId: b.tool_use_id as string | undefined,
             step,
-          } as StreamEvent);
+          });
         }
       }
     }
@@ -1152,7 +1152,7 @@ export class ClaudeSession extends EventEmitter {
         // Suppress the generic banner: the injected text is the better one.
         this.expectingTurn = true;
         this.setProcessing();
-        this.emit("event", { kind: "notice", level, content: trimmed } as StreamEvent);
+        this.emit("event", { kind: "notice", level, content: trimmed });
       }
     }
     if (!Array.isArray(content)) return;
@@ -1176,7 +1176,7 @@ export class ClaudeSession extends EventEmitter {
           content: text,
           toolUseId,
           ...(isSubagentResult && { isMarkdown: true }),
-        } as StreamEvent);
+        });
       }
     }
   }
@@ -1198,12 +1198,12 @@ export class ClaudeSession extends EventEmitter {
       if (deltaType === "thinking_delta") {
         const text = delta.thinking as string;
         if (text) {
-          this.emit("event", { kind: "thinking_delta", content: text } as StreamEvent);
+          this.emit("event", { kind: "thinking_delta", content: text });
         }
       } else if (deltaType === "text_delta") {
         const text = delta.text as string;
         if (text) {
-          this.emit("event", { kind: "text_delta", content: text } as StreamEvent);
+          this.emit("event", { kind: "text_delta", content: text });
         }
       }
     }
@@ -1226,7 +1226,7 @@ export class ClaudeSession extends EventEmitter {
         : undefined;
       this.lastCallUsage = null;
       const effort = this.config.effort ?? this.effectiveEffort ?? undefined;
-      this.emit("event", { kind: "result", content: text, context, effort } as StreamEvent);
+      this.emit("event", { kind: "result", content: text, context, effort });
     } else {
       const errResult = msg as Record<string, unknown>;
       const errList = errResult.errors as string[] | undefined;
@@ -1234,7 +1234,7 @@ export class ClaudeSession extends EventEmitter {
         (errList?.length ? errList.join("\n") : undefined) ??
         (errResult.error as string) ??
         `Turn failed (${(errResult.subtype as string) ?? "unknown error"})`;
-      this.emit("event", { kind: "error", content: errMsg } as StreamEvent);
+      this.emit("event", { kind: "error", content: errMsg });
     }
 
     this.usage.turns++;
@@ -1272,13 +1272,13 @@ export class ClaudeSession extends EventEmitter {
         kind: "notice",
         level: "schedule",
         content: "Loop ended — no further wake-ups.",
-      } as StreamEvent);
+      });
       return;
     }
     const delay = Number(input.delaySeconds ?? 0);
     const at = Date.now() + delay * 1000;
-    const reason = String(input.reason ?? "").trim();
-    const prompt = String(input.prompt ?? "").trim();
+    const reason = str(input.reason ?? "").trim();
+    const prompt = str(input.prompt ?? "").trim();
     this.pendingWake = { at, reason, stop: false };
     const when = `${formatDelay(delay)} (${formatClock(at)})`;
     const what = reason ? ` — ${reason}` : "";
@@ -1287,7 +1287,7 @@ export class ClaudeSession extends EventEmitter {
       kind: "notice",
       level: "schedule",
       content: `Wake up in ${when}${input.noop ? " · no change" : ""}${what}${next}`,
-    } as StreamEvent);
+    });
   }
 
   // Context occupancy after this turn: what the last request carried (fresh
@@ -1319,7 +1319,7 @@ export class ClaudeSession extends EventEmitter {
   async getContextUsage(): Promise<Record<string, unknown> | null> {
     if (!this.queryInstance) return null;
     try {
-      return (await this.queryInstance.getContextUsage()) as Record<string, unknown>;
+      return await this.queryInstance.getContextUsage();
     } catch {
       return null;
     }
@@ -1496,6 +1496,15 @@ export function backgroundTaskLabel(taskType: string | undefined): string {
   }
 }
 
+// Loosely typed SDK/tool-input fields: strings pass through, anything else
+// is rendered as JSON rather than "[object Object]".
+function str(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v == null) return "";
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
+  return JSON.stringify(v);
+}
+
 function formatToolUse(block: Record<string, unknown>): string {
   const name = block.name as string;
   const input = block.input as Record<string, unknown> | undefined;
@@ -1504,18 +1513,18 @@ function formatToolUse(block: Record<string, unknown>): string {
 
   switch (name) {
     case "Bash":
-      return `**Bash**\n\`\`\`bash\n${input.command}\n\`\`\``;
+      return `**Bash**\n\`\`\`bash\n${str(input.command)}\n\`\`\``;
 
     case "Read":
-      return `**Read** \`${input.file_path}\``;
+      return `**Read** \`${str(input.file_path)}\``;
 
     case "Write":
-      return `**Write** \`${input.file_path}\`\n\`\`\`\n${input.content}\n\`\`\``;
+      return `**Write** \`${str(input.file_path)}\`\n\`\`\`\n${str(input.content)}\n\`\`\``;
 
     case "Edit": {
-      const old_str = String(input.old_string ?? "");
-      const new_str = String(input.new_string ?? "");
-      return `**Edit** \`${input.file_path}\`\n\`\`\`diff\n${old_str
+      const old_str = str(input.old_string ?? "");
+      const new_str = str(input.new_string ?? "");
+      return `**Edit** \`${str(input.file_path)}\`\n\`\`\`diff\n${old_str
         .split("\n")
         .map((l) => "- " + l)
         .join("\n")}\n${new_str
@@ -1525,25 +1534,25 @@ function formatToolUse(block: Record<string, unknown>): string {
     }
 
     case "Grep":
-      return `**Grep** \`${input.pattern}\`${input.path ? ` in \`${input.path}\`` : ""}`;
+      return `**Grep** \`${str(input.pattern)}\`${input.path ? ` in \`${str(input.path)}\`` : ""}`;
 
     case "Glob":
-      return `**Glob** \`${input.pattern}\``;
+      return `**Glob** \`${str(input.pattern)}\``;
 
     case "Agent":
-      return `**Agent** ${input.prompt ?? ""}`;
+      return `**Agent** ${str(input.prompt ?? "")}`;
 
     case "ScheduleWakeup": {
       if (input.stop) return "**ScheduleWakeup** stop — loop ended";
       const delay = Number(input.delaySeconds ?? 0);
       const when = formatDelay(delay);
       const reason = input.reason ? ` — ${input.reason as string}` : "";
-      const prompt = input.prompt ? `\n\n> ${String(input.prompt).replace(/\n/g, "\n> ")}` : "";
+      const prompt = input.prompt ? `\n\n> ${str(input.prompt).replace(/\n/g, "\n> ")}` : "";
       return `**ScheduleWakeup** in ${when}${input.noop ? " (no change)" : ""}${reason}${prompt}`;
     }
 
     case "CronCreate":
-      return `**CronCreate** \`${input.cron ?? ""}\`${input.prompt ? ` — ${String(input.prompt).slice(0, 120)}` : ""}`;
+      return `**CronCreate** \`${str(input.cron ?? "")}\`${input.prompt ? ` — ${str(input.prompt).slice(0, 120)}` : ""}`;
 
     default:
       return `**${name}**\n\`\`\`json\n${JSON.stringify(input, null, 2)}\n\`\`\``;

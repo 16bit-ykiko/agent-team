@@ -15,16 +15,17 @@ function makeSession(model = "gpt-5.5") {
   session.on("event", (e: StreamEvent) => events.push(e));
   const dispatch = (ev: unknown) =>
     (session as unknown as { handleThreadEvent(e: unknown): void }).handleThreadEvent(ev);
-  const run = async (stream: unknown[] | (() => AsyncGenerator<unknown>)) => {
+  const run = async (stream: unknown[] | (() => Iterable<unknown> | AsyncIterable<unknown>)) => {
     const thread = {
-      runStreamed: async () => ({
-        events:
-          typeof stream === "function"
-            ? stream()
-            : (async function* () {
-                for (const ev of stream) yield ev;
-              })(),
-      }),
+      runStreamed: () =>
+        Promise.resolve({
+          events:
+            typeof stream === "function"
+              ? stream()
+              : (function* () {
+                  for (const ev of stream) yield ev;
+                })(),
+        }),
     };
     (session as unknown as { codex: unknown }).codex = {
       startThread: () => thread,
@@ -77,7 +78,7 @@ describe("codex thread event mapping", () => {
       if (e.kind === "result") runningAtResult = session.isRunning;
     });
     let drained = false;
-    await run(async function* () {
+    await run(function* () {
       yield { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } };
       // codex exec keeps stdout open a while after turn.completed.
       expect(events.some((e) => e.kind === "result")).toBe(false);
@@ -99,7 +100,7 @@ describe("codex thread event mapping", () => {
     // Captured live from codex-cli 0.144.1 with a revoked auth token: the
     // stream reports the same fault twice, then the SDK generator throws.
     const { events, run } = makeSession();
-    await run(async function* () {
+    await run(function* () {
       yield { type: "thread.started", thread_id: "thr_live" };
       yield { type: "turn.started" };
       yield { type: "error", message: "Your session has ended. Please log in again." };
@@ -124,7 +125,7 @@ describe("codex thread event mapping", () => {
   it("resets the thread when a resume fails so the next message starts fresh", async () => {
     const { session, events, run } = makeSession();
     session.sessionId = "thr_gone";
-    await run(async function* () {
+    await run(function* () {
       throw new Error("thread not found");
       yield undefined;
     });

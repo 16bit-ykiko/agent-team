@@ -10,8 +10,11 @@ import {
 } from "../src/stream";
 import { Message, StreamEvent } from "../src/useServer";
 
-const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent =>
-  ({ kind, content: "", ...over }) as StreamEvent;
+const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent => ({
+  kind,
+  content: "",
+  ...over,
+});
 
 const msg = (over: Partial<Message> = {}): Message => ({
   id: "m1",

@@ -34,7 +34,7 @@ class FakeSocket {
     this.readyState = FakeSocket.CLOSED;
   }
   frames(): Array<Record<string, unknown>> {
-    return this.sent.map((s) => JSON.parse(s));
+    return this.sent.map((s) => JSON.parse(s) as Record<string, unknown>);
   }
 }
 
@@ -185,7 +185,7 @@ describe("resync detail refetch", () => {
     vi.useRealTimers();
   });
 
-  it("re-fetches bodies for a message the user was watching live", async () => {
+  it("re-fetches bodies for a message the user was watching live", () => {
     const { result } = renderHook(() => useServer());
     const ws = FakeSocket.instances[0];
     const w = { id: "w", name: "w", project: "p", hostId: "h", cwd: "/", agents: [], messages: [] };

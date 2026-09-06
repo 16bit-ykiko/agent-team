@@ -53,14 +53,15 @@ function compressToBlob(file: File, maxDim = 1600, quality = 0.85): Promise<Blob
         canvas.toBlob(
           (blob) => {
             URL.revokeObjectURL(src);
-            blob ? resolve(blob) : reject(new Error("toBlob returned null"));
+            if (blob) resolve(blob);
+            else reject(new Error("toBlob returned null"));
           },
           "image/jpeg",
           quality,
         );
       } catch (e) {
         URL.revokeObjectURL(src);
-        reject(e);
+        reject(e instanceof Error ? e : new Error(String(e)));
       }
     };
     img.onerror = () => {
@@ -91,7 +92,7 @@ async function uploadImage(file: File): Promise<{ name: string; url: string }> {
     body: blob,
   });
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-  return res.json();
+  return res.json() as Promise<{ name: string; url: string }>;
 }
 
 export function App() {
@@ -309,7 +310,10 @@ export function App() {
   const [seenTick, setSeenTick] = useState(0);
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>(() => {
     try {
-      return JSON.parse(localStorage.getItem("wsGroupOverrides") ?? "{}");
+      return JSON.parse(localStorage.getItem("wsGroupOverrides") ?? "{}") as Record<
+        string,
+        boolean
+      >;
     } catch {
       return {};
     }
@@ -365,6 +369,7 @@ export function App() {
         return next;
       });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on id + message count; activeWs changes identity on every stream update and would re-tick on each
   }, [activeWsId, activeWs?.messages.length]);
 
   const runningSnapshot = useMemo(
@@ -416,7 +421,7 @@ export function App() {
         setTimeout(() => setHighlightMsgId(null), 2000);
       }, 100);
     },
-    [workspaces],
+    [workspaces, loadMessages],
   );
 
   useEffect(() => {
@@ -508,7 +513,7 @@ export function App() {
     } else if (msgs.length > prevCount && !userScrolledUpRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [activeWs?.messages?.length]);
+  }, [activeWs?.messages]);
 
   const isAnyRunning = activeWs?.agents.some(isAgentActive) ?? false;
   const hasAgents = (activeWs?.agents.length ?? 0) > 0;
@@ -635,7 +640,7 @@ export function App() {
         images = await Promise.all(pendingImages.map(({ file }) => uploadImage(file)));
       } catch (e) {
         console.error("Image upload failed:", e);
-        alert(`Image upload failed: ${e instanceof Error ? e.message : e}`);
+        alert(`Image upload failed: ${e instanceof Error ? e.message : String(e)}`);
         setUploading(false);
         return;
       }
@@ -662,7 +667,7 @@ export function App() {
       textareaRef.current.style.height = "36px";
     }
     setHasInput(false);
-  }, [activeWsId, sendMessage, pendingImages, uploading, quotedMsg, targetBusy]);
+  }, [activeWsId, sendMessage, pendingImages, uploading, quotedMsg]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (isImeKeyEvent(e, composingRef.current, compositionEndTsRef.current)) return;
@@ -712,7 +717,7 @@ export function App() {
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   };
 
@@ -1113,19 +1118,21 @@ export function App() {
                 {targetBusy && (
                   <button
                     className="btn-abort"
-                    title={`Stop ${targetAgent!.name}`}
-                    onClick={() => abort(activeWs.id, targetAgent!.id)}
+                    title={`Stop ${targetAgent.name}`}
+                    onClick={() => abort(activeWs.id, targetAgent.id)}
                   >
                     ◼
                   </button>
                 )}
                 <button
                   className="btn-primary-slot"
-                  onClick={handleSend}
+                  onClick={() => {
+                    void handleSend();
+                  }}
                   disabled={(!hasInput && pendingImages.length === 0) || !hasAgents || uploading}
                   title={
                     targetBusy
-                      ? `${targetAgent!.name} is busy — message will run next`
+                      ? `${targetAgent.name} is busy — message will run next`
                       : targetAgent && activeWs.agents.length > 1
                         ? `Send to ${targetAgent.name}`
                         : "Send"

@@ -13,7 +13,7 @@ import { Workspace, Message, WorkspaceCallbacks } from "../src/task";
 import { HostRegistry, Host, HostSessionHandle, HostInfo } from "../src/host";
 import { applyEventsToMessage } from "../../webview/src/stream";
 
-// Real SDK streams recorded with scripts/capture-sdk.mjs (claude-sonnet-5,
+// Real SDK streams recorded with scripts/capture-sdk.ts (claude-sonnet-5,
 // bundled CLI). Each fixture is replayed through ClaudeSession and the
 // Workspace aggregation, and the client-side aggregation is checked to
 // converge on the same transcript.
@@ -74,8 +74,9 @@ class FakeSession extends EventEmitter implements HostSessionHandle {
   constructor(private config: SessionConfig) {
     super();
   }
-  async send(): Promise<void> {
+  send(): Promise<void> {
     this.isRunning = true;
+    return Promise.resolve();
   }
   abort(): void {}
   getState(): SessionState {
@@ -148,9 +149,7 @@ function clientView(prompt: string, events: StreamEvent[]): Message[] {
         ? msgs.find((m) => m.events!.some((x) => x.subagent?.taskId === taskId))
         : undefined;
     const target: ClientMessage = owner ?? cur;
-    const next = applyEventsToMessage(target, [
-      e as ClientMessage["events"] extends (infer E)[] | undefined ? E : never,
-    ]);
+    const next = applyEventsToMessage(target, [e]);
     msgs[msgs.indexOf(target)] = next;
     if (target === cur) cur = next;
   }
@@ -164,14 +163,14 @@ const kinds = (evs: StreamEvent[]) =>
     .filter((e) => e.kind !== "subagent_done" && e.kind !== "subagent_progress")
     .map((e) => e.kind);
 
-const strip = (m: Message) =>
+const strip = (m: Message): unknown =>
   JSON.parse(
-    JSON.stringify(m.events, (k, v) =>
+    JSON.stringify(m.events, (k: string, v: unknown) =>
       k === "_innerEvent" || k === "contentOffset" || k === "step" || k === "toolInput"
         ? undefined
         : v,
     ),
-  );
+  ) as unknown;
 
 describe("real SDK streams", () => {
   it("bash-quick: one paired tool call, no cards", () => {

@@ -73,7 +73,7 @@ function splitByText(msg: Message, events: StreamEvent[]): Message[] {
   return results;
 }
 
-const baseDir = process.argv[2] || path.join(__dirname, "..");
+const baseDir = process.argv[2] || path.join(import.meta.dirname, "..");
 const dataDir = path.join(baseDir, ".agent-team");
 const stateFile = path.join(dataDir, "cache", "state.json");
 const logsDir = path.join(dataDir, "logs");

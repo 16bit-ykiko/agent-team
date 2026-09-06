@@ -4,12 +4,11 @@ import { SubAgentItem, StepGroup, MessageItem, CreateWorkspaceDialog } from "../
 import { HostInfo } from "../src/useServer";
 import { StreamEvent, Message, AgentInfo } from "../src/useServer";
 
-const sa = (over: Partial<NonNullable<StreamEvent["subagent"]>> = {}): StreamEvent =>
-  ({
-    kind: "subagent_start",
-    content: "",
-    subagent: { taskId: "task-1", description: "explore the repo", agentType: "Explore", ...over },
-  }) as StreamEvent;
+const sa = (over: Partial<NonNullable<StreamEvent["subagent"]>> = {}): StreamEvent => ({
+  kind: "subagent_start",
+  content: "",
+  subagent: { taskId: "task-1", description: "explore the repo", agentType: "Explore", ...over },
+});
 
 describe("SubAgentItem", () => {
   it("shows a cancel button while running and reports the taskId", () => {
@@ -39,17 +38,17 @@ describe("SubAgentItem", () => {
 
   it("renders nested subagents as nested SubAgentItems with merged lifecycle", () => {
     const nestedEvents: StreamEvent[] = [
-      { kind: "tool_use", content: "Read /a", toolUseId: "t1" } as StreamEvent,
+      { kind: "tool_use", content: "Read /a", toolUseId: "t1" },
       {
         kind: "subagent_start",
         content: "",
         subagent: { taskId: "nested-1", description: "inner search", agentType: "Explore" },
-      } as StreamEvent,
+      },
       {
         kind: "subagent_done",
         content: "",
         subagent: { taskId: "nested-1", description: "", status: "completed" },
-      } as StreamEvent,
+      },
     ];
     const { container, getByText } = render(
       <SubAgentItem ev={sa({ status: "running", events: nestedEvents })} />,
@@ -68,7 +67,7 @@ describe("SubAgentItem", () => {
 describe("StepGroup", () => {
   it("renders subagents as sibling blocks, not inside the step box", () => {
     const events: StreamEvent[] = [
-      { kind: "tool_use", content: "Bash ls", toolUseId: "t1" } as StreamEvent,
+      { kind: "tool_use", content: "Bash ls", toolUseId: "t1" },
       sa({ status: "running" }),
     ];
     const { container } = render(<StepGroup group={{ step: 0, events }} />);
@@ -109,7 +108,7 @@ describe("MessageItem", () => {
 
   it("renders subagents outside the collapsed events box", () => {
     const events: StreamEvent[] = [
-      { kind: "thinking", content: "hmm" } as StreamEvent,
+      { kind: "thinking", content: "hmm" },
       sa({ status: "completed" }),
     ];
     const { container } = render(<MessageItem msg={msg({ events })} agents={agents} />);
@@ -129,7 +128,7 @@ describe("MessageItem", () => {
         content: "Read /a",
         toolUseId: "t1",
         contentOffset: part1.length,
-      } as StreamEvent,
+      },
       { ...sa({ status: "completed" }), contentOffset: part1.length },
     ];
     const { container, getByText } = render(
@@ -251,7 +250,9 @@ describe("CreateWorkspaceDialog", () => {
       expect(container.querySelector(".dir-suggest")).not.toBeNull();
 
       fireEvent.blur(pathInput);
-      act(() => vi.advanceTimersByTime(200));
+      act(() => {
+        vi.advanceTimersByTime(200);
+      });
       expect(container.querySelector(".dir-suggest")).toBeNull();
 
       // Refocusing brings it back before the user types anything.
@@ -278,7 +279,9 @@ describe("CreateWorkspaceDialog", () => {
       );
       fireEvent.blur(pathInput);
       fireEvent.focus(pathInput); // cancels the pending close
-      act(() => vi.advanceTimersByTime(300));
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
       expect(container.querySelector(".dir-suggest")).not.toBeNull();
     } finally {
       vi.useRealTimers();
@@ -326,9 +329,9 @@ describe("MessageItem events without contentOffset", () => {
       { id: "a1", name: "A", model: "m", avatar: "x", color: "#fff", isDefault: true },
     ];
     const events: StreamEvent[] = [
-      { kind: "tool_use", content: "**Read** `a`", contentOffset: 0 } as StreamEvent,
-      { kind: "notice", level: "warning", content: "late banner" } as StreamEvent,
-      { kind: "error", content: "boom" } as StreamEvent,
+      { kind: "tool_use", content: "**Read** `a`", contentOffset: 0 },
+      { kind: "notice", level: "warning", content: "late banner" },
+      { kind: "error", content: "boom" },
     ];
     const msg: Message = {
       id: "m",
@@ -368,12 +371,12 @@ describe("MessageItem subagent lifecycle placement", () => {
         content: "",
         contentOffset: 0,
         subagent: { taskId: "t", description: "search", agentType: "Explore", status: "running" },
-      } as StreamEvent,
+      },
       {
         kind: "subagent_done",
         content: "",
         subagent: { taskId: "t", description: "", status: "completed" },
-      } as StreamEvent,
+      },
     ];
     const msg: Message = {
       id: "m",
@@ -405,8 +408,8 @@ describe("legacy messages without any contentOffset", () => {
       timestamp: 0,
       status: "done",
       events: [
-        { kind: "thinking", content: "hmm" } as StreamEvent,
-        { kind: "tool_use", content: "**Read** `a`" } as StreamEvent,
+        { kind: "thinking", content: "hmm" },
+        { kind: "tool_use", content: "**Read** `a`" },
       ],
     };
     const { container } = render(<MessageItem msg={msg} agents={agents} />);

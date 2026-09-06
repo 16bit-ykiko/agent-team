@@ -4,7 +4,7 @@ const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fen
 turndown.addRule("fencedCodeBlock", {
   filter: (node) => node.nodeName === "PRE" && !!node.querySelector("code"),
   replacement: (_content, node) => {
-    const code = (node as HTMLElement).querySelector("code")!;
+    const code = node.querySelector("code")!;
     const lang = [...code.classList].find((c) => c.startsWith("language-"))?.slice(9) ?? "";
     return `\n\`\`\`${lang}\n${code.textContent}\n\`\`\`\n`;
   },

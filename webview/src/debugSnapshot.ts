@@ -50,7 +50,7 @@ export const SNAPSHOT_SELECTORS = [
 ];
 
 function geometry(selector: string): ElementGeometry | null {
-  const el = document.querySelector(selector) as HTMLElement | null;
+  const el = document.querySelector(selector);
   if (!el) return null;
   const r = el.getBoundingClientRect();
   const cs = getComputedStyle(el);

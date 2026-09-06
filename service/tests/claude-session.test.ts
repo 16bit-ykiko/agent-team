@@ -388,7 +388,9 @@ describe("rateLimit recovery signal", () => {
   it("emits rateLimit with type and reset on rejection, once per status flip", () => {
     const session = new ClaudeSession({ cwd: "/tmp" });
     const signals: Array<{ rateLimitType?: string; resetsAt?: number }> = [];
-    session.on("rateLimit", (info) => signals.push(info));
+    session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) =>
+      signals.push(info),
+    );
     const dispatch = (msg: unknown) =>
       (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage(msg);
 

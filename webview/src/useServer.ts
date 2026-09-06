@@ -722,7 +722,7 @@ export function useServer() {
     ws.onmessage = (e) => {
       clearTimeout(probeRef.current);
       probeRef.current = undefined;
-      handleServerMessage(JSON.parse(e.data));
+      handleServerMessage(JSON.parse(e.data as string) as Record<string, unknown>);
     };
   }, [handleServerMessage]);
 
@@ -763,7 +763,7 @@ export function useServer() {
     }
     if (useReplay) {
       setConnected(true);
-      import("./replay").then(({ startReplay }) =>
+      void import("./replay").then(({ startReplay }) =>
         startReplay(handleServerMessage).catch((e) => console.error("[replay]", e)),
       );
       return;
@@ -839,7 +839,7 @@ export function useServer() {
       (wsId: string, agentId: string, taskId: string) => {
         if (wsId === "replay-demo") {
           // Demo workspace exists only client-side; emulate the stop locally.
-          import("./replayFixture").then(({ cancelDemoSubagent }) =>
+          void import("./replayFixture").then(({ cancelDemoSubagent }) =>
             cancelDemoSubagent(handleServerMessage, taskId),
           );
           return;
@@ -851,7 +851,7 @@ export function useServer() {
     // Plays the synthetic rendering-review fixture through the same dispatch
     // path as live server frames. Returns the demo workspace id.
     startReplayDemo: useCallback(() => {
-      import("./replayFixture").then(({ startDemoReplay }) =>
+      void import("./replayFixture").then(({ startDemoReplay }) =>
         startDemoReplay(handleServerMessage).catch((e) => console.error("[replay-demo]", e)),
       );
       return "replay-demo";

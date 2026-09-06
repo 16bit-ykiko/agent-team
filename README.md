@@ -70,18 +70,24 @@ With pixi, `pixi run serve` builds and starts in one step.
 
 ```bash
 pixi run dev-webview         # Vite dev server with HMR
+npm run check                # tsc (strict) + ESLint + prettier, zero tolerance
 npm test                     # service + webview (vitest)
 npm run fmt                  # prettier
 ```
 
+CI (`.github/workflows/ci.yml`) runs `check`, `test` and `build` on every push
+and pull request. Agent-facing project rules live in `.claude/CLAUDE.md`, with
+task-specific playbooks under `.claude/skills/` (deploy, capture-sdk,
+stream-debug, add-model, review).
+
 The Claude event mapping is tested against recorded real streams:
 `service/tests/fixtures/sdk/*.jsonl` are raw SDK message logs (foreground and
 background shells, subagents, nested subagents, skills, images) captured with
-`node scripts/capture-sdk.mjs [scenario ...]` (run from `service/`, uses your
-own Claude login), and `scripts/summarize-capture.mjs` prints one line per
-frame. `service/tests/sdk-captures.test.ts` replays them through the session,
-the workspace aggregation and the client aggregation, which must agree. When
-the CLI changes shape, re-capture rather than guess.
+`node scripts/capture-sdk.ts [scenario ...]` (uses your own Claude login), and
+`node scripts/summarize-capture.ts` prints one line per frame.
+`service/tests/sdk-captures.test.ts` replays them through the session, the
+workspace aggregation and the client aggregation, which must agree. When the
+CLI changes shape, re-capture rather than guess.
 
 ## Configuration
 
@@ -167,7 +173,8 @@ service/src/     Node server: HTTP + WebSocket, sessions, config, git, state
   claude-session.ts / codex-session.ts   one adapter per CLI backend
   presets.ts                             agent + model lists (hand-maintained)
 webview/src/     React UI (Vite), one panel per workspace
-scripts/         start script, deferred deploy, one-off maintenance tools
+scripts/         start script, deferred deploy, SDK capture + smoke tests, one-off migrations
+.claude/         CLAUDE.md + skills: the rules and playbooks agents load when working here
 ```
 
 ## License

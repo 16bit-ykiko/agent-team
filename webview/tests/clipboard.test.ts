@@ -27,13 +27,10 @@ function mockSelection(html: string | null) {
 }
 
 function makeEvent(setDataImpl?: () => void) {
-  return {
-    clipboardData: { setData: vi.fn(setDataImpl) },
-    preventDefault: vi.fn(),
-  } as unknown as React.ClipboardEvent & {
-    clipboardData: { setData: ReturnType<typeof vi.fn> };
-    preventDefault: ReturnType<typeof vi.fn>;
-  };
+  const setData = vi.fn(setDataImpl);
+  const preventDefault = vi.fn();
+  const e = { clipboardData: { setData }, preventDefault } as unknown as React.ClipboardEvent;
+  return { e, setData, preventDefault };
 }
 
 afterEach(() => {
@@ -59,37 +56,37 @@ describe("selectionToMarkdown", () => {
 describe("copySelectionAsMarkdown", () => {
   it("writes markdown to the clipboard and suppresses the native copy", () => {
     mockSelection("<p><em>hi</em> there</p>");
-    const e = makeEvent();
+    const { e, setData, preventDefault } = makeEvent();
     copySelectionAsMarkdown(e);
-    expect(e.clipboardData.setData).toHaveBeenCalledWith("text/plain", "_hi_ there");
-    expect(e.preventDefault).toHaveBeenCalled();
+    expect(setData).toHaveBeenCalledWith("text/plain", "_hi_ there");
+    expect(preventDefault).toHaveBeenCalled();
   });
 
   it("does nothing for a collapsed selection", () => {
     mockSelection(null);
-    const e = makeEvent();
+    const { e, setData, preventDefault } = makeEvent();
     copySelectionAsMarkdown(e);
-    expect(e.clipboardData.setData).not.toHaveBeenCalled();
-    expect(e.preventDefault).not.toHaveBeenCalled();
+    expect(setData).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it("falls back to native copy when the clipboard write throws", () => {
     // iOS Safari can reject programmatic clipboard writes; the old code
     // called preventDefault first, so a failure left the clipboard empty.
     mockSelection("<p>text</p>");
-    const e = makeEvent(() => {
+    const { e, preventDefault } = makeEvent(() => {
       throw new Error("denied");
     });
     copySelectionAsMarkdown(e);
-    expect(e.preventDefault).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 
   it("leaves huge selections to the native copy path", () => {
     mockSelection("<p>" + "x".repeat(MAX_COPY_HTML) + "</p>");
-    const e = makeEvent();
+    const { e, setData, preventDefault } = makeEvent();
     copySelectionAsMarkdown(e);
-    expect(e.clipboardData.setData).not.toHaveBeenCalled();
-    expect(e.preventDefault).not.toHaveBeenCalled();
+    expect(setData).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
   });
 });
 
@@ -146,7 +143,7 @@ describe("installMacCtrlClipboard", () => {
 
   it("copies via execCommand on Ctrl+C with a textarea selection", () => {
     const exec = vi.fn(() => true);
-    document.execCommand = exec as typeof document.execCommand;
+    document.execCommand = exec;
     const ta = document.createElement("textarea");
     ta.value = "hello";
     document.body.appendChild(ta);
@@ -166,7 +163,7 @@ describe("installMacCtrlClipboard", () => {
 
   it("leaves Ctrl+C alone without a selection (and Cmd combos alone entirely)", () => {
     const exec = vi.fn(() => true);
-    document.execCommand = exec as typeof document.execCommand;
+    document.execCommand = exec;
     const cleanup = installMacCtrlClipboard(
       () => null,
       () => {},
@@ -183,10 +180,10 @@ describe("installMacCtrlClipboard", () => {
     vi.stubGlobal("navigator", {
       ...navigator,
       platform: "MacIntel",
-      clipboard: { readText: async () => "pasted" },
+      clipboard: { readText: () => Promise.resolve("pasted") },
     });
     const exec = vi.fn(() => false); // force the setRangeText fallback
-    document.execCommand = exec as typeof document.execCommand;
+    document.execCommand = exec;
     const ta = document.createElement("textarea");
     document.body.appendChild(ta);
 
@@ -217,8 +214,9 @@ describe("installMacCtrlClipboard", () => {
     vi.stubGlobal("navigator", {
       ...navigator,
       clipboard: {
-        readText: async () => "ignored",
-        read: async () => [{ types: ["image/png"], getType: async () => blob }],
+        readText: () => Promise.resolve("ignored"),
+        read: () =>
+          Promise.resolve([{ types: ["image/png"], getType: () => Promise.resolve(blob) }]),
       },
     });
     const added: File[][] = [];

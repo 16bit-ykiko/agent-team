@@ -66,11 +66,13 @@ export function gitBranch(cwd: string): Promise<string | null> {
   return gitStatus(cwd).then((s) => s?.branch ?? null);
 }
 
+const text = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
+
 // gh's statusCheckRollup is a list of check runs / status contexts; fold it.
 export function parsePrJson(raw: unknown): PrInfo | null {
   const d = raw as Record<string, unknown> | null;
   if (!d || typeof d.url !== "string") return null;
-  const stateRaw = String(d.state ?? "OPEN").toUpperCase();
+  const stateRaw = text(d.state, "OPEN").toUpperCase();
   const state: PrState =
     stateRaw === "MERGED" ? "merged" : stateRaw === "CLOSED" ? "closed" : "open";
   let checks: CheckState | null = null;
@@ -78,8 +80,8 @@ export function parsePrJson(raw: unknown): PrInfo | null {
   if (Array.isArray(rollup) && rollup.length > 0) {
     checks = "success";
     for (const c of rollup) {
-      const conclusion = String(c.conclusion ?? c.state ?? "").toUpperCase();
-      const status = String(c.status ?? "").toUpperCase();
+      const conclusion = text(c.conclusion ?? c.state).toUpperCase();
+      const status = text(c.status).toUpperCase();
       if (
         [
           "FAILURE",
@@ -101,7 +103,7 @@ export function parsePrJson(raw: unknown): PrInfo | null {
   return {
     number: Number(d.number ?? 0),
     url: d.url,
-    title: String(d.title ?? ""),
+    title: text(d.title),
     state,
     draft: !!d.isDraft,
     checks,

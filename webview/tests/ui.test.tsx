@@ -5,8 +5,11 @@ import { Sidebar, SidebarProps } from "../src/Sidebar";
 import { ConfirmDialog } from "../src/dialogs";
 import { StreamEvent, Message, AgentInfo, Workspace } from "../src/useServer";
 
-const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent =>
-  ({ kind, content: "", ...over }) as StreamEvent;
+const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent => ({
+  kind,
+  content: "",
+  ...over,
+});
 
 const agent: AgentInfo = {
   id: "a1",

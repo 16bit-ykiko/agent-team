@@ -4,7 +4,6 @@ import {
   RunState,
   SessionConfig,
   SessionState,
-  StreamEvent,
   UsageStats,
   BackgroundTask,
 } from "./claude-session";

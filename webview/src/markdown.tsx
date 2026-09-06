@@ -12,7 +12,9 @@ function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
       <button
         className="copy-btn"
         onClick={() => {
-          navigator.clipboard.writeText(preRef.current?.querySelector("code")?.textContent ?? "");
+          void navigator.clipboard.writeText(
+            preRef.current?.querySelector("code")?.textContent ?? "",
+          );
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }}

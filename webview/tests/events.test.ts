@@ -2,8 +2,11 @@ import { describe, it, expect } from "vitest";
 import { splitEvents, timelineBlocks, hasRunningSubagents } from "../src/events";
 import { StreamEvent } from "../src/useServer";
 
-const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent =>
-  ({ kind, content: "", ...over }) as StreamEvent;
+const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent => ({
+  kind,
+  content: "",
+  ...over,
+});
 
 describe("splitEvents", () => {
   it("separates regular events from subagent events", () => {

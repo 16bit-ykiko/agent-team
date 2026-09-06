@@ -26,8 +26,6 @@ const LOGS_OUT_DIR = path.join(DATA_DIR, "logs");
 
 const REAL_USER = "ykiko7";
 
-const BOT_ECHOES = new Set(["Alice#8192", "Isla#2674", "Kisara#2358"]);
-
 interface ChatEntry {
   ts: string;
   thread_id: number;
@@ -141,7 +139,7 @@ function loadThreadMeta(): Map<string, ThreadMeta> {
 
   const stateFile = path.join(CACHE_DIR, "state.json");
   if (fs.existsSync(stateFile)) {
-    const raw = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+    const raw = JSON.parse(fs.readFileSync(stateFile, "utf-8")) as Record<string, unknown>;
     for (const [k, v] of Object.entries(raw)) {
       if (k === "tasks") continue;
       const entry = v as Record<string, unknown>;
@@ -158,7 +156,7 @@ function loadThreadMeta(): Map<string, ThreadMeta> {
   for (const botFile of ["state_planner.json", "state_coder.json", "state_reviewer.json"]) {
     const file = path.join(CACHE_DIR, botFile);
     if (!fs.existsSync(file)) continue;
-    const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, unknown>;
     for (const [tid, val] of Object.entries(raw)) {
       const v = val as Record<string, unknown>;
       if (!result.has(tid) && v.cwd) {
@@ -181,7 +179,7 @@ function readJsonl<T>(file: string): T[] {
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l));
+    .map((l) => JSON.parse(l) as T);
 }
 
 /**
@@ -235,9 +233,10 @@ function buildTurnMessages(events: StreamEntry[], agentId: string, turnId: strin
       }
 
       case "result": {
-        if (currentMsg && !textFinalized) {
-          currentMsg.content = e.content;
-          currentMsg.status = "done";
+        const msg = currentMsg as NewMessage | null;
+        if (msg && !textFinalized) {
+          msg.content = e.content;
+          msg.status = "done";
         }
         break;
       }

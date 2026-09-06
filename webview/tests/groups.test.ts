@@ -6,7 +6,7 @@ import {
   archivedWorkspaces,
   isArchived,
 } from "../src/groups";
-import { Workspace, Message, StreamEvent } from "../src/useServer";
+import { Workspace } from "../src/useServer";
 
 const NOW = 1_800_000_000_000;
 

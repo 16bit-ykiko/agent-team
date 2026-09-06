@@ -27,7 +27,6 @@ import { searchMessages } from "./search";
 import { summarizeMessages } from "./summary";
 import * as zlib from "zlib";
 import { HostRegistry, LocalHost } from "./host";
-import type { Message } from "./task";
 
 // Commands handled by this server (Workspace.tryHandleCommand) rather than
 // forwarded to the agent. Merged into the SDK command list for autocomplete.
@@ -62,14 +61,7 @@ function stripEventsInnerEvents(events: StreamEvent[]): StreamEvent[] {
     return {
       ...e,
       subagent: { ...e.subagent, eventCount: e.subagent.events.length, events: undefined },
-    } as StreamEvent;
-  });
-}
-
-function stripMessageSubagentEvents(messages: Message[]): Message[] {
-  return messages.map((m) => {
-    if (!m.events?.some((e) => e.subagent?.events?.length)) return m;
-    return { ...m, events: stripEventsInnerEvents(m.events!) };
+    };
   });
 }
 
@@ -165,8 +157,10 @@ export class Server {
     this.restoreState();
     this.initCpuBaseline();
     this.statusTimer = setInterval(() => this.broadcastSystemStatus(), 3000);
-    this.branchTimer = setInterval(() => this.scanGit(), 3000);
-    this.scanGit();
+    this.branchTimer = setInterval(() => {
+      void this.scanGit();
+    }, 3000);
+    void this.scanGit();
     this.refreshQuota();
     this.quotaTimer = setInterval(() => this.refreshQuota(), 60000);
     this.sweepArchives();
@@ -298,7 +292,9 @@ export class Server {
 
     const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
     try {
-      const creds = JSON.parse(fs.readFileSync(credPath, "utf-8"));
+      const creds = JSON.parse(fs.readFileSync(credPath, "utf-8")) as {
+        claudeAiOauth?: { accessToken?: string };
+      } | null;
       const token = creds?.claudeAiOauth?.accessToken;
       if (token) sources.push({ label: "local", token });
     } catch {}
@@ -674,10 +670,15 @@ export class Server {
 
     ws.on("message", (raw) => {
       try {
-        const msg = JSON.parse(raw.toString());
+        const buf = Buffer.isBuffer(raw)
+          ? raw
+          : Array.isArray(raw)
+            ? Buffer.concat(raw)
+            : Buffer.from(raw);
+        const msg = JSON.parse(buf.toString()) as Record<string, unknown>;
         this.handleMessage(ws, msg);
       } catch (e) {
-        this.sendJson(ws, { type: "error", message: `Invalid message: ${e}` });
+        this.sendJson(ws, { type: "error", message: `Invalid message: ${String(e)}` });
       }
     });
 
@@ -825,7 +826,7 @@ export class Server {
         if (images) this.ensureLocalImages(images);
         const quote = msg.quote as
           { messageId: string; agentId: string | null; content: string } | undefined;
-        this.sendMessage(
+        void this.sendMessage(
           msg.workspaceId as string,
           msg.content as string,
           msg.target as string | undefined,
@@ -894,7 +895,10 @@ export class Server {
         try {
           workspace.cancelSubagent(msg.agentId as string, msg.taskId as string);
         } catch (e) {
-          this.sendJson(ws, { type: "error", message: `${e instanceof Error ? e.message : e}` });
+          this.sendJson(ws, {
+            type: "error",
+            message: `${e instanceof Error ? e.message : String(e)}`,
+          });
         }
         return;
       }
@@ -909,7 +913,7 @@ export class Server {
       }
 
       case "forward_message":
-        this.forwardMessage(
+        void this.forwardMessage(
           msg.workspaceId as string,
           msg.messageId as string,
           msg.targetAgentId as string,
@@ -927,7 +931,7 @@ export class Server {
         return;
 
       default:
-        this.sendJson(ws, { type: "error", message: `Unknown message type: ${msg.type}` });
+        this.sendJson(ws, { type: "error", message: `Unknown message type: ${String(msg.type)}` });
     }
   }
 
@@ -1013,7 +1017,10 @@ export class Server {
       this.persistWorkspaceNow(workspaceId);
       this.broadcastUI({ type: "agent_added", workspaceId, agent });
     } catch (e) {
-      this.sendJson(ws, { type: "error", message: `${e instanceof Error ? e.message : e}` });
+      this.sendJson(ws, {
+        type: "error",
+        message: `${e instanceof Error ? e.message : String(e)}`,
+      });
     }
   }
 
@@ -1066,7 +1073,7 @@ export class Server {
       } catch (e) {
         this.broadcastUI({
           type: "error",
-          message: `config.toml reload failed: ${e instanceof Error ? e.message : e}`,
+          message: `config.toml reload failed: ${e instanceof Error ? e.message : String(e)}`,
         });
         return;
       }
@@ -1157,7 +1164,7 @@ export class Server {
     } catch (e) {
       this.broadcastUI({
         type: "error",
-        message: `${e instanceof Error ? e.message : e}`,
+        message: `${e instanceof Error ? e.message : String(e)}`,
       });
     }
 
@@ -1175,7 +1182,7 @@ export class Server {
     try {
       await workspace.forwardMessage(messageId, targetAgentId);
     } catch (e) {
-      this.broadcastUI({ type: "error", message: `${e instanceof Error ? e.message : e}` });
+      this.broadcastUI({ type: "error", message: `${e instanceof Error ? e.message : String(e)}` });
     }
     this.persistWorkspace(workspaceId);
   }
