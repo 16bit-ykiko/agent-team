@@ -7,7 +7,7 @@ description: Frame semantics of the Claude SDK stream and the event model that t
 
 Fixtures for every fact below live in `service/tests/snap/claude/` and `codex/` (capture-sdk skill); the `.snap.md` next to each recording is the transcript the pipeline produces from it.
 
-Pipeline: SDK frames → `service/src/claude-session.ts` (frames → `StreamEvent`) → `service/src/task.ts` (`Workspace.applyInnerEvent`, message list, `contentOffset`) → WebSocket `stream_event` batches → `webview/src/stream.ts` (`applyEventsToMessage`, same aggregation client-side) → `webview/src/events.ts` (`timelineBlocks`, `foldSubagents`) → `webview/src/messages.tsx`. The server and client aggregations must produce the same transcript; `service/tests/sdk-captures.test.ts` asserts that on recorded streams. Codex goes through `codex-session.ts` into the same event model.
+Pipeline: SDK frames → `service/src/claude-session.ts` (frames → `StreamEvent`) → `service/src/task.ts` (`Workspace.applyInnerEvent`, message list, `contentOffset`) → WebSocket `stream_event` batches → `webview/src/stream.ts` (`applyEventsToMessage`, same aggregation client-side) → `webview/src/events.ts` (`timelineBlocks`, `foldSubagents`) → `webview/src/messages.tsx`. The server and client aggregations must produce the same transcript; `service/tests/snap/snap.test.ts` asserts that on every recorded fixture. Codex goes through `codex-session.ts` into the same event model.
 
 ## Frame facts (from recordings, not docs)
 

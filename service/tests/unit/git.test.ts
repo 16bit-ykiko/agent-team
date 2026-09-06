@@ -3,7 +3,7 @@ import { execSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { gitBranch, gitStatus, getPrInfo, parseGitStatus, parsePrJson } from "../src/git";
+import { gitBranch, gitStatus, getPrInfo, parseGitStatus, parsePrJson } from "../../src/git";
 
 let repo: string;
 let plain: string;

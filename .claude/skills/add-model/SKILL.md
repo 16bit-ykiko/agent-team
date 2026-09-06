@@ -50,4 +50,4 @@ Preset fields for Codex: `codexModelId` strips the `[1m]` suffix; `[1m]` variant
 
 ## Tests
 
-`service/tests/presets.test.ts` covers the helper functions (`backendForModel`, `codexModelId`, `codexContextWindow`, `supportsFastMode`, `defaultEffortForModel`). Add the new id to whichever cases enumerate models. Restart is a separate, user-approved step (deploy skill).
+`service/tests/unit/presets.test.ts` covers the helper functions (`backendForModel`, `codexModelId`, `codexContextWindow`, `supportsFastMode`, `defaultEffortForModel`). Add the new id to whichever cases enumerate models. Restart is a separate, user-approved step (deploy skill).

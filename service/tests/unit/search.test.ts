@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { searchMessages, SearchSource } from "../src/search";
+import { searchMessages, SearchSource } from "../../src/search";
 
 function ws(id: string, name: string, msgs: Array<[string, string, number]>): SearchSource {
   return {

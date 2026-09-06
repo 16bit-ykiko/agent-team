@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { CodexSession, findRollout, readRolloutContext } from "../src/codex-session";
-import { StreamEvent } from "../src/claude-session";
+import { CodexSession, findRollout, readRolloutContext } from "../../src/codex-session";
+import { StreamEvent } from "../../src/claude-session";
 
 // handleThreadEvent maps @openai/codex-sdk ThreadEvents onto our StreamEvent
 // protocol. The constructor is inert, so we drive it directly; `run` plays a

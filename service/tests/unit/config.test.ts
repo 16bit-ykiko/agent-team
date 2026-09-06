@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { loadConfig, effectiveAccount, pickFailoverAccount } from "../src/config";
-import { loadSettings, saveSettings } from "../src/state";
+import { loadConfig, effectiveAccount, pickFailoverAccount } from "../../src/config";
+import { loadSettings, saveSettings } from "../../src/state";
 
 let dir: string;
 

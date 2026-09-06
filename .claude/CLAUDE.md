@@ -38,6 +38,7 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 - `webview/src/useServer.ts` — WebSocket client, types, reconnect/resync
 - `webview/src/stream.ts` / `events.ts` — client-side aggregation and timeline blocks
 - `webview/src/messages.tsx` / `App.tsx` — rendering
+- `service/tests/unit/` — unit tests for the server (frame mapping edge cases, config, git, state)
 - `service/tests/snap/{claude,codex}/<name>.{ts,jsonl,snap.md}` — recorded real interactions (script + recording + pinned transcript), replayed by `snap.test.ts` through the real sessions
 - `scripts/` — `deploy-deferred.sh`; `capture-sdk.ts` / `summarize-capture.ts` / `smoke-*.ts` run via `npm run capture|summarize|smoke:claude|smoke:codex`; `flush-events.ts` / `migrate-streams.ts` are one-off migrations from the Discord-era data format
 
@@ -45,7 +46,7 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 
 - Node ≥ 22, npm workspaces rooted at the repo top level — `npm install` at the root only. TypeScript scripts run through `tsx` (`npm run capture -- …`), never compiled.
 - `npm run check` — root `tsc` (scripts + cross-package test), per-workspace strict `tsc`, ESLint (`typescript-eslint` recommendedTypeChecked + react-hooks), prettier. Zero tolerance; no `eslint-disable` except `react-hooks/exhaustive-deps` with a stated reason.
-- `npm test` — vitest in `service/` (unit tests + snap fixtures) then `webview/` (jsdom + testing-library).
+- `npm test` — vitest in `service/` (`tests/unit` + `tests/snap`) then `webview/` (jsdom + testing-library).
 - `npm run build` — Vite bundle then esbuild server bundle into `dist/`. The SDKs are `external`: the server resolves them from `node_modules` at runtime.
 - CI (`.github/workflows/ci.yml`) runs check, test, build on every push and PR.
 

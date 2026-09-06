@@ -6,7 +6,7 @@ import {
   codexFastTier,
   codexModelId,
   supportsFastMode,
-} from "../src/presets";
+} from "../../src/presets";
 
 describe("codex model presets", () => {
   it("offers a 1M variant for every codex model with the larger window", () => {

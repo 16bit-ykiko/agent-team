@@ -10,8 +10,8 @@ import {
   saveIndex,
   saveWorkspace,
   stripLegacyRaw,
-} from "../src/state";
-import { Message, WorkspaceState } from "../src/task";
+} from "../../src/state";
+import { Message, WorkspaceState } from "../../src/task";
 
 function tmpBase(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-state-"));
