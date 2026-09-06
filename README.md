@@ -74,6 +74,15 @@ npm test                     # service + webview (vitest)
 npm run fmt                  # prettier
 ```
 
+The Claude event mapping is tested against recorded real streams:
+`service/tests/fixtures/sdk/*.jsonl` are raw SDK message logs (foreground and
+background shells, subagents, nested subagents, skills, images) captured with
+`node scripts/capture-sdk.mjs [scenario ...]` (run from `service/`, uses your
+own Claude login), and `scripts/summarize-capture.mjs` prints one line per
+frame. `service/tests/sdk-captures.test.ts` replays them through the session,
+the workspace aggregation and the client aggregation, which must agree. When
+the CLI changes shape, re-capture rather than guess.
+
 ## Configuration
 
 Everything lives in `config.toml` (gitignored — `config.example.toml` is the

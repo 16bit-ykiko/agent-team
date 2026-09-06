@@ -117,9 +117,30 @@ function applyInnerEvent(sa: NonNullable<StreamEvent["subagent"]>, innerEv: Stre
       sa.events.push(innerEv);
     }
   } else if (innerEv.kind === "subagent_progress" && innerEv.subagent?.taskId) {
+    const nid = innerEv.subagent.taskId;
+    const nested = (innerEv.subagent as unknown as Record<string, unknown>)._innerEvent as
+      StreamEvent | undefined;
+    if (nested) {
+      // A carrier for a nested task: apply it inside that task's own card
+      // (mirrors task.ts). Without a start to hold it, it is dropped.
+      const si = sa.events.findIndex(
+        (e) => e.kind === "subagent_start" && e.subagent?.taskId === nid,
+      );
+      if (si >= 0) {
+        const child = {
+          ...sa.events[si],
+          subagent: {
+            ...sa.events[si].subagent!,
+            events: [...(sa.events[si].subagent!.events ?? [])],
+          },
+        };
+        applyInnerEvent(child.subagent, nested);
+        sa.events[si] = child;
+      }
+      return;
+    }
     // Nested subagent progress replaces the previous progress entry for the
     // same nested task (mirrors task.ts).
-    const nid = innerEv.subagent.taskId;
     const pi = sa.events.findIndex(
       (e) => e.kind === "subagent_progress" && e.subagent?.taskId === nid,
     );
