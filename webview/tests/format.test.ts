@@ -30,6 +30,7 @@ describe("shortModel", () => {
     expect(shortModel("claude-fable-5-1")).toBe("fable 5.1");
     expect(shortModel("claude-fable-5")).toBe("fable 5");
     expect(shortModel("claude-opus-4-6")).toBe("opus 4.6");
+    expect(shortModel("claude-opus-5-5[1m]")).toBe("opus 5.5 [1m]");
     expect(shortModel("claude-haiku-4-5-20251001")).toBe("haiku 4.5");
     expect(shortModel("gpt-5.6-sol")).toBe("gpt 5.6 sol");
     expect(shortModel("deepseek-v4-pro")).toBe("deepseek v4 pro");

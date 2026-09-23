@@ -5,6 +5,9 @@ import {
   codexContextWindow,
   codexFastTier,
   codexModelId,
+  defaultEffortForModel,
+  effortLevelsForModel,
+  supportsAdaptiveThinking,
   supportsFastMode,
 } from "../../src/presets";
 
@@ -37,6 +40,17 @@ describe("codex model presets", () => {
     expect(supportsFastMode("claude-opus-5")).toBe(true);
     expect(supportsFastMode("deepseek-v4-pro")).toBe(false);
     expect(supportsFastMode("unknown-model")).toBe(false);
+  });
+
+  it("offers Opus 5.5 in both windows with the five-level effort set", () => {
+    for (const id of ["claude-opus-5-5", "claude-opus-5-5[1m]"]) {
+      expect(MODEL_OPTIONS.some((m) => m.id === id)).toBe(true);
+      expect(effortLevelsForModel(id)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+      expect(defaultEffortForModel(id)).toBe("xhigh");
+      expect(supportsFastMode(id)).toBe(true);
+      expect(supportsAdaptiveThinking(id)).toBe(true);
+      expect(backendForModel(id)).toBe("claude");
+    }
   });
 
   it("resolves the backend from the preset, falling back on the id prefix", () => {
