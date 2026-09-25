@@ -35,7 +35,7 @@ function writeJson(file: string, data: unknown): void {
   const dir = path.dirname(file);
   ensureDir(dir);
   const tmp = `${file}.${process.pid}-${++tmpCounter}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
   fs.renameSync(tmp, file);
 }
 
@@ -54,15 +54,33 @@ export function saveWorkspace(baseDir: string, ws: WorkspaceState): void {
   const file = path.join(wsDir(baseDir), `${ws.id}.json`);
   let state = ws;
   if (!ws.messages) {
-    const existing = readJson<WorkspaceState>(file);
-    state = { ...ws, messages: existing?.messages ?? [] };
+    let messages: Message[] = [];
+    try {
+      messages = (JSON.parse(fs.readFileSync(file, "utf-8")) as WorkspaceState).messages ?? [];
+    } catch (e) {
+      // Only a missing file means "no history"; overwriting one that failed
+      // to read would replace recoverable bytes with an empty list.
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+        console.error(`[state] ${ws.id}: history unreadable, not saving`, e);
+        return;
+      }
+    }
+    state = { ...ws, messages };
   }
   writeJson(file, state);
 }
 
+// Throws when the history exists but cannot be read: an empty list would
+// be saved over it.
 export function loadWorkspaceMessages(baseDir: string, workspaceId: string): Message[] {
-  const ws = readJson<WorkspaceState>(path.join(wsDir(baseDir), `${workspaceId}.json`));
-  if (!ws) return [];
+  const file = path.join(wsDir(baseDir), `${workspaceId}.json`);
+  let ws: WorkspaceState;
+  try {
+    ws = JSON.parse(fs.readFileSync(file, "utf-8")) as WorkspaceState;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
   stripLegacyRaw(ws);
   return ws.messages ?? [];
 }
@@ -91,7 +109,11 @@ export function loadAll(baseDir: string): WorkspaceState[] {
     const file = path.join(wsDir(baseDir), `${id}.json`);
     const ws = readJson<WorkspaceState>(file);
     if (!ws) continue;
-    if (stripLegacyRaw(ws) > 0) writeJson(file, ws);
+    if (stripLegacyRaw(ws) + stripProviderEnv(ws) > 0) writeJson(file, ws);
+    else if ((fs.statSync(file).mode & 0o077) !== 0) fs.chmodSync(file, 0o600);
+    // Archived histories stay on disk until opened; holding every one of
+    // them until the whole list was parsed peaked at over a gigabyte.
+    if (ws.archivedAt) delete ws.messages;
     results.push(ws);
   }
   return results;
@@ -114,6 +136,18 @@ export function stripLegacyRaw(ws: WorkspaceState): number {
     }
   };
   for (const m of ws.messages ?? []) strip(m.events);
+  return removed;
+}
+
+// Older builds persisted account tokens and provider keys with the agents.
+function stripProviderEnv(ws: WorkspaceState): number {
+  let removed = 0;
+  for (const a of ws.agents ?? []) {
+    if (a.session?.config && "providerEnv" in a.session.config) {
+      delete a.session.config.providerEnv;
+      removed++;
+    }
+  }
   return removed;
 }
 

@@ -5,6 +5,7 @@ import * as os from "os";
 import * as path from "path";
 import {
   ContextUsage,
+  RunState,
   StreamEvent,
   UsageStats,
   SessionConfig,
@@ -31,6 +32,11 @@ function getCodexBin(): string {
   }
   return codexBin;
 }
+
+// "No saved session found with ID …" and "no rollout found for thread id …"
+// are strings in the codex 0.153 binary; not yet seen in a capture.
+const RESUME_FAILURE =
+  /not found|no such|no (saved )?(session|rollout|thread)\b.*\bfound|(could not|couldn't|failed to|unable to) (find|load|read|resume)/i;
 
 // Codex sessions run through the official @openai/codex-sdk (a typed wrapper
 // over `codex exec --json`; threads persist in ~/.codex/sessions and are
@@ -74,6 +80,10 @@ export class CodexSession extends EventEmitter {
 
   get isRunning(): boolean {
     return this.busy;
+  }
+
+  get runState(): RunState {
+    return this.busy ? "working" : "idle";
   }
 
   get effectiveEffort(): string | null {
@@ -185,10 +195,13 @@ export class CodexSession extends EventEmitter {
   async send(message: string): Promise<void> {
     if (this.busy) throw new Error("Session is busy");
     this.busy = true;
+    this.emit("runState", "working");
     this.turnFinalized = false;
     this.textEmitted = false;
     const startTime = Date.now();
-    this.abortController = new AbortController();
+    const { signal } = (this.abortController = new AbortController());
+    const resuming = this.sessionId !== null;
+    let threadStarted = false;
 
     try {
       const codex = await this.getCodex();
@@ -196,19 +209,23 @@ export class CodexSession extends EventEmitter {
         ? codex.resumeThread(this.sessionId, this.threadOptions())
         : codex.startThread(this.threadOptions());
 
-      const { events } = await thread.runStreamed(message, {
-        signal: this.abortController.signal,
-      });
+      const { events } = await thread.runStreamed(message, { signal });
       for await (const ev of events) {
+        // After a Stop the child can still flush lines until it exits; the
+        // workspace has already closed that turn.
+        if (signal.aborted) continue;
+        if (ev.type === "thread.started") threadStarted = true;
         this.handleThreadEvent(ev);
       }
     } catch (err) {
-      if (!this.abortController.signal.aborted && !this.turnFinalized) {
+      if (!signal.aborted && !this.turnFinalized) {
         this.turnFinalized = true;
         const msg = err instanceof Error ? err.message : String(err);
-        // A failed resume usually means the thread is gone from
-        // ~/.codex/sessions — reset so the next message starts fresh.
-        if (this.sessionId && /resume|session|thread|not found|No such/i.test(msg)) {
+        // A resume that fails before the thread starts (a resumed thread
+        // reports thread.started first) because the thread is gone from
+        // ~/.codex/sessions: reset so the next message starts fresh. Any
+        // other failure keeps the conversation.
+        if (resuming && !threadStarted && RESUME_FAILURE.test(msg)) {
           this.sessionId = null;
           this.terminal = {
             kind: "error",
@@ -221,10 +238,9 @@ export class CodexSession extends EventEmitter {
     } finally {
       this.usage.turns++;
       this.usage.duration_ms += Date.now() - startTime;
-      const aborted = this.abortController?.signal.aborted ?? false;
       this.busy = false;
       this.abortController = null;
-      if (!aborted) {
+      if (!signal.aborted) {
         // Stream ended without turn.completed/turn.failed (e.g. process
         // died): still close the message so the UI doesn't stay "working".
         const terminal = this.terminal ?? this.resultEvent();
@@ -233,6 +249,7 @@ export class CodexSession extends EventEmitter {
       } else {
         this.terminal = null;
       }
+      this.emit("runState", "idle");
     }
   }
 

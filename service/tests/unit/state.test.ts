@@ -87,7 +87,7 @@ describe("unloaded workspaces", () => {
     saveWorkspace(base, { ...ws, messages: undefined, archivedAt: 42 });
     const loaded = loadAll(base);
     expect(loaded[0].archivedAt).toBe(42);
-    expect(loaded[0].messages).toHaveLength(1);
+    expect(loaded[0].messages).toBeUndefined();
     expect(loadWorkspaceMessages(base, "ws-1")).toHaveLength(1);
   });
 
@@ -100,5 +100,68 @@ describe("unloaded workspaces", () => {
     deleteWorkspaceState(base, "ws-1");
     expect(fs.existsSync(logDir)).toBe(false);
     expect(loadWorkspaceMessages(base, "ws-1")).toEqual([]);
+  });
+
+  it("saving an unloaded workspace never overwrites a history it could not read", () => {
+    const base = tmpBase();
+    saveWorkspace(base, wsWithRaw());
+    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.json");
+    const truncated = fs.readFileSync(file, "utf-8").slice(0, 40);
+    fs.writeFileSync(file, truncated);
+    saveWorkspace(base, { ...wsWithRaw(), messages: undefined, archivedAt: 1 });
+    expect(fs.readFileSync(file, "utf-8")).toBe(truncated);
+  });
+
+  it("state files are private to the user", () => {
+    const base = tmpBase();
+    saveWorkspace(base, wsWithRaw());
+    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.json");
+    expect(fs.statSync(file).mode & 0o077).toBe(0);
+  });
+
+  it("an unreadable history is an error, not an empty one", () => {
+    const base = tmpBase();
+    saveWorkspace(base, wsWithRaw());
+    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.json");
+    fs.chmodSync(file, 0o000);
+    expect(() => loadWorkspaceMessages(base, "ws-1")).toThrow();
+    fs.chmodSync(file, 0o600);
+    expect(loadWorkspaceMessages(base, "ws-2")).toEqual([]);
+  });
+
+  it("loading scrubs account tokens older builds saved, and makes the file private", () => {
+    const base = tmpBase();
+    const dir = path.join(base, ".agent-team", "cache", "workspaces");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "ws-1.json");
+    const ws = wsWithRaw();
+    ws.agents = [
+      {
+        id: "a",
+        name: "A",
+        model: "m",
+        avatar: "",
+        color: "",
+        isDefault: true,
+        session: {
+          sessionId: null,
+          config: { cwd: "/tmp", providerEnv: { ANTHROPIC_AUTH_TOKEN: "sk-old" } },
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            turns: 0,
+            duration_ms: 0,
+          },
+        },
+      },
+    ];
+    fs.writeFileSync(file, JSON.stringify(ws), { mode: 0o664 });
+    fs.chmodSync(file, 0o664);
+    saveIndex(base, ["ws-1"]);
+    loadAll(base);
+    expect(fs.readFileSync(file, "utf-8")).not.toContain("sk-old");
+    expect(fs.statSync(file).mode & 0o077).toBe(0);
   });
 });

@@ -1,5 +1,23 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import type { Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSession, StreamEvent } from "../../src/claude-session";
+import { HostRegistry, LocalHost } from "../../src/host";
+import { Workspace } from "../../src/task";
+
+// A real query spawns the Claude CLI on the user's account: every test runs
+// against a stub that throws unless the test installs a fake SDK, and the
+// stub is back before anything a test leaves scheduled can reach it.
+const noSdk = {
+  query: (): Query => {
+    throw new Error("real Claude SDK reached from a unit test");
+  },
+};
+beforeEach(() => {
+  ClaudeSession.sdk = noSdk;
+});
+afterEach(() => {
+  ClaudeSession.sdk = noSdk;
+});
 
 // handleSDKMessage is the seam between the SDK's message stream and our
 // StreamEvent protocol. The constructor is inert (no SDK import, no process),
@@ -53,6 +71,170 @@ function taskNotification(over: Record<string, unknown> = {}): Record<string, un
     session_id: "sess-1",
     ...over,
   };
+}
+
+// Frames the test pushes, pulled by a query's for-await loop.
+function feeder() {
+  const queue: unknown[] = [];
+  let wake: (() => void) | null = null;
+  let end: Error | true | null = null;
+  const settle = () => {
+    wake?.();
+    wake = null;
+  };
+  return {
+    push(frame: unknown) {
+      queue.push(frame);
+      settle();
+    },
+    end() {
+      end ??= true;
+      settle();
+    },
+    fail(err: Error) {
+      end ??= err;
+      settle();
+    },
+    async *[Symbol.asyncIterator]() {
+      for (;;) {
+        if (queue.length) yield queue.shift();
+        else if (end === true) return;
+        else if (end) throw end;
+        else await new Promise<void>((r) => (wake = r));
+      }
+    },
+  };
+}
+
+interface FakeQuery {
+  frames: ReturnType<typeof feeder>;
+  options: Options;
+  prompts: string[];
+  closed: boolean;
+}
+
+// Stand-in for the SDK: one FakeQuery per CLI process the session starts.
+// Aborting a query's signal fails it a little later, as the real process
+// takes a moment to die.
+function fakeClaude(): FakeQuery[] {
+  const queries: FakeQuery[] = [];
+  ClaudeSession.sdk = {
+    query: ({ prompt, options = {} }) => {
+      const q: FakeQuery = { frames: feeder(), options, prompts: [], closed: false };
+      queries.push(q);
+      void (async () => {
+        for await (const m of prompt as AsyncIterable<SDKUserMessage>) {
+          q.prompts.push(m.message.content as string);
+        }
+      })();
+      options.abortController?.signal.addEventListener("abort", () => {
+        setTimeout(() => q.frames.fail(new Error("Claude Code process aborted by user")), 10);
+      });
+      const query = {
+        [Symbol.asyncIterator]: () => q.frames[Symbol.asyncIterator](),
+        close: () => {
+          q.closed = true;
+          q.frames.end();
+        },
+        supportedCommands: () => Promise.resolve([]),
+        stopTask: () => Promise.resolve(),
+      };
+      return query as unknown as Query;
+    },
+  };
+  return queries;
+}
+
+const flush = async () => {
+  for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+};
+// Frames consumed and the workspace's deferred dequeue run.
+const settle = async () => {
+  await flush();
+  await new Promise((r) => setTimeout(r, 5));
+  await flush();
+};
+
+function claudeWorkspace() {
+  const registry = new HostRegistry();
+  registry.register(new LocalHost("local", "Local"));
+  const ws = new Workspace("ws", "t", "p", "local", "/tmp", registry, {
+    onNewMessage: () => {},
+    onStreamEvent: () => {},
+    onMessageDone: () => {},
+  });
+  const { id } = ws.addAgent("A", "claude-opus-5-5", "🤖", "#888", { backend: "claude" });
+  const entry = ws.agents.get(id)!;
+  const reply = (content: string) =>
+    ws.messages.find((m) => m.kind === "agent" && m.content.startsWith(content))!;
+  const card = (taskId: string) =>
+    ws.messages
+      .flatMap((m) => m.events ?? [])
+      .find((e) => e.kind === "subagent_start" && e.subagent?.taskId === taskId)?.subagent;
+  return { ws, entry, agentId: id, reply, card };
+}
+
+const frame = {
+  delta: (text: string) => ({
+    type: "stream_event",
+    parent_tool_use_id: null,
+    session_id: "sess-1",
+    event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+  }),
+  result: (over: Record<string, unknown> = {}) => ({
+    type: "result",
+    subtype: "success",
+    result: "",
+    num_turns: 1,
+    session_id: "sess-1",
+    ...over,
+  }),
+  toolUse: (
+    id: string,
+    name: string,
+    input: Record<string, unknown>,
+    parent: string | null = null,
+  ) => ({
+    type: "assistant",
+    parent_tool_use_id: parent,
+    session_id: "sess-1",
+    message: { content: [{ type: "tool_use", id, name, input }] },
+  }),
+  toolResult: (id: string, content: unknown, parent: string | null = null) => ({
+    type: "user",
+    parent_tool_use_id: parent,
+    session_id: "sess-1",
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content }] },
+  }),
+  background: (ids: string[], taskType = "local_bash") => ({
+    type: "system",
+    subtype: "background_tasks_changed",
+    session_id: "sess-1",
+    tasks: ids.map((task_id) => ({ task_id, task_type: taskType, description: task_id })),
+  }),
+};
+
+// A turn that leaves a background shell running, in the order of fixture
+// claude/bash-bg.
+function backgroundShellTurn(q: FakeQuery): void {
+  q.frames.push(frame.toolUse("toolu_bg", "Bash", { command: "sleep 60" }));
+  q.frames.push(frame.background(["bt1"]));
+  q.frames.push(
+    taskStarted({
+      task_id: "bt1",
+      tool_use_id: "toolu_bg",
+      task_type: "local_bash",
+      is_backgrounded: true,
+    }),
+  );
+  q.frames.push(frame.toolResult("toolu_bg", "Command running in background with ID: bt1"));
+  q.frames.push(frame.delta("started"));
+  q.frames.push(frame.result());
+}
+
+function sleepingTurn(q: FakeQuery): void {
+  q.frames.push(frame.toolUse("w", "ScheduleWakeup", { delaySeconds: 600 }));
+  q.frames.push(frame.result());
 }
 
 describe("task_started → subagent classification", () => {
@@ -789,6 +971,28 @@ describe("scheduled wake-up banner and sleeping label", () => {
     expect(events.find((e) => e.level === "schedule")!.content).toContain("Loop ended");
     expect(activity).toEqual([]);
   });
+
+  it("keeps sleeping, with its label, after a turn the user starts while a wake-up is pending", async () => {
+    const queries = fakeClaude();
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const activity: Array<string | null> = [];
+    session.on("activity", (a: string | null) => activity.push(a));
+    await session.send("loop");
+    sleepingTurn(queries[0]);
+    await flush();
+    expect(session.runState).toBe("sleeping");
+    const label = activity.at(-1);
+    expect(label).toMatch(/^sleeping until /);
+
+    await session.send("quick question");
+    expect(session.runState).toBe("working");
+    expect(activity.at(-1)).toBeNull();
+    queries[0].frames.push(frame.delta("answer"));
+    queries[0].frames.push(frame.result());
+    await flush();
+    expect(session.runState).toBe("sleeping");
+    expect(activity.at(-1)).toBe(label);
+  });
 });
 
 describe("run state", () => {
@@ -1008,6 +1212,26 @@ describe("other frames", () => {
     expect(events[0].content).toBe("line 1\nline 2");
   });
 
+  it("closes a tool call whose result is only an image (fixture claude/image)", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({
+      type: "user",
+      session_id: "s",
+      parent_tool_use_id: null,
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_img",
+            content: [{ type: "image", source: { type: "base64", data: "AAAA" } }],
+          },
+        ],
+      },
+    });
+    expect(events).toEqual([{ kind: "tool_result", content: "[image]", toolUseId: "toolu_img" }]);
+  });
+
   it("ignores frames the CLI appends without a turn (shouldQuery=false)", () => {
     const session = new ClaudeSession({ cwd: "/tmp" });
     const events: StreamEvent[] = [];
@@ -1021,5 +1245,300 @@ describe("other frames", () => {
     });
     expect(events).toEqual([]);
     expect(session.isRunning).toBe(false);
+  });
+});
+
+describe("per-session bookkeeping", () => {
+  type Internals = {
+    handleSDKMessage(m: unknown): void;
+    expectingTurn: boolean;
+    toolCommands: Map<string, string>;
+    taskInfo: Map<string, unknown>;
+    agentToolUseIds: Set<string>;
+  };
+
+  it("forgets commands, agent calls and finished foreground tasks once they are answered", () => {
+    const s = new ClaudeSession({ cwd: "/tmp" }) as unknown as Internals;
+    for (let i = 0; i < 50; i++) {
+      s.expectingTurn = true;
+      // A long foreground command, in the order of fixture claude/bash-long.
+      s.handleSDKMessage(frame.toolUse(`b${i}`, "Bash", { command: `make build-${i}` }));
+      s.handleSDKMessage(
+        taskStarted({
+          task_id: `k${i}`,
+          tool_use_id: `b${i}`,
+          task_type: "local_bash",
+          is_backgrounded: false,
+        }),
+      );
+      s.handleSDKMessage(taskNotification({ task_id: `k${i}`, tool_use_id: `b${i}` }));
+      s.handleSDKMessage(frame.toolResult(`b${i}`, "ok"));
+      s.handleSDKMessage(frame.toolUse(`q${i}`, "Bash", { command: "true" }));
+      s.handleSDKMessage(frame.toolResult(`q${i}`, "(Bash completed with no output)"));
+      s.handleSDKMessage(frame.toolUse(`a${i}`, "Agent", { prompt: "look" }));
+      s.handleSDKMessage(frame.toolResult(`a${i}`, "report"));
+      s.handleSDKMessage(frame.result());
+    }
+    expect(s.toolCommands.size).toBe(0);
+    expect(s.taskInfo.size).toBe(0);
+    expect(s.agentToolUseIds.size).toBe(0);
+  });
+
+  it("keeps a running command's text until its task ends, for a card opened late", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(frame.toolUse("toolu_b", "Bash", { command: "npm run watch" }));
+    dispatch(
+      taskStarted({
+        task_id: "k",
+        tool_use_id: "toolu_b",
+        task_type: "local_bash",
+        is_backgrounded: false,
+      }),
+    );
+    dispatch(frame.toolResult("toolu_b", "Command was moved to the background"));
+    dispatch({
+      type: "system",
+      subtype: "task_updated",
+      session_id: "s",
+      task_id: "k",
+      patch: { is_backgrounded: true },
+    });
+    const start = events.find((e) => e.kind === "subagent_start")!;
+    expect(start.subagent?.prompt).toBe("```bash\nnpm run watch\n```");
+  });
+});
+
+describe("what a deferred option change shows", () => {
+  it("/effort while waiting labels the next reply with the effort its process runs", async () => {
+    const queries = fakeClaude();
+    const { ws, reply } = claudeWorkspace();
+    await ws.sendMessage("start a background shell");
+    backgroundShellTurn(queries[0]);
+    await settle();
+
+    await ws.sendMessage("/effort low");
+    expect(reply("Effort for").content).toContain("Applies once **A** has no background work");
+    await ws.sendMessage("status?");
+    expect(queries).toHaveLength(1);
+    const next = ws.messages.filter((m) => m.kind === "agent").at(-1)!;
+    expect(next.effort).not.toBe("low");
+  });
+
+  it("/fast while sleeping does not flag the next reply fast", async () => {
+    const queries = fakeClaude();
+    const { ws } = claudeWorkspace();
+    await ws.sendMessage("sleep");
+    sleepingTurn(queries[0]);
+    await settle();
+    await ws.sendMessage("/fast on");
+    await ws.sendMessage("still there?");
+    expect(queries).toHaveLength(1);
+    expect(ws.messages.filter((m) => m.kind === "agent").at(-1)!.fast).toBeUndefined();
+  });
+});
+
+describe("Stop and removal around the CLI process", () => {
+  it("Stop while the SDK is still loading spawns nothing", async () => {
+    const queries = fakeClaude();
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const sent = session.send("do something destructive");
+    expect(session.isRunning).toBe(true);
+    session.abort();
+    expect(session.isRunning).toBe(false);
+    await sent;
+    await settle();
+    expect(queries).toHaveLength(0);
+  });
+
+  it("removing an agent closes its running background cards", async () => {
+    const queries = fakeClaude();
+    const { ws, agentId, card } = claudeWorkspace();
+    await ws.sendMessage("start a background shell");
+    backgroundShellTurn(queries[0]);
+    await settle();
+    expect(card("bt1")?.status).toBe("running");
+    ws.removeAgent(agentId);
+    expect(card("bt1")?.status).toBe("stopped");
+  });
+});
+
+describe("launch options changed on a live query", () => {
+  it("/effort during a turn lets the turn finish and applies from the next message", async () => {
+    const queries = fakeClaude();
+    const { ws, entry, reply } = claudeWorkspace();
+    await ws.sendMessage("long task");
+    queries[0].frames.push(frame.delta("working"));
+    await flush();
+    await ws.sendMessage("follow-up");
+    await ws.sendMessage("/effort high");
+    await flush();
+    expect(reply("Effort for").content).toContain("Applies from the next message");
+    expect(queries[0].closed).toBe(false);
+    expect(entry.session.isRunning).toBe(true);
+
+    queries[0].frames.push(frame.delta(" done"));
+    queries[0].frames.push(frame.result());
+    await settle();
+    expect(reply("working").content).toBe("working done");
+    expect(reply("working").status).toBe("done");
+    expect(ws.messages.find((m) => m.content === "follow-up")!.status).toBe("done");
+    expect(queries[0].closed).toBe(true);
+    expect(queries).toHaveLength(2);
+    expect(queries[1].options).toMatchObject({ effort: "high", resume: "sess-1" });
+    expect(queries[1].prompts).toEqual(["follow-up"]);
+  });
+
+  it("waits for background work to end before replacing the process", async () => {
+    const queries = fakeClaude();
+    const { ws, entry } = claudeWorkspace();
+    await ws.sendMessage("start a background shell");
+    backgroundShellTurn(queries[0]);
+    await settle();
+    expect(entry.session.runState).toBe("waiting");
+
+    await ws.sendMessage("/effort high");
+    entry.session.setProviderEnv!({ CLAUDE_CODE_OAUTH_TOKEN: "other" });
+    expect(queries[0].closed).toBe(false);
+    expect(queries[0].options.abortController!.signal.aborted).toBe(false);
+    // Still waiting: a message goes to the process that runs the shell.
+    await ws.sendMessage("status?");
+    expect(queries).toHaveLength(1);
+    expect(queries[0].prompts).toEqual(["start a background shell", "status?"]);
+    queries[0].frames.push(frame.delta("still running"));
+    queries[0].frames.push(frame.result());
+
+    queries[0].frames.push(frame.background([]));
+    queries[0].frames.push(taskNotification({ task_id: "bt1", tool_use_id: "toolu_bg" }));
+    await settle();
+    expect(entry.session.runState).toBe("idle");
+    await ws.sendMessage("next");
+    expect(queries[0].closed).toBe(true);
+    expect(queries).toHaveLength(2);
+    expect(queries[1].options.effort).toBe("high");
+    expect(queries[1].options.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("other");
+  });
+
+  it("an account switch keeps the process a scheduled wake-up lives in", async () => {
+    const queries = fakeClaude();
+    const { ws, entry } = claudeWorkspace();
+    await ws.sendMessage("loop");
+    sleepingTurn(queries[0]);
+    await settle();
+    expect(entry.session.runState).toBe("sleeping");
+    entry.session.setProviderEnv!({ CLAUDE_CODE_OAUTH_TOKEN: "other" });
+    expect(queries[0].options.abortController!.signal.aborted).toBe(false);
+    expect(entry.session.runState).toBe("sleeping");
+  });
+
+  it("an account switch while idle replaces the process before the next send", async () => {
+    const queries = fakeClaude();
+    const { ws, entry, reply } = claudeWorkspace();
+    await ws.sendMessage("one");
+    queries[0].frames.push(frame.delta("one"));
+    queries[0].frames.push(frame.result());
+    await settle();
+    entry.session.setProviderEnv!({ CLAUDE_CODE_OAUTH_TOKEN: "other" });
+    expect(queries[0].closed).toBe(true);
+    // Output the dying process had already written is not a new turn.
+    queries[0].frames.push(frame.delta("stale"));
+    await flush();
+    expect(entry.session.isRunning).toBe(false);
+    expect(ws.messages.some((m) => m.content.includes("stale"))).toBe(false);
+
+    await ws.sendMessage("two");
+    expect(queries).toHaveLength(2);
+    expect(queries[1].options.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("other");
+    queries[1].frames.push(frame.delta("two"));
+    queries[1].frames.push(frame.result());
+    await settle();
+    expect(reply("two").status).toBe("done");
+    expect(ws.messages.some((m) => m.status === "error")).toBe(false);
+  });
+
+  it("two sends while the SDK is still loading start one process", async () => {
+    const queries = fakeClaude();
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    // Production loads the SDK with a dynamic import, which yields before
+    // the query exists; model that yield on top of the fake.
+    const inner = session as unknown as { startQuery(m: string): Promise<void> };
+    const startQuery = inner.startQuery.bind(session);
+    inner.startQuery = async (m: string) => {
+      await Promise.resolve();
+      return startQuery(m);
+    };
+    const first = session.send("a");
+    expect(session.isRunning).toBe(true);
+    await Promise.all([first, session.send("b")]);
+    await flush();
+    expect(queries).toHaveLength(1);
+    expect(queries[0].prompts).toEqual(["a", "b"]);
+  });
+});
+
+describe("background cards when the CLI process goes away", () => {
+  it("Stop closes running cards, and the resumed CLI's stopped report is not an orphan", async () => {
+    const queries = fakeClaude();
+    const { ws, agentId, card } = claudeWorkspace();
+    await ws.sendMessage("start a background shell");
+    backgroundShellTurn(queries[0]);
+    await settle();
+    expect(card("bt1")?.status).toBe("running");
+
+    ws.abortAgent(agentId);
+    expect(card("bt1")?.status).toBe("stopped");
+    await settle();
+
+    // Resuming: the CLI reports the task stopped before its first turn
+    // (fixture claude/resume-orphan-bg).
+    await ws.sendMessage("two");
+    const q = queries[1];
+    q.frames.push(taskNotification({ task_id: "bt1", tool_use_id: "toolu_bg", status: "stopped" }));
+    q.frames.push({ type: "system", subtype: "init", session_id: "sess-1" });
+    q.frames.push(frame.result({ num_turns: 0, origin: { kind: "task-notification" } }));
+    q.frames.push({ type: "system", subtype: "init", session_id: "sess-1" });
+    q.frames.push(frame.delta("two"));
+    q.frames.push(frame.result());
+    await settle();
+    const notices = ws.messages.flatMap((m) => m.events ?? []).filter((e) => e.kind === "notice");
+    expect(notices).toEqual([]);
+    expect(card("bt1")?.status).toBe("stopped");
+  });
+
+  it("keeps a background subagent's nested card inside it when the main turn ends first", async () => {
+    const queries = fakeClaude();
+    const { ws, card } = claudeWorkspace();
+    await ws.sendMessage("spawn a background agent");
+    const q = queries[0];
+    q.frames.push(frame.toolUse("toolu_A", "Agent", { prompt: "go" }));
+    q.frames.push(frame.background(["A"], "local_agent"));
+    q.frames.push(
+      taskStarted({
+        task_id: "A",
+        tool_use_id: "toolu_A",
+        task_type: "local_agent",
+        subagent_type: "general-purpose",
+        is_backgrounded: true,
+      }),
+    );
+    q.frames.push(frame.toolResult("toolu_A", "Async agent launched successfully."));
+    // The subagent's first call races the main agent's closing reply.
+    q.frames.push(frame.toolUse("toolu_inner", "Agent", { prompt: "nested" }, "toolu_A"));
+    q.frames.push(frame.delta("started"));
+    q.frames.push(frame.result());
+    q.frames.push(
+      taskStarted({
+        task_id: "B",
+        tool_use_id: "toolu_inner",
+        task_type: "local_agent",
+        subagent_type: "Explore",
+      }),
+    );
+    await settle();
+
+    const agentMsgs = ws.messages.filter((m) => m.kind === "agent");
+    expect(agentMsgs).toHaveLength(1);
+    expect(card("B")).toBeUndefined();
+    const nested = card("A")!.events!.find((e) => e.kind === "subagent_start");
+    expect(nested?.subagent?.taskId).toBe("B");
   });
 });

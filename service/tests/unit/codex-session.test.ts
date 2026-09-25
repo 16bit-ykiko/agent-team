@@ -1,9 +1,26 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import type { Codex } from "@openai/codex-sdk";
 import { CodexSession, findRollout, readRolloutContext } from "../../src/codex-session";
 import { StreamEvent } from "../../src/claude-session";
+import { HostRegistry, LocalHost } from "../../src/host";
+import { Workspace } from "../../src/task";
+
+// A real client spawns `codex exec` on the user's account: sessions without
+// a stand-in client of their own get one that throws.
+const noCodex = {
+  codex: (): Codex => {
+    throw new Error("real Codex SDK reached from a unit test");
+  },
+};
+beforeEach(() => {
+  CodexSession.hooks = noCodex;
+});
+afterEach(() => {
+  CodexSession.hooks = noCodex;
+});
 
 // handleThreadEvent maps @openai/codex-sdk ThreadEvents onto our StreamEvent
 // protocol. The constructor is inert, so we drive it directly; `run` plays a
@@ -78,6 +95,42 @@ describe("codex thread event mapping", () => {
     expect(session.sessionId).toBeNull();
     expect(events[0].kind).toBe("error");
     expect(events[0].content).toContain("fresh session");
+  });
+
+  // Missing-thread messages from the codex 0.153 binary (strings), not yet
+  // seen in a capture.
+  it.each([
+    "Codex Exec exited with code 1: Error: No saved session found with ID thr_gone",
+    "Codex Exec exited with code 1: Error: no rollout found for thread id thr_gone",
+  ])("resets the thread on %s", async (message) => {
+    const { session, run } = makeSession();
+    session.sessionId = "thr_gone";
+    await run(function* () {
+      throw new Error(message);
+      yield undefined;
+    });
+    expect(session.sessionId).toBeNull();
+  });
+
+  it("keeps the thread when codex fails for another reason", async () => {
+    const panic =
+      "Codex Exec exited with code 101: thread 'main' panicked at core/src/session.rs:1:1";
+    const { session, events, run } = makeSession();
+    session.sessionId = "thr_keep";
+    // After the resumed thread started (codex/two-turns: a resume reports it).
+    await run(function* () {
+      yield { type: "thread.started", thread_id: "thr_keep" };
+      yield { type: "turn.started" };
+      throw new Error(panic);
+    });
+    expect(session.sessionId).toBe("thr_keep");
+    expect(events.at(-1)!.content).not.toContain("fresh session");
+    // Before it started, but nothing says the thread is missing.
+    await run(function* () {
+      throw new Error(panic);
+      yield undefined;
+    });
+    expect(session.sessionId).toBe("thr_keep");
   });
 
   it("maps reasoning to thinking and file changes to an edit summary", () => {
@@ -216,5 +269,102 @@ describe("codex item edge cases", () => {
       { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
     ]);
     expect(events.map((e) => e.kind)).toEqual(["error"]);
+  });
+});
+
+describe("Stop during a codex turn", () => {
+  // Thread events the test pushes, pulled by the session's for-await loop.
+  function feeder() {
+    const queue: unknown[] = [];
+    let wake: (() => void) | null = null;
+    let end: Error | null = null;
+    return {
+      push(ev: unknown) {
+        queue.push(ev);
+        wake?.();
+      },
+      fail(err: Error) {
+        end = err;
+        wake?.();
+      },
+      async *[Symbol.asyncIterator]() {
+        for (;;) {
+          if (queue.length) yield queue.shift();
+          else if (end) throw end;
+          else await new Promise<void>((r) => (wake = r));
+        }
+      },
+    };
+  }
+
+  // Stand-in client. A stopped run's stream fails only once the killed
+  // child has exited (the SDK reads its stdout to EOF), modelled as a delay.
+  function fakeCodex() {
+    const runs: ReturnType<typeof feeder>[] = [];
+    const thread = {
+      runStreamed: (_input: string, { signal }: { signal?: AbortSignal } = {}) => {
+        const run = feeder();
+        signal?.addEventListener("abort", () => {
+          const err = Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+          setTimeout(() => run.fail(err), 20);
+        });
+        runs.push(run);
+        return Promise.resolve({ events: run });
+      },
+    };
+    CodexSession.hooks = {
+      codex: () => ({ startThread: () => thread, resumeThread: () => thread }) as unknown as Codex,
+      readContext: () => undefined,
+    };
+    return runs;
+  }
+
+  const flush = async () => {
+    for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+  };
+
+  it("dispatches the queued message once the stopped turn's process has exited", async () => {
+    const runs = fakeCodex();
+    const registry = new HostRegistry();
+    registry.register(new LocalHost("local", "Local"));
+    const ws = new Workspace("ws", "t", "p", "local", "/tmp", registry, {
+      onNewMessage: () => {},
+      onStreamEvent: () => {},
+      onMessageDone: () => {},
+    });
+    const { id } = ws.addAgent("A", "gpt-6-astra", "🤖", "#888", { backend: "codex" });
+    const session = ws.agents.get(id)!.session;
+    const first = ws.sendMessage("first");
+    await flush();
+    runs[0].push({ type: "thread.started", thread_id: "thr_1" });
+    runs[0].push({
+      type: "item.completed",
+      item: { id: "m1", type: "agent_message", text: "partial" },
+    });
+    await flush();
+    await ws.sendMessage("second");
+    const second = ws.messages.find((m) => m.content === "second")!;
+    expect(second.status).toBe("queued");
+
+    ws.abortAgent(id);
+    // What the child still flushes before it exits belongs to the closed turn.
+    runs[0].push({
+      type: "item.completed",
+      item: { id: "m2", type: "agent_message", text: "late" },
+    });
+    await flush();
+    expect(session.isRunning).toBe(true);
+    expect(second.status).toBe("queued");
+
+    await new Promise((r) => setTimeout(r, 40));
+    await first;
+    await flush();
+    expect(second.status).toBe("done");
+    expect(runs).toHaveLength(2);
+    const replies = ws.messages.filter((m) => m.kind === "agent");
+    expect(replies.map((m) => [m.content, m.status])).toEqual([
+      ["partial\n\n*\\[interrupted\\]*", "done"],
+      ["", "streaming"],
+    ]);
   });
 });

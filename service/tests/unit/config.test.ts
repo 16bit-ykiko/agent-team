@@ -126,3 +126,19 @@ describe("workspace housekeeping config", () => {
     expect(loadConfig(d2).workspace.archive_after_days).toBe(30);
   });
 });
+
+describe("auth config", () => {
+  it("a complete [auth] enables login", () => {
+    const d = writeConfig(`[auth]\nusername = "u"\npassword = "p"\nsession_secret = "s"\n`);
+    expect(loadConfig(d).auth).toMatchObject({ username: "u", max_age_days: 30 });
+  });
+
+  it("a half-filled [auth] is an error, not a server without login", () => {
+    const d = writeConfig(`[auth]\nusername = "u"\npassword = "p"\n`);
+    expect(() => loadConfig(d)).toThrow(/session_secret/);
+  });
+
+  it("no [auth] section means no login", () => {
+    expect(loadConfig(dir).auth).toBeNull();
+  });
+});

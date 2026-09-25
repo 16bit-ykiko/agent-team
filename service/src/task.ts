@@ -148,8 +148,9 @@ export interface WorkspaceCallbacks {
   ) => void;
   onAgentActivity?: (wsId: string, agentId: string, activity: string | null) => void;
   onAgentState?: (wsId: string, agentId: string, state: RunState) => void;
-  // Persistent agent attributes changed (effort level...).
-  onAgentUpdated?: (wsId: string, agent: AgentRuntimeInfo) => void;
+  // Agent attributes changed: persistent ones (effort level...) or, when
+  // `transient`, runtime-only ones (background tasks) that need no save.
+  onAgentUpdated?: (wsId: string, agent: AgentRuntimeInfo, transient?: boolean) => void;
   // An SDK message the session did not know how to render; logged so a
   // missing rendering is diagnosable instead of silent.
   onUnhandled?: (wsId: string, agentId: string, msg: unknown) => void;
@@ -242,6 +243,7 @@ export class Workspace {
 
   private cb?: WorkspaceCallbacks;
   private hostRegistry: HostRegistry;
+  private disposed = false;
 
   constructor(
     id: string,
@@ -311,7 +313,7 @@ export class Workspace {
 
   private makeAgentMsg(agentId: string): Message {
     const session = this.agents.get(agentId)?.session;
-    const config = session?.getState().config;
+    const config = session?.nextTurnOptions ?? session?.getState().config;
     const effort = config?.effort ?? session?.effectiveEffort ?? undefined;
     return {
       id: genId("msg"),
@@ -446,6 +448,8 @@ export class Workspace {
           this.pushSystemMessage(event.content);
           return;
         }
+        // A card update whose card is in no loaded message (see above).
+        if (event.kind === "subagent_progress" || event.kind === "subagent_done") return;
       }
 
       if (
@@ -582,12 +586,15 @@ export class Workspace {
     });
     session.on("backgroundTasks", () => {
       const entry = this.agents.get(agentId);
-      if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry));
+      if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
     });
     session.on("runState", (state: RunState) => {
       const entry = this.agents.get(agentId);
       if (entry) entry.runState = state;
       this.cb?.onAgentState?.(this.id, agentId, state);
+      // A stopped Codex turn ends only when its process has exited, with no
+      // terminal event; this is the one signal that the queue may move.
+      if (state === "idle") setTimeout(() => this.dequeueNext(agentId), 0);
     });
     session.on("activity", (activity: string | null) => {
       const entry = this.agents.get(agentId);
@@ -600,16 +607,19 @@ export class Workspace {
     return handler;
   }
 
-  removeAgent(agentId: string): boolean {
+  // Returns the ids of the agent's queued messages, which are dropped with
+  // it; null if there is no such agent.
+  removeAgent(agentId: string): string[] | null {
     const entry = this.agents.get(agentId);
-    if (!entry) return false;
+    if (!entry) return null;
 
-    entry.session.off("event", entry.handler);
-
-    const host = this.hostRegistry.get(this.hostId);
-    if (host) host.destroySession(agentId);
-    else entry.session.abort();
+    this.releaseSession(agentId, entry);
+    this.finalizeAbort(entry);
     this.agents.delete(agentId);
+    const dropped = this.messages
+      .filter((m) => m.status === "queued" && m.queuedFor === agentId)
+      .map((m) => m.id);
+    this.messages = this.messages.filter((m) => !dropped.includes(m.id));
 
     if (entry.info.isDefault && this.agents.size > 0) {
       const first = this.agents.values().next().value!;
@@ -617,7 +627,24 @@ export class Workspace {
     }
 
     this.pushSystemMessage(`${entry.info.avatar} **${entry.info.name}** left the team`);
-    return true;
+    return dropped;
+  }
+
+  // Stopped first, detached after: stopping closes the agent's open cards
+  // through its own events.
+  private releaseSession(agentId: string, entry: AgentEntry): void {
+    const host = this.hostRegistry.get(this.hostId);
+    if (host) host.destroySession(agentId);
+    else entry.session.abort();
+    entry.session.removeAllListeners();
+  }
+
+  // The workspace is being deleted: stop every session and let the host
+  // forget it, without starting anything still queued.
+  dispose(): void {
+    this.disposed = true;
+    for (const [agentId, entry] of this.agents) this.releaseSession(agentId, entry);
+    this.agents.clear();
   }
 
   setDefaultAgent(agentId: string): boolean {
@@ -689,7 +716,7 @@ export class Workspace {
     agent.session.setFastMode(on);
     this.cb?.onAgentUpdated?.(this.id, this.agentInfo(agent));
     const cost = on ? " Faster responses at higher usage." : "";
-    return `Fast mode for **${name}** turned **${on ? "on" : "off"}**.${cost} Applies from the next message.`;
+    return `Fast mode for **${name}** turned **${on ? "on" : "off"}**.${cost} ${this.appliesWhen(agent)}`;
   }
 
   // Codex goals: the objective lives in the codex thread (create_goal /
@@ -760,7 +787,14 @@ export class Workspace {
 
     agent.session.setEffort(level);
     this.cb?.onAgentUpdated?.(this.id, this.agentInfo(agent));
-    return `Effort for **${agent.info.name}** set to **${level}**${current ? ` (was ${current})` : ""}. Applies from the next message.`;
+    return `Effort for **${agent.info.name}** set to **${level}**${current ? ` (was ${current})` : ""}. ${this.appliesWhen(agent)}`;
+  }
+
+  private appliesWhen(agent: AgentEntry): string {
+    const state = this.agentState(agent);
+    return agent.session.optionsPending && (state === "waiting" || state === "sleeping")
+      ? `Applies once **${agent.info.name}** has no background work or pending wake-up.`
+      : "Applies from the next message.";
   }
 
   async sendMessage(
@@ -873,7 +907,7 @@ export class Workspace {
   // for that agent and dispatch its stored prompt.
   dequeueNext(agentId: string): void {
     const entry = this.agents.get(agentId);
-    if (!entry || entry.session.isRunning) return;
+    if (this.disposed || !entry || entry.session.isRunning) return;
     if (entry.pausedUntil && Date.now() < entry.pausedUntil) return;
     const msg = this.messages.find((m) => m.status === "queued" && m.queuedFor === agentId);
     if (!msg) return;
@@ -1060,10 +1094,15 @@ export class Workspace {
       project: this.project,
       hostId: this.hostId,
       cwd: this.cwd,
-      agents: [...this.agents.values()].map((a) => ({
-        ...a.info,
-        session: a.session.getState(),
-      })),
+      agents: [...this.agents.values()].map((a) => {
+        const session = a.session.getState();
+        // Account tokens and provider keys: recomputed from config.toml on
+        // restore, never written to the state files.
+        return {
+          ...a.info,
+          session: { ...session, config: { ...session.config, providerEnv: undefined } },
+        };
+      }),
       ...(this.messagesLoaded && { messages: this.messages }),
       createdAt: this.createdAt,
       lastActivityAt: this.lastActivityAt,
@@ -1094,9 +1133,18 @@ export class Workspace {
         kind: m.kind ?? (m.agentId === null ? "user" : "agent"),
         status: m.status === "streaming" ? ("done" as MessageStatus) : m.status,
       };
+      // Cut off by a server restart or crash mid-turn.
+      if (m.status === "streaming") {
+        msg.content = m.content ? `${m.content}\n\n*\\[interrupted\\]*` : "*\\[interrupted\\]*";
+      }
       if (msg.events) normalizeEvents(msg.events);
       return msg;
     });
+    // Queued for an agent that no longer exists: nothing will ever run it.
+    const agentIds = new Set(state.agents.map((a) => a.id));
+    ws.messages = ws.messages.filter(
+      (m) => m.status !== "queued" || !m.queuedFor || agentIds.has(m.queuedFor),
+    );
     const lastMsg = ws.messages[ws.messages.length - 1];
     ws.lastActivityAt = Math.max(
       state.lastActivityAt ?? 0,

@@ -19,6 +19,10 @@ export interface HostSessionHandle extends EventEmitter {
   readonly effectiveEffort?: string | null;
   // Live background tasks (Claude: background Bash, subagents, Monitor).
   readonly backgroundTaskList?: BackgroundTask[];
+  // Claude: effort/fast the next turn runs with, and whether a changed one
+  // waits for the process to become idle.
+  readonly nextTurnOptions?: { effort?: string; fast?: boolean };
+  readonly optionsPending?: boolean;
   send(message: string): Promise<void>;
   abort(): void;
   setEffort?(level: string): void;

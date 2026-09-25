@@ -4,7 +4,8 @@ import * as crypto from "crypto";
 import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
-import { execSync, spawn } from "child_process";
+import { execFile, spawn } from "child_process";
+import { promisify } from "util";
 import { WebSocketServer, WebSocket } from "ws";
 import { Workspace, WorkspaceCallbacks } from "./task";
 import {
@@ -77,8 +78,14 @@ interface QuotaEntry {
   fetchedAt: number;
 }
 
+const execFileAsync = promisify(execFile);
+
 // Protocol-level ping cadence; a client that misses one round is dropped.
 const HEARTBEAT_INTERVAL_MS = 30_000;
+
+// The quota probe is a real (1-token) API request per account; only made
+// while someone is looking, and at most this often.
+const QUOTA_INTERVAL_MS = 5 * 60_000;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -111,6 +118,7 @@ export class Server {
   private prevCpuTotal = 0;
   private commands: CommandInfo[] = mergeLocalCommands([]);
   private persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private sendOrder = new Map<string, Promise<void>>();
   private uploadsDir: string;
   private hostRegistry: HostRegistry;
   private quotaEntries: QuotaEntry[] = [];
@@ -161,8 +169,7 @@ export class Server {
       void this.scanGit();
     }, 3000);
     void this.scanGit();
-    this.refreshQuota();
-    this.quotaTimer = setInterval(() => this.refreshQuota(), 60000);
+    this.quotaTimer = setInterval(() => this.refreshQuotaIfStale(), 60_000);
     this.sweepArchives();
     this.archiveTimer = setInterval(() => this.sweepArchives(), 3600_000);
 
@@ -287,7 +294,16 @@ export class Server {
     return registry;
   }
 
+  private quotaRefreshedAt = 0;
+
+  private refreshQuotaIfStale(): void {
+    if (this.uiClients.size === 0) return;
+    if (Date.now() - this.quotaRefreshedAt < QUOTA_INTERVAL_MS) return;
+    this.refreshQuota();
+  }
+
   private refreshQuota(): void {
+    this.quotaRefreshedAt = Date.now();
     const sources: Array<{ label: string; token: string }> = [];
 
     const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
@@ -313,7 +329,11 @@ export class Server {
     const results: QuotaEntry[] = [];
     let done = 0;
     for (const src of sources) {
+      // A timeout fires both 'timeout' and the 'error' from destroy().
+      let reported = false;
       this.fetchQuotaForToken(src.token, body, (entry) => {
+        if (reported) return;
+        reported = true;
         if (entry) results.push({ ...entry, label: src.label });
         if (++done === sources.length) {
           results.sort((a, b) => a.label.localeCompare(b.label));
@@ -459,7 +479,9 @@ export class Server {
   private handleHttp(req: http.IncomingMessage, res: http.ServerResponse): void {
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
-      const pathname = decodeURIComponent(url.pathname);
+      // Normalised before the auth check: "/icons/..%2findex.html" must not
+      // count as a public icon.
+      const pathname = path.posix.normalize(decodeURIComponent(url.pathname));
 
       if (this.config.auth) {
         if (pathname === "/login") {
@@ -528,6 +550,9 @@ export class Server {
         const ext = path.extname(target);
         res.setHeader("Content-Type", MIME[ext] ?? "application/octet-stream");
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        // Uploaded .html/.svg would otherwise run script on the app's origin.
+        res.setHeader("Content-Security-Policy", "sandbox");
+        res.setHeader("X-Content-Type-Options", "nosniff");
         fs.createReadStream(target).pipe(res);
         return;
       }
@@ -549,6 +574,10 @@ export class Server {
       res.setHeader("Content-Type", MIME[ext] ?? "application/octet-stream");
       if (ext === ".js" || ext === ".css") {
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      } else if (pathname.startsWith("/avatars/") || pathname.startsWith("/icons/")) {
+        // Not content-hashed, so not immutable; a day spares the home-screen
+        // app a re-download on every cold start.
+        res.setHeader("Cache-Control", "public, max-age=86400");
       }
       const gz = this.gzipped(target, ext, req.headers["accept-encoding"]);
       if (gz) {
@@ -667,6 +696,9 @@ export class Server {
     this.uiClients.add(ws);
     this.alive.add(ws);
     ws.on("pong", () => this.alive.add(ws));
+    // ws emits 'error' for frames it cannot parse (invalid UTF-8, bad
+    // opcode); unhandled, that is an uncaught exception that kills every turn.
+    ws.on("error", () => ws.terminate());
 
     ws.on("message", (raw) => {
       try {
@@ -704,24 +736,29 @@ export class Server {
       hosts: this.hostRegistry.getAllInfo(),
     });
     this.sendJson(ws, this.getSystemStatus());
+    this.refreshQuotaIfStale();
   }
 
   private handleMessage(ws: WebSocket, msg: Record<string, unknown>): void {
     switch (msg.type) {
       case "load_messages": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
-        if (workspace) {
-          this.ensureLoaded(workspace);
+        if (workspace && this.ensureLoaded(workspace)) {
           const before = (msg.before as number) ?? Infinity;
           const limit = Math.min((msg.limit as number) ?? 50, 200);
           const all = workspace.getMessages();
-          const filtered = before === Infinity ? all : all.filter((m) => m.timestamp < before);
-          const page = filtered.slice(-limit);
+          const older = before === Infinity ? all : all.filter((m) => m.timestamp < before);
+          // A prompt and its reply often share a millisecond, and the client
+          // only knows the oldest message it has, not which of its same-ms
+          // neighbours it has: send all of them on top of the page (the client
+          // drops duplicates by id).
+          const tied = before === Infinity ? [] : all.filter((m) => m.timestamp === before);
+          const page = [...older.slice(-limit), ...tied];
           this.sendJson(ws, {
             type: "workspace_messages",
             workspaceId: workspace.id,
             messages: summarizeMessages(page),
-            hasMore: filtered.length > limit,
+            hasMore: older.length > limit,
             // Echoed so the client can tell an older page from a resync of
             // the newest one (the latter replaces, the former prepends).
             before: before === Infinity ? null : before,
@@ -732,8 +769,7 @@ export class Server {
 
       case "load_message_details": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
-        if (!workspace) return;
-        this.ensureLoaded(workspace);
+        if (!workspace || !this.ensureLoaded(workspace)) return;
         const message = workspace.getMessages().find((m) => m.id === msg.messageId);
         if (!message) return;
         this.sendJson(ws, {
@@ -747,8 +783,7 @@ export class Server {
 
       case "load_subagent_events": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
-        if (workspace) {
-          this.ensureLoaded(workspace);
+        if (workspace && this.ensureLoaded(workspace)) {
           const message = workspace.getMessages().find((m) => m.id === msg.messageId);
           const ev = message?.events?.find((e) => e.subagent?.taskId === msg.taskId);
           this.sendJson(ws, {
@@ -823,16 +858,33 @@ export class Server {
               path: path.join(this.uploadsDir, path.basename(img.url)),
             }))
           : undefined;
-        if (images) this.ensureLocalImages(images);
         const quote = msg.quote as
           { messageId: string; agentId: string | null; content: string } | undefined;
-        void this.sendMessage(
-          msg.workspaceId as string,
-          msg.content as string,
-          msg.target as string | undefined,
-          images,
-          quote,
-        );
+        const send = () =>
+          this.sendMessage(
+            msg.workspaceId as string,
+            msg.content as string,
+            msg.target as string | undefined,
+            images,
+            quote,
+          );
+        // Sends keep their order even when one waits on an image download.
+        const wsId = msg.workspaceId as string;
+        const missing = images?.filter((img) => !fs.existsSync(img.path)) ?? [];
+        const prev = this.sendOrder.get(wsId);
+        if (!prev && missing.length === 0) {
+          void send();
+          return;
+        }
+        const next = (prev ?? Promise.resolve())
+          .then(() => (missing.length ? this.fetchRemoteImages(missing) : undefined))
+          .then(() => {
+            void send();
+          });
+        this.sendOrder.set(wsId, next);
+        void next.finally(() => {
+          if (this.sendOrder.get(wsId) === next) this.sendOrder.delete(wsId);
+        });
         return;
       }
 
@@ -862,8 +914,7 @@ export class Server {
 
       case "cancel_queued": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
-        if (!workspace) return;
-        this.ensureLoaded(workspace);
+        if (!workspace || !this.ensureLoaded(workspace)) return;
         if (workspace.cancelQueued(msg.messageId as string)) {
           this.persistWorkspace(workspace.id);
           this.broadcastUI({
@@ -970,7 +1021,10 @@ export class Server {
   private deleteWorkspace(workspaceId: string): void {
     const ws = this.workspaces.get(workspaceId);
     if (!ws) return;
-    ws.abortAll();
+    ws.dispose();
+    const timer = this.persistTimers.get(workspaceId);
+    if (timer) clearTimeout(timer);
+    this.persistTimers.delete(workspaceId);
     this.workspaces.delete(workspaceId);
     deleteWorkspaceState(this.baseDir, workspaceId);
     this.persistIndex();
@@ -1083,7 +1137,8 @@ export class Server {
         this.broadcastUI({ type: "default_account", account: null });
       }
       this.reapplyAccountEnv();
-      this.refreshQuota();
+      this.quotaRefreshedAt = 0;
+      this.refreshQuotaIfStale();
       this.broadcastUI({
         type: "config_update",
         accounts: Object.keys(this.config.accounts),
@@ -1113,35 +1168,36 @@ export class Server {
     const workspace = this.workspaces.get(workspaceId);
     if (!workspace) return;
 
-    workspace.removeAgent(agentId);
+    const dropped = workspace.removeAgent(agentId);
+    if (!dropped) return;
     this.persistWorkspaceNow(workspaceId);
+    for (const messageId of dropped) {
+      this.broadcastUI({ type: "message_removed", workspaceId, messageId });
+    }
     this.broadcastUI({ type: "agent_removed", workspaceId, agentId });
   }
 
-  private ensureLocalImages(images: Array<{ name: string; url: string; path: string }>): void {
+  private async fetchRemoteImages(
+    images: Array<{ name: string; url: string; path: string }>,
+  ): Promise<void> {
     const remoteBase = this.config.server.remote_uploads_url;
     if (!remoteBase) return;
-
-    for (const img of images) {
-      if (fs.existsSync(img.path)) continue;
-      const filename = path.basename(img.url);
-      const url = `${remoteBase}/${filename}`;
-      console.log(`[ensureLocalImages] downloading ${url} → ${img.path}`);
-      try {
-        this.downloadFile(url, img.path);
-        console.log(`[ensureLocalImages] saved ${fs.statSync(img.path).size} bytes`);
-      } catch (e) {
-        console.error(`[ensureLocalImages] failed to download ${url}:`, e);
-      }
-    }
-  }
-
-  private downloadFile(url: string, dest: string): void {
-    execSync(
-      `curl -sfL --connect-timeout 10 --max-time 30 -o ${JSON.stringify(dest)} ${JSON.stringify(url)}`,
-      {
-        timeout: 35000,
-      },
+    await Promise.all(
+      images.map(async (img) => {
+        const filename = path.basename(img.url);
+        if (!/^[\w.-]+$/.test(filename)) return;
+        const url = `${remoteBase}/${filename}`;
+        try {
+          await execFileAsync(
+            "curl",
+            ["-sfL", "--connect-timeout", "10", "--max-time", "30", "-o", img.path, url],
+            { timeout: 35000 },
+          );
+          console.log(`[fetchRemoteImages] ${url} → ${img.path}`);
+        } catch (e) {
+          console.error(`[fetchRemoteImages] failed to download ${url}:`, e);
+        }
+      }),
     );
   }
 
@@ -1157,7 +1213,7 @@ export class Server {
       this.broadcastUI({ type: "error", message: "Workspace not found" });
       return;
     }
-    this.unarchiveWorkspace(workspace);
+    if (!this.unarchiveWorkspace(workspace)) return;
 
     try {
       await workspace.sendMessage(content, target, images, quote);
@@ -1177,8 +1233,7 @@ export class Server {
     targetAgentId: string,
   ): Promise<void> {
     const workspace = this.workspaces.get(workspaceId);
-    if (!workspace) return;
-    this.unarchiveWorkspace(workspace);
+    if (!workspace || !this.unarchiveWorkspace(workspace)) return;
     try {
       await workspace.forwardMessage(messageId, targetAgentId);
     } catch (e) {
@@ -1249,7 +1304,9 @@ systemctl --user restart agent-team-server
     for (const timer of this.persistTimers.values()) clearTimeout(timer);
     this.persistTimers.clear();
     for (const ws of this.workspaces.values()) {
-      saveWorkspace(this.baseDir, ws.getState());
+      // An unloaded workspace is persisted whenever it changes (archive,
+      // unarchive); rewriting it here re-read and re-wrote hundreds of MB.
+      if (ws.messagesLoaded) saveWorkspace(this.baseDir, ws.getState());
     }
     this.persistIndex();
   }
@@ -1266,6 +1323,19 @@ systemctl --user restart agent-team-server
       if (workspace.isArchived) workspace.unloadMessages();
       this.workspaces.set(workspace.id, workspace);
     }
+    // Messages still queued when the server went down; spaced out so a
+    // restart does not start many CLI sessions at once.
+    let delay = 1000;
+    for (const workspace of this.workspaces.values()) {
+      if (workspace.isArchived) continue;
+      for (const agentId of workspace.agents.keys()) {
+        if (!workspace.messages.some((m) => m.status === "queued" && m.queuedFor === agentId)) {
+          continue;
+        }
+        setTimeout(() => workspace.dequeueNext(agentId), delay);
+        delay += 5000;
+      }
+    }
 
     const archived = [...this.workspaces.values()].filter((w) => w.isArchived).length;
     console.log(`Restored ${this.workspaces.size} workspace(s), ${archived} archived`);
@@ -1276,9 +1346,21 @@ systemctl --user restart agent-team-server
   // is on disk only, its idle CLI child processes are gone, and the branch
   // scanner skips it. Any interaction that needs the history restores it.
 
-  private ensureLoaded(ws: Workspace): void {
-    if (ws.messagesLoaded) return;
-    ws.setMessages(loadWorkspaceMessages(this.baseDir, ws.id));
+  // False when the history on disk cannot be read; the workspace then stays
+  // unloaded so nothing saves an empty history over it.
+  private ensureLoaded(ws: Workspace): boolean {
+    if (ws.messagesLoaded) return true;
+    try {
+      ws.setMessages(loadWorkspaceMessages(this.baseDir, ws.id));
+      return true;
+    } catch (e) {
+      console.error(`[state] ${ws.id}: history unreadable`, e);
+      this.broadcastUI({
+        type: "error",
+        message: `History of "${ws.name}" could not be read: ${e instanceof Error ? e.message : String(e)}`,
+      });
+      return false;
+    }
   }
 
   private archiveWorkspace(workspaceId: string, auto: boolean): void {
@@ -1295,12 +1377,13 @@ systemctl --user restart agent-team-server
     this.broadcastUI({ type: "workspace_archived", workspaceId, archivedAt: ws.archivedAt });
   }
 
-  private unarchiveWorkspace(ws: Workspace): void {
-    this.ensureLoaded(ws);
-    if (!ws.isArchived) return;
+  private unarchiveWorkspace(ws: Workspace): boolean {
+    if (!this.ensureLoaded(ws)) return false;
+    if (!ws.isArchived) return true;
     ws.archivedAt = null;
     this.persistWorkspaceNow(ws.id);
     this.broadcastUI({ type: "workspace_unarchived", workspaceId: ws.id });
+    return true;
   }
 
   private sweepArchives(): void {
@@ -1437,9 +1520,9 @@ systemctl --user restart agent-team-server
         this.broadcastUI({ type: "commands_update", commands: this.commands });
       },
       onRateLimit: (wsId, agentId, info) => this.handleRateLimit(wsId, agentId, info),
-      onAgentUpdated: (wsId, agent) => {
+      onAgentUpdated: (wsId, agent, transient) => {
         this.broadcastUI({ type: "agent_updated", workspaceId: wsId, agent });
-        this.persistWorkspace(wsId);
+        if (!transient) this.persistWorkspace(wsId);
       },
       onAgentActivity: (wsId, agentId, activity) => {
         this.broadcastUI({ type: "agent_activity", workspaceId: wsId, agentId, activity });

@@ -227,6 +227,17 @@ export class ClaudeSession extends EventEmitter {
   private queryInstance: Query | null = null;
   private inputController: InputController | null = null;
   private abortController: AbortController | null = null;
+  // Set synchronously by send() while the SDK loads and the query spawns, so
+  // a second send cannot start another CLI process for the same session.
+  private starting: Promise<void> | null = null;
+  // An option baked into the running CLI process changed (effort, fast
+  // mode, credentials); the process is replaced on the next send that finds
+  // the session idle.
+  private restartPending = false;
+  // Effort and fast mode the live CLI process was launched with.
+  private launched: { effort?: string; fast?: boolean } | null = null;
+  // Bumped by abort(): a start still loading the SDK must not spawn.
+  private generation = 0;
   private iterating = false;
   private processing = false;
   // Set by pushMessage, cleared by the turn's first main-agent frame. In
@@ -246,7 +257,6 @@ export class ClaudeSession extends EventEmitter {
   // Park those until the task registers, instead of dropping them.
   private pendingNested = new Map<string, StreamEvent[]>();
   private lastRateLimitStatus: string | null = null;
-  private intentionalAbort = false;
   private activity: string | null = null;
   private unhandledSeen = new Set<string>();
   // Last prompt we pushed, to tell a CLI-originated user turn (scheduled
@@ -259,7 +269,9 @@ export class ClaudeSession extends EventEmitter {
   // Wake-up scheduled during the current turn; becomes the idle activity
   // label ("sleeping until …") once the turn ends.
   private pendingWake: { at: number; reason: string; stop: boolean } | null = null;
-  private sleeping = false;
+  // When the pending wake-up fires; set while sleeping. A turn the user
+  // starts in the meantime does not cancel it.
+  private wakeAt: number | null = null;
   // Live, non-ambient background tasks as reported by background_tasks_changed
   // (id → description). Level signal: replaced wholesale on every message.
   // Bash commands by tool_use id, so a background shell card can show what
@@ -277,6 +289,10 @@ export class ClaudeSession extends EventEmitter {
   private backgroundTasks = new Map<string, string>();
   private bgTaskMeta = new Map<string, { type: string; since: number }>();
   private bgDrainedAt = 0;
+  // Tasks whose cards were closed when their CLI process went away. The
+  // resumed CLI reports them stopped before its first turn; that is not an
+  // orphan from a previous server run.
+  private closedTasks = new Set<string>();
   runState: RunState = "idle";
 
   constructor(config: SessionConfig) {
@@ -285,7 +301,7 @@ export class ClaudeSession extends EventEmitter {
   }
 
   get isRunning(): boolean {
-    return this.processing;
+    return this.processing || this.starting !== null;
   }
 
   get backgroundTaskList(): BackgroundTask[] {
@@ -319,7 +335,7 @@ export class ClaudeSession extends EventEmitter {
       ? "working"
       : this.backgroundTasks.size > 0
         ? "waiting"
-        : this.sleeping
+        : this.wakeAt !== null
           ? "sleeping"
           : "idle";
     if (next === this.runState) return;
@@ -332,26 +348,45 @@ export class ClaudeSession extends EventEmitter {
           ? descs[0]
           : `${this.backgroundTasks.size} background tasks${descs[0] ? `: ${descs[0]}…` : ""}`;
       this.setActivity(`waiting on ${label}`);
-    } else if (prev === "waiting" && next === "idle") {
+    } else if (next === "sleeping") {
+      // Time only: the reason is already in the SCHEDULED banner, and the
+      // label must fit an agent pill and a message header on a phone.
+      this.setActivity(`sleeping until ${formatClock(this.wakeAt!)}`);
+    } else if (prev === "waiting" || prev === "sleeping") {
       this.setActivity(null);
     }
     this.emit("runState", next);
   }
 
   async send(message: string): Promise<void> {
-    this.intentionalAbort = false;
-    if (!this.queryInstance) {
-      await this.startQuery(message);
-    } else {
+    if (this.starting) await this.starting.catch(() => {});
+    if (this.restartPending && this.runState === "idle") this.closeQuery();
+    if (this.queryInstance) {
       this.pushMessage(message);
+      return;
+    }
+    const start = this.startQuery(message);
+    this.starting = start;
+    try {
+      await start;
+    } finally {
+      if (this.starting === start) this.starting = null;
     }
   }
 
   // Replaced by the snap tests with a player of recorded frames.
   static sdk: { query: typeof import("@anthropic-ai/claude-agent-sdk").query } | null = null;
 
+  private static async loadSdk(): Promise<{
+    query: typeof import("@anthropic-ai/claude-agent-sdk").query;
+  }> {
+    return ClaudeSession.sdk ?? (await import("@anthropic-ai/claude-agent-sdk"));
+  }
+
   private async startQuery(message: string): Promise<void> {
-    const { query } = ClaudeSession.sdk ?? (await import("@anthropic-ai/claude-agent-sdk"));
+    const generation = this.generation;
+    const { query } = await ClaudeSession.loadSdk();
+    if (generation !== this.generation) return;
 
     const { iterable, controller } = createInputStream();
     this.inputController = controller;
@@ -359,6 +394,7 @@ export class ClaudeSession extends EventEmitter {
     if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
 
     const options = this.buildOptions();
+    this.launched = { effort: this.config.effort, fast: this.config.fast };
 
     this.queryInstance = query({
       prompt: iterable,
@@ -411,32 +447,23 @@ export class ClaudeSession extends EventEmitter {
     void (async () => {
       try {
         for await (const msg of thisQuery!) {
+          if (this.queryInstance !== thisQuery) continue;
           this.handleSDKMessage(msg);
         }
       } catch (err) {
+        // Aborts WE initiate (user Stop, option and credential swaps) detach
+        // the query first, so only a failure of the live query gets here.
+        // Never match /abort/i instead: network failures throw "This
+        // operation was aborted" and every one rendered as a silent reply.
         if (this.queryInstance !== thisQuery) return;
         const errMsg = err instanceof Error ? err.message : String(err);
-        // Suppress the error bubble ONLY for aborts WE initiated (user Stop,
-        // credential swaps). Matching /abort/i on any error was a disaster:
-        // network failures throw "This operation was aborted" and every one
-        // of them rendered as a silent empty reply.
-        if (!this.intentionalAbort) {
-          this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` });
-        }
+        this.emit("event", { kind: "error", content: `[Claude error] ${errMsg}` });
       } finally {
         if (this.queryInstance === thisQuery) {
-          if (this.processing) {
-            this.emit("event", { kind: "result", content: "" });
-          }
-          this.iterating = false;
-          this.processing = false;
-          this.queryInstance = null;
-          this.inputController = null;
-          this.abortController = null;
-          if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
-          this.sleeping = false;
-          this.setActivity(null);
-          this.updateRunState();
+          const wasProcessing = this.processing;
+          this.detachQuery();
+          if (wasProcessing) this.emit("event", { kind: "result", content: "" });
+          this.clearTrackingState();
         }
       }
     })();
@@ -447,11 +474,8 @@ export class ClaudeSession extends EventEmitter {
     this.processing = true;
     this.turnStartTime = Date.now();
     this.stepCounter = 0;
-    const wasSleeping = this.sleeping;
-    if (this.sleeping) {
-      this.sleeping = false;
-      this.setActivity(null);
-    }
+    const wasSleeping = this.wakeAt !== null;
+    this.wakeAt = null;
     this.updateRunState();
     if (!this.expectingTurn) {
       const why = wasSleeping
@@ -464,15 +488,35 @@ export class ClaudeSession extends EventEmitter {
   }
 
   // Swap credentials/env for this session. The env is baked into the SDK
-  // child process at query start, so if a query is alive and idle we abort it
-  // — the next send() starts a fresh query that resumes the same session id
-  // (session transcripts are local files, valid across accounts).
+  // child process at query start; the next send() starts a fresh query that
+  // resumes the same session id (session transcripts are local files, valid
+  // across accounts).
   setProviderEnv(env: Record<string, string> | undefined): void {
     this.config.providerEnv = env;
-    if (this.queryInstance && !this.processing) {
-      this.intentionalAbort = true;
-      this.abortController?.abort();
-    }
+    this.restartForOptions();
+  }
+
+  // Replace the CLI process so a changed launch option applies. Only an idle
+  // one: a running turn, background work and a pending wake-up all live in
+  // that process, so otherwise the swap waits for a send that finds it idle.
+  private restartForOptions(): void {
+    if (!this.queryInstance) return;
+    if (this.runState === "idle") this.closeQuery();
+    else this.restartPending = true;
+  }
+
+  // A changed option waits for the process to be idle (see above).
+  get optionsPending(): boolean {
+    return this.restartPending;
+  }
+
+  // Effort and fast mode the next turn will actually run with: the live
+  // process's, unless the next send replaces it first.
+  get nextTurnOptions(): { effort?: string; fast?: boolean } {
+    const replaced = !this.queryInstance || (this.restartPending && this.runState === "idle");
+    return replaced || !this.launched
+      ? { effort: this.config.effort, fast: this.config.fast }
+      : this.launched;
   }
 
   private handleRateLimitInfo(info: Record<string, unknown>): void {
@@ -509,6 +553,8 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private cleanupTask(taskId: string): void {
+    const commandToolUseId = this.taskInfo.get(taskId)?.toolUseId;
+    if (commandToolUseId) this.toolCommands.delete(commandToolUseId);
     this.agentTaskIds.delete(taskId);
     this.taskInfo.delete(taskId);
     this.nestedTaskToParent.delete(taskId);
@@ -518,6 +564,16 @@ export class ClaudeSession extends EventEmitter {
       this.subagentToolMap.delete(toolUseId);
       this.nestedToolUseToParent.delete(toolUseId);
     }
+  }
+
+  // A tool call is answered: forget what was kept to render it, unless a
+  // task started by it is still running (it may yet become a card showing
+  // the command).
+  private forgetToolUse(toolUseId: string | undefined): void {
+    if (!toolUseId) return;
+    this.agentToolUseIds.delete(toolUseId);
+    for (const info of this.taskInfo.values()) if (info.toolUseId === toolUseId) return;
+    this.toolCommands.delete(toolUseId);
   }
 
   private clearTrackingState(): void {
@@ -531,10 +587,43 @@ export class ClaudeSession extends EventEmitter {
     this.agentToolUseIds.clear();
     this.pendingNested.clear();
     this.setActivity(null);
-    this.sleeping = false;
+    this.wakeAt = null;
     this.pendingWake = null;
     if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
     this.updateRunState();
+  }
+
+  // Forget the query; its loop then sees it is no longer current and stays
+  // silent. Everything the CLI process was running in the background died
+  // with it, so the cards still open are closed as stopped.
+  private detachQuery(): void {
+    this.queryInstance = null;
+    this.inputController = null;
+    this.abortController = null;
+    this.iterating = false;
+    this.processing = false;
+    this.restartPending = false;
+    for (const taskId of this.taskInfo.keys()) this.closedTasks.add(taskId);
+    for (const taskId of this.agentTaskIds) {
+      this.closedTasks.add(taskId);
+      const done: StreamEvent = {
+        kind: "subagent_done",
+        content: "",
+        toolUseId: this.taskToToolUse.get(taskId),
+        subagent: { taskId, description: "", status: "stopped" },
+      };
+      const parent = this.nestedTaskToParent.get(taskId);
+      if (parent) this.emitNestedEvent(parent, done);
+      else this.emit("event", done);
+    }
+  }
+
+  private closeQuery(): void {
+    this.abortController?.abort();
+    this.queryInstance?.close();
+    this.inputController?.end();
+    this.detachQuery();
+    this.clearTrackingState();
   }
 
   // Transient "what is the agent doing right now" label (compacting, a long
@@ -875,7 +964,9 @@ export class ClaudeSession extends EventEmitter {
         } else if (sys.subtype === "task_notification") {
           const taskId = sys.task_id as string;
           if (!this.agentTaskIds.has(taskId)) {
-            if (sys.status === "stopped" && !this.taskInfo.has(taskId)) {
+            const known = this.taskInfo.has(taskId) || this.closedTasks.delete(taskId);
+            this.cleanupTask(taskId);
+            if (sys.status === "stopped" && !known) {
               this.emit("event", {
                 kind: "notice",
                 level: "warning",
@@ -1080,6 +1171,7 @@ export class ClaudeSession extends EventEmitter {
               toolUseId: b.tool_use_id as string | undefined,
             };
           }
+          this.forgetToolUse(b.tool_use_id as string | undefined);
         }
         if (!ev) continue;
         if (taskId) this.emitInner(parentToolUseId, taskId, ev);
@@ -1128,6 +1220,7 @@ export class ClaudeSession extends EventEmitter {
             step,
           });
         }
+        this.forgetToolUse(b.tool_use_id as string | undefined);
       }
     }
   }
@@ -1180,14 +1273,13 @@ export class ClaudeSession extends EventEmitter {
       if (b.type !== "tool_result") continue;
       const toolUseId = b.tool_use_id as string | undefined;
       const text = toolResultText(b.content);
-      if (!text) continue;
 
-      if (parentToolUseId) {
+      if (text && parentToolUseId) {
         const taskId = this.subagentToolMap.get(parentToolUseId);
         const inner = { kind: "tool_result", content: text, toolUseId } as StreamEvent;
         if (taskId) this.emitInner(parentToolUseId, taskId, inner);
         else this.parkNested(parentToolUseId, inner);
-      } else {
+      } else if (text) {
         const isSubagentResult = toolUseId
           ? this.subagentToolMap.has(toolUseId) || this.agentToolUseIds.has(toolUseId)
           : false;
@@ -1198,6 +1290,7 @@ export class ClaudeSession extends EventEmitter {
           ...(isSubagentResult && { isMarkdown: true }),
         });
       }
+      this.forgetToolUse(toolUseId);
     }
   }
 
@@ -1274,18 +1367,15 @@ export class ClaudeSession extends EventEmitter {
     this.expectingTurn = false;
     this.awaitingFirstOutput = false;
     this.pendingNested.clear();
-    // Every tool_use a subagent made this turn was recorded for nesting;
-    // the tasks are done, so the map would only grow. Commands stay: a
-    // background task may still be promoted to a card after the turn.
-    this.nestedToolUseToParent.clear();
-    this.setActivity(null);
-    if (this.pendingWake && !this.pendingWake.stop) {
-      const { at } = this.pendingWake;
-      this.sleeping = true;
-      // Time only: the reason is already in the SCHEDULED banner, and the
-      // label must fit an agent pill and a message header on a phone.
-      this.setActivity(`sleeping until ${formatClock(at)}`);
+    this.closedTasks.clear();
+    // Tool calls of subagents that have finished; a background subagent
+    // still running keeps its entries, as its nested tasks may start after
+    // the main turn's result.
+    for (const [toolUseId, parent] of this.nestedToolUseToParent) {
+      if (!this.agentTaskIds.has(parent)) this.nestedToolUseToParent.delete(toolUseId);
     }
+    this.setActivity(null);
+    if (this.pendingWake) this.wakeAt = this.pendingWake.stop ? null : this.pendingWake.at;
     this.pendingWake = null;
     this.updateRunState();
   }
@@ -1366,41 +1456,23 @@ export class ClaudeSession extends EventEmitter {
     }
   }
 
+  // Effort is passed as a CLI flag when the query starts; the restarted
+  // query resumes the conversation by session ID.
   setEffort(level: string): void {
     this.config.effort = level;
-    // Effort is passed as a CLI flag when the query starts, so close the
-    // current query; the next send() restarts it with the new level and
-    // resumes the conversation by session ID.
-    if (this.queryInstance) {
-      this.abort();
-    }
+    this.restartForOptions();
   }
 
-  // Same lifecycle as effort: an option of the query, so the running query
-  // is closed and the next send() resumes with fast mode toggled.
+  // Same lifecycle as effort: fast mode is an option of the query.
   setFastMode(on: boolean): void {
     this.config.fast = on || undefined;
-    if (this.queryInstance) {
-      this.abort();
-    }
+    this.restartForOptions();
   }
 
   abort(): void {
-    this.intentionalAbort = true;
-    if (this.abortController) {
-      this.abortController.abort();
-    }
-    if (this.queryInstance) {
-      this.queryInstance.close();
-      this.queryInstance = null;
-    }
-    if (this.inputController) {
-      this.inputController.end();
-      this.inputController = null;
-    }
-    this.iterating = false;
-    this.processing = false;
-    this.clearTrackingState();
+    this.generation++;
+    this.starting = null;
+    this.closeQuery();
   }
 
   getState(): SessionState {
@@ -1498,13 +1570,13 @@ function extractToolInput(block: Record<string, unknown>): ToolInput | undefined
   return undefined;
 }
 
-// tool_result content is a string or a list of blocks; only text is shown.
+// tool_result content is a string or a list of blocks; text is shown, other
+// blocks (an image the Read tool returned) as a placeholder, never inline.
 function toolResultText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
     return (content as Array<Record<string, unknown>>)
-      .filter((c) => c.type === "text")
-      .map((c) => c.text as string)
+      .map((c) => (c.type === "text" ? (c.text as string) : `[${str(c.type) || "content"}]`))
       .join("\n");
   }
   return "";

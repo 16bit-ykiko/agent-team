@@ -103,7 +103,11 @@ export function loadConfig(baseDir: string): AppConfig {
 
   let auth: AuthConfig | null = null;
   const rawAuth = parsed.auth as Record<string, unknown> | undefined;
-  if (rawAuth?.username && rawAuth?.password && rawAuth?.session_secret) {
+  if (rawAuth) {
+    // A half-filled [auth] must not silently turn login off.
+    for (const key of ["username", "password", "session_secret"]) {
+      if (!rawAuth[key]) throw new Error(`[auth] is missing ${key}`);
+    }
     auth = {
       username: rawAuth.username as string,
       password: rawAuth.password as string,

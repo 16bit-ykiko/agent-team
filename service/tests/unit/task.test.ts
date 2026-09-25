@@ -49,6 +49,7 @@ class FakeHost implements Host {
   readonly type = "local" as const;
   readonly connected = true;
   lastSession: FakeSession | null = null;
+  destroyed: string[] = [];
   getInfo(): HostInfo {
     return { id: this.id, label: this.label, type: this.type, connected: this.connected };
   }
@@ -56,7 +57,9 @@ class FakeHost implements Host {
     this.lastSession = new FakeSession(config);
     return this.lastSession;
   }
-  destroySession(): void {}
+  destroySession(agentId: string): void {
+    this.destroyed.push(agentId);
+  }
   restoreSession(_agentId: string, state: SessionState): HostSessionHandle {
     this.lastSession = new FakeSession(state.config);
     return this.lastSession;
@@ -80,7 +83,7 @@ function makeWorkspace(model = "claude-fable-5") {
   const session = host.lastSession!;
   const emit = (e: Partial<StreamEvent>) => session.emit("event", e);
   const agentMsgs = () => ws.messages.filter((m): m is Message => m.kind === "agent");
-  return { ws, emit, done, agentMsgs, agentInfo, session };
+  return { ws, emit, done, agentMsgs, agentInfo, session, host };
 }
 
 const subagentStart = (taskId: string): Partial<StreamEvent> => ({
@@ -262,6 +265,27 @@ describe("message queue", () => {
     ws.abortAll();
     await new Promise((r) => setTimeout(r, 5));
     expect(session.sent).toEqual(["after abort"]);
+  });
+
+  it("drains the queue when the session goes idle without a terminal event", async () => {
+    // A stopped codex turn: busy until its process exits, then only idle.
+    const { ws, session } = makeWorkspace();
+    session.isRunning = true;
+    await ws.sendMessage("after stop");
+    ws.abortAll();
+    await tick();
+    expect(session.sent).toEqual([]);
+    session.isRunning = false;
+    session.emit("runState", "idle");
+    await tick();
+    expect(session.sent).toEqual(["after stop"]);
+  });
+
+  it("dispose releases every session from the host", () => {
+    const { ws, host, agentInfo } = makeWorkspace();
+    ws.dispose();
+    expect(host.destroyed).toEqual([agentInfo.id]);
+    expect(ws.agents.size).toBe(0);
   });
 
   it("cancelQueued removes a pending message so it never runs", async () => {
@@ -670,6 +694,17 @@ describe("events between turns and late results", () => {
     expect(last.status).toBe("done");
     expect(last.content).toContain("Session compacted");
     expect(ws.messages.some((m) => m.status === "streaming")).toBe(false);
+  });
+
+  it("drops a card update whose card is in no loaded message while nothing runs", () => {
+    const { ws, emit, session } = makeWorkspace();
+    session.isRunning = false;
+    emit({
+      kind: "subagent_done",
+      content: "",
+      subagent: { taskId: "gone", description: "", status: "stopped" },
+    });
+    expect(ws.messages.some((m) => m.kind === "agent")).toBe(false);
   });
 
   it("attaches a late tool result to the call that made it", async () => {
