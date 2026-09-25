@@ -25,6 +25,9 @@ export default defineConfig({
     })(),
   ],
   base: "./",
+  // The KaTeX stylesheet and the renderer rehype-katex bundles must be one
+  // version: npm installs a copy per dependent.
+  resolve: { dedupe: ["katex"] },
   build: {
     outDir,
     emptyOutDir: true,

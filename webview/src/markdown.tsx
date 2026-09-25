@@ -1,7 +1,8 @@
-import { Fragment, useState, useRef, memo, type ComponentProps } from "react";
-import Markdown, { type ExtraProps } from "react-markdown";
+import { Fragment, useState, useRef, useMemo, useEffect, memo, type ComponentProps } from "react";
+import Markdown, { type ExtraProps, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { rehypeCodeHighlight } from "./highlight";
+import { prepareSource } from "./mdSource";
 import "highlight.js/styles/github-dark.css";
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
@@ -50,20 +51,58 @@ function Link({ href, children, node: _node, ...rest }: ComponentProps<"a"> & Ex
 }
 
 const mdComponents = { pre: CodeBlock, table: ScrollTable, a: Link };
-const mdRemarkPlugins = [remarkGfm];
-const mdRehypePlugins = [rehypeCodeHighlight];
+const mdRemarkPlugins: Options["remarkPlugins"] = [remarkGfm];
+const mdRehypePlugins: Options["rehypePlugins"] = [rehypeCodeHighlight];
+
+interface MathPlugins {
+  remark: Options["remarkPlugins"];
+  rehype: Options["rehypePlugins"];
+}
+let mathPlugins: MathPlugins | null = null;
+let mathLoading: Promise<MathPlugins> | null = null;
+
+export function loadMath(): Promise<MathPlugins> {
+  mathLoading ??= import("./mathPlugins").then(
+    ({ mathRemark, mathRehype }) => {
+      mathPlugins = {
+        remark: [...mdRemarkPlugins!, [...mathRemark]],
+        // KaTeX first: a ```math block must not reach the highlighter.
+        rehype: [[...mathRehype], ...mdRehypePlugins!],
+      };
+      return mathPlugins;
+    },
+    (e: unknown) => {
+      // Offline, or a chunk gone after a redeploy: the next block retries.
+      mathLoading = null;
+      throw e;
+    },
+  );
+  return mathLoading;
+}
+
+// Plugins for text with math: null until KaTeX has loaded (the text shows
+// its raw TeX meanwhile), then the block re-renders with them.
+function useMathPlugins(needed: boolean): MathPlugins | null {
+  const [plugins, setPlugins] = useState(mathPlugins);
+  useEffect(() => {
+    if (needed && !plugins) loadMath().then(setPlugins, () => {});
+  }, [needed, plugins]);
+  return needed ? (plugins ?? mathPlugins) : null;
+}
 
 // Markdown parsing + highlighting is the hottest path during streaming.
 // Memoized so a re-render only re-parses blocks whose text actually changed
 // (inline plugin arrays would defeat react-markdown's own memoization).
 export const MdBlock = memo(function MdBlock({ children }: { children: string }) {
+  const { text, hasMath } = useMemo(() => prepareSource(children), [children]);
+  const math = useMathPlugins(hasMath);
   return (
     <Markdown
-      remarkPlugins={mdRemarkPlugins}
-      rehypePlugins={mdRehypePlugins}
+      remarkPlugins={math?.remark ?? mdRemarkPlugins}
+      rehypePlugins={math?.rehype ?? mdRehypePlugins}
       components={mdComponents}
     >
-      {children}
+      {text}
     </Markdown>
   );
 });
@@ -72,6 +111,9 @@ export const MdBlock = memo(function MdBlock({ children }: { children: string })
 // inline code, not a fence.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/;
 const FENCE_CLOSE = /^ {0,3}(`{3,}|~{3,})\s*$/;
+// Display math may hold blank lines: $$ or \[ starting a line and not
+// closed on it runs to a line that ends with $$ or \].
+const MATH_OPEN = /^\s*(\$\$|\\\[)(.*)$/;
 // Indented (list item continuation, indented code) or a list item: after a
 // blank line these can still belong to the block before.
 const CONTINUES = /^(\s|[-*+](\s|$)|\d{1,9}[.)](\s|$))/;
@@ -96,12 +138,17 @@ export function markdownBlocks(text: string): string[] {
   const blocks: string[] = [];
   let start = 0;
   let fence: string | null = null;
+  let mathClose: string | null = null;
   let afterBlank = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    if (mathClose) {
+      if (line.trimEnd().endsWith(mathClose)) mathClose = null;
+      continue;
+    }
     if (fence) {
       const close = FENCE_CLOSE.exec(line)?.[1];
-      if (close && close[0] === fence[0] && close.length >= fence.length) fence = null;
+      if (close?.[0] === fence[0] && close.length >= fence.length) fence = null;
       continue;
     }
     if (!line.trim()) {
@@ -113,7 +160,10 @@ export function markdownBlocks(text: string): string[] {
       start = i;
     }
     afterBlank = false;
-    fence = FENCE_OPEN.exec(line)?.[1] ?? null;
+    const math = MATH_OPEN.exec(line);
+    const closer = math?.[1] === "$$" ? "$$" : "\\]";
+    if (math && !math[2].trimEnd().endsWith(closer)) mathClose = closer;
+    else fence = FENCE_OPEN.exec(line)?.[1] ?? null;
   }
   blocks.push(lines.slice(start).join("\n"));
   return blocks;

@@ -1216,6 +1216,15 @@ pre .copy-btn:hover {
 .banner-text li {
   margin: 2px 0;
 }
+/* Display math, like tables, scrolls inside itself (span.: outranks the
+   KaTeX stylesheet, which loads later). */
+span.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+  margin: 8px 0;
+  padding: 2px 0;
+}
 /* Tables render in every markdown container (answers, tool bodies, subagent
    prompts/summaries, banners): scroll inside their wrapper, never widen the
    transcript. */

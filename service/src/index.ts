@@ -102,6 +102,7 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
 };
 
 export class Server {
@@ -572,7 +573,8 @@ export class Server {
       }
       const ext = path.extname(target);
       res.setHeader("Content-Type", MIME[ext] ?? "application/octet-stream");
-      if (ext === ".js" || ext === ".css") {
+      // Everything under assets/ is content-hashed by Vite (JS, CSS, fonts).
+      if (pathname.startsWith("/assets/")) {
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
       } else if (pathname.startsWith("/avatars/") || pathname.startsWith("/icons/")) {
         // Not content-hashed, so not immutable; a day spares the home-screen

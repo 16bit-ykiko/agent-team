@@ -231,3 +231,22 @@ describe("installMacCtrlClipboard", () => {
     cleanup();
   });
 });
+
+describe("copying rendered math", () => {
+  it("gives back the TeX, inline and display", async () => {
+    const katex = (await import("katex")).default;
+    const inline = katex.renderToString("x^2");
+    const block = katex.renderToString("\\int_0^1 x\\,dx", { displayMode: true });
+    expect(selectionToMarkdown(`<p>area ${inline} here</p>${block}`)).toBe(
+      "area $x^2$ here\n\n$$\n\\int_0^1 x\\,dx\n$$",
+    );
+  });
+
+  it("copies the visible glyphs of a partly selected formula", async () => {
+    const katex = (await import("katex")).default;
+    const div = document.createElement("div");
+    div.innerHTML = katex.renderToString("x^2");
+    div.querySelector(".katex-mathml")!.remove();
+    expect(selectionToMarkdown(div.innerHTML)).toBe("x2");
+  });
+});

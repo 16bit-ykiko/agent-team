@@ -10,6 +10,21 @@ turndown.addRule("fencedCodeBlock", {
   },
 });
 
+// Rendered math copies back as the TeX it came from (KaTeX keeps it in a
+// MathML annotation).
+turndown.addRule("katex", {
+  filter: (node) => node.nodeName === "SPAN" && node.classList.contains("katex"),
+  replacement: (_content, node) => {
+    const tex = node.querySelector('annotation[encoding="application/x-tex"]')?.textContent?.trim();
+    // A selection starting inside the glyphs holds no annotation: copy
+    // what is visible.
+    if (!tex) return node.querySelector(".katex-html")?.textContent ?? node.textContent ?? "";
+    return node.parentElement?.classList.contains("katex-display")
+      ? `\n\n$$\n${tex}\n$$\n\n`
+      : "$" + tex + "$";
+  },
+});
+
 // Very large selections make turndown janky; beyond this we let the native
 // copy path handle it (plain text is fine at that size anyway).
 export const MAX_COPY_HTML = 200_000;

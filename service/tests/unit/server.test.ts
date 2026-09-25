@@ -105,6 +105,8 @@ beforeAll(async () => {
   fs.writeFileSync(path.join(web, "index.html"), "<html>app</html>");
   fs.writeFileSync(path.join(web, "secret.jsonl"), "private transcript");
   fs.writeFileSync(path.join(web, "icons", "icon.png"), "png");
+  fs.mkdirSync(path.join(web, "assets"));
+  fs.writeFileSync(path.join(web, "assets", "KaTeX_Main-Regular-abc123.ttf"), "ttf");
 
   remote = http.createServer((req, res) => {
     const delay = req.url?.includes("slow") ? 400 : 0;
@@ -189,6 +191,14 @@ describe("server auth", () => {
       expect(res.status, p).toBe(302);
       expect(res.body).not.toContain("private");
     }
+  });
+
+  it("caches content-hashed assets for good, fonts included", async () => {
+    const font = await request("/assets/KaTeX_Main-Regular-abc123.ttf", {
+      headers: { Cookie: cookie },
+    });
+    expect(font.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    expect(font.headers["content-type"]).toBe("font/ttf");
   });
 
   it("serves uploads sandboxed so they cannot script the app", async () => {
