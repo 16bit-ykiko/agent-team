@@ -1,12 +1,21 @@
-import { useState, useCallback, useMemo, memo, Component, useEffect } from "react";
+import {
+  useState,
+  useCallback,
+  useMemo,
+  memo,
+  Component,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import type { ReactNode } from "react";
 import type { Message, AgentInfo, StreamEvent } from "./useServer";
 import { splitEvents, timelineBlocks } from "./events";
 import { toolNameOf, toolSummary } from "./stream";
 import { copySelectionAsMarkdown } from "./clipboard";
-import { MdBlock } from "./markdown";
-import { AgentAvatar } from "./avatar";
-import { shortModel, formatTokens } from "./format";
+import { MdBlock, StreamingMdBlock } from "./markdown";
+import { AgentAvatar, Avatar } from "./avatar";
+import { shortModel, formatTokens, formatDuration } from "./format";
 
 function renderMentionContent(content: string, agents: AgentInfo[]) {
   const match = content.match(/^@(\S+)(\s+|$)/);
@@ -130,10 +139,17 @@ function chipLabelFor(toolName: string): string {
   return toolName === "ScheduleWakeup" ? "⏰ Wake-up" : toolName;
 }
 
-// Effort, fast mode and context occupancy line under an agent message header.
+// Effort, fast mode, thinking and context occupancy line under an agent
+// message header.
 export function MessageStatus({ msg }: { msg: Message }) {
-  if (!msg.effort && !msg.fast && !msg.context) return null;
+  if (!msg.effort && !msg.fast && !msg.context && !msg.thinking) return null;
   const ctx = msg.context;
+  const thought = msg.thinking
+    ? [
+        msg.thinking.tokens > 0 && `${formatTokens(msg.thinking.tokens)} tok`,
+        msg.thinking.durationMs > 0 && formatDuration(msg.thinking.durationMs),
+      ].filter(Boolean)
+    : [];
   const pct =
     ctx && ctx.window > 0 ? Math.min(100, Math.round((ctx.tokens / ctx.window) * 100)) : null;
   const tone = pct == null ? "" : pct >= 90 ? " ctx-high" : pct >= 70 ? " ctx-warn" : "";
@@ -147,6 +163,11 @@ export function MessageStatus({ msg }: { msg: Message }) {
       {msg.fast && (
         <span className="status-chip fast-chip" title="Fast mode">
           ⚡ fast
+        </span>
+      )}
+      {thought.length > 0 && (
+        <span className="status-chip" title="Thinking this turn">
+          thought {thought.join(" · ")}
         </span>
       )}
       {ctx && pct != null && (
@@ -200,7 +221,11 @@ export const EventItem = memo(function EventItem({
   const isToolUse = ev.kind === "tool_use";
   const toolName = isToolUse ? toolNameOf(ev) : null;
   const summary = isToolUse ? toolSummary(ev) : "";
-  const label = toolName ? chipLabelFor(toolName) : (KIND_LABEL[ev.kind] ?? ev.kind);
+  const label = toolName
+    ? chipLabelFor(toolName)
+    : ev.kind === "thinking" && ev.durationMs != null
+      ? `Thought for ${formatDuration(ev.durationMs)}`
+      : (KIND_LABEL[ev.kind] ?? ev.kind);
   const chipClass = chipClassFor(toolName, ev.kind);
   // Multi-line tool calls (Bash commands, edits) always show their body;
   // single-line ones (Read, Grep) get a summary and an optional details toggle.
@@ -546,6 +571,38 @@ export function StepGroup({
   );
 }
 
+// Keeps the tail of a long think in view without laying out all of it.
+const LIVE_THINKING_TAIL = 800;
+
+// A thinking block as it streams in, so a long think does not look like a
+// stuck agent. Gone once the block ends; the finished one goes to the steps.
+export function LiveThinking({ text, since }: { text: string; since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const tailRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = tailRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [text]);
+  const secs = Math.max(0, Math.floor((now - since) / 1000));
+  return (
+    <div className="live-thinking">
+      <div className="live-thinking-header">
+        <span className="streaming-dot" />
+        Thinking · {secs}s
+      </div>
+      {text && (
+        <div className="live-thinking-text" ref={tailRef}>
+          {text.length > LIVE_THINKING_TAIL ? "…" + text.slice(-LIVE_THINKING_TAIL) : text}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // One broken message (an old persisted event missing a field, an unexpected
 // shape) must not blank the whole transcript.
 export class MessageBoundary extends Component<
@@ -620,17 +677,22 @@ export const MessageItem = memo(function MessageItem({
   const agent = !isUser ? agents.find((a) => a.id === msg.agentId) : null;
   const streaming = msg.status === "streaming";
   const activity = streaming ? (agent?.activity ?? null) : null;
+  const thinkingLive = streaming && msg.liveThinking != null;
 
   const events = msg.events ?? [];
   const detailEvents = events.filter(
     (e) => e.kind !== "text" && e.kind !== "text_delta" && e.kind !== "thinking_delta",
   );
-  const hasDetails = detailEvents.length > 0 || streaming;
 
-  // Build interleaved segments using contentOffset to split msg.content
-  type Segment = { text: string; events: StreamEvent[]; streaming?: boolean };
+  // Interleaved segments, using contentOffset to split msg.content. One
+  // layout whatever has arrived so far: switching shapes when the first text
+  // lands would remount the step boxes and fold whatever the reader opened.
+  type Segment = { text: string; events: StreamEvent[] };
   const segments: Segment[] = [];
-  if (detailEvents.length > 0 && msg.content) {
+  const body = msg.content ?? "";
+  if (!isUser && detailEvents.length === 0 && body) {
+    segments.push({ text: body, events: [] });
+  } else if (!isUser && detailEvents.length > 0) {
     // Events without an offset (older logs, error events) belong after all
     // the text rather than nowhere; subagent lifecycle events always sit
     // with their subagent_start so a task never splits across segments.
@@ -659,18 +721,17 @@ export const MessageItem = memo(function MessageItem({
     if (uniqueOffsets.length > 0) {
       let prevOff = 0;
       for (const off of uniqueOffsets) {
-        const text = msg.content.substring(prevOff, off).trim();
+        const text = body.substring(prevOff, off).trim();
         const evtsAtOff = detailEvents.filter((e) => offsetOf(e) === off);
         segments.push({ text, events: evtsAtOff });
         prevOff = off;
       }
-      const trailing = msg.content.substring(prevOff).trim();
+      const trailing = body.substring(prevOff).trim();
       if (trailing || streaming) {
-        segments.push({ text: trailing, events: [], streaming });
+        segments.push({ text: trailing, events: [] });
       }
     }
   }
-  const isInterleaved = segments.length > 1 || (segments.length === 1 && segments[0].text !== "");
 
   const time = new Date(msg.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -751,13 +812,21 @@ export const MessageItem = memo(function MessageItem({
           <div className="forward-ref">
             <span className="forward-ref-icon">↩</span>
             <span className="forward-ref-agent">
-              {msg.forwardRef.fromAvatar} {msg.forwardRef.fromAgent}
+              <Avatar
+                avatar={msg.forwardRef.fromAvatar}
+                color={
+                  agents.find((a) => a.name === msg.forwardRef!.fromAgent)?.color ?? "transparent"
+                }
+                name={msg.forwardRef.fromAgent}
+                size={16}
+              />
+              {msg.forwardRef.fromAgent}
             </span>
             <span className="forward-ref-preview">{msg.forwardRef.preview}</span>
           </div>
         )}
 
-        {streaming && !msg.content && detailEvents.length === 0 && (
+        {streaming && !thinkingLive && !msg.content && detailEvents.length === 0 && (
           <div className="working-indicator">{activity ?? "Working..."}</div>
         )}
 
@@ -771,46 +840,36 @@ export const MessageItem = memo(function MessageItem({
           </div>
         )}
 
-        {isInterleaved ? (
-          <div className="message-content" onCopy={copySelectionAsMarkdown}>
-            {quoteButton}
-            {segments.map((seg, si) => (
-              <div key={si}>
-                {seg.text && <MdBlock>{seg.text}</MdBlock>}
-                {seg.events.length > 0 && (
-                  <StepGroup
-                    group={{ step: si, events: seg.events }}
-                    onLoadEvents={handleLoadEvents}
-                    onCancelSubagent={handleCancelSubagent}
-                    onLoadDetails={handleLoadDetails}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        ) : (
-          <>
-            {hasDetails && detailEvents.length > 0 && (
-              <StepGroup
-                group={{ step: 0, events: detailEvents }}
-                onLoadEvents={handleLoadEvents}
-                onCancelSubagent={handleCancelSubagent}
-                onLoadDetails={handleLoadDetails}
-              />
-            )}
-
-            {msg.content && (
+        {isUser
+          ? msg.content && (
               <div className="message-content" onCopy={copySelectionAsMarkdown}>
-                {msg.status === "done" && quoteButton}
-                {isUser ? (
-                  renderMentionContent(msg.content, agents)
-                ) : (
-                  <MdBlock>{msg.content}</MdBlock>
-                )}
+                {renderMentionContent(msg.content, agents)}
+              </div>
+            )
+          : segments.length > 0 && (
+              <div className="message-content" onCopy={copySelectionAsMarkdown}>
+                {!streaming && quoteButton}
+                {segments.map((seg, si) => (
+                  <div key={si}>
+                    {seg.text &&
+                      (streaming ? (
+                        <StreamingMdBlock>{seg.text}</StreamingMdBlock>
+                      ) : (
+                        <MdBlock>{seg.text}</MdBlock>
+                      ))}
+                    {seg.events.length > 0 && (
+                      <StepGroup
+                        group={{ step: si, events: seg.events }}
+                        onLoadEvents={handleLoadEvents}
+                        onCancelSubagent={handleCancelSubagent}
+                        onLoadDetails={handleLoadDetails}
+                      />
+                    )}
+                  </div>
+                ))}
               </div>
             )}
-          </>
-        )}
+        {thinkingLive && <LiveThinking text={msg.liveThinking!} since={msg.liveThinkingSince!} />}
       </div>
     </div>
   );

@@ -20,19 +20,43 @@ export function isBannerEvent(e: StreamEvent): boolean {
 // and accumulated inner events.
 // One entry per taskId, in order of first appearance.
 function foldSubagents(events: StreamEvent[]): Map<string, StreamEvent> {
-  const merged = new Map<string, StreamEvent>();
+  const parts = new Map<string, StreamEvent[]>();
   for (const e of events) {
     const taskId = e.subagent?.taskId;
     if (!taskId || !isSubagentEvent(e)) continue;
-    const existing = merged.get(taskId);
+    const list = parts.get(taskId);
+    if (list) list.push(e);
+    else parts.set(taskId, [e]);
+  }
+  const merged = new Map<string, StreamEvent>();
+  for (const [taskId, list] of parts) merged.set(taskId, foldTask(list));
+  return merged;
+}
+
+// Folded cards are cached on their lifecycle events, which keep their
+// identity until the card changes (stream.ts copies on write): the same
+// events give the same object, so a memoized SubAgentItem skips the render.
+const foldCache = new WeakMap<StreamEvent, { parts: StreamEvent[]; folded: StreamEvent }>();
+
+function foldTask(parts: StreamEvent[]): StreamEvent {
+  const cached = foldCache.get(parts[0]);
+  if (
+    cached &&
+    cached.parts.length === parts.length &&
+    cached.parts.every((e, i) => e === parts[i])
+  ) {
+    return cached.folded;
+  }
+  let folded: StreamEvent | undefined;
+  for (const e of parts) {
     if (
-      !existing ||
+      !folded ||
       e.kind === "subagent_done" ||
-      (e.kind === "subagent_progress" && existing.kind === "subagent_start")
+      (e.kind === "subagent_progress" && folded.kind === "subagent_start")
     ) {
-      const prev = existing?.subagent;
+      const prev = folded?.subagent;
       const next = e.subagent!;
-      merged.set(taskId, {
+      folded = {
         ...e,
         subagent: {
           ...(prev ?? {}),
@@ -49,10 +73,11 @@ function foldSubagents(events: StreamEvent[]): Map<string, StreamEvent> {
           events: prev?.events ?? next.events,
           eventCount: Math.max(prev?.eventCount ?? 0, next.eventCount ?? 0) || undefined,
         },
-      });
+      };
     }
   }
-  return merged;
+  foldCache.set(parts[0], { parts, folded: folded! });
+  return folded!;
 }
 
 // The tool_use that spawned a subagent (same toolUseId as its card) shows the

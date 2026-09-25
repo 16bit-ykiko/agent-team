@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
-import { useServer, Message } from "./useServer";
+import { useServer, Message, AgentInfo } from "./useServer";
 import { groupWorkspaces } from "./groups";
 import { agentQueues, agentState, isAgentActive, pillLabel, stateLabel } from "./agents";
 import { extractImageFiles, installMacCtrlClipboard } from "./clipboard";
@@ -9,6 +9,7 @@ import { formatRelative } from "./format";
 import { MessageItem, MessageBoundary } from "./messages";
 import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs";
 import { Sidebar } from "./Sidebar";
+import { ViewportInfo } from "./ViewportInfo";
 import { GitBar } from "./GitBar";
 import { HistoryHint } from "./HistoryHint";
 import {
@@ -94,6 +95,11 @@ async function uploadImage(file: File): Promise<{ name: string; url: string }> {
   if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
   return res.json() as Promise<{ name: string; url: string }>;
 }
+
+// Paging back to a search hit: the server's maximum page, and how far back
+// to go before giving up.
+const JUMP_PAGE = 200;
+const JUMP_MAX_PAGES = 10;
 
 export function App() {
   const {
@@ -350,6 +356,75 @@ export function App() {
   const activeWsRef = useRef(activeWs);
   activeWsRef.current = activeWs;
 
+  // Message props must keep their identity across stream frames, or every
+  // memoized MessageItem re-renders on each one. Handlers read the active
+  // workspace at call time; settled messages get an agents list that only
+  // changes when an agent's name, look or model does, not with its
+  // activity, which ticks every second while a tool runs.
+  const onLoadSubagentEvents = useCallback(
+    (messageId: string, taskId: string) => {
+      const ws = activeWsRef.current;
+      if (ws) loadSubagentEvents(ws.id, messageId, taskId);
+    },
+    [loadSubagentEvents],
+  );
+  const onCancelSubagent = useCallback(
+    (agentId: string, taskId: string) => {
+      const ws = activeWsRef.current;
+      if (ws) cancelSubagent(ws.id, agentId, taskId);
+    },
+    [cancelSubagent],
+  );
+  const onCancelQueued = useCallback(
+    (messageId: string) => {
+      const ws = activeWsRef.current;
+      if (ws) cancelQueued(ws.id, messageId);
+    },
+    [cancelQueued],
+  );
+  const onLoadDetails = useCallback(
+    (messageId: string) => {
+      const ws = activeWsRef.current;
+      if (ws) loadMessageDetails(ws.id, messageId);
+    },
+    [loadMessageDetails],
+  );
+  const agentsLook = (activeWs?.agents ?? [])
+    .map((a) => [a.id, a.name, a.avatar, a.color, a.model].join("\u0000"))
+    .join("\n");
+  const settledAgents = useMemo<AgentInfo[]>(
+    () => activeWs?.agents ?? [],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on how the agents look; see above
+    [agentsLook],
+  );
+
+  const onSelectWorkspace = useCallback((id: string) => {
+    setActiveWsId(id);
+    setSidebarOpen(false);
+  }, []);
+  const onDeleteWorkspace = useCallback(
+    (id: string) => {
+      deleteWorkspace(id);
+      setActiveWsId((cur) => (cur === id ? null : cur));
+    },
+    [deleteWorkspace],
+  );
+  const onCreateWorkspace = useCallback(() => {
+    setCreateInPath(undefined);
+    setShowCreate(true);
+  }, []);
+  const onCreateWorkspaceIn = useCallback((cwd: string) => {
+    setCreateInPath(cwd);
+    setShowCreate(true);
+  }, []);
+  const onReplayDemo = useCallback(() => {
+    const wsId = startReplayDemo();
+    setActiveWsId(wsId);
+    setSidebarOpen(false);
+  }, [startReplayDemo]);
+  const onPurgeArchived = useCallback(() => setShowPurge(true), []);
+  const closePurge = useCallback(() => setShowPurge(false), []);
+
   useEffect(() => {
     for (const ws of workspaces) {
       if (!(ws.id in seenCountRef.current)) {
@@ -405,24 +480,18 @@ export function App() {
   // null = query in flight (debounce or awaiting the server echo).
   const searchHits = searchResults.query === searchQuery.trim() ? searchResults.hits : null;
 
-  const jumpToMessage = useCallback(
-    (wsId: string, msgId: string) => {
-      const ws = workspaces.find((w) => w.id === wsId);
-      if (ws && !ws.messagesLoaded) {
-        loadMessages(ws.id);
-      }
-      setActiveWsId(wsId);
-      setHighlightMsgId(msgId);
-      setSearchQuery("");
-      setTimeout(() => {
-        document
-          .getElementById(`msg-${msgId}`)
-          ?.scrollIntoView({ behavior: "smooth", block: "center" });
-        setTimeout(() => setHighlightMsgId(null), 2000);
-      }, 100);
-    },
-    [workspaces, loadMessages],
-  );
+  // A search hit to scroll to once its message is loaded; older pages are
+  // fetched until it is (the loaded window must stay contiguous).
+  const [pendingJump, setPendingJump] = useState<{
+    wsId: string;
+    msgId: string;
+    pages: number;
+  } | null>(null);
+  const jumpToMessage = useCallback((wsId: string, msgId: string) => {
+    setActiveWsId(wsId);
+    setSearchQuery("");
+    setPendingJump({ wsId, msgId, pages: 0 });
+  }, []);
 
   useEffect(() => {
     if (activeWsId) {
@@ -453,12 +522,18 @@ export function App() {
     }
     setHasInput(restored.trim().length > 0);
     setMentionTarget(restored.match(/(?:^|\s)@(\S+)/)?.[1] ?? null);
-    if (activeWsId && connected) loadMessages(activeWsId);
     userScrolledUpRef.current = false;
+    stuckToBottomRef.current = true;
     prevMsgCountRef.current = 0;
     requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView();
     });
+  }, [activeWsId]);
+
+  // Also on every reconnect: the newest page resyncs in place, without
+  // touching the draft or the reader's scroll position.
+  useEffect(() => {
+    if (activeWsId && connected) loadMessages(activeWsId);
   }, [activeWsId, connected, loadMessages]);
 
   // Prepending a page changes scrollHeight; Safari has no overflow-anchor,
@@ -495,25 +570,82 @@ export function App() {
 
   const prevMsgCountRef = useRef(0);
   const userScrolledUpRef = useRef(false);
+  // Whether a growing reply keeps the view pinned to its end. Any upward
+  // scroll lets go (a finger dragging back to reread moves a few pixels per
+  // frame, far less than "scrolled up"); the very bottom takes hold again.
+  const stuckToBottomRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
+  const wasStreamingRef = useRef(false);
 
   const onMessagesScrollTrack = useCallback(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     userScrolledUpRef.current = distFromBottom > 150;
+    if (distFromBottom <= 8) stuckToBottomRef.current = true;
+    else if (el.scrollTop < lastScrollTopRef.current || userScrolledUpRef.current) {
+      stuckToBottomRef.current = false;
+    }
+    lastScrollTopRef.current = el.scrollTop;
     onMessagesScroll();
   }, [onMessagesScroll]);
 
-  useEffect(() => {
+  // Follow the conversation while the reader is at the bottom: a new
+  // message scrolls into view, a streaming one keeps the end pinned. Only
+  // while something streams (or just finished): a reply growing because the
+  // reader opened a box must stay where they tapped.
+  useLayoutEffect(() => {
     const msgs = activeWs?.messages ?? [];
     const prevCount = prevMsgCountRef.current;
     prevMsgCountRef.current = msgs.length;
+    const streaming = msgs.some((m) => m.status === "streaming");
+    const wasStreaming = wasStreamingRef.current;
+    wasStreamingRef.current = streaming;
     if (prevCount === 0 && msgs.length > 0) {
       messagesEndRef.current?.scrollIntoView();
-    } else if (msgs.length > prevCount && !userScrolledUpRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    } else if (msgs.length > prevCount) {
+      if (!userScrolledUpRef.current) {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
+    } else if (stuckToBottomRef.current && (streaming || wasStreaming)) {
+      const el = messagesContainerRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
     }
   }, [activeWs?.messages]);
+
+  useEffect(() => {
+    const jump = pendingJump;
+    if (!jump) return;
+    if (activeWsId !== jump.wsId) {
+      // The reader went elsewhere: coming back later must not resume it.
+      setPendingJump(null);
+      return;
+    }
+    if (!activeWs || !activeWs.messagesLoaded) return;
+    if (activeWs.messages.some((m) => m.id === jump.msgId)) {
+      setPendingJump(null);
+      setHighlightMsgId(jump.msgId);
+      setTimeout(() => {
+        document
+          .getElementById(`msg-${jump.msgId}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => setHighlightMsgId(null), 2000);
+      }, 100);
+      return;
+    }
+    if (activeWs.loadingOlder) return;
+    const oldest = activeWs.messages[0];
+    if (activeWs.hasMore && oldest && jump.pages < JUMP_MAX_PAGES) {
+      // Prepended pages must not pull the view back to the bottom.
+      userScrolledUpRef.current = true;
+      stuckToBottomRef.current = false;
+      loadMessages(activeWs.id, oldest.timestamp, JUMP_PAGE);
+      setPendingJump({ ...jump, pages: jump.pages + 1 });
+    } else {
+      setPendingJump(null);
+      setNotice("That message is no longer in the history.");
+    }
+  }, [pendingJump, activeWsId, activeWs, loadMessages]);
 
   const isAnyRunning = activeWs?.agents.some(isAgentActive) ?? false;
   const hasAgents = (activeWs?.agents.length ?? 0) > 0;
@@ -628,46 +760,65 @@ export function App() {
     });
   }, []);
 
+  // Set while a send is in flight (uploading, or waiting on a liveness probe)
+  // so a second tap cannot send the same draft twice.
+  const sendingRef = useRef(false);
   const handleSend = useCallback(async () => {
     const text = (textareaRef.current?.value ?? "").trim();
     const ws = activeWsRef.current;
-    if ((!text && pendingImages.length === 0) || !ws || uploading) return;
-
-    let images: Array<{ name: string; url: string }> | undefined;
-    if (pendingImages.length > 0) {
-      setUploading(true);
-      try {
-        images = await Promise.all(pendingImages.map(({ file }) => uploadImage(file)));
-      } catch (e) {
-        console.error("Image upload failed:", e);
-        alert(`Image upload failed: ${e instanceof Error ? e.message : String(e)}`);
-        setUploading(false);
-        return;
+    if ((!text && pendingImages.length === 0) || !ws || sendingRef.current) return;
+    sendingRef.current = true;
+    let sent = false;
+    try {
+      let images: Array<{ name: string; url: string }> | undefined;
+      if (pendingImages.length > 0) {
+        setUploading(true);
+        try {
+          images = await Promise.all(pendingImages.map(({ file }) => uploadImage(file)));
+        } catch (e) {
+          console.error("Image upload failed:", e);
+          alert(`Image upload failed: ${e instanceof Error ? e.message : String(e)}`);
+          return;
+        } finally {
+          setUploading(false);
+        }
       }
-      setUploading(false);
+      sent = await sendMessage(
+        ws.id,
+        text,
+        undefined,
+        images,
+        quotedMsg
+          ? { messageId: quotedMsg.id, agentId: quotedMsg.agentId, content: quotedMsg.content }
+          : undefined,
+      );
+    } finally {
+      sendingRef.current = false;
+    }
+    // Not sent: the draft, images and quote stay for another try.
+    if (!sent) return;
+    if (pendingImages.length > 0) {
       pendingImages.forEach((img) => URL.revokeObjectURL(img.preview));
       setPendingImages([]);
     }
-
-    sendMessage(
-      ws.id,
-      text,
-      undefined,
-      images,
-      quotedMsg
-        ? { messageId: quotedMsg.id, agentId: quotedMsg.agentId, content: quotedMsg.content }
-        : undefined,
-    );
-    if (activeWsId) inputMapRef.current.set(activeWsId, "");
+    setQuotedMsg(null);
+    inputMapRef.current.set(ws.id, "");
+    // A send held by a liveness probe can complete after the reader moved to
+    // another workspace or kept typing: that draft is not the one sent.
+    const el = textareaRef.current;
+    if (activeWsRef.current?.id !== ws.id) return;
+    if (el && el.value.trim() !== text) {
+      inputMapRef.current.set(ws.id, el.value);
+      return;
+    }
     setMentionQuery(null);
     setCmdQuery(null);
-    setQuotedMsg(null);
-    if (textareaRef.current) {
-      textareaRef.current.value = "";
-      textareaRef.current.style.height = "36px";
+    if (el) {
+      el.value = "";
+      el.style.height = "36px";
     }
     setHasInput(false);
-  }, [activeWsId, sendMessage, pendingImages, uploading, quotedMsg]);
+  }, [sendMessage, pendingImages, quotedMsg]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (isImeKeyEvent(e, composingRef.current, compositionEndTsRef.current)) return;
@@ -780,34 +931,20 @@ export function App() {
           systemStatus={systemStatus}
           accounts={accounts}
           defaultAccount={defaultAccount}
-          onSelect={(id) => {
-            setActiveWsId(id);
-            setSidebarOpen(false);
-          }}
-          onDelete={(id) => {
-            deleteWorkspace(id);
-            if (activeWsId === id) setActiveWsId(null);
-          }}
+          onSelect={onSelectWorkspace}
+          onDelete={onDeleteWorkspace}
           onToggleGroup={toggleGroup}
           onSearchChange={setSearchQuery}
           onJump={jumpToMessage}
-          onCreate={() => {
-            setCreateInPath(undefined);
-            setShowCreate(true);
-          }}
-          onCreateIn={(cwd) => {
-            setCreateInPath(cwd);
-            setShowCreate(true);
-          }}
-          onReplayDemo={() => {
-            const wsId = startReplayDemo();
-            setActiveWsId(wsId);
-            setSidebarOpen(false);
-          }}
-          onPurgeArchived={() => setShowPurge(true)}
+          onCreate={onCreateWorkspace}
+          onCreateIn={onCreateWorkspaceIn}
+          onReplayDemo={onReplayDemo}
+          onPurgeArchived={onPurgeArchived}
           onDebugSnapshot={takeSnapshot}
           onSetDefaultAccount={setDefaultAccount}
         />
+        {/* Measures the layout on every viewport resize: only while visible. */}
+        {sidebarOpen && <ViewportInfo />}
       </div>
 
       <div className="resize-handle" onMouseDown={onResizeStart} />
@@ -954,20 +1091,14 @@ export function App() {
                         <MessageBoundary key={msg.id} messageId={msg.id}>
                           <MessageItem
                             msg={msg}
-                            agents={activeWs.agents}
+                            agents={msg.status === "streaming" ? activeWs.agents : settledAgents}
                             compact={compact}
                             highlight={msg.id === highlightMsgId}
                             onQuote={handleQuote}
-                            onLoadSubagentEvents={(messageId, taskId) =>
-                              loadSubagentEvents(activeWs.id, messageId, taskId)
-                            }
-                            onCancelSubagent={(agentId, taskId) =>
-                              cancelSubagent(activeWs.id, agentId, taskId)
-                            }
-                            onCancelQueued={(messageId) => cancelQueued(activeWs.id, messageId)}
-                            onLoadDetails={(messageId) =>
-                              loadMessageDetails(activeWs.id, messageId)
-                            }
+                            onLoadSubagentEvents={onLoadSubagentEvents}
+                            onCancelSubagent={onCancelSubagent}
+                            onCancelQueued={onCancelQueued}
+                            onLoadDetails={onLoadDetails}
                           />
                         </MessageBoundary>
                       );
@@ -986,7 +1117,7 @@ export function App() {
                     <div className="quote-bar">
                       <div className="quote-bar-content">
                         <span className="quote-bar-agent">
-                          {qa?.avatar ?? "👤"} {qa?.name ?? "User"}
+                          {qa ? <AgentAvatar agent={qa} size={16} /> : "👤"} {qa?.name ?? "User"}
                         </span>
                         <span className="quote-bar-preview">
                           {quotedMsg.content.slice(0, 100)}
@@ -1183,7 +1314,7 @@ export function App() {
           confirmLabel="Delete all"
           danger
           onConfirm={purgeArchived}
-          onClose={() => setShowPurge(false)}
+          onClose={closePurge}
         />
       )}
 

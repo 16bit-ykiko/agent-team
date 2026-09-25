@@ -6,6 +6,7 @@ import {
   mergeDetailEvents,
   mergeLatestPage,
   PendingEvent,
+  withoutLiveThinking,
 } from "./stream";
 
 // Liveness probing. Mobile browsers freeze the page when the screen turns off
@@ -16,6 +17,8 @@ import {
 export const PROBE_TIMEOUT_MS = 5_000;
 export const HEARTBEAT_MS = 30_000;
 const RECONNECT_DELAY_MS = 2_000;
+// Hidden tabs get no animation frames; stream events still need applying.
+export const HIDDEN_FLUSH_MS = 1_000;
 
 export interface ToolInput {
   tool: string;
@@ -37,6 +40,9 @@ export interface SubAgentInfo {
   summary?: string;
   eventCount?: number;
   events?: StreamEvent[];
+  // Client-only, on a card whose transcript was never loaded: nested tasks
+  // whose progress entry it gained live (the next one replaces it).
+  liveProgress?: string[];
   hasPrompt?: boolean;
   summaryLength?: number;
 }
@@ -66,6 +72,12 @@ export interface ContextUsage {
   window: number;
 }
 
+// Thinking over a whole turn (Claude only).
+export interface ThinkingStats {
+  tokens: number;
+  durationMs: number;
+}
+
 export interface StreamEvent {
   kind: string;
   content: string;
@@ -78,6 +90,8 @@ export interface StreamEvent {
   isMarkdown?: boolean;
   toolResult?: string;
   toolResultIsMarkdown?: boolean;
+  // A finished thinking block: how long it took.
+  durationMs?: number;
   subagent?: SubAgentInfo;
   // Present on summary pages instead of the bodies.
   contentLength?: number;
@@ -112,8 +126,13 @@ export interface Message {
   effort?: string;
   fast?: boolean;
   context?: ContextUsage;
+  thinking?: ThinkingStats;
   // History pages arrive as summaries; full events load on first expand.
   detail?: "summary";
+  // A thinking block streaming in right now, and when it started (client
+  // clock). Client-only: the finished block arrives as a "thinking" event.
+  liveThinking?: string;
+  liveThinkingSince?: number;
 }
 
 export interface AgentInfo {
@@ -263,6 +282,8 @@ export function useServer() {
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   // Pending liveness probe; cleared by any frame from the server.
   const probeRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Sends waiting for the pending probe's verdict.
+  const probeWaitersRef = useRef<Array<() => void>>([]);
   // Detail re-fetches owed after a resync ("ws/msg" keys). Collected inside
   // the state updater (which React runs lazily, at render) and sent from an
   // effect after the commit, once each even under StrictMode's double run.
@@ -278,16 +299,42 @@ export function useServer() {
     detailRefetchRef.current.clear();
   }, []);
 
-  const pendingEventsRef = useRef<PendingEvent[]>([]);
-  const rafRef = useRef<number>(0);
+  const settleProbe = useCallback(() => {
+    clearTimeout(probeRef.current);
+    probeRef.current = undefined;
+    const waiters = probeWaitersRef.current;
+    probeWaitersRef.current = [];
+    for (const wake of waiters) wake();
+  }, []);
 
+  const pendingEventsRef = useRef<PendingEvent[]>([]);
+  const scheduledFlushRef = useRef<{ hidden: boolean; cancel: () => void } | null>(null);
+
+  // Applies every stream event received so far. Snapshot replies (a page,
+  // details, a transcript, message_done) call it first: the server's copy
+  // already contains those events, applying them after it would repeat them.
   const flushStreamEvents = useCallback(() => {
-    rafRef.current = 0;
+    scheduledFlushRef.current?.cancel();
+    scheduledFlushRef.current = null;
     const batch = pendingEventsRef.current;
     if (batch.length === 0) return;
     pendingEventsRef.current = [];
     setWorkspaces((prev) => applyStreamBatch(prev, batch));
   }, []);
+
+  const scheduleFlush = useCallback(() => {
+    const hidden = document.visibilityState === "hidden";
+    const scheduled = scheduledFlushRef.current;
+    if (scheduled?.hidden === hidden) return;
+    scheduled?.cancel();
+    if (hidden) {
+      const timer = setTimeout(flushStreamEvents, HIDDEN_FLUSH_MS);
+      scheduledFlushRef.current = { hidden, cancel: () => clearTimeout(timer) };
+    } else {
+      const frame = requestAnimationFrame(flushStreamEvents);
+      scheduledFlushRef.current = { hidden, cancel: () => cancelAnimationFrame(frame) };
+    }
+  }, [flushStreamEvents]);
 
   const handleServerMessage = useCallback(
     (msg: Record<string, unknown>) => {
@@ -354,10 +401,14 @@ export function useServer() {
           const hasMore = msg.hasMore as boolean;
           // Set on older-page replies; null/absent on a fetch of the newest page.
           const before = (msg.before as number | null | undefined) ?? null;
+          flushStreamEvents();
           setWorkspaces((prev) =>
             prev.map((w) => {
               if (w.id !== wsId) return w;
               if (!w.messagesLoaded) {
+                // An older page for a history that was dropped since (archived)
+                // is not a first page.
+                if (before != null) return w;
                 return {
                   ...w,
                   messages: incoming,
@@ -367,6 +418,9 @@ export function useServer() {
                 };
               }
               if (before != null) {
+                // Asked for before a resync replaced the list: prepending it
+                // now would put it in the wrong place.
+                if (before !== w.messages[0]?.timestamp) return w;
                 const existingIds = new Set(w.messages.map((m) => m.id));
                 const newMsgs = incoming.filter((m) => !existingIds.has(m.id));
                 return {
@@ -452,14 +506,13 @@ export function useServer() {
         }
 
         case "stream_event": {
+          if (!msg.event) break;
           pendingEventsRef.current.push({
             wsId: msg.workspaceId as string,
             messageId: msg.messageId as string,
             event: msg.event as StreamEvent,
           });
-          if (!rafRef.current) {
-            rafRef.current = requestAnimationFrame(flushStreamEvents);
-          }
+          scheduleFlush();
           break;
         }
 
@@ -471,16 +524,10 @@ export function useServer() {
           const events = msg.events as StreamEvent[] | undefined;
           const context = msg.context as ContextUsage | undefined;
           const effort = msg.effort as string | undefined;
-          // Events still waiting for the next frame belong to this message:
-          // apply them first. The completion payload strips subagent
-          // transcripts, so dropping them would lose the live tail.
-          const mine = pendingEventsRef.current.filter(
-            (e) => e.wsId === wsId && e.messageId === messageId,
-          );
-          pendingEventsRef.current = pendingEventsRef.current.filter(
-            (e) => !(e.wsId === wsId && e.messageId === messageId),
-          );
-          if (mine.length > 0) setWorkspaces((prev) => applyStreamBatch(prev, mine));
+          const thinking = msg.thinking as ThinkingStats | undefined;
+          // The completion payload strips subagent transcripts, so events
+          // still waiting for a frame must land first or the live tail is lost.
+          flushStreamEvents();
           setWorkspaces((prev) =>
             prev.map((w) => {
               if (w.id !== wsId) return w;
@@ -490,12 +537,13 @@ export function useServer() {
                   if (m.id !== messageId) return m;
                   const merged = events ? mergeDetailEvents(m.events, events) : undefined;
                   return {
-                    ...m,
+                    ...withoutLiveThinking(m),
                     status,
                     content,
                     ...(merged ? { events: merged } : {}),
                     ...(context ? { context } : {}),
                     ...(effort ? { effort } : {}),
+                    ...(thinking ? { thinking } : {}),
                   };
                 }),
               };
@@ -579,6 +627,7 @@ export function useServer() {
           const wsId = msg.workspaceId as string;
           const messageId = msg.messageId as string;
           const events = msg.events as StreamEvent[];
+          flushStreamEvents();
           setWorkspaces((prev) =>
             prev.map((w) => {
               if (w.id !== wsId) return w;
@@ -600,6 +649,7 @@ export function useServer() {
           const messageId = msg.messageId as string;
           const taskId = msg.taskId as string;
           const saEvents = msg.events as StreamEvent[];
+          flushStreamEvents();
           setWorkspaces((prev) =>
             prev.map((w) => {
               if (w.id !== wsId) return w;
@@ -611,7 +661,10 @@ export function useServer() {
                     ...m,
                     events: m.events.map((e) => {
                       if (e.subagent?.taskId !== taskId) return e;
-                      return { ...e, subagent: { ...e.subagent, events: saEvents } };
+                      return {
+                        ...e,
+                        subagent: { ...e.subagent, events: saEvents, eventCount: saEvents.length },
+                      };
                     }),
                   };
                 }),
@@ -696,14 +749,14 @@ export function useServer() {
           break;
       }
     },
-    [flushStreamEvents],
+    [flushStreamEvents, scheduleFlush],
   );
 
   useEffect(() => {
     if (detailRefetchRef.current.size > 0) flushDetailRefetches();
   }, [workspaces, flushDetailRefetches]);
 
-  const connect = useCallback(() => {
+  const connect = useCallback((): WebSocket => {
     const ws = new WebSocket(resolveWsUrl());
     wsRef.current = ws;
 
@@ -714,17 +767,39 @@ export function useServer() {
       if (wsRef.current !== ws) return;
       setConnected(false);
       wsRef.current = null;
-      clearTimeout(probeRef.current);
-      probeRef.current = undefined;
+      settleProbe();
       reconnectRef.current = setTimeout(connect, RECONNECT_DELAY_MS);
     };
     ws.onerror = () => ws.close();
     ws.onmessage = (e) => {
-      clearTimeout(probeRef.current);
-      probeRef.current = undefined;
+      settleProbe();
       handleServerMessage(JSON.parse(e.data as string) as Record<string, unknown>);
     };
-  }, [handleServerMessage]);
+    return ws;
+  }, [handleServerMessage, settleProbe]);
+
+  // Gives `ws` PROBE_TIMEOUT_MS to show it is alive: any frame, or for an
+  // attempt still connecting, opening. Otherwise it is replaced by a new
+  // attempt under the same deadline, since an attempt can hang in CONNECTING
+  // for minutes after a network switch before the browser gives up.
+  const watchSocket = useCallback(
+    (ws: WebSocket, connecting: boolean) => {
+      const watch = (sock: WebSocket, attempt: boolean) => {
+        probeRef.current = setTimeout(() => {
+          const dead = wsRef.current === sock && !(attempt && sock.readyState === WebSocket.OPEN);
+          if (dead) {
+            wsRef.current = null;
+            sock.close();
+            setConnected(false);
+          }
+          settleProbe();
+          if (dead) watch(connect(), true);
+        }, PROBE_TIMEOUT_MS);
+      };
+      watch(ws, connecting);
+    },
+    [connect, settleProbe],
+  );
 
   // Check that the socket still carries traffic; reconnect right away if it
   // is gone rather than waiting for the browser to notice.
@@ -733,20 +808,16 @@ export function useServer() {
     if (!ws) {
       // Between attempts: skip the rest of the back-off.
       clearTimeout(reconnectRef.current);
-      connect();
+      watchSocket(connect(), true);
       return;
     }
-    if (ws.readyState !== WebSocket.OPEN || probeRef.current) return;
-    ws.send(JSON.stringify({ type: "ping" }));
-    probeRef.current = setTimeout(() => {
-      probeRef.current = undefined;
-      if (wsRef.current !== ws) return;
-      wsRef.current = null;
-      ws.close();
-      setConnected(false);
-      connect();
-    }, PROBE_TIMEOUT_MS);
-  }, [connect]);
+    if (probeRef.current) return;
+    const state: number = ws.readyState;
+    const connecting = state === WebSocket.CONNECTING;
+    if (!connecting && state !== WebSocket.OPEN) return;
+    if (!connecting) ws.send(JSON.stringify({ type: "ping" }));
+    watchSocket(ws, connecting);
+  }, [connect, watchSocket]);
 
   const useMock = import.meta.env.DEV && new URLSearchParams(window.location.search).has("mock");
   const useReplay =
@@ -772,7 +843,10 @@ export function useServer() {
     return () => {
       clearTimeout(reconnectRef.current);
       clearTimeout(probeRef.current);
-      wsRef.current?.close();
+      // Detached first, or its onclose would schedule a reconnect.
+      const ws = wsRef.current;
+      wsRef.current = null;
+      ws?.close();
     };
   }, [connect, useMock, useReplay, handleServerMessage]);
 
@@ -794,10 +868,10 @@ export function useServer() {
     };
   }, [probe, useMock, useReplay]);
 
-  const send = useCallback((data: unknown) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
-    }
+  const send = useCallback((data: unknown): boolean => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return false;
+    wsRef.current.send(JSON.stringify(data));
+    return true;
   }, []);
 
   return {
@@ -813,9 +887,9 @@ export function useServer() {
     lastError,
     clearError: useCallback(() => setLastError(null), []),
     loadMessages: useCallback(
-      (wsId: string, before?: number) => {
+      (wsId: string, before?: number, pageSize?: number) => {
         // Small screens get smaller first pages; scrolling back fetches more.
-        const limit = before ? 50 : window.innerWidth < 768 ? 25 : 50;
+        const limit = pageSize ?? (before ? 50 : window.innerWidth < 768 ? 25 : 50);
         if (before) {
           setWorkspaces((prev) =>
             prev.map((w) => (w.id === wsId ? { ...w, loadingOlder: true } : w)),
@@ -895,14 +969,29 @@ export function useServer() {
       (wsId: string, agentId: string) => send({ type: "remove_agent", workspaceId: wsId, agentId }),
       [send],
     ),
+    // Resolves to whether the message went out; the caller keeps the draft
+    // otherwise. A socket under probe may be dead (the phone just woke up),
+    // so a send waits for the verdict rather than writing into it.
     sendMessage: useCallback(
-      (
+      async (
         wsId: string,
         content: string,
         target?: string,
         images?: Array<{ name: string; url: string }>,
         quote?: { messageId: string; agentId: string | null; content: string },
-      ) => send({ type: "send_message", workspaceId: wsId, content, target, images, quote }),
+      ): Promise<boolean> => {
+        if (probeRef.current) await new Promise<void>((r) => probeWaitersRef.current.push(r));
+        const sent = send({
+          type: "send_message",
+          workspaceId: wsId,
+          content,
+          target,
+          images,
+          quote,
+        });
+        if (!sent) setLastError("Not connected: the message was not sent");
+        return sent;
+      },
       [send],
     ),
     forwardMessage: useCallback(

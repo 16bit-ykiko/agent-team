@@ -147,6 +147,31 @@ describe("timelineBlocks", () => {
   });
 });
 
+describe("folded card identity", () => {
+  const card = (events: StreamEvent[]) =>
+    timelineBlocks(events).flatMap((b) => (b.kind === "subagent" ? [b.ev] : []))[0];
+
+  it("gives the same card object while its lifecycle events are unchanged", () => {
+    const start = ev("subagent_start", {
+      subagent: { taskId: "a", description: "d", status: "running", events: [] },
+    });
+    const done = ev("subagent_done", {
+      subagent: { taskId: "a", description: "", status: "completed" },
+    });
+    // A new events array (a stream frame elsewhere in the message) with the
+    // same card events: memo(SubAgentItem) must see the same props.
+    const first = card([ev("thinking"), start, done]);
+    expect(card([ev("thinking"), start, done, ev("tool_use")])).toBe(first);
+    expect(card([start, done])).toBe(first);
+    const stopped = ev("subagent_done", {
+      subagent: { taskId: "a", description: "", status: "stopped" },
+    });
+    const refolded = card([start, stopped]);
+    expect(refolded).not.toBe(first);
+    expect(refolded.subagent!.status).toBe("stopped");
+  });
+});
+
 describe("timelineBlocks details", () => {
   it("folds a summarised done event without losing the start's count or type", () => {
     const events = [

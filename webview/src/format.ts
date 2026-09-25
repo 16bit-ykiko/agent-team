@@ -47,6 +47,16 @@ export function formatTokens(n: number): string {
   return String(n);
 }
 
+// 4200 → "4.2s", 45000 → "45s", 65000 → "1m 5s", 3_900_000 → "1h 5m".
+export function formatDuration(ms: number): string {
+  // Rounded first, or 59.96 s would read "60s".
+  const secs = Math.round(ms / 100) / 10;
+  if (secs < 60) return `${secs.toFixed(1).replace(/\.0$/, "")}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ${Math.floor(secs % 60)}s`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
 export function shortModel(model: string): string {
   const m = model.match(/^(.*?)(\[1m\])?$/i);
   let base = (m?.[1] ?? model).replace(/^claude-/, "").replace(/-\d{8}$/, "");

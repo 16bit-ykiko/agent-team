@@ -1067,6 +1067,28 @@ button {
   font-size: 12px;
   animation: pulse 2s infinite;
 }
+.live-thinking {
+  margin: 4px 0;
+  border-left: 2px solid var(--accent-soft);
+  padding-left: 10px;
+}
+.live-thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.live-thinking-text {
+  margin-top: 3px;
+  max-height: 5.4em;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .message-error .message-content {
   color: var(--error);
 }
@@ -2107,6 +2129,9 @@ pre .copy-btn:hover {
 }
 .forward-ref-agent {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -2135,6 +2160,9 @@ pre .copy-btn:hover {
 }
 .quote-bar-agent {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);

@@ -145,6 +145,42 @@ describe("MessageItem", () => {
     expect(container.querySelector(".step-group")).toBeTruthy();
   });
 
+  it("keeps an opened step box open when the first text of the reply arrives", () => {
+    const events: StreamEvent[] = [
+      { kind: "thinking", content: "plan", contentOffset: 0 },
+      { kind: "tool_use", toolName: "Read", content: "**Read** `a.ts`", contentOffset: 0 },
+    ];
+    const live = msg({ events, status: "streaming" });
+    const { container, rerender } = render(<MessageItem msg={live} agents={agents} />);
+    fireEvent.click(container.querySelector(".step-header")!);
+    expect(container.querySelector(".step-group.open")).not.toBeNull();
+    rerender(<MessageItem msg={{ ...live, content: "Found it" }} agents={agents} />);
+    expect(container.querySelector(".step-group.open")).not.toBeNull();
+    expect(container.textContent).toContain("Found it");
+  });
+
+  it("shows a forwarded message's agent avatar as an image", () => {
+    const { container } = render(
+      <MessageItem
+        msg={msg({
+          kind: "user",
+          agentId: null,
+          content: "look at this",
+          forwardRef: {
+            messageId: "x",
+            fromAgent: "Alice",
+            fromAvatar: "avatars/Alice.jpg",
+            preview: "the answer",
+          },
+        })}
+        agents={agents}
+      />,
+    );
+    const who = container.querySelector(".forward-ref-agent")!;
+    expect(who.textContent).toBe("Alice");
+    expect(who.querySelector("img")!.getAttribute("src")).toBe("avatars/Alice.jpg");
+  });
+
   it("wires cancel through to the owning agent", () => {
     const onCancelSubagent = vi.fn();
     const events: StreamEvent[] = [sa({ status: "running" })];

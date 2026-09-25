@@ -12,10 +12,10 @@
   "dependencies": {
     "@types/turndown": "^5.0.6",
     "highlight.js": "^11.11.1",
+    "lowlight": "^3.3.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",
-    "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
     "turndown": "^7.2.4"
   },

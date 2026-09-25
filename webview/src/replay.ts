@@ -13,10 +13,12 @@
 //   speed=<n>      time compression factor (default 20x)
 //   maxdelay=<ms>  cap between consecutive events (default 400ms)
 
+// Logs also carry `{ timestamp, agentId, unhandled }` lines for SDK frames
+// the session could not map; those have no message to replay into.
 interface LogEntry {
   timestamp: number;
-  messageId: string;
-  event: Record<string, unknown>;
+  messageId?: string;
+  event?: Record<string, unknown>;
 }
 
 const WS_ID = "replay";
@@ -41,11 +43,12 @@ export async function startReplay(dispatch: (msg: Record<string, unknown>) => vo
       `Failed to fetch ${url} (${res.status}). Copy a .agent-team/logs/<ws>/stream.jsonl to webview/public/replay.jsonl`,
     );
   }
-  const entries: LogEntry[] = [];
+  const entries: Array<Required<LogEntry>> = [];
   for (const line of (await res.text()).split("\n")) {
     if (!line.trim()) continue;
     try {
-      entries.push(JSON.parse(line) as LogEntry);
+      const entry = JSON.parse(line) as LogEntry;
+      if (entry.messageId && entry.event) entries.push(entry as Required<LogEntry>);
     } catch {
       // Skip malformed lines (e.g. a truncated tail write).
     }
@@ -75,6 +78,20 @@ export async function startReplay(dispatch: (msg: Record<string, unknown>) => vo
   });
 
   const seenMsgs = new Set<string>();
+  // The log has no message_done frames: a message is finished when the next
+  // one starts, and the last one when the log ends.
+  const content = new Map<string, string>();
+  let latest: string | null = null;
+  const finish = () => {
+    if (latest == null) return;
+    dispatch({
+      type: "message_done",
+      workspaceId: WS_ID,
+      messageId: latest,
+      status: "done",
+      content: content.get(latest) ?? "",
+    });
+  };
   let prevTs = entries[0].timestamp;
   for (const entry of entries) {
     const delay = Math.min(Math.max(0, (entry.timestamp - prevTs) / speed), maxDelay);
@@ -82,7 +99,7 @@ export async function startReplay(dispatch: (msg: Record<string, unknown>) => vo
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
 
     if (!seenMsgs.has(entry.messageId)) {
-      // Finalize the previous message; the log has no message_done frames.
+      finish();
       dispatch({
         type: "new_message",
         workspaceId: WS_ID,
@@ -97,6 +114,11 @@ export async function startReplay(dispatch: (msg: Record<string, unknown>) => vo
         },
       });
       seenMsgs.add(entry.messageId);
+      latest = entry.messageId;
+    }
+    if (entry.event.kind === "text_delta") {
+      const text = (entry.event.content as string | undefined) ?? "";
+      content.set(entry.messageId, (content.get(entry.messageId) ?? "") + text);
     }
     dispatch({
       type: "stream_event",
@@ -105,5 +127,6 @@ export async function startReplay(dispatch: (msg: Record<string, unknown>) => vo
       event: entry.event,
     });
   }
+  finish();
   console.log(`[replay] done: ${entries.length} events, ${seenMsgs.size} message(s)`);
 }

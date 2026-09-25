@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { buildFrames, cancelDemoSubagent, DEMO_WS_ID } from "../src/replayFixture";
+import { startReplay } from "../src/replay";
 import { StreamEvent } from "../src/useServer";
 
 type Frame = Record<string, unknown>;
@@ -145,5 +146,35 @@ describe("cancelDemoSubagent", () => {
     const event = frame.event as StreamEvent;
     expect(event.kind).toBe("subagent_done");
     expect(event.subagent).toMatchObject({ taskId: "demo-sa-run", status: "stopped" });
+  });
+});
+
+describe("?replay of a server stream log", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("skips unhandled-frame lines and finishes every replayed message", async () => {
+    // Real logs mix event lines with { timestamp, agentId, unhandled } ones.
+    const log = [
+      { timestamp: 1, messageId: "m1", event: { kind: "text_delta", content: "hi" } },
+      { timestamp: 2, agentId: "a", unhandled: { type: "system", subtype: "x" } },
+      { timestamp: 3, messageId: "m1", event: { kind: "text_delta", content: " there" } },
+      { timestamp: 4, messageId: "m2", event: { kind: "text_delta", content: "next" } },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n");
+    vi.stubGlobal("fetch", () => Promise.resolve(new Response(log)));
+    const frames: Frame[] = [];
+    await startReplay((f) => frames.push(f));
+    expect(frames.filter((f) => f.type === "stream_event" && !f.event)).toEqual([]);
+    expect(
+      frames
+        .filter((f) => f.type === "new_message" || f.type === "message_done")
+        .map((f) => [f.type, f.messageId ?? (f.message as { id: string }).id, f.content]),
+    ).toEqual([
+      ["new_message", "m1", undefined],
+      ["message_done", "m1", "hi there"],
+      ["new_message", "m2", undefined],
+      ["message_done", "m2", "next"],
+    ]);
   });
 });

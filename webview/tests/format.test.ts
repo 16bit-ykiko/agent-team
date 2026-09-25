@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { formatRelative, formatResetTime, formatTokens, shortModel } from "../src/format";
+import {
+  formatDuration,
+  formatRelative,
+  formatResetTime,
+  formatTokens,
+  shortModel,
+} from "../src/format";
 
 const NOW = 1_800_000_000_000;
 
@@ -44,5 +50,17 @@ describe("formatTokens", () => {
     expect(formatTokens(200_000)).toBe("200k");
     expect(formatTokens(1_000_000)).toBe("1M");
     expect(formatTokens(1_200_000)).toBe("1.2M");
+  });
+});
+
+describe("formatDuration", () => {
+  it("keeps a tenth of a second under a minute, then whole units", () => {
+    expect(formatDuration(4_200)).toBe("4.2s");
+    expect(formatDuration(13_700)).toBe("13.7s");
+    expect(formatDuration(45_000)).toBe("45s");
+    expect(formatDuration(65_400)).toBe("1m 5s");
+    expect(formatDuration(3_900_000)).toBe("1h 5m");
+    // Rounds before picking the unit.
+    expect(formatDuration(59_960)).toBe("1m 0s");
   });
 });

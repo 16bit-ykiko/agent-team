@@ -1,9 +1,8 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { Workspace, SystemStatus, SearchHit } from "./useServer";
 import { groupWorkspaces, isGroupExpanded, archivedWorkspaces } from "./groups";
 import { isAgentActive } from "./agents";
 import { formatBytes, formatRelative, formatResetTime } from "./format";
-import { ViewportInfo } from "./ViewportInfo";
 
 function gitTitle(git: { dirty: number; ahead: number; behind: number }): string {
   const parts: string[] = [];
@@ -134,7 +133,7 @@ export interface SidebarProps {
   onSetDefaultAccount: (account: string | null) => void;
 }
 
-export function Sidebar(p: SidebarProps) {
+export const Sidebar = memo(function Sidebar(p: SidebarProps) {
   const now = p.now ?? Date.now();
   const groups = groupWorkspaces(p.workspaces);
   const archived = archivedWorkspaces(p.workspaces);
@@ -375,7 +374,6 @@ export function Sidebar(p: SidebarProps) {
           onSetDefault={p.onSetDefaultAccount}
         />
       )}
-      <ViewportInfo />
     </>
   );
-}
+});

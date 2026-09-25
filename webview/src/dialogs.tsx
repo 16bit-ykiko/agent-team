@@ -20,14 +20,18 @@ export function ConfirmDialog({
   onClose: () => void;
 }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  // Parents pass fresh closures on every render (each stream frame);
+  // re-running the effect would pull focus back onto the confirm button.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     confirmRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, []);
   return (
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog dialog-confirm" onClick={(e) => e.stopPropagation()}>

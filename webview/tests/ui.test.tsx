@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, fireEvent, act } from "@testing-library/react";
 import { EventItem, BannerItem, StepGroup, MessageItem } from "../src/messages";
 import { Sidebar, SidebarProps } from "../src/Sidebar";
 import { ConfirmDialog } from "../src/dialogs";
@@ -54,6 +54,13 @@ describe("EventItem", () => {
   it("labels thinking with its own chip", () => {
     const { container } = render(<EventItem ev={ev("thinking", { content: "hmm" })} />);
     expect(container.querySelector(".chip-thinking")!.textContent).toBe("Thinking");
+  });
+
+  it("shows how long a finished thinking block took", () => {
+    const { container } = render(
+      <EventItem ev={ev("thinking", { content: "hmm", durationMs: 13_700 })} />,
+    );
+    expect(container.querySelector(".chip-thinking")!.textContent).toBe("Thought for 13.7s");
   });
 });
 
@@ -291,6 +298,29 @@ describe("ConfirmDialog", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("leaves focus alone when the parent re-renders with a new onClose", () => {
+    // App passes a fresh closure on every render (each stream frame, the
+    // 3 s status tick); focus must not jump back to the destructive button.
+    const dialog = (onClose: () => void) => (
+      <ConfirmDialog
+        title="T"
+        body="B"
+        confirmLabel="Delete all"
+        danger
+        onConfirm={() => {}}
+        onClose={onClose}
+      />
+    );
+    const { getByText, rerender } = render(dialog(() => {}));
+    expect(document.activeElement).toBe(getByText("Delete all"));
+    getByText("Cancel").focus();
+    const onClose = vi.fn();
+    rerender(dialog(onClose));
+    expect(document.activeElement).toBe(getByText("Cancel"));
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+  });
 });
 
 describe("StepGroup timeline", () => {
@@ -431,6 +461,25 @@ describe("message status row and timestamps", () => {
     );
     expect(container.querySelector(".ctx-chip")!.className).toContain("ctx-high");
     expect(container.querySelector(".message-status")!.textContent).not.toContain("effort");
+  });
+
+  it("shows the turn's thinking tokens and time, and nothing without them", () => {
+    const { container, rerender } = render(
+      <MessageItem
+        msg={{ ...base, thinking: { tokens: 1234, durationMs: 45_000 } }}
+        agents={[agent]}
+      />,
+    );
+    expect(container.querySelector(".message-status")!.textContent).toBe("thought 1k tok · 45s");
+    rerender(
+      <MessageItem
+        msg={{ ...base, thinking: { tokens: 0, durationMs: 4_200 } }}
+        agents={[agent]}
+      />,
+    );
+    expect(container.querySelector(".message-status")!.textContent).toBe("thought 4.2s");
+    rerender(<MessageItem msg={base} agents={[agent]} />);
+    expect(container.querySelector(".message-status")).toBeNull();
   });
 
   it("marks turns that ran in fast mode", () => {
@@ -634,5 +683,76 @@ describe("HistoryHint", () => {
     expect(container.textContent).toContain("Beginning of conversation");
     rerender(<HistoryHint hasMore={false} loading={false} loaded count={0} />);
     expect(container.innerHTML).toBe("");
+  });
+});
+
+describe("live thinking", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const live = (over: Partial<Message> = {}): Message => ({
+    id: "m",
+    kind: "agent",
+    agentId: "a1",
+    content: "",
+    timestamp: 0,
+    status: "streaming",
+    events: [],
+    ...over,
+  });
+
+  it("shows the block as it streams, with a ticking timer, outside the step box", () => {
+    vi.setSystemTime(10_000);
+    const events = [
+      ev("tool_use", { toolName: "Read", content: "**Read** `a`", contentOffset: 0 }),
+    ];
+    const { container, rerender } = render(
+      <MessageItem
+        msg={live({ events, liveThinking: "", liveThinkingSince: 10_000 })}
+        agents={[agent]}
+      />,
+    );
+    const panel = () => container.querySelector(".live-thinking");
+    // Before the first words: just the header and the timer.
+    expect(panel()!.querySelector(".live-thinking-header")!.textContent).toBe("Thinking · 0s");
+    expect(panel()!.querySelector(".live-thinking-text")).toBeNull();
+    expect(panel()!.closest(".step-group")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(panel()!.textContent).toContain("Thinking · 3s");
+
+    rerender(
+      <MessageItem
+        msg={live({
+          events,
+          liveThinking: "x".repeat(2000) + "the tail",
+          liveThinkingSince: 10_000,
+        })}
+        agents={[agent]}
+      />,
+    );
+    const text = panel()!.querySelector(".live-thinking-text")!.textContent;
+    expect(text.endsWith("the tail")).toBe(true);
+    expect(text.length).toBeLessThan(1000);
+
+    // The block ended: the panel goes, the finished block is in the steps.
+    rerender(
+      <MessageItem
+        msg={live({ events: [...events, ev("thinking", { content: "done", durationMs: 5_000 })] })}
+        agents={[agent]}
+      />,
+    );
+    expect(panel()).toBeNull();
+  });
+
+  it("replaces the generic working indicator while it is up", () => {
+    const { container } = render(
+      <MessageItem
+        msg={live({ liveThinking: "", liveThinkingSince: Date.now() })}
+        agents={[agent]}
+      />,
+    );
+    expect(container.querySelector(".working-indicator")).toBeNull();
+    expect(container.querySelector(".live-thinking")).not.toBeNull();
   });
 });
