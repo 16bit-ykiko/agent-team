@@ -703,7 +703,7 @@ export class ClaudeSession extends EventEmitter {
         taskId,
         description,
         // The card must stand on its own: the command it is running.
-        ...(command && { prompt: "```bash\n" + command + "\n```" }),
+        ...(command && { prompt: fenced(command, "bash") }),
         agentType: backgroundTaskLabel(type),
         taskType: type,
         status: "running",
@@ -1643,6 +1643,15 @@ function str(v: unknown): string {
   return JSON.stringify(v);
 }
 
+// A fence longer than any backtick run in the body, so a heredoc or a
+// markdown file holding its own ``` cannot close it early.
+export function fenced(body: string, lang = ""): string {
+  let longest = 0;
+  for (const run of body.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}${lang}\n${body}\n${fence}`;
+}
+
 function formatToolUse(block: Record<string, unknown>): string {
   const name = block.name as string;
   const input = block.input as Record<string, unknown> | undefined;
@@ -1651,13 +1660,13 @@ function formatToolUse(block: Record<string, unknown>): string {
 
   switch (name) {
     case "Bash":
-      return `**Bash**\n\`\`\`bash\n${str(input.command)}\n\`\`\``;
+      return `**Bash**\n${fenced(str(input.command), "bash")}`;
 
     case "Read":
       return `**Read** \`${str(input.file_path)}\``;
 
     case "Write":
-      return `**Write** \`${str(input.file_path)}\`\n\`\`\`\n${str(input.content)}\n\`\`\``;
+      return `**Write** \`${str(input.file_path)}\`\n${fenced(str(input.content))}`;
 
     case "Edit": {
       const old_str = str(input.old_string ?? "");
@@ -1693,6 +1702,6 @@ function formatToolUse(block: Record<string, unknown>): string {
       return `**CronCreate** \`${str(input.cron ?? "")}\`${input.prompt ? ` — ${str(input.prompt).slice(0, 120)}` : ""}`;
 
     default:
-      return `**${name}**\n\`\`\`json\n${JSON.stringify(input, null, 2)}\n\`\`\``;
+      return `**${name}**\n${fenced(JSON.stringify(input, null, 2), "json")}`;
   }
 }

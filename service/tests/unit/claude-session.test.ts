@@ -1132,6 +1132,19 @@ describe("per-turn status: context size and effort", () => {
   });
 });
 
+describe("tool bodies", () => {
+  it("fences a command holding its own ``` with a longer fence", () => {
+    const { events, dispatch } = makeSession();
+    const command = "cat > README.md <<'EOF'\n```sh\nmake\n```\nEOF";
+    dispatch({
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command } }] },
+    });
+    expect(events[0].content).toBe(`**Bash**\n\`\`\`\`bash\n${command}\n\`\`\`\``);
+  });
+});
+
 describe("thinking: live view, block time, turn totals", () => {
   const partial = (event: Record<string, unknown>) => ({
     type: "stream_event",

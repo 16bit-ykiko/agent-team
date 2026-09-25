@@ -10,6 +10,7 @@ import {
   UsageStats,
   SessionConfig,
   SessionState,
+  fenced,
 } from "./claude-session";
 import type { Codex, ThreadEvent, ThreadItem, ThreadOptions } from "@openai/codex-sdk";
 import { codexContextWindow, codexFastTier, codexModelId, defaultEffortForModel } from "./presets";
@@ -346,7 +347,7 @@ function parseStartedItem(item: ThreadItem): StreamEvent | null {
       return {
         kind: "tool_use",
         toolName: "Bash",
-        content: `**Bash**\n\`\`\`bash\n${item.command}\n\`\`\``,
+        content: `**Bash**\n${fenced(item.command, "bash")}`,
         toolUseId: item.id,
       };
     case "mcp_tool_call":
@@ -409,7 +410,7 @@ function parseCompletedItem(item: ThreadItem): StreamEvent | null {
       return {
         kind: "tool_use",
         toolName: "Edit",
-        content: `**Edit**${status}\n\`\`\`\n${changes}\n\`\`\``,
+        content: `**Edit**${status}\n${fenced(changes)}`,
         toolUseId: item.id,
       };
     }
