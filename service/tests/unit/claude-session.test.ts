@@ -1132,6 +1132,80 @@ describe("per-turn status: context size and effort", () => {
   });
 });
 
+describe("thinking: live view, block time, turn totals", () => {
+  const partial = (event: Record<string, unknown>) => ({
+    type: "stream_event",
+    parent_tool_use_id: null,
+    event,
+  });
+  const thinkingBlock = (text: string) => ({
+    type: "assistant",
+    parent_tool_use_id: null,
+    message: { role: "assistant", content: [{ type: "thinking", thinking: text }] },
+  });
+  const messageDelta = (thinking: number) =>
+    partial({
+      type: "message_delta",
+      usage: { output_tokens_details: { thinking_tokens: thinking } },
+    });
+
+  afterEach(() => vi.useRealTimers());
+
+  it("opens the live view at block start, then times the finished block", () => {
+    vi.useFakeTimers();
+    const { events, dispatch } = makeSession();
+    dispatch(partial({ type: "content_block_start", content_block: { type: "thinking" } }));
+    expect(events).toEqual([{ kind: "thinking_delta", content: "" }]);
+    vi.advanceTimersByTime(1500);
+    dispatch(
+      partial({ type: "content_block_delta", delta: { type: "thinking_delta", thinking: "Hm" } }),
+    );
+    vi.advanceTimersByTime(2500);
+    dispatch(thinkingBlock("Hm"));
+    expect(events.map((e) => e.kind)).toEqual(["thinking_delta", "thinking_delta", "thinking"]);
+    expect(events[2]).toMatchObject({ content: "Hm", durationMs: 4000 });
+  });
+
+  it("sums thinking tokens and time over the turn's calls into the result", () => {
+    vi.useFakeTimers();
+    const { events, dispatch } = makeSession();
+    for (const [ms, tokens] of [
+      [1000, 9],
+      [3000, 4],
+    ]) {
+      dispatch(partial({ type: "content_block_start", content_block: { type: "thinking" } }));
+      vi.advanceTimersByTime(ms);
+      dispatch(thinkingBlock("…"));
+      dispatch(messageDelta(tokens));
+    }
+    dispatch(partial({ type: "message_delta", usage: { output_tokens: 3 } }));
+    dispatch({ type: "result", subtype: "success", result: "done", usage: {} });
+    expect(events.find((e) => e.kind === "result")!.thinking).toEqual({
+      tokens: 13,
+      durationMs: 4000,
+    });
+  });
+
+  it("ends the live view of a block whose text is not returned, keeping nothing", () => {
+    vi.useFakeTimers();
+    const { events, dispatch } = makeSession();
+    dispatch(partial({ type: "content_block_start", content_block: { type: "thinking" } }));
+    vi.advanceTimersByTime(700);
+    dispatch(thinkingBlock(""));
+    expect(events).toEqual([
+      { kind: "thinking_delta", content: "" },
+      { kind: "thinking_delta", content: "", durationMs: 700 },
+    ]);
+  });
+
+  it("ignores subagent thinking and reports nothing for a turn without any", () => {
+    const { events, dispatch } = makeSession();
+    dispatch({ ...messageDelta(50), parent_tool_use_id: "toolu_sub" });
+    dispatch({ type: "result", subtype: "success", result: "done", usage: {} });
+    expect(events.find((e) => e.kind === "result")!.thinking).toBeUndefined();
+  });
+});
+
 describe("background task list", () => {
   it("exposes live tasks with kind and start time and announces changes", () => {
     const session = new ClaudeSession({ cwd: "/tmp" });

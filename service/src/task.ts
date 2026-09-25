@@ -6,6 +6,7 @@ import {
   ContextUsage,
   RunState,
   BackgroundTask,
+  ThinkingStats,
 } from "./claude-session";
 import type { GitInfo, PrInfo } from "./git";
 import { HostSessionHandle, HostRegistry } from "./host";
@@ -46,6 +47,8 @@ export interface Message {
   effort?: string;
   fast?: boolean;
   context?: ContextUsage;
+  // Thinking tokens and time of the turn (Claude; from the API usage).
+  thinking?: ThinkingStats;
   // "summary" when the events carry only chips/counts (history pages); the
   // full events arrive via load_message_details.
   detail?: "summary";
@@ -136,7 +139,7 @@ export interface WorkspaceCallbacks {
     status: MessageStatus,
     content: string,
     events?: StreamEvent[],
-    patch?: Partial<Pick<Message, "context" | "effort">>,
+    patch?: Partial<Pick<Message, "context" | "effort" | "thinking">>,
   ) => void;
   onAgentBusy?: (wsId: string, agentId: string) => void;
   onAgentIdle?: (wsId: string, agentId: string) => void;
@@ -466,6 +469,8 @@ export class Workspace {
         msg.content += event.content;
         this.cb?.onStreamEvent(this.id, msg, event);
       } else if (event.kind === "thinking_delta") {
+        // Live only: relayed so the client can show thinking as it streams;
+        // the finished block arrives as a "thinking" event and is what stays.
         const msg = this.ensureAgentMsg(entry);
         this.cb?.onStreamEvent(this.id, msg, event);
       } else if (event.kind === "text") {
@@ -486,9 +491,11 @@ export class Workspace {
           }
           if (event.context) entry.currentMsg.context = event.context;
           if (event.effort) entry.currentMsg.effort = event.effort;
+          if (event.thinking) entry.currentMsg.thinking = event.thinking;
           const patch = {
             ...(event.context && { context: event.context }),
             ...(event.effort && { effort: event.effort }),
+            ...(event.thinking && { thinking: event.thinking }),
           };
           this.cb?.onMessageDone(
             this.id,

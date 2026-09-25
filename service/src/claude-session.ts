@@ -62,6 +62,10 @@ export interface StreamEvent {
   context?: ContextUsage;
   // On result events: the effort the turn actually ran at.
   effort?: string;
+  // On result events: thinking tokens and time of the turn's main loop.
+  thinking?: ThinkingStats;
+  // On thinking events: how long the block took to think.
+  durationMs?: number;
   toolInput?: ToolInput;
   step?: number;
   contentOffset?: number;
@@ -85,6 +89,11 @@ export type RunState = "idle" | "working" | "waiting" | "sleeping";
 export interface ContextUsage {
   tokens: number;
   window: number;
+}
+
+export interface ThinkingStats {
+  tokens: number;
+  durationMs: number;
 }
 
 export interface SubAgentInfo {
@@ -245,6 +254,8 @@ export class ClaudeSession extends EventEmitter {
   private awaitingFirstOutput = false;
   private turnStartTime = 0;
   private stepCounter = 0;
+  private thinkingStartedAt = 0;
+  private turnThinking: ThinkingStats = { tokens: 0, durationMs: 0 };
   // Subagent parent-child tracking: SDK only gives us flat task events, so we
   // reconstruct the hierarchy from tool_use IDs to route nested events correctly.
   private subagentToolMap = new Map<string, string>(); // toolUseId → taskId
@@ -435,6 +446,7 @@ export class ClaudeSession extends EventEmitter {
     this.awaitingFirstOutput = true;
     this.turnStartTime = Date.now();
     this.stepCounter = 0;
+    this.turnThinking = { tokens: 0, durationMs: 0 };
     this.updateRunState();
   }
 
@@ -1189,8 +1201,15 @@ export class ClaudeSession extends EventEmitter {
 
       if (blockType === "thinking") {
         const text = b.thinking as string;
+        const durationMs = this.thinkingStartedAt ? Date.now() - this.thinkingStartedAt : undefined;
+        this.thinkingStartedAt = 0;
+        if (durationMs != null) this.turnThinking.durationMs += durationMs;
         if (text) {
-          this.emit("event", { kind: "thinking", content: text, step });
+          this.emit("event", { kind: "thinking", content: text, step, durationMs });
+        } else if (durationMs != null) {
+          // A block whose text is not returned: nothing to keep, but the live
+          // view must still end here, not when the next block lands.
+          this.emit("event", { kind: "thinking_delta", content: "", durationMs });
         }
       } else if (blockType === "text") {
         const text = (b.text as string)?.trim();
@@ -1302,7 +1321,20 @@ export class ClaudeSession extends EventEmitter {
 
     const eventType = (event as unknown as Record<string, unknown>).type as string;
 
-    if (eventType === "content_block_delta") {
+    if (eventType === "content_block_start") {
+      const block = (event as unknown as Record<string, unknown>).content_block as
+        Record<string, unknown> | undefined;
+      if (block?.type === "thinking") {
+        this.thinkingStartedAt = Date.now();
+        // Opens the live thinking view before the first words arrive, which
+        // can take a while on long thinks.
+        this.emit("event", { kind: "thinking_delta", content: "" });
+      }
+    } else if (eventType === "message_delta") {
+      const usage = (event as unknown as Record<string, unknown>).usage as
+        { output_tokens_details?: { thinking_tokens?: number } } | undefined;
+      this.turnThinking.tokens += usage?.output_tokens_details?.thinking_tokens ?? 0;
+    } else if (eventType === "content_block_delta") {
       const delta = (event as unknown as Record<string, unknown>).delta as
         Record<string, unknown> | undefined;
       if (!delta) return;
@@ -1346,8 +1378,12 @@ export class ClaudeSession extends EventEmitter {
         ? this.contextUsageFrom(this.lastCallUsage, result.modelUsage)
         : undefined;
       this.lastCallUsage = null;
-      const effort = this.config.effort ?? this.effectiveEffort ?? undefined;
-      this.emit("event", { kind: "result", content: text, context, effort });
+      const effort = (this.launched ?? this.config).effort ?? this.effectiveEffort ?? undefined;
+      const thinking =
+        this.turnThinking.tokens || this.turnThinking.durationMs
+          ? { ...this.turnThinking }
+          : undefined;
+      this.emit("event", { kind: "result", content: text, context, effort, thinking });
     } else {
       const errResult = msg as Record<string, unknown>;
       const errList = errResult.errors as string[] | undefined;
@@ -1358,6 +1394,8 @@ export class ClaudeSession extends EventEmitter {
       this.emit("event", { kind: "error", content: errMsg });
     }
 
+    this.turnThinking = { tokens: 0, durationMs: 0 };
+    this.thinkingStartedAt = 0;
     this.usage.turns++;
     if (this.turnStartTime) {
       this.usage.duration_ms += Date.now() - this.turnStartTime;

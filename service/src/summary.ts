@@ -23,6 +23,7 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
   if (e.step != null) base.step = e.step;
   if (e.isMarkdown) base.isMarkdown = true;
   if (e.toolResultIsMarkdown) base.toolResultIsMarkdown = true;
+  if (e.durationMs != null) base.durationMs = e.durationMs;
 
   switch (e.kind) {
     case "tool_use":

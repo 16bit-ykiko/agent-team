@@ -311,7 +311,12 @@ function renderEvents(events: StreamEvent[], indent: string, out: string[]): voi
 export function transcript(messages: Message[]): string {
   const out: string[] = [];
   messages.forEach((m, i) => {
-    const meta = [m.kind, m.status, m.context && `ctx ${m.context.tokens}/${m.context.window}`]
+    const meta = [
+      m.kind,
+      m.status,
+      m.context && `ctx ${m.context.tokens}/${m.context.window}`,
+      m.thinking && `thought ${m.thinking.tokens} tokens`,
+    ]
       .filter(Boolean)
       .join(" ");
     out.push(`## ${i + 1} ${meta}`);
