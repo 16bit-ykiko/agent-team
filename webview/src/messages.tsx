@@ -617,6 +617,51 @@ export function LiveThinking({ text, secs }: { text: string; secs: number }) {
   );
 }
 
+// A tool call still running or a subagent still working: the turn is not
+// waiting on the model.
+function workInFlight(events: StreamEvent[]): boolean {
+  return events.some(
+    (e) =>
+      (e.kind === "tool_use" && e.toolResult == null && e.resultLength == null) ||
+      (e.kind === "subagent_start" && e.subagent?.status === "running"),
+  );
+}
+
+function progressOf(msg: Message): string {
+  const events = msg.events ?? [];
+  const results = events.filter((e) => e.toolResult != null).length;
+  return `${msg.content.length}:${events.length}:${results}`;
+}
+
+const WAIT_SHOWN_AFTER_MS = 5000;
+
+// Nothing has arrived for a while and nothing else explains it: the turn
+// is waiting on the model. Shown with how long, so a request that stalls
+// is told apart from one that is thinking or running a tool.
+function WaitingIndicator({
+  progress,
+  immediate = false,
+}: {
+  progress: string;
+  immediate?: boolean;
+}) {
+  const [since, setSince] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setSince(Date.now());
+    setNow(Date.now());
+  }, [progress]);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const waited = Math.max(0, now - since);
+  if (!immediate && waited < WAIT_SHOWN_AFTER_MS) return null;
+  return (
+    <div className="working-indicator">Waiting for the model · {Math.floor(waited / 1000)}s</div>
+  );
+}
+
 // One broken message (an old persisted event missing a field, an unexpected
 // shape) must not blank the whole transcript.
 export class MessageBoundary extends Component<
@@ -853,9 +898,15 @@ export const MessageItem = memo(function MessageItem({
           </div>
         )}
 
-        {streaming && !thinkingLive && !msg.content && detailEvents.length === 0 && (
-          <div className="working-indicator">{activity ?? "Working..."}</div>
-        )}
+        {streaming &&
+          !thinkingLive &&
+          !msg.content &&
+          detailEvents.length === 0 &&
+          (activity ? (
+            <div className="working-indicator">{activity}</div>
+          ) : (
+            <WaitingIndicator progress="start" immediate />
+          ))}
 
         {msg.images && msg.images.length > 0 && (
           <div className="msg-images">
@@ -897,6 +948,11 @@ export const MessageItem = memo(function MessageItem({
                 ))}
               </div>
             )}
+        {streaming &&
+          !thinkingLive &&
+          !activity &&
+          (msg.content || detailEvents.length > 0) &&
+          !workInFlight(detailEvents) && <WaitingIndicator progress={progressOf(msg)} />}
       </div>
     </div>
   );

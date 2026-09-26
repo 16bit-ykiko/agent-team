@@ -177,9 +177,11 @@ describe("MessageItem activity", () => {
     expect(container.querySelector(".activity-label")!.textContent).toBe("compacting context");
   });
 
-  it("falls back to Working... and hides the label once the message is done", () => {
+  it("waits on the model with a timer, and hides the label once the message is done", () => {
     const { container, rerender } = render(<MessageItem msg={msg()} agents={[agent]} />);
-    expect(container.querySelector(".working-indicator")!.textContent).toBe("Working...");
+    expect(container.querySelector(".working-indicator")!.textContent).toBe(
+      "Waiting for the model · 0s",
+    );
     rerender(
       <MessageItem
         msg={msg({ status: "done", content: "hi" })}
@@ -188,6 +190,67 @@ describe("MessageItem activity", () => {
     );
     expect(container.querySelector(".activity-label")).toBeNull();
     expect(container.querySelector(".working-indicator")).toBeNull();
+  });
+});
+
+describe("waiting for the model", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+  const msg = (over: Partial<Message> = {}): Message => ({
+    id: "m1",
+    kind: "agent",
+    agentId: "a1",
+    content: "",
+    timestamp: 0,
+    status: "streaming",
+    events: [],
+    ...over,
+  });
+  const read = ev("tool_use", { toolName: "Read", content: "**Read** `a`", contentOffset: 0 });
+  const waiting = (c: HTMLElement) =>
+    [...c.querySelectorAll(".working-indicator")].map((e) => e.textContent);
+  const tick = (ms: number) =>
+    act(() => {
+      vi.advanceTimersByTime(ms);
+    });
+
+  it("counts from the start of a turn that has produced nothing yet", () => {
+    const { container } = render(<MessageItem msg={msg()} agents={[agent]} />);
+    tick(45_000);
+    expect(waiting(container)).toEqual(["Waiting for the model · 45s"]);
+  });
+
+  it("shows after a quiet spell once a tool result is in, and resets on progress", () => {
+    const done = { ...read, toolResult: "body" };
+    const { container, rerender } = render(
+      <MessageItem msg={msg({ events: [done] })} agents={[agent]} />,
+    );
+    tick(4_000);
+    expect(waiting(container)).toEqual([]);
+    tick(2_000);
+    expect(waiting(container)).toEqual(["Waiting for the model · 6s"]);
+    rerender(<MessageItem msg={msg({ events: [done], content: "So" })} agents={[agent]} />);
+    expect(waiting(container)).toEqual([]);
+  });
+
+  it("stays out of the way while a tool runs or a block is thinking", () => {
+    const { container, rerender } = render(
+      <MessageItem msg={msg({ events: [read] })} agents={[agent]} />,
+    );
+    tick(60_000);
+    expect(waiting(container)).toEqual([]);
+    rerender(
+      <MessageItem
+        msg={msg({
+          events: [{ ...read, toolResult: "body" }],
+          liveThinking: "hm",
+          liveThinkingSince: Date.now(),
+        })}
+        agents={[agent]}
+      />,
+    );
+    tick(60_000);
+    expect(waiting(container)).toEqual([]);
   });
 });
 
