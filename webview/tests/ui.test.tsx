@@ -700,45 +700,39 @@ describe("live thinking", () => {
     ...over,
   });
 
-  it("shows the block as it streams, with a ticking timer, outside the step box", () => {
+  it("streams the whole block like reply text, with a ticking timer, outside the step box", () => {
     vi.setSystemTime(10_000);
     const events = [
       ev("tool_use", { toolName: "Read", content: "**Read** `a`", contentOffset: 0 }),
     ];
-    const { container, rerender } = render(
-      <MessageItem
-        msg={live({ events, liveThinking: "", liveThinkingSince: 10_000 })}
-        agents={[agent]}
-      />,
-    );
+    const view = (liveThinking: string) =>
+      live({ events, liveThinking, liveThinkingSince: 10_000 });
+    const { container, rerender } = render(<MessageItem msg={view("")} agents={[agent]} />);
     const panel = () => container.querySelector(".live-thinking");
     // Before the first words: just the header and the timer.
-    expect(panel()!.querySelector(".live-thinking-header")!.textContent).toBe("Thinking · 0s");
-    expect(panel()!.querySelector(".live-thinking-text")).toBeNull();
+    expect(panel()!.querySelector(".event-chip")!.textContent).toBe("Thinking · 0s");
+    expect(panel()!.querySelector(".event-content")).toBeNull();
     expect(panel()!.closest(".step-group")).toBeNull();
     act(() => {
       vi.advanceTimersByTime(3_000);
     });
     expect(panel()!.textContent).toContain("Thinking · 3s");
 
-    rerender(
-      <MessageItem
-        msg={live({
-          events,
-          liveThinking: "x".repeat(2000) + "the tail",
-          liveThinkingSince: 10_000,
-        })}
-        agents={[agent]}
-      />,
-    );
-    const text = panel()!.querySelector(".live-thinking-text")!.textContent;
-    expect(text.endsWith("the tail")).toBe(true);
-    expect(text.length).toBeLessThan(1000);
+    // Each fragment adds to what is shown; nothing scrolls away or is cut.
+    const first = "First I check the **states**.";
+    rerender(<MessageItem msg={view(first)} agents={[agent]} />);
+    const long = first + "\n\n" + "x".repeat(2000) + " the tail";
+    rerender(<MessageItem msg={view(long)} agents={[agent]} />);
+    const body = panel()!.querySelector(".event-content")!;
+    expect(body.querySelector("strong")!.textContent).toBe("states");
+    expect(body.textContent).toContain("First I check the states.");
+    expect(body.textContent.endsWith("the tail")).toBe(true);
+    expect(body.textContent.length).toBeGreaterThan(2000);
 
     // The block ended: the panel goes, the finished block is in the steps.
     rerender(
       <MessageItem
-        msg={live({ events: [...events, ev("thinking", { content: "done", durationMs: 5_000 })] })}
+        msg={live({ events: [...events, ev("thinking", { content: long, durationMs: 5_000 })] })}
         agents={[agent]}
       />,
     );

@@ -1069,25 +1069,11 @@ button {
 }
 .live-thinking {
   margin: 4px 0;
-  border-left: 2px solid var(--accent-soft);
-  padding-left: 10px;
 }
-.live-thinking-header {
-  display: flex;
+.live-thinking .event-chip {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-.live-thinking-text {
-  margin-top: 3px;
-  max-height: 5.4em;
-  overflow: hidden;
-  font-size: 12px;
-  line-height: 1.35;
-  color: var(--text-muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  gap: 5px;
 }
 .message-error .message-content {
   color: var(--error);

@@ -1,13 +1,4 @@
-import {
-  useState,
-  useCallback,
-  useMemo,
-  memo,
-  Component,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-} from "react";
+import { useState, useCallback, useMemo, memo, Component, useEffect } from "react";
 import type { ReactNode } from "react";
 import type { Message, AgentInfo, StreamEvent } from "./useServer";
 import { splitEvents, timelineBlocks } from "./events";
@@ -571,32 +562,27 @@ export function StepGroup({
   );
 }
 
-// Keeps the tail of a long think in view without laying out all of it.
-const LIVE_THINKING_TAIL = 800;
-
 // A thinking block as it streams in, so a long think does not look like a
-// stuck agent. Gone once the block ends; the finished one goes to the steps.
+// stuck agent: it grows like the reply's text, drawn as the finished block
+// will be, which then takes its place in the steps.
 export function LiveThinking({ text, since }: { text: string; since: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  const tailRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const el = tailRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [text]);
   const secs = Math.max(0, Math.floor((now - since) / 1000));
   return (
-    <div className="live-thinking">
-      <div className="live-thinking-header">
-        <span className="streaming-dot" />
-        Thinking · {secs}s
+    <div className="live-thinking event event-thinking">
+      <div className="event-row">
+        <span className="event-chip chip-thinking">
+          <span className="streaming-dot" />
+          Thinking · {secs}s
+        </span>
       </div>
       {text && (
-        <div className="live-thinking-text" ref={tailRef}>
-          {text.length > LIVE_THINKING_TAIL ? "…" + text.slice(-LIVE_THINKING_TAIL) : text}
+        <div className="event-content">
+          <StreamingMdBlock>{text}</StreamingMdBlock>
         </div>
       )}
     </div>
