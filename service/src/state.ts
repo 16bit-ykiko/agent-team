@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Message, WorkspaceState } from "./task";
-import type { CommandInfo } from "./claude-session";
+import type { CommandInfo, StreamEvent } from "./claude-session";
 
 const DATA_DIR = ".agent-team";
 const CACHE_DIR = "cache";
@@ -173,6 +173,13 @@ function migrateIfNeeded(baseDir: string): WorkspaceState[] | null {
   } catch {
     return null;
   }
+}
+
+// Thinking fragments are live-view only: the finished block is logged, and
+// so are the empty markers of a block's start and end, which date a long
+// think or a stalled request.
+export function isLoggedEvent(event: StreamEvent): boolean {
+  return event.kind !== "thinking_delta" || !event.content;
 }
 
 // appendLog runs on every stream event; only stat the directory once per workspace.

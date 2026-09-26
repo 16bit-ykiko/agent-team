@@ -15,6 +15,7 @@ import {
   loadAll,
   loadWorkspaceMessages,
   appendLog,
+  isLoggedEvent,
   loadSettings,
   saveSettings,
   RuntimeSettings,
@@ -1483,8 +1484,7 @@ systemctl --user restart agent-team-server
         this.broadcastUI({ type: "new_message", workspaceId: wsId, message: msg });
       },
       onStreamEvent: (wsId, agentMsg, event) => {
-        // Thinking deltas are live-view only; the finished block is logged.
-        if (event.kind !== "thinking_delta") {
+        if (isLoggedEvent(event)) {
           appendLog(this.baseDir, wsId, { timestamp: Date.now(), messageId: agentMsg.id, event });
         }
         this.broadcastUI({

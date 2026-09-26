@@ -5,6 +5,7 @@ import * as path from "path";
 import {
   appendLog,
   deleteWorkspaceState,
+  isLoggedEvent,
   loadAll,
   loadWorkspaceMessages,
   saveIndex,
@@ -163,5 +164,14 @@ describe("unloaded workspaces", () => {
     loadAll(base);
     expect(fs.readFileSync(file, "utf-8")).not.toContain("sk-old");
     expect(fs.statSync(file).mode & 0o077).toBe(0);
+  });
+});
+
+describe("stream log", () => {
+  it("keeps a thinking block's start and end markers, not its fragments", () => {
+    expect(isLoggedEvent({ kind: "thinking_delta", content: "" })).toBe(true);
+    expect(isLoggedEvent({ kind: "thinking_delta", content: "", durationMs: 900 })).toBe(true);
+    expect(isLoggedEvent({ kind: "thinking_delta", content: "Hm" })).toBe(false);
+    expect(isLoggedEvent({ kind: "thinking", content: "Hm" })).toBe(true);
   });
 });
