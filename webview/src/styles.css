@@ -1070,7 +1070,7 @@ button {
 .live-thinking {
   margin: 4px 0;
 }
-.live-thinking .event-chip {
+.chip-live {
   display: inline-flex;
   align-items: center;
   gap: 5px;

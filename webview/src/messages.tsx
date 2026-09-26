@@ -470,27 +470,50 @@ function stepTools(regular: StreamEvent[]): string[] {
   return seen;
 }
 
+export interface LiveBlock {
+  text: string;
+  since: number;
+}
+
+// Seconds since `since`, ticking while `active`.
+function useElapsed(since: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (since == null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [since]);
+  return since == null ? 0 : Math.max(0, Math.floor((now - since) / 1000));
+}
+
 // One collapsible box for a run of ordinary events (thinking, tool calls).
+// A thinking block streaming in is its last item: the box opens for it and
+// folds again once it is done, unless the reader toggled it.
 function StepBox({
   events,
+  live,
   onLoadDetails,
   defaultOpen = false,
 }: {
   events: StreamEvent[];
+  live?: LiveBlock;
   onLoadDetails?: () => void;
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [toggled, setToggled] = useState<boolean | null>(null);
+  const open = toggled ?? (defaultOpen || !!live);
+  const secs = useElapsed(live?.since);
   const toggle = () => {
     if (!open) onLoadDetails?.();
-    setOpen((v) => !v);
+    setToggled(!open);
   };
   const tools = stepTools(events);
   return (
     <div className={`step-group${open ? " open" : ""}`}>
       <div className="step-header" onClick={toggle}>
         <span className="events-toggle">{open ? "▾" : "▸"}</span>
-        <span className="step-summary">{stepSummary(events)}</span>
+        {live && <LiveChip secs={secs} />}
+        {events.length > 0 && <span className="step-summary">{stepSummary(events)}</span>}
         {!open && tools.length > 0 && (
           <span className="step-tools">
             {tools.slice(0, 6).map((t) => (
@@ -507,6 +530,7 @@ function StepBox({
           {events.map((ev, i) => (
             <EventItem key={i} ev={ev} onLoadDetails={onLoadDetails} />
           ))}
+          {live && <LiveThinking text={live.text} secs={secs} />}
         </div>
       )}
     </div>
@@ -521,14 +545,20 @@ export function StepGroup({
   onCancelSubagent,
   onLoadDetails,
   defaultOpen = false,
+  live,
 }: {
   group: { step: number; events: StreamEvent[] };
   onLoadEvents?: (taskId: string) => void;
   onCancelSubagent?: (taskId: string) => void;
   onLoadDetails?: () => void;
   defaultOpen?: boolean;
+  // A thinking block streaming in after these events.
+  live?: LiveBlock;
 }) {
   const blocks = timelineBlocks(group.events);
+  // Where the finished block will land: the trailing step box, or a new one
+  // after a card or banner (same key, so the box keeps its state).
+  const liveOwnBox = live && blocks[blocks.length - 1]?.kind !== "steps";
   return (
     <>
       {blocks.map((block, i) => {
@@ -537,6 +567,7 @@ export function StepGroup({
             <StepBox
               key={`s${i}`}
               events={block.events}
+              live={i === blocks.length - 1 ? live : undefined}
               onLoadDetails={onLoadDetails}
               defaultOpen={defaultOpen}
             />
@@ -554,27 +585,28 @@ export function StepGroup({
           />
         );
       })}
+      {liveOwnBox && <StepBox key={`s${blocks.length}`} events={[]} live={live} />}
     </>
+  );
+}
+
+function LiveChip({ secs }: { secs: number }) {
+  return (
+    <span className="event-chip chip-thinking chip-live">
+      <span className="streaming-dot" />
+      Thinking · {secs}s
+    </span>
   );
 }
 
 // A thinking block as it streams in, so a long think does not look like a
 // stuck agent: it grows like the reply's text, drawn as the finished block
-// will be, which then takes its place in the steps.
-export function LiveThinking({ text, since }: { text: string; since: number }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  const secs = Math.max(0, Math.floor((now - since) / 1000));
+// will be, which then takes its place.
+export function LiveThinking({ text, secs }: { text: string; secs: number }) {
   return (
     <div className="live-thinking event event-thinking">
       <div className="event-row">
-        <span className="event-chip chip-thinking">
-          <span className="streaming-dot" />
-          Thinking · {secs}s
-        </span>
+        <LiveChip secs={secs} />
       </div>
       {text && (
         <div className="event-content">
@@ -672,6 +704,9 @@ export const MessageItem = memo(function MessageItem({
   type Segment = { text: string; events: StreamEvent[] };
   const segments: Segment[] = [];
   const body = msg.content ?? "";
+  // A thinking block that starts now lands at the current end of the text:
+  // with the last events if no text followed them.
+  let joinsLastEvents = false;
   if (!isUser && detailEvents.length === 0 && body) {
     segments.push({ text: body, events: [] });
   } else if (!isUser && detailEvents.length > 0) {
@@ -712,8 +747,18 @@ export const MessageItem = memo(function MessageItem({
       if (trailing || streaming) {
         segments.push({ text: trailing, events: [] });
       }
+      joinsLastEvents = body.length === prevOff;
     }
   }
+
+  let liveAt = -1;
+  if (thinkingLive) {
+    if (segments.length === 0) segments.push({ text: "", events: [] });
+    liveAt = joinsLastEvents ? segments.length - 2 : segments.length - 1;
+  }
+  const liveBlock = thinkingLive
+    ? { text: msg.liveThinking!, since: msg.liveThinkingSince! }
+    : undefined;
 
   const time = new Date(msg.timestamp).toLocaleTimeString([], {
     hour: "2-digit",
@@ -839,19 +884,19 @@ export const MessageItem = memo(function MessageItem({
                       ) : (
                         <MdBlock>{seg.text}</MdBlock>
                       ))}
-                    {seg.events.length > 0 && (
+                    {(seg.events.length > 0 || si === liveAt) && (
                       <StepGroup
                         group={{ step: si, events: seg.events }}
                         onLoadEvents={handleLoadEvents}
                         onCancelSubagent={handleCancelSubagent}
                         onLoadDetails={handleLoadDetails}
+                        live={si === liveAt ? liveBlock : undefined}
                       />
                     )}
                   </div>
                 ))}
               </div>
             )}
-        {thinkingLive && <LiveThinking text={msg.liveThinking!} since={msg.liveThinkingSince!} />}
       </div>
     </div>
   );
