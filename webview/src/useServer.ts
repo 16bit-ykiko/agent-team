@@ -90,8 +90,10 @@ export interface StreamEvent {
   isMarkdown?: boolean;
   toolResult?: string;
   toolResultIsMarkdown?: boolean;
-  // A finished thinking block: how long it took.
+  // A finished thinking block: how long it took and, once its API call
+  // ends, how many tokens it spent.
   durationMs?: number;
+  tokens?: number;
   subagent?: SubAgentInfo;
   // Present on summary pages instead of the bodies.
   contentLength?: number;

@@ -24,6 +24,7 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
   if (e.isMarkdown) base.isMarkdown = true;
   if (e.toolResultIsMarkdown) base.toolResultIsMarkdown = true;
   if (e.durationMs != null) base.durationMs = e.durationMs;
+  if (e.tokens != null) base.tokens = e.tokens;
 
   switch (e.kind) {
     case "tool_use":

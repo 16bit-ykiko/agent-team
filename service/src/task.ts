@@ -473,6 +473,11 @@ export class Workspace {
         // the finished block arrives as a "thinking" event and is what stays.
         const msg = this.ensureAgentMsg(entry);
         this.cb?.onStreamEvent(this.id, msg, event);
+      } else if (event.kind === "thinking_tokens") {
+        const msg = this.ensureAgentMsg(entry);
+        const block = lastThinking(msg.events!);
+        if (block && block.tokens == null) block.tokens = event.tokens;
+        this.cb?.onStreamEvent(this.id, msg, event);
       } else if (event.kind === "text") {
         // text comes via text_delta streaming; finalized text event is redundant
       } else if (event.kind === "result") {
@@ -1181,6 +1186,11 @@ export class Workspace {
 
     return ws;
   }
+}
+
+function lastThinking(events: StreamEvent[]): StreamEvent | undefined {
+  for (let i = events.length - 1; i >= 0; i--) if (events[i].kind === "thinking") return events[i];
+  return undefined;
 }
 
 function genId(prefix: string): string {

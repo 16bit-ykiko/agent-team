@@ -103,6 +103,17 @@ describe("Workspace event aggregation", () => {
     expect(agentMsgs()[0].content).toBe("Hello world");
   });
 
+  it("puts a block's thinking tokens on the block instead of listing them", () => {
+    const { emit, agentMsgs } = makeWorkspace();
+    emit({ kind: "thinking", content: "Hm", durationMs: 1200 });
+    emit({ kind: "tool_use", content: "Read /a", toolUseId: "t1" });
+    emit({ kind: "thinking_tokens", content: "", tokens: 42 });
+    expect(agentMsgs()[0].events!.map((e) => [e.kind, e.tokens])).toEqual([
+      ["thinking", 42],
+      ["tool_use", undefined],
+    ]);
+  });
+
   it("pairs a tool_result onto its tool_use event", () => {
     const { emit, agentMsgs } = makeWorkspace();
     emit({ kind: "tool_use", content: "Read /a", toolUseId: "t1" });

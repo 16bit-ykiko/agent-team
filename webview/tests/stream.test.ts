@@ -514,6 +514,28 @@ describe("robustness", () => {
   });
 });
 
+describe("thinking tokens", () => {
+  it("land on the latest thinking block, and are not listed", () => {
+    const m: Message = {
+      id: "m1",
+      kind: "agent",
+      agentId: "a",
+      content: "",
+      timestamp: 1,
+      status: "streaming",
+      events: [
+        { kind: "thinking", content: "Hm", durationMs: 900 },
+        { kind: "tool_use", content: "Read /a", toolUseId: "t1" },
+      ],
+    };
+    const next = applyEventsToMessage(m, [{ kind: "thinking_tokens", content: "", tokens: 42 }]);
+    expect(next.events!.map((e) => [e.kind, e.tokens])).toEqual([
+      ["thinking", 42],
+      ["tool_use", undefined],
+    ]);
+  });
+});
+
 describe("live thinking", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());

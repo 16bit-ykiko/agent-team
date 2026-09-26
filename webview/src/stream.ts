@@ -61,6 +61,15 @@ export function applyEventsToMessage(m: Message, evts: StreamEvent[]): Message {
         continue;
       }
     }
+    // Tokens of the latest thinking block (task.ts does the same).
+    if (ev.kind === "thinking_tokens") {
+      let idx = events.length - 1;
+      while (idx >= 0 && events[idx].kind !== "thinking") idx--;
+      if (idx >= 0 && events[idx].tokens == null) {
+        events[idx] = { ...events[idx], tokens: ev.tokens };
+      }
+      continue;
+    }
     if (ev.kind === "retry") {
       const idx = events.findIndex((e) => e.kind === "retry");
       if (idx >= 0) {

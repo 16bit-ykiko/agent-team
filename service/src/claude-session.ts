@@ -29,6 +29,9 @@ export interface ToolInput {
 export type StreamEventKind =
   | "thinking"
   | "thinking_delta"
+  // Thinking tokens of the API call whose thinking block was the last
+  // "thinking" event; applied to that event, never listed itself.
+  | "thinking_tokens"
   | "text"
   | "text_delta"
   | "tool_use"
@@ -64,8 +67,10 @@ export interface StreamEvent {
   effort?: string;
   // On result events: thinking tokens and time of the turn's main loop.
   thinking?: ThinkingStats;
-  // On thinking events: how long the block took to think.
+  // On thinking events: how long the block took to think, and (patched in
+  // by a later thinking_tokens event) how many tokens it spent.
   durationMs?: number;
+  tokens?: number;
   toolInput?: ToolInput;
   step?: number;
   contentOffset?: number;
@@ -255,6 +260,9 @@ export class ClaudeSession extends EventEmitter {
   private turnStartTime = 0;
   private stepCounter = 0;
   private thinkingStartedAt = 0;
+  // A thinking event was emitted for the API call in flight: its
+  // message_delta then reports that block's tokens.
+  private thinkingInCall = false;
   private turnThinking: ThinkingStats = { tokens: 0, durationMs: 0 };
   // Subagent parent-child tracking: SDK only gives us flat task events, so we
   // reconstruct the hierarchy from tool_use IDs to route nested events correctly.
@@ -1205,6 +1213,7 @@ export class ClaudeSession extends EventEmitter {
         this.thinkingStartedAt = 0;
         if (durationMs != null) this.turnThinking.durationMs += durationMs;
         if (text) {
+          this.thinkingInCall = true;
           this.emit("event", { kind: "thinking", content: text, step, durationMs });
         } else if (durationMs != null) {
           // A block whose text is not returned: nothing to keep, but the live
@@ -1321,7 +1330,9 @@ export class ClaudeSession extends EventEmitter {
 
     const eventType = (event as unknown as Record<string, unknown>).type as string;
 
-    if (eventType === "content_block_start") {
+    if (eventType === "message_start") {
+      this.thinkingInCall = false;
+    } else if (eventType === "content_block_start") {
       const block = (event as unknown as Record<string, unknown>).content_block as
         Record<string, unknown> | undefined;
       if (block?.type === "thinking") {
@@ -1333,7 +1344,12 @@ export class ClaudeSession extends EventEmitter {
     } else if (eventType === "message_delta") {
       const usage = (event as unknown as Record<string, unknown>).usage as
         { output_tokens_details?: { thinking_tokens?: number } } | undefined;
-      this.turnThinking.tokens += usage?.output_tokens_details?.thinking_tokens ?? 0;
+      const tokens = usage?.output_tokens_details?.thinking_tokens ?? 0;
+      this.turnThinking.tokens += tokens;
+      if (tokens && this.thinkingInCall) {
+        this.emit("event", { kind: "thinking_tokens", content: "", tokens });
+      }
+      this.thinkingInCall = false;
     } else if (eventType === "content_block_delta") {
       const delta = (event as unknown as Record<string, unknown>).delta as
         Record<string, unknown> | undefined;

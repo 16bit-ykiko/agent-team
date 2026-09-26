@@ -62,6 +62,15 @@ describe("EventItem", () => {
     );
     expect(container.querySelector(".chip-thinking")!.textContent).toBe("Thought for 13.7s");
   });
+
+  it("adds the block's tokens once they are known", () => {
+    const { container } = render(
+      <EventItem ev={ev("thinking", { content: "hmm", durationMs: 13_700, tokens: 1234 })} />,
+    );
+    expect(container.querySelector(".chip-thinking")!.textContent).toBe(
+      "Thought for 13.7s · 1.2k tokens",
+    );
+  });
 });
 
 describe("BannerItem folding", () => {
@@ -463,22 +472,13 @@ describe("message status row and timestamps", () => {
     expect(container.querySelector(".message-status")!.textContent).not.toContain("effort");
   });
 
-  it("shows the turn's thinking tokens and time, and nothing without them", () => {
-    const { container, rerender } = render(
+  it("keeps thinking time and tokens out of the header", () => {
+    const { container } = render(
       <MessageItem
         msg={{ ...base, thinking: { tokens: 1234, durationMs: 45_000 } }}
         agents={[agent]}
       />,
     );
-    expect(container.querySelector(".message-status")!.textContent).toBe("thought 1k tok · 45s");
-    rerender(
-      <MessageItem
-        msg={{ ...base, thinking: { tokens: 0, durationMs: 4_200 } }}
-        agents={[agent]}
-      />,
-    );
-    expect(container.querySelector(".message-status")!.textContent).toBe("thought 4.2s");
-    rerender(<MessageItem msg={base} agents={[agent]} />);
     expect(container.querySelector(".message-status")).toBeNull();
   });
 

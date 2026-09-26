@@ -1211,6 +1211,22 @@ describe("thinking: live view, block time, turn totals", () => {
     ]);
   });
 
+  it("reports a shown block's tokens when its call ends", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(partial({ type: "message_start" }));
+    dispatch(partial({ type: "content_block_start", content_block: { type: "thinking" } }));
+    dispatch(thinkingBlock("Hm"));
+    dispatch(messageDelta(42));
+    // A call whose block text was not returned: nothing to attach to.
+    dispatch(partial({ type: "message_start" }));
+    dispatch(partial({ type: "content_block_start", content_block: { type: "thinking" } }));
+    dispatch(thinkingBlock(""));
+    dispatch(messageDelta(7));
+    expect(events.filter((e) => e.kind === "thinking_tokens")).toEqual([
+      { kind: "thinking_tokens", content: "", tokens: 42 },
+    ]);
+  });
+
   it("ignores subagent thinking and reports nothing for a turn without any", () => {
     const { events, dispatch } = makeSession();
     dispatch({ ...messageDelta(50), parent_tool_use_id: "toolu_sub" });

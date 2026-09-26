@@ -130,17 +130,11 @@ function chipLabelFor(toolName: string): string {
   return toolName === "ScheduleWakeup" ? "⏰ Wake-up" : toolName;
 }
 
-// Effort, fast mode, thinking and context occupancy line under an agent
-// message header.
+// Effort, fast mode and context occupancy line under an agent message
+// header. Thinking time and tokens show on the blocks in the steps.
 export function MessageStatus({ msg }: { msg: Message }) {
-  if (!msg.effort && !msg.fast && !msg.context && !msg.thinking) return null;
+  if (!msg.effort && !msg.fast && !msg.context) return null;
   const ctx = msg.context;
-  const thought = msg.thinking
-    ? [
-        msg.thinking.tokens > 0 && `${formatTokens(msg.thinking.tokens)} tok`,
-        msg.thinking.durationMs > 0 && formatDuration(msg.thinking.durationMs),
-      ].filter(Boolean)
-    : [];
   const pct =
     ctx && ctx.window > 0 ? Math.min(100, Math.round((ctx.tokens / ctx.window) * 100)) : null;
   const tone = pct == null ? "" : pct >= 90 ? " ctx-high" : pct >= 70 ? " ctx-warn" : "";
@@ -156,11 +150,6 @@ export function MessageStatus({ msg }: { msg: Message }) {
           ⚡ fast
         </span>
       )}
-      {thought.length > 0 && (
-        <span className="status-chip" title="Thinking this turn">
-          thought {thought.join(" · ")}
-        </span>
-      )}
       {ctx && pct != null && (
         <span
           className={`status-chip ctx-chip${tone}`}
@@ -174,6 +163,13 @@ export function MessageStatus({ msg }: { msg: Message }) {
       )}
     </div>
   );
+}
+
+function thinkingLabel(ev: StreamEvent): string {
+  const head = ev.durationMs != null ? `Thought for ${formatDuration(ev.durationMs)}` : "Thinking";
+  if (!ev.tokens) return head;
+  const tokens = ev.tokens < 1000 ? String(ev.tokens) : `${(ev.tokens / 1000).toFixed(1)}k`;
+  return `${head} · ${tokens} tokens`;
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -214,8 +210,8 @@ export const EventItem = memo(function EventItem({
   const summary = isToolUse ? toolSummary(ev) : "";
   const label = toolName
     ? chipLabelFor(toolName)
-    : ev.kind === "thinking" && ev.durationMs != null
-      ? `Thought for ${formatDuration(ev.durationMs)}`
+    : ev.kind === "thinking"
+      ? thinkingLabel(ev)
       : (KIND_LABEL[ev.kind] ?? ev.kind);
   const chipClass = chipClassFor(toolName, ev.kind);
   // Multi-line tool calls (Bash commands, edits) always show their body;
