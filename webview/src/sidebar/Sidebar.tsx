@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import type { Workspace, SystemStatus, SearchHit } from "../state/useServer";
+import type { Workspace, Project, SystemStatus, SearchHit } from "../state/useServer";
 import { groupWorkspaces, isGroupExpanded, archivedWorkspaces } from "./groups";
 import { isAgentActive } from "../workspace/agents";
 import { formatBytes, formatRelative, formatResetTime } from "../format";
@@ -107,6 +107,7 @@ export function SystemStatusPanel({
 
 export interface SidebarProps {
   workspaces: Workspace[];
+  projects?: Project[];
   activeWsId: string | null;
   connected: boolean;
   groupOverrides: Record<string, boolean>;
@@ -120,6 +121,9 @@ export interface SidebarProps {
   now?: number;
   onSelect: (wsId: string) => void;
   onDelete: (wsId: string) => void;
+  // The × on a project's lead deletes the project (after confirming).
+  onDeleteProject?: (projectId: string) => void;
+  onOpenBoard?: (projectId: string) => void;
   onToggleGroup: (key: string, expanded: boolean) => void;
   onSearchChange: (q: string) => void;
   onJump: (wsId: string, msgId: string) => void;
@@ -135,7 +139,27 @@ export interface SidebarProps {
 
 export const Sidebar = memo(function Sidebar(p: SidebarProps) {
   const now = p.now ?? Date.now();
-  const groups = groupWorkspaces(p.workspaces);
+  const known = new Set((p.projects ?? []).map((pr) => pr.id));
+  // A lead takes its project with it; one whose project is unknown (its
+  // project.json unreadable) is just a workspace.
+  const deleteButton = (ws: Workspace) => {
+    const link = ws.projectLink;
+    const project = link?.role === "lead" && known.has(link.projectId) ? link.projectId : null;
+    return (
+      <button
+        className="task-delete"
+        title={project ? "Delete project" : "Delete"}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (project && p.onDeleteProject) p.onDeleteProject(project);
+          else p.onDelete(ws.id);
+        }}
+      >
+        ×
+      </button>
+    );
+  };
+  const groups = groupWorkspaces(p.workspaces, p.projects);
   const archived = archivedWorkspaces(p.workspaces);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const activeIsArchived = archived.some((w) => w.id === p.activeWsId);
@@ -222,8 +246,8 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
             return (
               <div key={g.key} className="ws-group">
                 <div
-                  className="ws-group-header"
-                  title={g.key}
+                  className={`ws-group-header${g.project ? " ws-group-project" : ""}`}
+                  title={g.project?.root ?? g.key}
                   onClick={() => p.onToggleGroup(g.key, !expanded)}
                 >
                   <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
@@ -234,16 +258,30 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                       {g.workspaces[0].git.dirty > 0 && <span className="ws-group-dirty">●</span>}
                     </span>
                   )}
-                  <button
-                    className="ws-group-add"
-                    title={`New workspace in ${g.key}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      p.onCreateIn(g.key);
-                    }}
-                  >
-                    +
-                  </button>
+                  {g.project && p.onOpenBoard && (
+                    <button
+                      className="ws-group-add ws-group-board"
+                      title={`Objectives of ${g.project.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        p.onOpenBoard!(g.project!.id);
+                      }}
+                    >
+                      ▦
+                    </button>
+                  )}
+                  {!g.project && (
+                    <button
+                      className="ws-group-add"
+                      title={`New workspace in ${g.key}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        p.onCreateIn(g.key);
+                      }}
+                    >
+                      +
+                    </button>
+                  )}
                   <span className="ws-group-count">{g.workspaces.length}</span>
                   {g.running && <span className="streaming-dot" />}
                 </div>
@@ -265,7 +303,11 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                           <div className="task-info">
                             <div className="task-name">
                               <span className="task-name-text">
-                                {ws.name}
+                                {ws.projectLink?.role === "lead" && (
+                                  <span className="task-lead-tag">lead</span>
+                                )}
+                                {/* Under its project's header the tag says it all. */}
+                                {!(g.project && ws.projectLink?.role === "lead") && ws.name}
                                 {unread > 0 && ws.id !== p.activeWsId && (
                                   <span className="unread-badge">{unread}</span>
                                 )}
@@ -290,16 +332,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                               </div>
                             )}
                           </div>
-                          <button
-                            className="task-delete"
-                            title="Delete"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              p.onDelete(ws.id);
-                            }}
-                          >
-                            ×
-                          </button>
+                          {deleteButton(ws)}
                         </div>
                       );
                     })}
@@ -348,16 +381,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                         </div>
                         <div className="task-meta">{ws.project}</div>
                       </div>
-                      <button
-                        className="task-delete"
-                        title="Delete"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          p.onDelete(ws.id);
-                        }}
-                      >
-                        ×
-                      </button>
+                      {deleteButton(ws)}
                     </div>
                   ))}
                 </div>

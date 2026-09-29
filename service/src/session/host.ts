@@ -8,6 +8,7 @@ import {
   BackgroundTask,
 } from "./claude";
 import { CodexSession } from "./codex";
+import type { PanelToolset } from "../project/tools";
 
 export interface HostSessionHandle extends EventEmitter {
   sessionId: string | null;
@@ -28,6 +29,7 @@ export interface HostSessionHandle extends EventEmitter {
   setEffort?(level: string): void;
   setFastMode?(on: boolean): void;
   setGoal?(goal: string | null): void;
+  setPanelTools?(tools: PanelToolset | null): void;
   stopTask?(taskId: string): Promise<void>;
   simulateRateLimit?(info: { rateLimitType?: string; resetsAt?: number }): void;
   setProviderEnv?(env: Record<string, string> | undefined): void;

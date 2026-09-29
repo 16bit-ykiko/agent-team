@@ -38,6 +38,8 @@ export interface Message {
   turnId?: string;
   images?: MessageImage[];
   forwardRef?: ForwardRef;
+  // Sent by another session rather than typed by the user.
+  from?: MessageOrigin;
   // Queued-message bookkeeping: which agent will run it and the fully built
   // prompt to dispatch (kept on the message so queues survive restarts).
   queuedFor?: string;
@@ -82,6 +84,31 @@ export interface AgentState extends AgentInfo {
   session: SessionState;
 }
 
+// A workspace in a project: its lead agent's, or a worker session the lead
+// started (see project/manager.ts).
+export type ProjectRole = "lead" | "worker";
+
+export interface ProjectLink {
+  projectId: string;
+  role: ProjectRole;
+}
+
+// Who sent a message the user did not type: the project's lead, one of its
+// worker sessions, or another project's lead.
+export interface MessageOrigin {
+  workspaceId: string;
+  name: string;
+  role: "lead" | "worker" | "peer";
+  // The sender's project, for a peer.
+  projectId?: string;
+}
+
+// How the panel names a message's sender (the client's label matches).
+export function originLabel(from: MessageOrigin): string {
+  if (from.role === "lead") return "Lead";
+  return from.role === "peer" ? `${from.name} · lead` : from.name;
+}
+
 export interface WorkspaceInfo {
   id: string;
   name: string;
@@ -97,6 +124,7 @@ export interface WorkspaceInfo {
   // Set while the workspace is archived (idle past the configured window or
   // archived by hand). Archived workspaces keep their history on disk only.
   archivedAt: number | null;
+  projectLink?: ProjectLink;
 }
 
 export interface WorkspaceState {
@@ -112,6 +140,7 @@ export interface WorkspaceState {
   createdAt: number;
   lastActivityAt?: number;
   archivedAt?: number | null;
+  projectLink?: ProjectLink;
 }
 
 type CommandOutcome = string | { forward: string } | null;
@@ -236,6 +265,7 @@ export class Workspace {
   // Timestamp of the newest message; maintained so it survives unloading.
   lastActivityAt: number;
   archivedAt: number | null = null;
+  projectLink?: ProjectLink;
   // False once the history has been unloaded (archived workspace). Every
   // path that touches `messages` must call ensureLoaded via the server first.
   messagesLoaded = true;
@@ -855,14 +885,14 @@ export class Workspace {
 
     let forwardRef: ForwardRef | undefined;
     if (quote) {
-      const fromEntry = quote.agentId
-        ? [...this.agents.values()].find((a) => a.info.id === quote.agentId)
-        : null;
+      const author = this.authorOf(
+        this.messages.find((m) => m.id === quote.messageId) ?? { agentId: quote.agentId },
+      );
       const preview = quote.content.slice(0, 120) + (quote.content.length > 120 ? "..." : "");
       forwardRef = {
         messageId: quote.messageId,
-        fromAgent: fromEntry?.info.name ?? "User",
-        fromAvatar: fromEntry?.info.avatar ?? "👤",
+        fromAgent: author.name,
+        fromAvatar: author.avatar,
         preview,
       };
     }
@@ -895,6 +925,39 @@ export class Workspace {
     if (busy) return;
 
     await this.dispatchPrompt(agent, prompt);
+  }
+
+  // Who wrote a message, for quotes and forwards.
+  private authorOf(msg: Pick<Message, "agentId" | "from">): { name: string; avatar: string } {
+    const agent = msg.agentId ? this.agents.get(msg.agentId) : undefined;
+    if (agent) return { name: agent.info.name, avatar: agent.info.avatar };
+    if (msg.from) return { name: originLabel(msg.from), avatar: "◆" };
+    return { name: "User", avatar: "👤" };
+  }
+
+  // A message from another session, to the default agent: the panel shows
+  // `text` with its sender, the model reads `prompt`. It waits in the queue
+  // behind a running turn, earlier queued messages or a rate-limit pause.
+  deliver(text: string, from: MessageOrigin, prompt: string): "sent" | "queued" {
+    const agent = this.resolveAgent();
+    if (!agent) throw new Error(`"${this.name}" has no agent to take the message`);
+    const paused = !!agent.pausedUntil && Date.now() < agent.pausedUntil;
+    const queued =
+      agent.session.isRunning ||
+      paused ||
+      this.messages.some((m) => m.status === "queued" && m.queuedFor === agent.info.id);
+    this.pushMessage({
+      id: genId("msg"),
+      kind: "user",
+      agentId: null,
+      content: text,
+      timestamp: Date.now(),
+      status: queued ? "queued" : "done",
+      from,
+      ...(queued && { queuedFor: agent.info.id, queuedPrompt: prompt }),
+    });
+    if (!queued) void this.dispatchPrompt(agent, prompt);
+    return queued ? "queued" : "sent";
   }
 
   private async dispatchPrompt(agent: AgentEntry, prompt: string): Promise<void> {
@@ -965,9 +1028,7 @@ export class Workspace {
     const original = this.messages.find((m) => m.id === messageId);
     if (!original || !original.content) throw new Error("Message not found");
 
-    const fromAgent = original.agentId
-      ? [...this.agents.values()].find((a) => a.info.id === original.agentId)
-      : null;
+    const author = this.authorOf(original);
 
     const agent = this.resolveAgent(targetAgentId);
     if (!agent) throw new Error("Target agent not found");
@@ -975,12 +1036,12 @@ export class Workspace {
     const preview = original.content.slice(0, 120) + (original.content.length > 120 ? "..." : "");
     const forwardRef: ForwardRef = {
       messageId,
-      fromAgent: fromAgent?.info.name ?? "User",
-      fromAvatar: fromAgent?.info.avatar ?? "👤",
+      fromAgent: author.name,
+      fromAvatar: author.avatar,
       preview,
     };
 
-    const prompt = `[Forwarded message from ${fromAgent?.info.name ?? "User"}]:\n\n${original.content}`;
+    const prompt = `[Forwarded message from ${author.name}]:\n\n${original.content}`;
     const busy = agent.session.isRunning;
     const userMsg: Message = {
       id: genId("msg"),
@@ -1092,6 +1153,7 @@ export class Workspace {
       createdAt: this.createdAt,
       lastMessageAt: this.lastActivityAt,
       archivedAt: this.archivedAt,
+      ...(this.projectLink && { projectLink: this.projectLink }),
     };
   }
 
@@ -1119,6 +1181,7 @@ export class Workspace {
       createdAt: this.createdAt,
       lastActivityAt: this.lastActivityAt,
       archivedAt: this.archivedAt,
+      ...(this.projectLink && { projectLink: this.projectLink }),
     };
   }
 
@@ -1139,6 +1202,7 @@ export class Workspace {
     );
     ws.createdAt = state.createdAt;
     ws.archivedAt = state.archivedAt ?? null;
+    ws.projectLink = state.projectLink;
     ws.messages = (state.messages ?? []).map((m) => {
       const msg = {
         ...m,

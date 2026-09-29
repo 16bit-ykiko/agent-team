@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, memo, Component, useEffect } from "react";
 import type { ReactNode } from "react";
-import type { Message, AgentInfo, StreamEvent } from "../state/useServer";
+import type { Message, MessageOrigin, AgentInfo, StreamEvent } from "../state/useServer";
 import { splitEvents, timelineBlocks } from "./events";
 import { toolNameOf, toolSummary } from "../state/stream";
 import { copySelectionAsMarkdown } from "./clipboard";
@@ -27,6 +27,13 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
       {rest && <MdBlock>{rest}</MdBlock>}
     </>
   );
+}
+
+// The sender of a message another session delivered (the server names it
+// the same way in quotes and forwards).
+export function originLabel(from: MessageOrigin): string {
+  if (from.role === "lead") return "Lead";
+  return from.role === "peer" ? `${from.name} · lead` : from.name;
 }
 
 // Banners that carry a whole prompt (a wake-up's text, a scheduled
@@ -123,11 +130,17 @@ const SCHEDULE_TOOLS = new Set(["ScheduleWakeup", "CronCreate", "CronDelete"]);
 
 function chipClassFor(toolName: string | null, kind: string): string {
   if (toolName && SCHEDULE_TOOLS.has(toolName)) return "chip-schedule";
+  if (toolName?.startsWith("mcp__panel__")) return "chip-panel";
   return kind === "tool_use" ? "chip-tool" : `chip-${kind}`;
 }
 
-function chipLabelFor(toolName: string): string {
-  return toolName === "ScheduleWakeup" ? "⏰ Wake-up" : toolName;
+// MCP tools arrive as mcp__<server>__<tool>; the panel's own read as plain
+// names.
+export function chipLabelFor(toolName: string): string {
+  if (toolName === "ScheduleWakeup") return "⏰ Wake-up";
+  const mcp = toolName.match(/^mcp__(.+?)__(.+)$/);
+  if (mcp) return mcp[1] === "panel" ? mcp[2] : `${mcp[1]} · ${mcp[2]}`;
+  return toolName;
 }
 
 // Effort, fast mode and context occupancy line under an agent message
@@ -693,11 +706,13 @@ export const MessageItem = memo(function MessageItem({
   onCancelSubagent,
   onCancelQueued,
   onLoadDetails,
+  onOpenWorkspace,
 }: {
   msg: Message;
   agents: AgentInfo[];
   compact?: boolean;
   highlight?: boolean;
+  onOpenWorkspace?: (workspaceId: string) => void;
   onQuote?: (msg: Message) => void;
   onLoadSubagentEvents?: (messageId: string, taskId: string) => void;
   onCancelSubagent?: (agentId: string, taskId: string) => void;
@@ -733,6 +748,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   const isUser = msg.kind === "user";
+  const from = isUser ? msg.from : undefined;
   const agent = !isUser ? agents.find((a) => a.id === msg.agentId) : null;
   const streaming = msg.status === "streaming";
   const activity = streaming ? (agent?.activity ?? null) : null;
@@ -823,7 +839,9 @@ export const MessageItem = memo(function MessageItem({
       className={`message${isUser ? " message-user" : " message-agent"}${compact ? " message-compact" : ""}${highlight ? " message-highlight" : ""}${msg.status === "queued" ? " message-queued" : ""}${msg.status === "error" ? " message-error" : ""}`}
     >
       <div className="message-gutter">
-        {compact ? null : isUser ? (
+        {compact ? null : from ? (
+          <div className="avatar-user avatar-from">{from.role === "worker" ? "◇" : "◆"}</div>
+        ) : isUser ? (
           <div className="avatar-user">
             <img
               src="avatars/ykiko.jpg"
@@ -842,7 +860,17 @@ export const MessageItem = memo(function MessageItem({
           <div className="message-header">
             {isUser ? (
               <>
-                <span className="message-author user-author">You</span>
+                {from ? (
+                  <button
+                    className="message-author from-author"
+                    title="Open that session"
+                    onClick={() => onOpenWorkspace?.(from.workspaceId)}
+                  >
+                    {originLabel(from)}
+                  </button>
+                ) : (
+                  <span className="message-author user-author">You</span>
+                )}
                 {msg.status === "queued" && (
                   <span className="queued-badge">
                     queued

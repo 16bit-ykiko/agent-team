@@ -14,6 +14,12 @@ the CLIs.
 
 - **Workspaces** — a folder plus the agents working in it. Each agent keeps a
   separate session, so two agents in the same repo do not share context.
+- **Projects** — a repository with a long-lived lead agent you plan the work
+  with. When you decide to start something, the lead opens worker sessions
+  (in the repo or a git worktree) through the panel's own tools; they are
+  ordinary conversations you can join, and they report back to the lead.
+  The lead keeps an objectives board and notes outside the repository, and
+  can message other projects' leads.
 - **A transcript that shows the work**, not just the answer: thinking blocks,
   tool calls, sub-agent runs, and a per-message row with effort level and
   context usage. Long histories page in lazily.
@@ -168,10 +174,17 @@ detached from the caller; it logs to `~/.cache/agent-team-deploy.log`.
 ## Layout
 
 ```
-service/src/     Node server: HTTP + WebSocket, sessions, config, git, state
-  session/claude.ts / session/codex.ts   one adapter per CLI backend
-  config/presets.ts                      agent + model lists (hand-maintained)
+service/src/     Node server
+  server/        HTTP + WebSocket, auth, uploads, quota
+  session/       one adapter per CLI backend (claude.ts, codex.ts)
+  workspace/     message list, event aggregation, persistence, search
+  project/       project leads, worker sessions, objectives, the panel's MCP tools
+  config/        config.toml, agent + model lists (presets.ts, hand-maintained)
+  repo/          git status, PR lookups, directory completion
 webview/src/     React UI (Vite), one panel per workspace
+  state/         WebSocket client and client-side aggregation
+  chat/          transcript rendering, markdown, input helpers
+  sidebar/ workspace/ project/ viewport/ dev/
 scripts/         start script, deferred deploy, SDK capture + smoke tests, one-off migrations
 .claude/         CLAUDE.md + skills: the rules and playbooks agents load when working here
 ```

@@ -62,6 +62,21 @@ export async function gitStatus(cwd: string): Promise<GitInfo | null> {
   return out === null ? null : parseGitStatus(out);
 }
 
+// The repository's worktrees, main checkout first; just `root` when git
+// cannot tell.
+export function parseWorktrees(porcelain: string): string[] {
+  return porcelain
+    .split("\n")
+    .filter((l) => l.startsWith("worktree "))
+    .map((l) => l.slice("worktree ".length));
+}
+
+export async function gitWorktrees(root: string): Promise<string[]> {
+  const out = await run("git", ["worktree", "list", "--porcelain"], root, 5000);
+  const paths = out === null ? [] : parseWorktrees(out);
+  return paths.length ? paths : [root];
+}
+
 export function gitBranch(cwd: string): Promise<string | null> {
   return gitStatus(cwd).then((s) => s?.branch ?? null);
 }

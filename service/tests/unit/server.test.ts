@@ -284,4 +284,43 @@ describe("server websocket", () => {
     ws.close();
     expect(errors).toEqual(["Agent not found: first", "Agent not found: second"]);
   });
+
+  it("creates a project with its lead workspace and lists it on connect", async () => {
+    const { ws, next } = await connect();
+    ws.send(JSON.stringify({ type: "create_project", name: "demo", path: base }));
+    const created = (await next("workspace_created")).workspace as Record<string, unknown>;
+    const agent = (await next("agent_added")).agent as Record<string, unknown>;
+    const project = (await next("project_updated")).project as Record<string, unknown>;
+    ws.close();
+    expect(created).toMatchObject({
+      name: "demo · lead",
+      cwd: base,
+      projectLink: { projectId: project.id, role: "lead" },
+    });
+    expect(agent).toMatchObject({ name: "Lead", model: "claude-opus-5-5[1m]" });
+    expect(project).toMatchObject({ name: "demo", root: base, leadWorkspaceId: created.id });
+    expect(
+      fs.existsSync(path.join(base, ".agent-team", "projects", String(project.id), "notes")),
+    ).toBe(true);
+
+    const again = await connect();
+    const init = await again.next("init");
+    expect(init.projects).toEqual([{ ...project, objectives: [] }]);
+
+    again.ws.send(JSON.stringify({ type: "rename_project", projectId: project.id, name: "demo2" }));
+    const renamed = (await again.next("workspace_updated")).workspace as Record<string, unknown>;
+    expect(renamed).toMatchObject({ id: created.id, name: "demo2 · lead" });
+    expect(((await again.next("project_updated")).project as Record<string, unknown>).name).toBe(
+      "demo2",
+    );
+
+    // The lead's delete takes the project with it.
+    again.ws.send(JSON.stringify({ type: "delete_workspace", workspaceId: created.id }));
+    expect((await again.next("workspace_deleted")).workspaceId).toBe(created.id);
+    expect((await again.next("project_deleted")).projectId).toBe(project.id);
+    again.ws.close();
+    expect(fs.existsSync(path.join(base, ".agent-team", "projects", String(project.id)))).toBe(
+      false,
+    );
+  });
 });

@@ -1,5 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { MOCK_WORKSPACES, MOCK_SYSTEM_STATUS, MOCK_PRESETS, MOCK_MODELS } from "../dev/mockData";
+import {
+  MOCK_WORKSPACES,
+  MOCK_PROJECTS,
+  MOCK_PROJECT_WORKSPACES,
+  MOCK_SYSTEM_STATUS,
+  MOCK_PRESETS,
+  MOCK_MODELS,
+} from "../dev/mockData";
 import {
   applyStreamBatch,
   downgradedMessageIds,
@@ -113,6 +120,73 @@ export interface ForwardRef {
   preview: string;
 }
 
+export type ProjectRole = "lead" | "worker";
+
+export interface ProjectLink {
+  projectId: string;
+  role: ProjectRole;
+}
+
+export interface MessageOrigin {
+  workspaceId: string;
+  name: string;
+  role: "lead" | "worker" | "peer";
+  projectId?: string;
+}
+
+// A project's objectives (server: project/objectives.ts).
+export type ObjectiveStatus = "active" | "later" | "done" | "dropped";
+export type Priority = "high" | "normal" | "low";
+export type TaskState = "todo" | "doing" | "review" | "done" | "dropped";
+
+export interface ObjectiveTask {
+  id: string;
+  text: string;
+  state: TaskState;
+  session?: string;
+}
+
+export interface ObjectiveDecision {
+  id: string;
+  question: string;
+  outcome?: string;
+}
+
+export interface Objective {
+  id: string;
+  area: string;
+  title: string;
+  goal: string;
+  status: ObjectiveStatus;
+  priority: Priority;
+  reason?: string;
+  context?: string;
+  dependsOn: string[];
+  tasks: ObjectiveTask[];
+  decisions: ObjectiveDecision[];
+  sessions: string[];
+  notes?: string;
+  updatedAt: number;
+  // Filed away: finished or given up, out of the board's main view.
+  archived?: boolean;
+}
+
+// A file the server could not read.
+export interface BrokenObjective {
+  id: string;
+  error: string;
+  archived?: boolean;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  root: string;
+  leadWorkspaceId: string | null;
+  createdAt: number;
+  objectives: Array<Objective | BrokenObjective>;
+}
+
 export interface Message {
   id: string;
   kind: "user" | "agent" | "system";
@@ -125,6 +199,9 @@ export interface Message {
   images?: MessageImage[];
   forwardRef?: ForwardRef;
   queuedFor?: string;
+  // Sent by another session, not the user: the project's lead, one of its
+  // sessions, or another project's lead (peer, named by its project).
+  from?: MessageOrigin;
   effort?: string;
   fast?: boolean;
   context?: ContextUsage;
@@ -191,6 +268,7 @@ export interface Workspace {
   createdAt: number;
   lastMessageAt?: number;
   archivedAt?: number | null;
+  projectLink?: ProjectLink;
   hasMore?: boolean;
   messagesLoaded?: boolean;
   // An older page has been requested and not yet arrived.
@@ -260,6 +338,7 @@ function resolveWsUrl(): string {
 
 export function useServer() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [connected, setConnected] = useState(false);
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -386,6 +465,39 @@ export function useServer() {
           if (config.commands) setCommands(config.commands);
           if (config.hosts) setHostConfigs(config.hosts);
           if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
+          setProjects((msg.projects as Project[] | undefined) ?? []);
+          break;
+        }
+
+        case "workspace_updated": {
+          const info = msg.workspace as Workspace;
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === info.id
+                ? {
+                    ...info,
+                    messages: w.messages,
+                    messagesLoaded: w.messagesLoaded,
+                    hasMore: w.hasMore,
+                    loadingOlder: w.loadingOlder,
+                  }
+                : w,
+            ),
+          );
+          break;
+        }
+
+        case "project_deleted":
+          setProjects((prev) => prev.filter((p) => p.id !== msg.projectId));
+          break;
+
+        case "project_updated": {
+          const project = msg.project as Project;
+          setProjects((prev) =>
+            prev.some((p) => p.id === project.id)
+              ? prev.map((p) => (p.id === project.id ? project : p))
+              : [...prev, project],
+          );
           break;
         }
 
@@ -827,7 +939,8 @@ export function useServer() {
 
   useEffect(() => {
     if (useMock) {
-      setWorkspaces(MOCK_WORKSPACES);
+      setWorkspaces([...MOCK_WORKSPACES, ...MOCK_PROJECT_WORKSPACES]);
+      setProjects(MOCK_PROJECTS);
       setPresets(MOCK_PRESETS);
       setModels(MOCK_MODELS);
       setSystemStatus(MOCK_SYSTEM_STATUS);
@@ -878,6 +991,7 @@ export function useServer() {
 
   return {
     workspaces,
+    projects,
     connected,
     presets,
     models,
@@ -935,6 +1049,19 @@ export function useServer() {
     createWorkspace: useCallback(
       (name: string, path: string, hostId?: string) =>
         send({ type: "create_workspace", name, path, hostId }),
+      [send],
+    ),
+    createProject: useCallback(
+      (name: string, path: string, model?: string) =>
+        send({ type: "create_project", name, path, model }),
+      [send],
+    ),
+    renameProject: useCallback(
+      (projectId: string, name: string) => send({ type: "rename_project", projectId, name }),
+      [send],
+    ),
+    deleteProject: useCallback(
+      (projectId: string) => send({ type: "delete_project", projectId }),
       [send],
     ),
     cancelQueued: useCallback(

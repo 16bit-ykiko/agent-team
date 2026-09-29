@@ -831,6 +831,27 @@ describe("context usage and wake-ups", () => {
     // Each call is also announced as a schedule banner.
     expect(events.filter((e) => e.level === "schedule")).toHaveLength(3);
   });
+
+  it("formats the panel's own tools by what they do", () => {
+    const { events, dispatch } = makeSession();
+    const call = (name: string, input: Record<string, unknown>, id: string) =>
+      dispatch({
+        type: "assistant",
+        session_id: "s",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "tool_use", id, name: `mcp__panel__${name}`, input }] },
+      });
+    call("start_session", { title: "modules", cwd: "wt", task: "do it\nthen test" }, "t1");
+    call("update_objective", { id: "obj-001", status: "done" }, "t2");
+    call("project_status", {}, "t3");
+    const calls = events.filter((e) => e.kind === "tool_use");
+    expect(calls[0].toolName).toBe("mcp__panel__start_session");
+    expect(calls.map((e) => e.content)).toEqual([
+      "**start_session** modules in `wt`\n\n> do it\n> then test",
+      "**update_objective** obj-001 → done",
+      "**project_status**",
+    ]);
+  });
 });
 
 describe("self-initiated turns", () => {

@@ -30,15 +30,20 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 
 ## Layout
 
-- `service/src/index.ts` — HTTP/WebSocket server, slash commands, settings persistence
-- `service/src/session/claude.ts` / `session/codex.ts` — one adapter per backend, both emit `StreamEvent`s
-- `service/src/workspace/workspace.ts` — workspace: message list, event aggregation, persistence
-- `service/src/workspace/summary.ts` — summary pages sent before details are requested
-- `service/src/config/presets.ts` — agent and model lists (hand-maintained)
-- `webview/src/state/useServer.ts` — WebSocket client, types, reconnect/resync
-- `webview/src/state/stream.ts` / `chat/events.ts` — client-side aggregation and timeline blocks
-- `webview/src/chat/messages.tsx` / `App.tsx` — rendering
-- `service/tests/unit/` — unit tests for the server (frame mapping edge cases, config, git, state)
+`service/src/` (Node server):
+
+- `index.ts` — entry point; `server/` — `server.ts` (WebSocket protocol, workspace lifecycle, accounts, persistence), `auth.ts`, `http.ts` (static files, uploads), `quota.ts`, `system.ts`, `commands.ts` (slash commands handled locally)
+- `session/` — `claude.ts` / `codex.ts`, one adapter per backend, both emit `StreamEvent`s; `host.ts` creates them
+- `workspace/` — `workspace.ts` (message list, event aggregation), `state.ts` (persistence), `summary.ts` (summary pages sent before details are requested), `search.ts`
+- `project/` — `manager.ts` (project leads, worker sessions, cross-project messages), `tools.ts` (the panel's MCP tools), `store.ts` (projects, objectives, notes under `.agent-team/projects/`)
+- `config/` — `config.ts` (config.toml), `presets.ts` (agent and model lists, hand-maintained)
+- `repo/` — `git.ts`, `scanner.ts` (branch/PR polling), `dirs.ts`
+
+`webview/src/` (React client): `App.tsx` / `main.tsx` at the top; `state/` — `useServer.ts` (WebSocket client, types, reconnect/resync), `stream.ts` (client-side aggregation); `chat/` — `messages.tsx`, `events.ts` (timeline blocks), markdown, input helpers; `sidebar/`; `workspace/` (header, dialogs, avatars); `project/`; `viewport/`; `dev/` (replay demo, mock data, debug snapshots).
+
+Tests and tooling:
+
+- `service/tests/unit/` — unit tests for the server (frame mapping edge cases, config, git, state, projects); `fakes.ts` holds in-memory sessions
 - `service/tests/snap/{claude,codex}/<name>.{ts,jsonl,snap.md}` — recorded real interactions (script + recording + pinned transcript), replayed by `snap.test.ts` through the real sessions
 - `scripts/` — `deploy-deferred.sh`; `capture-sdk.ts` / `summarize-capture.ts` / `smoke-*.ts` run via `npm run capture|summarize|smoke:claude|smoke:codex`; `flush-events.ts` / `migrate-streams.ts` are one-off migrations from the Discord-era data format
 

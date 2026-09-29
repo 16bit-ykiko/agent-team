@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import { supportsAdaptiveThinking } from "../config/presets";
+import type { PanelToolset } from "../project/tools";
 import type {
   Query,
   SDKMessage,
@@ -394,17 +395,25 @@ export class ClaudeSession extends EventEmitter {
   }
 
   // Replaced by the snap tests with a player of recorded frames.
-  static sdk: { query: typeof import("@anthropic-ai/claude-agent-sdk").query } | null = null;
+  static sdk: SdkModule | null = null;
 
-  private static async loadSdk(): Promise<{
-    query: typeof import("@anthropic-ai/claude-agent-sdk").query;
-  }> {
+  private static async loadSdk(): Promise<SdkModule> {
     return ClaudeSession.sdk ?? (await import("@anthropic-ai/claude-agent-sdk"));
+  }
+
+  // Tools the panel serves this session in-process (a project's lead, or a
+  // worker it started). Runtime only: the server sets them again on restore.
+  private panelTools: PanelToolset | null = null;
+
+  setPanelTools(tools: PanelToolset | null): void {
+    this.panelTools = tools;
+    this.restartForOptions();
   }
 
   private async startQuery(message: string): Promise<void> {
     const generation = this.generation;
-    const { query } = await ClaudeSession.loadSdk();
+    const sdk = await ClaudeSession.loadSdk();
+    const { query } = sdk;
     if (generation !== this.generation) return;
 
     const { iterable, controller } = createInputStream();
@@ -412,7 +421,7 @@ export class ClaudeSession extends EventEmitter {
     this.abortController = new AbortController();
     if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
 
-    const options = this.buildOptions();
+    const options = this.buildOptions(sdk);
     this.launched = { effort: this.config.effort, fast: this.config.fast };
 
     this.queryInstance = query({
@@ -1544,7 +1553,7 @@ export class ClaudeSession extends EventEmitter {
     return session;
   }
 
-  private buildOptions(): Options {
+  private buildOptions(sdk: SdkModule): Options {
     const opts: Options = {
       cwd: this.config.cwd,
       abortController: this.abortController ?? undefined,
@@ -1593,10 +1602,38 @@ export class ClaudeSession extends EventEmitter {
     if (this.config.providerEnv) {
       opts.env = { ...process.env, ...this.config.providerEnv };
     }
+    if (this.panelTools && sdk.createSdkMcpServer && sdk.tool) {
+      const { createSdkMcpServer, tool } = sdk;
+      opts.mcpServers = {
+        panel: createSdkMcpServer({
+          name: "panel",
+          instructions: this.panelTools.instructions,
+          // Always in the prompt: deferred behind tool search, a lead would
+          // not know it can start sessions.
+          alwaysLoad: true,
+          tools: this.panelTools.tools.map((t) =>
+            tool(t.name, t.description, t.shape, async (args: Record<string, unknown>) => {
+              try {
+                return { content: [{ type: "text" as const, text: await t.handler(args) }] };
+              } catch (e) {
+                const text = e instanceof Error ? e.message : String(e);
+                return { content: [{ type: "text" as const, text }], isError: true };
+              }
+            }),
+          ),
+        }),
+      };
+    }
 
     return opts;
   }
 }
+
+type SdkModule = {
+  query: typeof import("@anthropic-ai/claude-agent-sdk").query;
+  createSdkMcpServer?: typeof import("@anthropic-ai/claude-agent-sdk").createSdkMcpServer;
+  tool?: typeof import("@anthropic-ai/claude-agent-sdk").tool;
+};
 
 function formatDelay(seconds: number): string {
   if (seconds >= 3600) return `${(seconds / 3600).toFixed(seconds % 3600 ? 1 : 0)}h`;
@@ -1718,6 +1755,40 @@ function formatToolUse(block: Record<string, unknown>): string {
       return `**CronCreate** \`${str(input.cron ?? "")}\`${input.prompt ? ` — ${str(input.prompt).slice(0, 120)}` : ""}`;
 
     default:
+      if (name.startsWith("mcp__panel__")) {
+        return formatPanelTool(name.slice("mcp__panel__".length), input);
+      }
       return `**${name}**\n${fenced(JSON.stringify(input, null, 2), "json")}`;
+  }
+}
+
+// The panel's own tools (project/tools.ts), shown by what they do.
+function formatPanelTool(tool: string, input: Record<string, unknown>): string {
+  const head = `**${tool}**`;
+  const quote = (v: unknown) => `\n\n> ${str(v).replace(/\n/g, "\n> ")}`;
+  switch (tool) {
+    case "start_session":
+      return `${head} ${str(input.title)} in \`${str(input.cwd)}\`${quote(input.task)}`;
+    case "message_session":
+      return `${head} \`${str(input.session_id)}\`${quote(input.message)}`;
+    case "message_project":
+      return `${head} \`${str(input.project_id)}\`${quote(input.message)}`;
+    case "read_session":
+    case "stop_session":
+    case "archive_session":
+      return `${head} \`${str(input.session_id)}\``;
+    case "update_objective": {
+      const what = [input.id ?? "new", input.status && `→ ${str(input.status)}`, input.title];
+      const notes = input.notes ? quote(input.notes) : "";
+      return `${head} ${what.filter(Boolean).map(str).join(" ")}${notes}`;
+    }
+    case "report_progress":
+      return `${head}${quote(input.text)}`;
+    case "finish_task":
+      return `${head}${quote(input.summary)}`;
+    default:
+      return Object.keys(input).length
+        ? `${head}\n${fenced(JSON.stringify(input, null, 2), "json")}`
+        : head;
   }
 }

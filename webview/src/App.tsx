@@ -1,16 +1,24 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
-import { useServer, Message, AgentInfo } from "./state/useServer";
+import {
+  useServer,
+  type Message,
+  type AgentInfo,
+  type MessageOrigin,
+  type Project,
+  type Workspace,
+} from "./state/useServer";
 import { groupWorkspaces } from "./sidebar/groups";
 import { agentQueues, agentState, isAgentActive, pillLabel, stateLabel } from "./workspace/agents";
 import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
 import { isImeKeyEvent } from "./chat/ime";
 import { AgentAvatar } from "./workspace/avatar";
 import { formatRelative } from "./format";
-import { MessageItem, MessageBoundary } from "./chat/messages";
+import { MessageItem, MessageBoundary, originLabel } from "./chat/messages";
 import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./workspace/dialogs";
 import { Sidebar } from "./sidebar/Sidebar";
 import { ViewportInfo } from "./viewport/ViewportInfo";
 import { GitBar } from "./workspace/GitBar";
+import { BoardPage, type SessionInfo } from "./project/BoardPage";
 import { HistoryHint } from "./chat/HistoryHint";
 import {
   viewportVars,
@@ -104,6 +112,7 @@ const JUMP_MAX_PAGES = 10;
 export function App() {
   const {
     workspaces,
+    projects,
     connected,
     presets,
     models,
@@ -111,6 +120,9 @@ export function App() {
     hosts,
     systemStatus,
     createWorkspace,
+    createProject,
+    renameProject,
+    deleteProject,
     deleteWorkspace,
     addAgent,
     removeAgent,
@@ -251,16 +263,33 @@ export function App() {
   });
   const [hasInput, setHasInput] = useState(false);
   const inputMapRef = useRef(new Map<string, string>());
+  // Set when switching to a workspace whose draft should be typed on at once.
+  const focusComposerRef = useRef(false);
   const prevWsIdRef = useRef<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [createInPath, setCreateInPath] = useState<string | undefined>(undefined);
   const [showAddAgent, setShowAddAgent] = useState(false);
+  // The project whose board page is open, whichever workspace is.
+  const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
+  const closeBoard = useCallback(() => setBoardProjectId(null), []);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
+  const closeDeleteProject = useCallback(() => setDeletingProjectId(null), []);
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  // A lead whose project has not arrived yet has nothing to delete.
+  const askDeleteProject = useCallback((id: string) => {
+    if (projectsRef.current.some((p) => p.id === id)) setDeletingProjectId(id);
+  }, []);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [mentionIdx, setMentionIdx] = useState(0);
   const [cmdQuery, setCmdQuery] = useState<string | null>(null);
   const [cmdIdx, setCmdIdx] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const openBoard = useCallback((projectId: string) => {
+    setBoardProjectId(projectId);
+    setSidebarOpen(false);
+  }, []);
   const [pendingImages, setPendingImages] = useState<Array<{ file: File; preview: string }>>([]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -271,10 +300,11 @@ export function App() {
     id: string;
     agentId: string | null;
     content: string;
+    from?: MessageOrigin;
   } | null>(null);
 
   const handleQuote = useCallback((msg: Message) => {
-    setQuotedMsg({ id: msg.id, agentId: msg.agentId, content: msg.content });
+    setQuotedMsg({ id: msg.id, agentId: msg.agentId, content: msg.content, from: msg.from });
   }, []);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -310,9 +340,43 @@ export function App() {
     [workspaces],
   );
   const activeWs = workspaces.find((w) => w.id === activeWsId);
+  const activeProject = activeWs?.projectLink
+    ? projects.find((p) => p.id === activeWs.projectLink!.projectId)
+    : undefined;
+  const boardProject = projects.find((p) => p.id === boardProjectId);
+  const onRenameProject = useCallback(
+    (name: string) => {
+      if (boardProjectId) renameProject(boardProjectId, name);
+    },
+    [boardProjectId, renameProject],
+  );
+  const onDeleteBoardProject = useCallback(() => {
+    if (boardProjectId) setDeletingProjectId(boardProjectId);
+  }, [boardProjectId]);
+  // Sessions as the board shows them, stable across stream frames.
+  const sessionsKey = workspaces
+    .map((w) => {
+      const state =
+        w.archivedAt != null ? "archived" : w.agents.some(isAgentActive) ? "working" : "idle";
+      return `${w.id}\u0000${w.name}\u0000${state}`;
+    })
+    .join("\u0001");
+  const boardSessions = useMemo(
+    () =>
+      new Map(
+        sessionsKey
+          .split("\u0001")
+          .filter(Boolean)
+          .map((e) => {
+            const [id, name, state] = e.split("\u0000");
+            return [id, { name, state } as SessionInfo];
+          }),
+      ),
+    [sessionsKey],
+  );
 
   // Sidebar folder groups; explicit expand/collapse choices persist.
-  const wsGroups = useMemo(() => groupWorkspaces(workspaces), [workspaces]);
+  const wsGroups = useMemo(() => groupWorkspaces(workspaces, projects), [workspaces, projects]);
   const [seenTick, setSeenTick] = useState(0);
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>(() => {
     try {
@@ -402,6 +466,17 @@ export function App() {
     setActiveWsId(id);
     setSidebarOpen(false);
   }, []);
+  // Links to other sessions (message senders, the board, the lead) can
+  // outlive the session they point at.
+  const workspacesRef = useRef(workspaces);
+  workspacesRef.current = workspaces;
+  const openWorkspace = useCallback(
+    (id: string) => {
+      if (workspacesRef.current.some((w) => w.id === id)) onSelectWorkspace(id);
+      else setNotice("That session no longer exists.");
+    },
+    [onSelectWorkspace],
+  );
   const onDeleteWorkspace = useCallback(
     (id: string) => {
       deleteWorkspace(id);
@@ -519,6 +594,11 @@ export function App() {
       el.value = restored;
       el.style.height = "36px";
       el.style.height = Math.min(el.scrollHeight, 120) + "px";
+      if (focusComposerRef.current) {
+        focusComposerRef.current = false;
+        el.focus();
+        el.selectionStart = el.selectionEnd = restored.length;
+      }
     }
     setHasInput(restored.trim().length > 0);
     setMentionTarget(restored.match(/(?:^|\s)@(\S+)/)?.[1] ?? null);
@@ -535,6 +615,18 @@ export function App() {
   useEffect(() => {
     if (activeWsId && connected) loadMessages(activeWsId);
   }, [activeWsId, connected, loadMessages]);
+
+  // The open workspace dropped its history (archived while in view, e.g. by
+  // a project's lead): fetch it again rather than spin until a switch.
+  const activeLoaded = activeWs?.messagesLoaded ?? true;
+  const loadedRef = useRef({ id: activeWsId, loaded: activeLoaded });
+  useEffect(() => {
+    const prev = loadedRef.current;
+    loadedRef.current = { id: activeWsId, loaded: activeLoaded };
+    if (connected && activeWsId && prev.id === activeWsId && prev.loaded && !activeLoaded) {
+      loadMessages(activeWsId);
+    }
+  }, [activeWsId, activeLoaded, connected, loadMessages]);
 
   // Prepending a page changes scrollHeight; Safari has no overflow-anchor,
   // so remember where we were and restore it once the page is in the DOM.
@@ -720,6 +812,41 @@ export function App() {
       setHasInput(text.trim().length > 0);
     },
     [activeWsId],
+  );
+
+  // From the board: open the project's lead with the objective named in the
+  // composer, ready for the question.
+  const activeWsIdRef = useRef(activeWsId);
+  activeWsIdRef.current = activeWsId;
+  const askLead = useCallback(
+    (objectiveId: string) => {
+      const leadId = projectsRef.current.find((p) => p.id === boardProjectId)?.leadWorkspaceId;
+      if (!leadId) return;
+      // Added to whatever was being written to the lead, not in its place.
+      const onLead = activeWsIdRef.current === leadId;
+      const draft = onLead
+        ? (textareaRef.current?.value ?? "")
+        : (inputMapRef.current.get(leadId) ?? "");
+      const text = draft.trim()
+        ? `${draft.trimEnd()}\nAbout ${objectiveId}: `
+        : `About ${objectiveId}: `;
+      setBoardProjectId(null);
+      if (onLead) {
+        setDivText(text);
+        return;
+      }
+      inputMapRef.current.set(leadId, text);
+      focusComposerRef.current = true;
+      openWorkspace(leadId);
+    },
+    [boardProjectId, setDivText, openWorkspace],
+  );
+  const openSessionFromBoard = useCallback(
+    (id: string) => {
+      setBoardProjectId(null);
+      openWorkspace(id);
+    },
+    [openWorkspace],
   );
 
   const applyCommand = useCallback(
@@ -921,6 +1048,7 @@ export function App() {
       >
         <Sidebar
           workspaces={workspaces}
+          projects={projects}
           activeWsId={activeWsId}
           connected={connected}
           groupOverrides={groupOverrides}
@@ -933,6 +1061,8 @@ export function App() {
           defaultAccount={defaultAccount}
           onSelect={onSelectWorkspace}
           onDelete={onDeleteWorkspace}
+          onDeleteProject={askDeleteProject}
+          onOpenBoard={openBoard}
           onToggleGroup={toggleGroup}
           onSearchChange={setSearchQuery}
           onJump={jumpToMessage}
@@ -1030,6 +1160,29 @@ export function App() {
                 </span>
                 <GitBar git={activeWs.git ?? null} pr={activeWs.pr ?? null} />
                 <span className="ws-info-spacer" />
+                {activeProject?.leadWorkspaceId && activeWs.projectLink?.role === "worker" && (
+                  <button
+                    className="btn-ghost ws-project-btn"
+                    title={`Open the lead of ${activeProject.name}`}
+                    onClick={() => openWorkspace(activeProject.leadWorkspaceId!)}
+                  >
+                    ◆<span className="ws-project-btn-label"> Lead</span>
+                  </button>
+                )}
+                {activeProject && (
+                  <button
+                    className="btn-ghost ws-project-btn"
+                    title={`Objectives of ${activeProject.name}`}
+                    aria-haspopup="dialog"
+                    onClick={() => setBoardProjectId(activeProject.id)}
+                  >
+                    Board ·{" "}
+                    {
+                      activeProject.objectives.filter((o) => "status" in o && o.status === "active")
+                        .length
+                    }
+                  </button>
+                )}
                 {activeWs.archivedAt == null ? (
                   <button
                     className="btn-ghost ws-archive-btn"
@@ -1099,6 +1252,7 @@ export function App() {
                             onCancelSubagent={onCancelSubagent}
                             onCancelQueued={onCancelQueued}
                             onLoadDetails={onLoadDetails}
+                            onOpenWorkspace={openWorkspace}
                           />
                         </MessageBoundary>
                       );
@@ -1117,7 +1271,8 @@ export function App() {
                     <div className="quote-bar">
                       <div className="quote-bar-content">
                         <span className="quote-bar-agent">
-                          {qa ? <AgentAvatar agent={qa} size={16} /> : "👤"} {qa?.name ?? "User"}
+                          {qa ? <AgentAvatar agent={qa} size={16} /> : quotedMsg.from ? "◆" : "👤"}{" "}
+                          {qa?.name ?? (quotedMsg.from ? originLabel(quotedMsg.from) : "User")}
                         </span>
                         <span className="quote-bar-preview">
                           {quotedMsg.content.slice(0, 100)}
@@ -1301,6 +1456,8 @@ export function App() {
           hosts={hosts}
           onClose={() => setShowCreate(false)}
           onCreate={createWorkspace}
+          onCreateProject={createProject}
+          models={models}
           onListDirs={listDirs}
           dirSuggestions={dirSuggestions}
           initialPath={createInPath}
@@ -1310,13 +1467,55 @@ export function App() {
       {showPurge && (
         <ConfirmDialog
           title="Delete archived workspaces"
-          body={`Permanently delete ${workspaces.filter((w) => w.archivedAt != null).length} archived workspace(s), including their message history and logs.`}
+          body={purgeBody(workspaces, projects)}
           confirmLabel="Delete all"
           danger
           onConfirm={purgeArchived}
           onClose={closePurge}
         />
       )}
+
+      {boardProject && (
+        <BoardPage
+          project={boardProject}
+          sessions={boardSessions}
+          onClose={closeBoard}
+          onOpenSession={openSessionFromBoard}
+          onAskLead={
+            boardProject.leadWorkspaceId &&
+            workspaces.some((w) => w.id === boardProject.leadWorkspaceId)
+              ? askLead
+              : null
+          }
+          onRename={onRenameProject}
+          onDelete={onDeleteBoardProject}
+        />
+      )}
+
+      {deletingProjectId &&
+        (() => {
+          const project = projects.find((p) => p.id === deletingProjectId);
+          if (!project) return null;
+          const sessions = workspaces.filter(
+            (w) => w.projectLink?.projectId === project.id && w.projectLink.role === "worker",
+          ).length;
+          const kept =
+            sessions === 0
+              ? ""
+              : sessions === 1
+                ? " The session it started stays as a plain workspace."
+                : ` The ${sessions} sessions it started stay as plain workspaces.`;
+          return (
+            <ConfirmDialog
+              title={`Delete project ${project.name}`}
+              body={`Deletes its lead session, objectives and notes.${kept}`}
+              confirmLabel="Delete project"
+              danger
+              onConfirm={() => deleteProject(project.id)}
+              onClose={closeDeleteProject}
+            />
+          );
+        })()}
 
       {showAddAgent && activeWs && (
         <AddAgentDialog
@@ -1329,4 +1528,15 @@ export function App() {
       )}
     </div>
   );
+}
+
+// Project leads survive a purge (server: purge_archived).
+function purgeBody(workspaces: Workspace[], projects: Project[]): string {
+  const archived = workspaces.filter((w) => w.archivedAt != null);
+  const leads = archived.filter(
+    (w) =>
+      w.projectLink?.role === "lead" && projects.some((p) => p.id === w.projectLink!.projectId),
+  ).length;
+  const kept = leads ? ` Archived project leads (${leads}) are kept.` : "";
+  return `Permanently delete ${archived.length - leads} archived workspace(s), including their message history and logs.${kept}`;
 }

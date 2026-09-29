@@ -1,70 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { EventEmitter } from "events";
 import { Workspace, Message, WorkspaceCallbacks } from "../../src/workspace/workspace";
-import { HostRegistry, Host, HostSessionHandle, HostInfo } from "../../src/session/host";
-import { SessionConfig, SessionState, StreamEvent, UsageStats } from "../../src/session/claude";
-
-const emptyUsage: UsageStats = {
-  input_tokens: 0,
-  output_tokens: 0,
-  cache_read_tokens: 0,
-  cache_creation_tokens: 0,
-  turns: 0,
-  duration_ms: 0,
-};
-
-class FakeSession extends EventEmitter implements HostSessionHandle {
-  sessionId: string | null = null;
-  usage: UsageStats = { ...emptyUsage };
-  isRunning = false;
-  stoppedTasks: string[] = [];
-  constructor(private config: SessionConfig) {
-    super();
-  }
-  sent: string[] = [];
-  send(prompt: string): Promise<void> {
-    this.sent.push(prompt);
-    this.isRunning = true;
-    return Promise.resolve();
-  }
-  abort(): void {}
-  stopTask(taskId: string): Promise<void> {
-    this.stoppedTasks.push(taskId);
-    return Promise.resolve();
-  }
-  setFastMode(on: boolean): void {
-    this.config.fast = on || undefined;
-  }
-  setGoal(goal: string | null): void {
-    this.config.goal = goal ?? undefined;
-  }
-  getState(): SessionState {
-    return { sessionId: this.sessionId, config: this.config, usage: this.usage };
-  }
-}
-
-class FakeHost implements Host {
-  readonly id = "local";
-  readonly label = "Local";
-  readonly type = "local" as const;
-  readonly connected = true;
-  lastSession: FakeSession | null = null;
-  destroyed: string[] = [];
-  getInfo(): HostInfo {
-    return { id: this.id, label: this.label, type: this.type, connected: this.connected };
-  }
-  createSession(_agentId: string, config: SessionConfig): HostSessionHandle {
-    this.lastSession = new FakeSession(config);
-    return this.lastSession;
-  }
-  destroySession(agentId: string): void {
-    this.destroyed.push(agentId);
-  }
-  restoreSession(_agentId: string, state: SessionState): HostSessionHandle {
-    this.lastSession = new FakeSession(state.config);
-    return this.lastSession;
-  }
-}
+import { HostRegistry } from "../../src/session/host";
+import { StreamEvent } from "../../src/session/claude";
+import { FakeHost, FakeSession } from "./fakes";
 
 function makeWorkspace(model = "claude-fable-5") {
   const host = new FakeHost();
@@ -794,5 +732,41 @@ describe("events between turns and late results", () => {
     const inner = events[0].subagent!.events!;
     expect(inner.map((e) => e.kind)).toEqual(["subagent_start"]);
     expect(inner[0].subagent!.events!.map((e) => e.kind)).toEqual(["tool_use"]);
+  });
+});
+
+describe("messages delivered from a project", () => {
+  const lead = { workspaceId: "ws-lead", name: "lead", role: "lead" as const };
+
+  it("shows the text with its sender and sends the model the prompt", () => {
+    const { ws, session } = makeWorkspace();
+    expect(ws.deliver("fix the parser", lead, "[From the lead]\n\nfix the parser")).toBe("sent");
+    expect(session.sent).toEqual(["[From the lead]\n\nfix the parser"]);
+    const msg = ws.messages.find((m) => m.kind === "user")!;
+    expect(msg).toMatchObject({ content: "fix the parser", from: lead, status: "done" });
+  });
+
+  it("queues behind a busy agent and dispatches the prompt", async () => {
+    const { ws, session, emit } = makeWorkspace();
+    session.isRunning = true;
+    const worker = { workspaceId: "ws-w", name: "parser fix", role: "worker" as const };
+    expect(ws.deliver("done: see branch fix/parser", worker, "[From parser fix]\n\ndone")).toBe(
+      "queued",
+    );
+    expect(session.sent).toEqual([]);
+    expect(ws.messages.find((m) => m.kind === "user")!.status).toBe("queued");
+    session.isRunning = false;
+    emit({ kind: "result", content: "" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(session.sent).toEqual(["[From parser fix]\n\ndone"]);
+  });
+
+  it("keeps the project link across a restart", () => {
+    const { ws } = makeWorkspace();
+    ws.projectLink = { projectId: "proj-1", role: "worker" };
+    const registry = new HostRegistry();
+    registry.register(new FakeHost());
+    const restored = Workspace.fromState(ws.getState(), registry);
+    expect(restored.getInfo(false).projectLink).toEqual({ projectId: "proj-1", role: "worker" });
   });
 });

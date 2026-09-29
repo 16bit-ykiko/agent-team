@@ -1,0 +1,822 @@
+import * as os from "os";
+import * as path from "path";
+import { AGENT_PRESETS, MODEL_OPTIONS } from "../config/presets";
+import { resolveWorkspacePath } from "../repo/dirs";
+import { gitStatus, gitWorktrees } from "../repo/git";
+import {
+  originLabel,
+  type MessageOrigin,
+  type ProjectLink,
+  type Workspace,
+} from "../workspace/workspace";
+import { ProjectStore, type Project } from "./store";
+import {
+  OBJECTIVE_STATUSES,
+  ObjectiveStore,
+  checkId,
+  dependencies,
+  cycleThrough,
+  type BrokenObjective,
+  type Objective,
+} from "./objectives";
+import {
+  leadToolset,
+  workerToolset,
+  type ItemPatch,
+  type ObjectivePatch,
+  type PanelApi,
+  type PanelToolset,
+  type StartSessionArgs,
+} from "./tools";
+
+// A long-lived lead has the whole project in its context.
+export const LEAD_MODEL = "claude-opus-5-5[1m]";
+
+// A lead asked to start everything at once must not spawn a burst of CLI
+// sessions on the user's account: worker tasks go out this far apart.
+export const START_SPACING_MS = 15_000;
+
+// Two leads can keep answering each other with nobody watching; past this
+// many messages between two projects within the window, message_project is
+// refused until it calms down.
+const PEER_LIMIT = 6;
+const PEER_WINDOW_MS = 10 * 60_000;
+
+// What the manager needs from the server that owns the workspaces.
+export interface ProjectHost {
+  workspaces(): Iterable<Workspace>;
+  workspace(id: string): Workspace | undefined;
+  createWorkspace(name: string, cwd: string, link: ProjectLink): Workspace;
+  addAgent(workspace: Workspace, name: string, model: string, avatar: string, color: string): void;
+  // Deletes a workspace without the project bookkeeping of a user delete.
+  removeWorkspace(id: string): void;
+  // False when the workspace is still busy.
+  archiveWorkspace(workspace: Workspace): boolean;
+  // Unarchives and loads the history; false when it cannot be read.
+  restoreWorkspace(workspace: Workspace): boolean;
+  loadWorkspace(workspace: Workspace): boolean;
+  persistWorkspace(workspace: Workspace): void;
+  // Right away: a shutdown drops pending debounced saves of unloaded
+  // (archived) workspaces.
+  saveWorkspaceNow(workspace: Workspace): void;
+  // Its name or project link changed.
+  workspaceChanged(workspace: Workspace): void;
+  broadcast(msg: unknown): void;
+}
+
+export type ProjectInfo = Project & { objectives: Array<Objective | BrokenObjective> };
+
+// Projects: a lead workspace per repository that starts worker sessions
+// through the panel tools, keeps the objectives, and talks to other
+// projects' leads. Every message between sessions goes through the normal
+// send path, shown with its sender (Message.from).
+export class ProjectManager {
+  private store: ProjectStore;
+  private nextStartAt = 0;
+  private peerLog = new Map<string, number[]>();
+  private timers = new Set<ReturnType<typeof setTimeout>>();
+  private boards = new Map<string, ObjectiveStore>();
+  private closed = false;
+
+  constructor(
+    baseDir: string,
+    private host: ProjectHost,
+  ) {
+    this.store = new ProjectStore(baseDir);
+  }
+
+  get(id: string): Project | undefined {
+    return this.store.get(id);
+  }
+
+  close(): void {
+    this.closed = true;
+    for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
+    for (const b of this.boards.values()) b.close();
+    this.boards.clear();
+  }
+
+  list(): ProjectInfo[] {
+    return this.store.list().map((p) => ({ ...p, objectives: this.board(p.id).list() }));
+  }
+
+  create(name: string, root: string, model = LEAD_MODEL): Project {
+    if (!claudeModels().includes(model)) throw new Error(`The lead needs a Claude model: ${model}`);
+    const project = this.store.create(name, root);
+    let lead: Workspace | undefined;
+    try {
+      lead = this.host.createWorkspace(`${name} · lead`, root, {
+        projectId: project.id,
+        role: "lead",
+      });
+      project.leadWorkspaceId = lead.id;
+      this.store.save(project);
+      const preset = AGENT_PRESETS[0];
+      this.host.addAgent(lead, "Lead", model, preset.avatar, preset.color);
+    } catch (e) {
+      if (lead) this.host.removeWorkspace(lead.id);
+      this.store.remove(project.id);
+      throw e;
+    }
+    this.changed(project.id);
+    return project;
+  }
+
+  rename(id: string, name: string): void {
+    const project = this.require(id);
+    const trimmed = name.trim();
+    if (!trimmed) throw new Error("A project needs a name");
+    project.name = trimmed;
+    this.store.save(project);
+    const lead = this.leadOf(id);
+    if (lead) {
+      lead.name = `${trimmed} · lead`;
+      this.host.saveWorkspaceNow(lead);
+      this.host.workspaceChanged(lead);
+    }
+    // The tools' instructions carry the name.
+    for (const w of this.members(id)) {
+      const tools = this.toolsFor(w);
+      for (const a of w.agents.values()) a.session.setPanelTools?.(tools);
+    }
+    this.changed(id);
+  }
+
+  // Deletes the project with its lead and its memory (objectives, notes).
+  // Its worker sessions stay, as plain workspaces.
+  delete(id: string): void {
+    this.require(id);
+    for (const w of this.members(id)) {
+      if (w.projectLink?.role === "lead") {
+        this.host.removeWorkspace(w.id);
+        continue;
+      }
+      w.projectLink = undefined;
+      for (const a of w.agents.values()) a.session.setPanelTools?.(null);
+      this.dropQueuedFromLead(w);
+      this.host.saveWorkspaceNow(w);
+      this.host.workspaceChanged(w);
+    }
+    this.boards.get(id)?.close();
+    this.boards.delete(id);
+    this.store.remove(id);
+    this.host.broadcast({ type: "project_deleted", projectId: id });
+  }
+
+  // A worker session is being deleted: the objectives stop pointing at it,
+  // and what it was doing goes back to todo. Never fails the delete itself.
+  forget(workspace: Workspace): void {
+    const id = workspace.projectLink?.projectId;
+    if (!id || !this.store.get(id)) return;
+    this.rewrite(
+      id,
+      (o) => o.sessions.includes(workspace.id) || o.tasks.some((t) => t.session === workspace.id),
+      (o) => ({
+        ...o,
+        sessions: o.sessions.filter((s) => s !== workspace.id),
+        tasks: o.tasks.map((t) =>
+          t.session === workspace.id
+            ? { ...t, session: undefined, state: t.state === "doing" ? ("todo" as const) : t.state }
+            : t,
+        ),
+      }),
+    );
+  }
+
+  // Applies `change` to every objective `match` picks, each read fresh from
+  // disk right before it is written; one that fails is logged and skipped.
+  private rewrite(
+    projectId: string,
+    match: (o: Objective) => boolean,
+    change: (o: Objective) => Objective,
+  ): void {
+    const board = this.board(projectId);
+    let touched = false;
+    for (const listed of this.objectives(projectId)) {
+      if (!match(listed)) continue;
+      try {
+        const fresh = board.get(listed.id);
+        if (!fresh || !match(fresh)) continue;
+        board.write({ ...change(fresh), updatedAt: Date.now() });
+        touched = true;
+      } catch (e) {
+        console.error(`[projects] ${listed.id}: not updated`, e);
+      }
+    }
+    if (touched) this.changed(projectId);
+  }
+
+  // The project's objectives, watched so hand edits reach the board too.
+  private board(id: string): ObjectiveStore {
+    let board = this.boards.get(id);
+    if (!board) {
+      if (this.closed) throw new Error("The server is shutting down");
+      board = new ObjectiveStore(this.store.objectivesDir(id));
+      board.watch(() => this.changed(id));
+      this.boards.set(id, board);
+    }
+    return board;
+  }
+
+  private objectives(id: string): Objective[] {
+    return this.board(id)
+      .list()
+      .filter((o): o is Objective => !("error" in o));
+  }
+
+  private objective(projectId: string, id: string): Objective {
+    checkId(id);
+    const o = this.board(projectId).get(id);
+    if (!o) throw new Error(`No objective ${id}`);
+    return o;
+  }
+
+  private saveObjective(projectId: string, o: Objective): void {
+    this.board(projectId).write({ ...o, updatedAt: Date.now() });
+    this.changed(projectId);
+  }
+
+  // The tools a project workspace's agents get: the lead's or a worker's.
+  toolsFor(workspace: Workspace): PanelToolset | null {
+    const link = workspace.projectLink;
+    const project = link && this.store.get(link.projectId);
+    if (!link || !project) return null;
+    return link.role === "lead"
+      ? leadToolset(this.api, project, this.store.notesDir(project.id), claudeModels())
+      : workerToolset(this.api, workspace.id, project);
+  }
+
+  // What the lead said that has not run yet (a task still waiting for its
+  // start slot, follow-ups queued behind a turn).
+  private dropQueuedFromLead(w: Workspace): void {
+    const queued = w.messages.filter((m) => m.status === "queued" && m.from?.role === "lead");
+    for (const m of queued) {
+      if (w.cancelQueued(m.id)) {
+        this.host.broadcast({ type: "message_removed", workspaceId: w.id, messageId: m.id });
+      }
+    }
+  }
+
+  private later(ms: number, fn: () => void): void {
+    const t = setTimeout(() => {
+      this.timers.delete(t);
+      fn();
+    }, ms);
+    this.timers.add(t);
+  }
+
+  private changed(id: string): void {
+    const project = this.store.get(id);
+    if (!project) return;
+    this.host.broadcast({
+      type: "project_updated",
+      project: { ...project, objectives: this.board(id).list() },
+    });
+  }
+
+  private require(id: string): Project {
+    const project = this.store.get(id);
+    if (!project) throw new Error(`No project ${id}`);
+    return project;
+  }
+
+  private members(id: string): Workspace[] {
+    return [...this.host.workspaces()].filter((w) => w.projectLink?.projectId === id);
+  }
+
+  private workers(id: string): Workspace[] {
+    return this.members(id).filter((w) => w.projectLink?.role === "worker");
+  }
+
+  private leadOf(id: string): Workspace | undefined {
+    const leadId = this.store.get(id)?.leadWorkspaceId;
+    return leadId ? this.host.workspace(leadId) : undefined;
+  }
+
+  private session(projectId: string, sessionId: string): Workspace {
+    const w = this.host.workspace(sessionId);
+    if (!w || w.projectLink?.projectId !== projectId || w.projectLink.role !== "worker") {
+      throw new Error(`No session ${sessionId} in this project`);
+    }
+    return w;
+  }
+
+  // `text` is what the panel shows, `prompt` what the model reads. Throws
+  // when the target cannot take it, so the tool reports the failure.
+  private deliver(
+    target: Workspace,
+    text: string,
+    from: MessageOrigin,
+    prompt: string,
+  ): "sent" | "queued" {
+    if (target.agents.size === 0) throw new Error(`"${target.name}" has no agent`);
+    if (!this.host.restoreWorkspace(target)) throw new Error(`"${target.name}" cannot be loaded`);
+    const outcome = target.deliver(text, from, prompt);
+    this.host.persistWorkspace(target);
+    return outcome;
+  }
+
+  private fromLead(projectId: string, text: string): [MessageOrigin, string] {
+    const origin: MessageOrigin = {
+      workspaceId: this.leadOf(projectId)?.id ?? "",
+      name: "lead",
+      role: "lead",
+    };
+    return [origin, `[From the project lead]\n\n${text}`];
+  }
+
+  private async status(projectId: string): Promise<string> {
+    const project = this.require(projectId);
+    const out = [
+      `# ${project.name}`,
+      `Repository: ${project.root}`,
+      `Notes: ${this.store.notesDir(projectId)}`,
+      "",
+      "## Worktrees",
+    ];
+    for (const wt of await gitWorktrees(project.root)) {
+      const git = await gitStatus(wt);
+      out.push(
+        git
+          ? `- ${wt} — ${git.branch ?? "detached"}, ${git.dirty} uncommitted, ahead ${git.ahead}, behind ${git.behind}`
+          : `- ${wt}`,
+      );
+    }
+    out.push("", "## Sessions");
+    const sessions = this.workers(projectId);
+    if (sessions.length === 0) out.push("(none)");
+    for (const w of sessions) {
+      const last = w.messagesLoaded
+        ? [...w.getMessages()].reverse().find((m) => m.kind === "agent")
+        : undefined;
+      const cut = last && (last.status === "error" || last.content.endsWith(INTERRUPTED));
+      const state = `${sessionState(w)}${cut ? ", its last turn did not finish" : ""}`;
+      const excerpt = last ? ` — last reply: ${oneLine(last.content, 160)}` : "";
+      out.push(`- ${w.id} "${w.name}" in ${w.cwd} — ${state}${excerpt}`);
+    }
+    out.push("", "## Active objectives", this.listObjectives(projectId, { status: "active" }));
+    return out.join("\n");
+  }
+
+  private startSession(projectId: string, a: StartSessionArgs): string {
+    const project = this.require(projectId);
+    const input =
+      a.cwd === "~" || a.cwd.startsWith("~/") ? path.join(os.homedir(), a.cwd.slice(1)) : a.cwd;
+    const cwd = resolveWorkspacePath(path.resolve(project.root, input));
+    if (!cwd) {
+      throw new Error(
+        `Not a directory: ${a.cwd}. Create it first (a worktree: git -C ${project.root} worktree add <path> -b <branch>).`,
+      );
+    }
+    const models = claudeModels();
+    if (a.model && !models.includes(a.model)) {
+      throw new Error(`Unknown model ${a.model}; one of: ${models.join(", ")}`);
+    }
+    const objective = a.objectiveId ? this.objective(projectId, a.objectiveId) : undefined;
+    if (a.taskId && !objective) throw new Error("task_id needs objective_id");
+    if (a.taskId && !objective!.tasks.some((t) => t.id === a.taskId)) {
+      throw new Error(`No task ${a.taskId} in ${objective!.id}`);
+    }
+
+    const lead = this.leadOf(projectId);
+    const leadModel = [...(lead?.agents.values() ?? [])]
+      .map((e) => e.info.model)
+      .find((m) => models.includes(m));
+    const model = a.model ?? leadModel ?? LEAD_MODEL;
+    const preset = AGENT_PRESETS[this.workers(projectId).length % AGENT_PRESETS.length];
+    const w = this.host.createWorkspace(a.title, cwd, { projectId, role: "worker" });
+    try {
+      this.host.addAgent(w, preset.name, model, preset.avatar, preset.color);
+    } catch (e) {
+      this.host.removeWorkspace(w.id);
+      throw e;
+    }
+    if (objective) {
+      this.saveObjective(projectId, {
+        ...objective,
+        sessions: [...objective.sessions, w.id],
+        tasks: objective.tasks.map((t) =>
+          t.id === a.taskId
+            ? { ...t, session: w.id, state: t.state === "todo" ? ("doing" as const) : t.state }
+            : t,
+        ),
+      });
+    }
+    // A task held back for spacing waits as a queued message (saved, shown,
+    // ahead of any follow-up) behind a pause on the worker's agent; after a
+    // restart the server's spaced dequeue sends it.
+    const now = Date.now();
+    const delay = Math.max(0, this.nextStartAt - now);
+    this.nextStartAt = now + delay + START_SPACING_MS;
+    if (delay > 0) {
+      const agentId = [...w.agents.keys()][0];
+      w.pauseAgent(agentId, now + delay);
+      this.later(delay, () => {
+        if (this.host.workspace(w.id) === w) w.dequeueNext(agentId);
+      });
+    }
+    this.deliver(w, a.task, ...this.fromLead(projectId, a.task));
+    const started = `Started session ${w.id} ("${a.title}") in ${cwd} on ${model}.`;
+    return delay === 0
+      ? started
+      : `${started} Its task goes out in ${Math.ceil(delay / 1000)} s: starts are spaced out.`;
+  }
+
+  private readSession(projectId: string, sessionId: string, last: number): string {
+    const w = this.session(projectId, sessionId);
+    if (!this.host.loadWorkspace(w)) throw new Error(`"${w.name}" cannot be loaded`);
+    const agents = new Map([...w.agents.values()].map((a) => [a.info.id, a.info.name]));
+    const out = [`Session ${w.id} "${w.name}" in ${w.cwd} — ${sessionState(w)}`];
+    for (const m of w
+      .getMessages()
+      .filter((x) => x.kind !== "system")
+      .slice(-last)) {
+      const who = m.from
+        ? originLabel(m.from)
+        : m.kind === "user"
+          ? "user"
+          : (agents.get(m.agentId ?? "") ?? "agent");
+      const tools = (m.events ?? []).filter((e) => e.kind === "tool_use").length;
+      out.push(
+        "",
+        `--- ${who} · ${new Date(m.timestamp).toISOString()} · ${m.status}${tools ? ` · ${tools} tool calls` : ""}`,
+        m.content.length > 3000 ? m.content.slice(0, 3000) + " …(truncated)" : m.content,
+      );
+    }
+    return out.join("\n");
+  }
+
+  private listProjects(projectId: string): string {
+    const others = this.store.list().filter((p) => p.id !== projectId);
+    if (others.length === 0) return "(no other projects)";
+    return others
+      .map((p) => {
+        const lead = this.leadOf(p.id);
+        return `- ${p.id} "${p.name}" — ${p.root} — lead ${lead ? sessionState(lead) : "missing"}`;
+      })
+      .join("\n");
+  }
+
+  private messageProject(projectId: string, targetId: string, text: string): string {
+    if (targetId === projectId) throw new Error("That is this project; use message_session");
+    const self = this.require(projectId);
+    const other = this.require(targetId);
+    const lead = this.leadOf(targetId);
+    if (!lead) throw new Error(`Project "${other.name}" has no lead`);
+    const pair = [projectId, targetId].sort().join(" ");
+    const now = Date.now();
+    const recent = (this.peerLog.get(pair) ?? []).filter((t) => now - t < PEER_WINDOW_MS);
+    if (recent.length >= PEER_LIMIT) {
+      throw new Error(
+        `${recent.length} messages with "${other.name}" in the last ${PEER_WINDOW_MS / 60_000} minutes; stop here and tell the user`,
+      );
+    }
+    this.deliver(
+      lead,
+      text,
+      { workspaceId: this.leadOf(projectId)?.id ?? "", name: self.name, role: "peer", projectId },
+      `[From the lead of project "${self.name}" (${projectId}). If they ask for something, answer with message_project; otherwise no reply is needed.]\n\n${text}`,
+    );
+    this.peerLog.set(pair, [...recent, now]);
+    return `Sent to the lead of "${other.name}". An answer, if any, arrives later as a message from that project.`;
+  }
+
+  private listObjectives(
+    projectId: string,
+    filter: { area?: string; status?: string; archived?: boolean },
+  ): string {
+    const all = this.board(projectId).list();
+    const objectives = all.filter((o): o is Objective => !("error" in o));
+    const deps = dependencies(objectives);
+    const inView = objectives.filter((o) => !!o.archived === !!filter.archived);
+    const shown = inView.filter(
+      (o) =>
+        (!filter.area || o.area === filter.area) && (!filter.status || o.status === filter.status),
+    );
+    const broken = all.filter((o): o is BrokenObjective => "error" in o);
+    const out: string[] = [];
+    let area = "";
+    for (const o of shown) {
+      if (o.area !== area) {
+        area = o.area;
+        out.push(`${out.length ? "\n" : ""}## ${area}`);
+      }
+      const live = o.tasks.filter((t) => t.state !== "dropped");
+      const done = live.filter((t) => t.state === "done").length;
+      const open = o.decisions.filter((d) => !d.outcome).length;
+      const { blockedBy, dropped } = deps.get(o.id)!;
+      out.push(
+        `- ${o.id} [${o.status}, ${o.priority}] ${o.title} — tasks ${done}/${live.length}` +
+          (open ? `, ${open} open decision${open === 1 ? "" : "s"}` : "") +
+          (blockedBy.length ? `; blocked by ${blockedBy.join(", ")}` : "") +
+          (dropped.length ? `; prerequisite dropped: ${dropped.join(", ")}` : ""),
+      );
+    }
+    for (const b of broken) out.push(`- ${b.id} UNREADABLE: ${b.error}`);
+    if (shown.length === 0) {
+      // Say what there is, so an empty filter is not taken for an empty board.
+      const counts = OBJECTIVE_STATUSES.map(
+        (st) => [st, inView.filter((o) => o.status === st).length] as const,
+      )
+        .filter(([, n]) => n)
+        .map(([st, n]) => `${n} ${st}`);
+      const archived = objectives.filter((o) => o.archived).length;
+      if (!filter.archived && archived) counts.push(`${archived} archived`);
+      out.unshift(
+        `No ${filter.status ?? ""} objectives here${counts.length ? ` (${counts.join(", ")})` : ""}.`.replace(
+          "  ",
+          " ",
+        ),
+      );
+    }
+    return out.join("\n");
+  }
+
+  private readObjective(projectId: string, id: string): string {
+    const o = this.objective(projectId, id);
+    const objectives = this.objectives(projectId);
+    const byId = new Map(objectives.map((x) => [x.id, x]));
+    const info = dependencies(objectives).get(o.id)!;
+    const ref = (x: string) => {
+      const target = byId.get(x);
+      if (!target) return `${x} (missing)`;
+      const flags = [
+        target.status,
+        info.blockedBy.includes(x) && "blocking",
+        target.archived && "archived",
+      ];
+      return `${x} (${flags.filter(Boolean).join(", ")})`;
+    };
+    const session = (sid: string) => {
+      const w = this.host.workspace(sid);
+      return w ? `${sid} "${w.name}" (${sessionState(w)})` : `${sid} (deleted)`;
+    };
+    const out = [
+      `${o.id} — ${o.title}`,
+      `status: ${o.status}${o.archived ? " (archived)" : ""}, priority: ${o.priority}${o.reason ? ` — ${o.reason}` : ""}`,
+      `goal: ${o.goal}`,
+      `depends on: ${o.dependsOn.map(ref).join(", ") || "nothing"}`,
+      `needed by: ${info.unblocks.join(", ") || "nothing"}`,
+      `sessions: ${o.sessions.map(session).join(", ") || "none"}`,
+      `updated: ${new Date(o.updatedAt).toISOString()}`,
+    ];
+    if (o.context) out.push("", "context:", o.context);
+    out.push("", "tasks:");
+    for (const t of o.tasks) {
+      out.push(`- ${t.id} [${t.state}] ${t.text}${t.session ? ` (session ${t.session})` : ""}`);
+    }
+    if (o.tasks.length === 0) out.push("(none)");
+    out.push("", "decisions:");
+    for (const d of o.decisions) {
+      out.push(
+        d.outcome
+          ? `- ${d.id} settled: ${d.question} → ${d.outcome}`
+          : `- ${d.id} open: ${d.question}`,
+      );
+    }
+    if (o.decisions.length === 0) out.push("(none)");
+    if (o.notes) out.push("", "notes:", o.notes);
+    return out.join("\n");
+  }
+
+  private writeObjective(projectId: string, patch: ObjectivePatch): string {
+    checkId(patch.id);
+    const board = this.board(projectId);
+    const current = board.get(patch.id);
+    if (current?.archived) throw new Error(`${patch.id} is archived; restore_objective it first`);
+    if (!current && (!patch.title || !patch.goal)) {
+      throw new Error(`${patch.id} does not exist yet: give it a title and a goal`);
+    }
+    if (patch.title === "" || patch.goal === "") throw new Error("title and goal cannot be empty");
+    const defined = Object.fromEntries(
+      Object.entries(patch).filter(([, v]) => v !== undefined),
+    ) as ObjectivePatch;
+    const next: Objective = {
+      ...(current ?? {
+        id: patch.id,
+        area: patch.id.split("/")[0],
+        title: "",
+        goal: "",
+        status: "active",
+        priority: "normal",
+        dependsOn: [],
+        tasks: [],
+        decisions: [],
+        sessions: [],
+        updatedAt: 0,
+      }),
+      ...defined,
+    };
+    // A reason explains the status or priority it was given with.
+    const moved =
+      current &&
+      ((patch.status && patch.status !== current.status) ||
+        (patch.priority && patch.priority !== current.priority));
+    if (moved && patch.reason === undefined) delete next.reason;
+    for (const key of ["reason", "context", "notes"] as const)
+      if (next[key] === "") delete next[key];
+    next.dependsOn = [...new Set(next.dependsOn)].filter((d) => d !== next.id);
+    for (const d of next.dependsOn) checkId(d);
+    const others = this.objectives(projectId).filter((o) => o.id !== next.id);
+    const cycle = cycleThrough([...others, next], next.id);
+    if (cycle) throw new Error(`That makes a dependency cycle: ${cycle.join(" → ")}`);
+    this.saveObjective(projectId, next);
+    const known = new Set(others.map((o) => o.id));
+    const missing = next.dependsOn.filter((d) => !known.has(d));
+    const deps =
+      patch.dependsOn !== undefined
+        ? ` Depends on: ${next.dependsOn.join(", ") || "nothing"}.`
+        : "";
+    const warn = missing.length ? ` Not objectives (yet): ${missing.join(", ")}.` : "";
+    return `${current ? "Updated" : "Created"} ${next.id} [${next.status}, ${next.priority}].${deps}${warn}`;
+  }
+
+  private updateItem(projectId: string, oid: string, itemId: string, patch: ItemPatch): string {
+    const o = this.objective(projectId, oid);
+    if (o.tasks.some((t) => t.id === itemId)) {
+      if (patch.outcome !== undefined)
+        throw new Error(`${itemId} is a task; outcome is for decisions`);
+      this.saveObjective(projectId, {
+        ...o,
+        tasks: o.tasks.map((t) =>
+          t.id === itemId
+            ? {
+                ...t,
+                ...(patch.text && { text: patch.text }),
+                ...(patch.state && { state: patch.state }),
+              }
+            : t,
+        ),
+      });
+      return `Updated ${o.id} ${itemId}.`;
+    }
+    if (o.decisions.some((d) => d.id === itemId)) {
+      if (patch.state) throw new Error(`${itemId} is a decision; settle it with an outcome`);
+      this.saveObjective(projectId, {
+        ...o,
+        decisions: o.decisions.map((d) => {
+          if (d.id !== itemId) return d;
+          const next = { ...d, ...(patch.text && { question: patch.text }) };
+          if (patch.outcome === "") delete next.outcome;
+          else if (patch.outcome !== undefined) next.outcome = patch.outcome;
+          return next;
+        }),
+      });
+      return `Updated ${o.id} ${itemId}.`;
+    }
+    throw new Error(`No item ${itemId} in ${o.id}`);
+  }
+
+  // A worker's report to its lead. Finishing moves the tasks it was doing to
+  // review; a blocked worker leaves them in progress for the lead to sort out.
+  private workerReport(workspaceId: string, text: string, final: boolean, blocked = false): string {
+    const w = this.host.workspace(workspaceId);
+    const projectId = w?.projectLink?.role === "worker" ? w.projectLink.projectId : undefined;
+    const lead = projectId ? this.leadOf(projectId) : undefined;
+    if (!w || !projectId || !lead) throw new Error("This session has no project lead");
+    const body = `${!final ? "Progress" : blocked ? "Blocked" : "Finished"}:\n\n${text}`;
+    this.deliver(
+      lead,
+      body,
+      { workspaceId: w.id, name: w.name, role: "worker" },
+      `[From session "${w.name}" (${w.id})]\n\n${body}`,
+    );
+    if (final && !blocked) {
+      const doing = (t: { session?: string; state: string }) =>
+        t.session === w.id && t.state === "doing";
+      this.rewrite(
+        projectId,
+        (o) => o.tasks.some(doing),
+        (o) => ({
+          ...o,
+          tasks: o.tasks.map((t) => (doing(t) ? { ...t, state: "review" as const } : t)),
+        }),
+      );
+    }
+    return final ? "Reported to the lead." : "Sent to the lead.";
+  }
+
+  private api: PanelApi = {
+    projectStatus: (pid) => this.status(pid),
+    startSession: (pid, a) => this.startSession(pid, a),
+    readSession: (pid, sid, last) => this.readSession(pid, sid, last),
+    messageSession: (pid, sid, text) => {
+      const w = this.session(pid, sid);
+      const outcome = this.deliver(w, text, ...this.fromLead(pid, text));
+      return `Sent to "${w.name}"${outcome === "queued" ? " (queued: it is busy)" : ""}.`;
+    },
+    stopSession: (pid, sid) => {
+      const w = this.session(pid, sid);
+      this.dropQueuedFromLead(w);
+      w.abortAll();
+      this.host.persistWorkspace(w);
+      return `Stopped "${w.name}".`;
+    },
+    archiveSession: (pid, sid) => {
+      const w = this.session(pid, sid);
+      if (w.isArchived) return `"${w.name}" is already archived.`;
+      if (!this.host.archiveWorkspace(w)) {
+        throw new Error(`"${w.name}" is still working or has queued messages; stop it first`);
+      }
+      return `Archived "${w.name}".`;
+    },
+    listObjectives: (pid, filter) => {
+      this.require(pid);
+      return this.listObjectives(pid, filter);
+    },
+    readObjective: (pid, id) => {
+      this.require(pid);
+      return this.readObjective(pid, id);
+    },
+    writeObjective: (pid, patch) => {
+      this.require(pid);
+      return this.writeObjective(pid, patch);
+    },
+    addItems: (pid, oid, tasks, decisions) => {
+      this.require(pid);
+      const o = this.objective(pid, oid);
+      const next = (prefix: string, ids: string[]) => {
+        const n = Math.max(0, ...ids.map((x) => Number(x.slice(1)) || 0));
+        return (i: number) => `${prefix}${n + i + 1}`;
+      };
+      const taskId = next(
+        "t",
+        o.tasks.map((t) => t.id),
+      );
+      const decisionId = next(
+        "d",
+        o.decisions.map((d) => d.id),
+      );
+      const added = {
+        tasks: tasks.map((text, i) => ({ id: taskId(i), text, state: "todo" as const })),
+        decisions: decisions.map((question, i) => ({ id: decisionId(i), question })),
+      };
+      this.saveObjective(pid, {
+        ...o,
+        tasks: [...o.tasks, ...added.tasks],
+        decisions: [...o.decisions, ...added.decisions],
+      });
+      const ids = [...added.tasks, ...added.decisions].map((x) => x.id);
+      return ids.length ? `Added ${ids.join(", ")} to ${o.id}.` : "Nothing to add.";
+    },
+    updateItem: (pid, oid, itemId, patch) => {
+      this.require(pid);
+      return this.updateItem(pid, oid, itemId, patch);
+    },
+    deleteObjective: (pid, id) => {
+      this.require(pid);
+      const o = this.objective(pid, id);
+      const dependents = this.objectives(pid).filter((x) => x.dependsOn.includes(o.id));
+      this.board(pid).remove(o.id);
+      this.changed(pid);
+      const left = dependents.length
+        ? ` Still listed as a prerequisite by ${dependents.map((x) => x.id).join(", ")}.`
+        : "";
+      return `Deleted ${o.id}.${left}`;
+    },
+    listProjects: (pid) => {
+      this.require(pid);
+      return this.listProjects(pid);
+    },
+    messageProject: (pid, target, text) => this.messageProject(pid, target, text),
+    workerReport: (wsId, text, final, blocked) => this.workerReport(wsId, text, final, blocked),
+    archiveObjective: (pid, id) => {
+      this.require(pid);
+      const o = this.objective(pid, id);
+      if (o.archived) return `${o.id} is already archived.`;
+      if (o.status !== "done" && o.status !== "dropped") {
+        throw new Error(`${o.id} is ${o.status}; only done or dropped objectives are archived`);
+      }
+      this.board(pid).move(o.id, true);
+      this.changed(pid);
+      return `Archived ${o.id}.`;
+    },
+    restoreObjective: (pid, id) => {
+      this.require(pid);
+      const o = this.objective(pid, id);
+      if (!o.archived) return `${o.id} is not archived.`;
+      this.board(pid).move(o.id, false);
+      this.changed(pid);
+      return `Restored ${o.id} [${o.status}].`;
+    },
+  };
+}
+
+// How the workspace marks a turn cut off by a restart.
+const INTERRUPTED = "*\\[interrupted\\]*";
+
+function claudeModels(): string[] {
+  return MODEL_OPTIONS.filter((m) => m.backend === "claude").map((m) => m.id);
+}
+
+function sessionState(w: Workspace): "archived" | "working" | "waiting to start" | "idle" {
+  if (w.isArchived) return "archived";
+  if ([...w.agents.values()].some((a) => a.session.isRunning)) return "working";
+  return w.messages.some((m) => m.status === "queued") ? "waiting to start" : "idle";
+}
+
+function oneLine(s: string, max: number): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > max ? t.slice(0, max) + "…" : t;
+}
