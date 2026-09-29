@@ -11,6 +11,7 @@ export function SidePanel({
   onPin,
   onClose,
   onWidth,
+  flush,
   children,
 }: {
   title: string;
@@ -19,6 +20,8 @@ export function SidePanel({
   onPin: () => void;
   onClose: () => void;
   onWidth: (width: number) => void;
+  // The content fills the panel and scrolls itself.
+  flush?: boolean;
   children: ReactNode;
 }) {
   const drag = useRef<{ x: number; w: number } | null>(null);
@@ -60,7 +63,7 @@ export function SidePanel({
           ×
         </button>
       </header>
-      <div className="side-panel-body">{children}</div>
+      <div className={`side-panel-body${flush ? " flush" : ""}`}>{children}</div>
     </aside>
   );
 }

@@ -1,5 +1,6 @@
 import type { Objective, ObjectiveTask, Project, Workspace } from "../state/useServer";
 import { agentState } from "../workspace/agents";
+import type { FileRoot } from "./FilesPanel";
 
 // What the side panels cover: every session of the active workspace's
 // project (lead first, then the most recently active), or the workspace on
@@ -55,4 +56,18 @@ export function stateSummary(states: SessionState[]): string {
     .filter(([, n]) => n > 0)
     .map(([s, n]) => `${n} ${s}`);
   return parts.length ? parts.join(" · ") : "idle";
+}
+
+// The folders the Files panel offers: each live session's working directory
+// (a project's repository and its worktrees), once each.
+export function fileRoots(sessions: Workspace[]): FileRoot[] {
+  const seen = new Set<string>();
+  const out: FileRoot[] = [];
+  for (const w of sessions) {
+    if (w.archivedAt != null || seen.has(w.cwd)) continue;
+    seen.add(w.cwd);
+    const name = w.cwd.split("/").filter(Boolean).pop() ?? w.cwd;
+    out.push({ label: w.git?.branch ? `${name} · ${w.git.branch}` : name, path: w.cwd });
+  }
+  return out;
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  formatSize,
   formatDuration,
   formatRelative,
   formatResetTime,
@@ -62,5 +63,15 @@ describe("formatDuration", () => {
     expect(formatDuration(3_900_000)).toBe("1h 5m");
     // Rounds before picking the unit.
     expect(formatDuration(59_960)).toBe("1m 0s");
+  });
+});
+
+describe("formatSize", () => {
+  it("reads as bytes, KB or MB", () => {
+    expect([formatSize(812), formatSize(2048), formatSize(3.4 * 1024 * 1024)]).toEqual([
+      "812 B",
+      "2.0 KB",
+      "3.4 MB",
+    ]);
   });
 });

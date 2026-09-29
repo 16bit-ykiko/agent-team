@@ -215,6 +215,70 @@ describe("server auth", () => {
   });
 });
 
+describe("file preview", () => {
+  const get = async (query: string) => {
+    const res = await request(`/api/file?${query}`, { headers: { Cookie: cookie } });
+    return { status: res.status, body: JSON.parse(res.body) as Record<string, unknown> };
+  };
+
+  beforeAll(() => {
+    fs.mkdirSync(path.join(base, "notes", "deep"), { recursive: true });
+    fs.writeFileSync(path.join(base, "notes", "a.ts"), "export const a = 1;\n");
+    fs.writeFileSync(path.join(base, "notes", "blob.bin"), Buffer.from([0, 1, 2, 0, 255]));
+    fs.writeFileSync(path.join(base, "notes", "pic.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    fs.writeFileSync(path.join(base, "notes", "page.html"), "<script>alert(1)</script>");
+    fs.writeFileSync(path.join(base, "notes", "big.log"), "x".repeat(1024 * 1024 + 10));
+  });
+
+  it("reads a text file relative to the workspace directory", async () => {
+    const { status, body } = await get("ws=ws-h&path=notes/a.ts");
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      kind: "text",
+      path: path.join(base, "notes", "a.ts"),
+      content: "export const a = 1;\n",
+      truncated: false,
+    });
+  });
+
+  it("lists a directory, folders first", async () => {
+    const { body } = await get(`ws=ws-h&path=${encodeURIComponent(path.join(base, "notes"))}`);
+    expect(body.kind).toBe("dir");
+    expect((body.entries as Array<{ name: string }>).map((e) => e.name)).toEqual([
+      "deep",
+      "a.ts",
+      "big.log",
+      "blob.bin",
+      "page.html",
+      "pic.png",
+    ]);
+  });
+
+  it("tells images and binaries apart from text, and caps large text", async () => {
+    expect((await get("ws=ws-h&path=notes/pic.png")).body.kind).toBe("image");
+    expect((await get("ws=ws-h&path=notes/blob.bin")).body.kind).toBe("binary");
+    const big = (await get("ws=ws-h&path=notes/big.log")).body;
+    expect(big).toMatchObject({ kind: "text", truncated: true, size: 1024 * 1024 + 10 });
+    expect((big.content as string).length).toBe(1024 * 1024);
+  });
+
+  it("serves raw bytes, sandboxed so a previewed page cannot script the app", async () => {
+    const pic = await request("/api/file/raw?ws=ws-h&path=notes/pic.png", {
+      headers: { Cookie: cookie },
+    });
+    expect(pic.headers["content-type"]).toBe("image/png");
+    const page = await request("/api/file/raw?ws=ws-h&path=notes/page.html", {
+      headers: { Cookie: cookie },
+    });
+    expect(page.headers["content-security-policy"]).toBe("sandbox");
+  });
+
+  it("reports a missing file, and needs a login", async () => {
+    expect((await get("ws=ws-h&path=notes/nope.txt")).status).toBe(404);
+    expect((await request("/api/file?ws=ws-h&path=notes/a.ts")).status).toBe(302);
+  });
+});
+
 describe("server websocket", () => {
   it("survives a malformed frame from an authenticated client", async () => {
     await new Promise<void>((resolve, reject) => {

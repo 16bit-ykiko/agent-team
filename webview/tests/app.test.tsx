@@ -593,3 +593,40 @@ describe("search jumps against the server's paging", () => {
     expect(renderedIds()).toEqual(all.map((m) => m.id));
   });
 });
+
+describe("files panel", () => {
+  const fetchMock = vi.fn((url: string) => {
+    const path = new URLSearchParams(url.split("?")[1]).get("path")!;
+    const view =
+      path === "."
+        ? { kind: "dir", path: "/tmp", truncated: false, entries: [] }
+        : { kind: "text", path: `/tmp/${path}`, size: 3, content: "hi\n", truncated: false };
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(view) });
+  });
+  beforeEach(() => vi.stubGlobal("fetch", fetchMock));
+  afterEach(() => vi.unstubAllGlobals());
+
+  const panel = () => document.querySelector('aside[aria-label="Files"]');
+  const lastFetch = () => fetchMock.mock.calls.at(-1)![0];
+
+  it("opens the workspace folder from the rail, and a file named in a reply", async () => {
+    boot([{ ...settled(1), content: "Changed `src/a.ts:3`." }], { others: ["w2"] });
+    fireEvent.click(document.querySelector('.side-rail [aria-label="Files"]')!);
+    await act(async () => {});
+    expect(panel()!.querySelector(".dir-view")).not.toBeNull();
+    expect(lastFetch()).toBe("api/file?ws=w1&path=.");
+    fireEvent.click(panel()!.querySelector(".side-panel-close")!);
+    expect(panel()).toBeNull();
+
+    fireEvent.click(document.querySelector(".message-content .file-ref")!);
+    await act(async () => {});
+    expect(lastFetch()).toBe("api/file?ws=w1&path=src%2Fa.ts");
+    expect(panel()!.querySelector(".code-mark")).not.toBeNull();
+
+    // Another workspace's panel shows that workspace's folder.
+    selectWorkspace("w2");
+    await act(async () => {});
+    expect(lastFetch()).toBe("api/file?ws=w2&path=.");
+    expect(panel()!.querySelector(".dir-view")).not.toBeNull();
+  });
+});

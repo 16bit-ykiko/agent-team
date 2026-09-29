@@ -13,7 +13,9 @@ import { SidePanel } from "./panels/SidePanel";
 import { Rail, type RailItem } from "./panels/Rail";
 import { AgentsPanel, type AgentsPanelActions } from "./panels/AgentsPanel";
 import { TasksPanel, workCount, type TasksPanelActions } from "./panels/TasksPanel";
-import { scopeSessions, sessionState, stateSummary } from "./panels/scope";
+import { FilesPanel } from "./panels/FilesPanel";
+import { fileRoots, scopeSessions, sessionState, stateSummary } from "./panels/scope";
+import { FileOpenContext, parseFileRef, type FileRef } from "./chat/fileRef";
 import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
 import { isImeKeyEvent } from "./chat/ime";
 import { AgentAvatar } from "./workspace/avatar";
@@ -286,11 +288,26 @@ export function App() {
   );
   useEffect(() => writeSetting("panelPinned", panelPinned ? "1" : "0"), [panelPinned]);
   useEffect(() => writeSetting("panelWidth", String(panelWidth)), [panelWidth]);
+  // Code needs more room than the lists, so the Files panel has its own width.
+  const [filesWidth, setFilesWidth] = useState(
+    () => Number(readSetting("filesWidth")) || DEFAULT_FILES_WIDTH,
+  );
+  useEffect(() => writeSetting("filesWidth", String(filesWidth)), [filesWidth]);
   const togglePanel = useCallback(
     (id: PanelId) => setOpenPanel((cur) => (cur === id ? null : id)),
     [],
   );
   const closePanel = useCallback(() => setOpenPanel(null), []);
+  // What the Files panel shows: a path named in a reply (relative to the
+  // workspace it was named in) or, opened from the rail, that folder itself.
+  // `seq` starts the panel over for each file opened.
+  const [fileTarget, setFileTarget] = useState<{ wsId: string; ref: FileRef; seq: number } | null>(
+    null,
+  );
+  const showFile = useCallback((wsId: string, ref: FileRef) => {
+    setFileTarget((t) => ({ wsId, ref, seq: (t?.seq ?? 0) + 1 }));
+    setOpenPanel("files");
+  }, []);
   const togglePin = useCallback(() => setPanelPinned((p) => !p), []);
   // The project whose board page is open, whichever workspace is.
   const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
@@ -431,7 +448,26 @@ export function App() {
       badge: workCount(scope),
       onClick: () => togglePanel("tasks"),
     },
+    {
+      id: "files",
+      label: "Files",
+      icon: "▤",
+      active: openPanel === "files",
+      onClick: () => togglePanel("files"),
+    },
   ];
+  // A file opened in another project's (or workspace's) chat gives way to
+  // this workspace's folder.
+  const files =
+    fileTarget && scope.some((w) => w.id === fileTarget.wsId)
+      ? fileTarget
+      : activeWs && { wsId: activeWs.id, ref: WORKSPACE_ROOT, seq: 0 };
+  const roots = useMemo(() => fileRoots(scope), [scope]);
+  const openFileRef = useMemo(
+    () =>
+      activeWsId ? (ref: string) => showFile(activeWsId, parseFileRef(ref) ?? { path: ref }) : null,
+    [activeWsId, showFile],
+  );
   // Sidebar folder groups; explicit expand/collapse choices persist.
   const wsGroups = useMemo(() => groupWorkspaces(workspaces, projects), [workspaces, projects]);
   const [seenTick, setSeenTick] = useState(0);
@@ -1236,57 +1272,59 @@ export function App() {
             </div>
 
             <div className="messages" ref={messagesContainerRef} onScroll={onMessagesScrollTrack}>
-              {(() => {
-                const msgs = activeWs.messages;
-                const total = msgs.length;
-                if (!activeWs.messagesLoaded) {
-                  return <HistoryHint hasMore={false} loading={false} loaded={false} count={0} />;
-                }
-                if (total === 0) {
+              <FileOpenContext.Provider value={openFileRef}>
+                {(() => {
+                  const msgs = activeWs.messages;
+                  const total = msgs.length;
+                  if (!activeWs.messagesLoaded) {
+                    return <HistoryHint hasMore={false} loading={false} loaded={false} count={0} />;
+                  }
+                  if (total === 0) {
+                    return (
+                      <div className="empty-state">
+                        {activeWs.agents.length === 0
+                          ? "Add an agent to get started."
+                          : "Send a message to start working."}
+                      </div>
+                    );
+                  }
                   return (
-                    <div className="empty-state">
-                      {activeWs.agents.length === 0
-                        ? "Add an agent to get started."
-                        : "Send a message to start working."}
-                    </div>
+                    <>
+                      <HistoryHint
+                        hasMore={!!activeWs.hasMore}
+                        loading={!!activeWs.loadingOlder}
+                        loaded
+                        count={total}
+                      />
+                      {msgs.map((msg, i) => {
+                        const prev = i > 0 ? msgs[i - 1] : null;
+                        const compact =
+                          !!prev &&
+                          msg.kind === "agent" &&
+                          prev.kind === "agent" &&
+                          !!msg.turnId &&
+                          msg.turnId === prev.turnId;
+                        return (
+                          <MessageBoundary key={msg.id} messageId={msg.id}>
+                            <MessageItem
+                              msg={msg}
+                              agents={msg.status === "streaming" ? activeWs.agents : settledAgents}
+                              compact={compact}
+                              highlight={msg.id === highlightMsgId}
+                              onQuote={handleQuote}
+                              onLoadSubagentEvents={onLoadSubagentEvents}
+                              onCancelSubagent={onCancelSubagent}
+                              onCancelQueued={onCancelQueued}
+                              onLoadDetails={onLoadDetails}
+                              onOpenWorkspace={openWorkspace}
+                            />
+                          </MessageBoundary>
+                        );
+                      })}
+                    </>
                   );
-                }
-                return (
-                  <>
-                    <HistoryHint
-                      hasMore={!!activeWs.hasMore}
-                      loading={!!activeWs.loadingOlder}
-                      loaded
-                      count={total}
-                    />
-                    {msgs.map((msg, i) => {
-                      const prev = i > 0 ? msgs[i - 1] : null;
-                      const compact =
-                        !!prev &&
-                        msg.kind === "agent" &&
-                        prev.kind === "agent" &&
-                        !!msg.turnId &&
-                        msg.turnId === prev.turnId;
-                      return (
-                        <MessageBoundary key={msg.id} messageId={msg.id}>
-                          <MessageItem
-                            msg={msg}
-                            agents={msg.status === "streaming" ? activeWs.agents : settledAgents}
-                            compact={compact}
-                            highlight={msg.id === highlightMsgId}
-                            onQuote={handleQuote}
-                            onLoadSubagentEvents={onLoadSubagentEvents}
-                            onCancelSubagent={onCancelSubagent}
-                            onCancelQueued={onCancelQueued}
-                            onLoadDetails={onLoadDetails}
-                            onOpenWorkspace={openWorkspace}
-                          />
-                        </MessageBoundary>
-                      );
-                    })}
-                  </>
-                );
-              })()}
+                })()}
+              </FileOpenContext.Provider>
               <div ref={messagesEndRef} />
             </div>
 
@@ -1508,6 +1546,24 @@ export function App() {
           <TasksPanel sessions={scope} actions={taskActions} />
         </SidePanel>
       )}
+      {files && openPanel === "files" && (
+        <SidePanel
+          title="Files"
+          pinned={panelPinned}
+          width={filesWidth}
+          onPin={togglePin}
+          onClose={closePanel}
+          onWidth={setFilesWidth}
+          flush
+        >
+          <FilesPanel
+            key={`${files.wsId}:${files.seq}`}
+            wsId={files.wsId}
+            target={files.ref}
+            roots={roots}
+          />
+        </SidePanel>
+      )}
       {activeWs && <Rail className="side-rail" items={railItems} />}
 
       {showCreate && (
@@ -1600,8 +1656,10 @@ function purgeBody(workspaces: Workspace[], projects: Project[]): string {
   return `Permanently delete ${archived.length - leads} archived workspace(s), including their message history and logs.${kept}`;
 }
 
-type PanelId = "agents" | "tasks";
+type PanelId = "agents" | "tasks" | "files";
+const WORKSPACE_ROOT: FileRef = { path: "." };
 const DEFAULT_PANEL_WIDTH = 380;
+const DEFAULT_FILES_WIDTH = 560;
 
 function readSetting(key: string): string | null {
   try {

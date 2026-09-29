@@ -1,9 +1,11 @@
 import * as crypto from "crypto";
 import * as fs from "fs";
+import * as os from "os";
 import type * as http from "http";
 import * as path from "path";
 import * as zlib from "zlib";
 import type { Auth } from "./auth";
+import { readFileView, resolveFilePath } from "../repo/files";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -21,12 +23,14 @@ const MIME: Record<string, string> = {
   ".woff": "font/woff",
   ".woff2": "font/woff2",
   ".ttf": "font/ttf",
+  ".pdf": "application/pdf",
+  ".bmp": "image/bmp",
 };
 
 const GZIP_EXTS = new Set([".js", ".css", ".html", ".json", ".svg", ".webmanifest"]);
 
-// Everything that is not the WebSocket: login, the app bundle, uploads and
-// layout debug snapshots.
+// Everything that is not the WebSocket: login, the app bundle, uploads,
+// file previews and layout debug snapshots.
 export class HttpHandler {
   // Pre-compressed static assets (the JS bundle is ~600 KB raw; gzip is
   // roughly a quarter of that). Cached by path + mtime.
@@ -38,6 +42,8 @@ export class HttpHandler {
     private webDir: string,
     private uploadsDir: string,
     private baseDir: string,
+    // A workspace's folder, for file paths relative to it.
+    private cwdOf: (workspaceId: string) => string | undefined = () => undefined,
   ) {}
 
   handle(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -65,6 +71,11 @@ export class HttpHandler {
 
       if (req.method === "POST" && pathname === "/debug/snapshot") {
         this.handleSnapshot(req, res);
+        return;
+      }
+
+      if (req.method === "GET" && (pathname === "/api/file" || pathname === "/api/file/raw")) {
+        this.handleFile(url, pathname === "/api/file/raw", res);
         return;
       }
 
@@ -145,6 +156,44 @@ export class HttpHandler {
       this.cachedBuildId = String(process.pid);
     }
     return this.cachedBuildId;
+  }
+
+  // File preview: a view (listing, text, or what kind of file it is) as JSON,
+  // or the raw bytes for images and downloads. Relative paths are resolved
+  // against the workspace directory.
+  private handleFile(url: URL, raw: boolean, res: http.ServerResponse): void {
+    const input = url.searchParams.get("path") ?? "";
+    const cwd = this.cwdOf(url.searchParams.get("ws") ?? "") ?? os.homedir();
+    const abs = resolveFilePath(cwd, input || ".");
+    const fail = (status: number, error: string) => {
+      res.statusCode = status;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(JSON.stringify({ error, path: abs }));
+    };
+    try {
+      if (raw) {
+        if (!fs.statSync(abs).isFile()) return fail(400, "Not a file");
+        const ext = path.extname(abs).toLowerCase();
+        res.setHeader("Content-Type", MIME[ext] ?? "application/octet-stream");
+        // A previewed .html/.svg must not run script on the app's origin; a
+        // sandboxed PDF would not render at all.
+        if (ext !== ".pdf") res.setHeader("Content-Security-Policy", "sandbox");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Cache-Control", "no-store");
+        const name = encodeURIComponent(path.basename(abs));
+        res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${name}`);
+        fs.createReadStream(abs).pipe(res);
+        return;
+      }
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.end(JSON.stringify(readFileView(abs)));
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return fail(404, "No such file or directory");
+      if (code === "EACCES" || code === "EPERM") return fail(403, "Permission denied");
+      fail(500, e instanceof Error ? e.message : String(e));
+    }
   }
 
   private handleUpload(req: http.IncomingMessage, res: http.ServerResponse): void {

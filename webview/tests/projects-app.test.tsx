@@ -301,3 +301,49 @@ describe("a lead whose project the server could not read", () => {
     );
   });
 });
+
+describe("the files panel in a project", () => {
+  const fetchMock = vi.fn((url: string) => {
+    const path = new URLSearchParams(url.split("?")[1]).get("path")!;
+    const abs = path.startsWith("/") ? path : `/repo/clice/${path}`;
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({ kind: "text", path: abs, size: 3, content: "x\n", truncated: false }),
+    });
+  });
+  beforeEach(() => vi.stubGlobal("fetch", fetchMock));
+
+  it("keeps a file opened from the lead while a worker is open, offering both folders", async () => {
+    const reply: Message = {
+      id: "r1",
+      kind: "agent",
+      agentId: "a1",
+      content: "See `src/x.cpp:5`.",
+      timestamp: NOW - 500,
+      status: "done",
+    };
+    const { recv } = boot([lead, worker], [project()], "lead");
+    recv({ type: "workspace_messages", workspaceId: "lead", messages: [reply], hasMore: false });
+    frame();
+    fireEvent.click(document.querySelector(".message-content .file-ref")!);
+    await act(async () => {});
+    const panel = () => document.querySelector('aside[aria-label="Files"]')!;
+    expect(panel().querySelector(".fp-path")!.textContent).toBe("/repo/clice/src/x.cpp");
+    const folders = () =>
+      [...panel().querySelectorAll(".fp-roots option")].map((o) => o.textContent);
+    expect(folders()).toEqual(["clice", "clice-modules"]);
+
+    const calls = fetchMock.mock.calls.length;
+    fireEvent.click(
+      [...document.querySelectorAll(".task-item")].find(
+        (el) => el.querySelector(".task-name-text")!.textContent === "modules",
+      )!,
+    );
+    await act(async () => {});
+    expect(title()).toContain("modules");
+    expect(fetchMock.mock.calls.length).toBe(calls);
+    expect(panel().querySelector(".fp-path")!.textContent).toBe("/repo/clice/src/x.cpp");
+  });
+});

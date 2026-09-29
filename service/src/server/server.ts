@@ -104,7 +104,13 @@ export class Server {
     this.projects = new ProjectManager(baseDir, this.projectHost());
     this.watchConfig();
 
-    this.http = new HttpHandler(this.auth, webDir, this.uploadsDir, baseDir);
+    this.http = new HttpHandler(
+      this.auth,
+      webDir,
+      this.uploadsDir,
+      baseDir,
+      (id) => this.workspaces.get(id)?.cwd,
+    );
     this.httpServer = http.createServer((req, res) => this.http.handle(req, res));
     this.wss = new WebSocketServer({
       server: this.httpServer,

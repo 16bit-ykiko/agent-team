@@ -1,8 +1,18 @@
-import { Fragment, useState, useRef, useMemo, useEffect, memo, type ComponentProps } from "react";
+import {
+  Fragment,
+  useState,
+  useRef,
+  useMemo,
+  useEffect,
+  useContext,
+  memo,
+  type ComponentProps,
+} from "react";
 import Markdown, { type ExtraProps, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { rehypeCodeHighlight } from "./highlight";
 import { prepareSource } from "./mdSource";
+import { FileOpenContext, parseFileRef } from "./fileRef";
 import "highlight.js/styles/github-dark.css";
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
@@ -38,8 +48,9 @@ function ScrollTable(props: ComponentProps<"table">) {
 // A link must never navigate the app itself: a home-screen app has no back
 // button, and agents link local paths ([a.cpp:514](/home/...)) that the
 // server answers with "Not found". Web links open a new tab; the rest show
-// as code with the target on hover.
+// as code with the target on hover, and open in the file viewer.
 function Link({ href, children, node: _node, ...rest }: ComponentProps<"a"> & ExtraProps) {
+  const openFile = useContext(FileOpenContext);
   if (href && /^https?:\/\//i.test(href)) {
     return (
       <a {...rest} href={href} target="_blank" rel="noopener noreferrer">
@@ -47,10 +58,32 @@ function Link({ href, children, node: _node, ...rest }: ComponentProps<"a"> & Ex
       </a>
     );
   }
+  const target = href?.replace(/^file:\/\//, "");
+  if (openFile && target) {
+    return (
+      <code className="file-ref" title={target} role="button" onClick={() => openFile(target)}>
+        {children}
+      </code>
+    );
+  }
   return <code title={href}>{children}</code>;
 }
 
-const mdComponents = { pre: CodeBlock, table: ScrollTable, a: Link };
+// Inline code naming a file ("src/a.ts:12", "/tmp/report.md") opens it.
+function InlineCode({ children, node: _node, ...rest }: ComponentProps<"code"> & ExtraProps) {
+  const openFile = useContext(FileOpenContext);
+  const text = typeof children === "string" ? children : null;
+  if (openFile && text && !text.includes("\n") && !rest.className && parseFileRef(text)) {
+    return (
+      <code {...rest} className="file-ref" role="button" onClick={() => openFile(text)}>
+        {children}
+      </code>
+    );
+  }
+  return <code {...rest}>{children}</code>;
+}
+
+const mdComponents = { pre: CodeBlock, table: ScrollTable, a: Link, code: InlineCode };
 const mdRemarkPlugins: Options["remarkPlugins"] = [remarkGfm];
 const mdRehypePlugins: Options["rehypePlugins"] = [rehypeCodeHighlight];
 

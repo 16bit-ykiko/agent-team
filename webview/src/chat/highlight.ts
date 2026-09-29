@@ -95,3 +95,9 @@ function visit(node: Root | RootContent, parent: Root | Element | null): void {
 export function rehypeCodeHighlight() {
   return (tree: Root) => visit(tree, null);
 }
+
+// Highlighted tree for a whole file in the file viewer, or null when the
+// language is not one of those bundled.
+export function highlightTree(lang: string, code: string): Root | null {
+  return lowlight.registered(lang) ? lowlight.highlight(lang, code) : null;
+}
