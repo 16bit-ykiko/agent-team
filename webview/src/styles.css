@@ -3522,6 +3522,11 @@ span.katex-display {
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
 }
+/* Focused on open so Escape reaches it; a ring round the whole panel says
+   nothing. */
+.side-panel:focus {
+  outline: none;
+}
 .side-panel.docked {
   position: relative;
   flex-shrink: 0;
