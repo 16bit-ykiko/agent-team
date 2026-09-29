@@ -1307,7 +1307,11 @@ export class ClaudeSession extends EventEmitter {
                 .join("\n")
             : "";
       const trimmed = text.trim();
-      if (trimmed && trimmed !== this.lastPushed?.trim()) {
+      // The CLI's note of our interrupt, sent before the result when the turn
+      // had no output yet (snap fixture claude/interrupt-early): the stop.
+      const stopNote =
+        this.interruptRequested && trimmed.startsWith("[Request interrupted by user");
+      if (trimmed && trimmed !== this.lastPushed?.trim() && !stopNote) {
         // We pushed a prompt and the turn has not started: this is the CLI's
         // expansion of it (a /skill), not something that woke the session.
         const level: NoticeLevel = expansion ? "skill" : "wakeup";
