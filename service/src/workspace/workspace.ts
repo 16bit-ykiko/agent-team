@@ -1098,26 +1098,32 @@ export class Workspace {
 
   // Stop the running turns and nothing else: background tasks and pending
   // wake-ups go on. A backend without interrupts (Codex) stops as by abort.
+  // A Stop the backend cannot take as an interrupt stops by abort: a second
+  // one while the first is unanswered (the SDK's request has no timeout), or
+  // one while the process is still starting.
   async interruptAgent(agentId: string): Promise<void> {
     const entry = this.agents.get(agentId);
     if (!entry) return;
-    if (entry.session.interrupt) {
-      await entry.session.interrupt();
+    const session = entry.session;
+    if (!session.interrupt || session.interruptPending) {
+      this.abortAgent(agentId);
       return;
     }
-    this.abortAgent(agentId);
+    if (session.isRunning && !(await session.interrupt())) this.abortAgent(agentId);
   }
 
   async interruptAll(): Promise<void> {
     await Promise.all([...this.agents.keys()].map((id) => this.interruptAgent(id)));
   }
 
-  // Drops an agent's pending wake-up; false when it has none (or is busy).
-  cancelWake(agentId: string): boolean {
+  // Drops an agent's pending wake-up; null once dropped, else why not.
+  cancelWake(agentId: string): string | null {
     const entry = this.agents.get(agentId);
-    if (!entry?.session.cancelWake?.()) return false;
+    if (!entry?.session.cancelWake) return "No wake-up to cancel";
+    const refused = entry.session.cancelWake();
+    if (refused) return refused;
     this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
-    return true;
+    return null;
   }
 
   private finalizeAbort(entry: AgentEntry): void {
@@ -1143,6 +1149,7 @@ export class Workspace {
     if (entry.session.isRunning) return false;
     entry.session.abort();
     entry.session.sessionId = null;
+    entry.lastContext = null;
     entry.session.usage = {
       input_tokens: 0,
       output_tokens: 0,

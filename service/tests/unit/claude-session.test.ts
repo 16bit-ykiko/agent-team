@@ -232,8 +232,17 @@ function backgroundShellTurn(q: FakeQuery): void {
   q.frames.push(frame.result());
 }
 
+// What the CLI answers a ScheduleWakeup call with (snap fixture
+// claude/wakeup-interrupt); the wake-up counts from this.
+const scheduled = (id: string, seconds = 60) =>
+  frame.toolResult(
+    id,
+    `Next wakeup scheduled for 12:00:00 (in ${seconds}s). Nothing more to do this turn — the harness re-invokes you when the wakeup fires or a task-notification arrives.`,
+  );
+
 function sleepingTurn(q: FakeQuery): void {
   q.frames.push(frame.toolUse("w", "ScheduleWakeup", { delaySeconds: 600 }));
+  q.frames.push(scheduled("w", 600));
   q.frames.push(frame.result());
 }
 
@@ -819,8 +828,11 @@ describe("context usage and wake-ups", () => {
         message: { content: [{ type: "tool_use", id, name: "ScheduleWakeup", input }] },
       });
     call({ delaySeconds: 480, reason: "watching CI", prompt: "check CI\nfix if red" }, "t1");
+    dispatch(scheduled("t1", 480));
     call({ delaySeconds: 5400, noop: true, reason: "quiet" }, "t2");
+    dispatch(scheduled("t2", 5400));
     call({ stop: true }, "t3");
+    dispatch(frame.toolResult("t3", "Loop stopped."));
     const calls = events.filter((e) => e.kind === "tool_use");
     expect(calls[0].toolName).toBe("ScheduleWakeup");
     expect(calls[0].content).toBe(
@@ -931,10 +943,12 @@ describe("scheduled wake-up banner and sleeping label", () => {
         ],
       },
     });
+    expect(events.map((e) => e.kind)).toEqual(["tool_use"]);
+    dispatch(scheduled("t1", 480));
     const banner = events.find((e) => e.level === "schedule")!;
     expect(banner.kind).toBe("notice");
     expect(banner.content).toMatch(/^Wake up in 8m \(\d{2}:\d{2}.*\) — watching CI\n\n> check CI$/);
-    expect(events.map((e) => e.kind)).toEqual(["tool_use", "notice"]);
+    expect(events.map((e) => e.kind)).toEqual(["tool_use", "tool_result", "notice"]);
   });
 
   it("sets a sleeping activity after the result and clears it when the wake-up turn starts", () => {
@@ -958,6 +972,7 @@ describe("scheduled wake-up banner and sleeping label", () => {
         ],
       },
     });
+    s.handleSDKMessage(scheduled("t1"));
     s.handleSDKMessage({ type: "result", subtype: "success", result: "", session_id: "s" });
     expect(activity).toHaveLength(1);
     // Time only; the reason lives in the SCHEDULED banner.
@@ -988,6 +1003,7 @@ describe("scheduled wake-up banner and sleeping label", () => {
         content: [{ type: "tool_use", id: "t1", name: "ScheduleWakeup", input: { stop: true } }],
       },
     });
+    s.handleSDKMessage(frame.toolResult("t1", "Loop stopped."));
     s.handleSDKMessage({ type: "result", subtype: "success", result: "", session_id: "s" });
     expect(events.find((e) => e.level === "schedule")!.content).toContain("Loop ended");
     expect(activity).toEqual([]);
@@ -1089,6 +1105,7 @@ describe("run state", () => {
         ],
       },
     });
+    s.handleSDKMessage(scheduled("w"));
     s.handleSDKMessage(bg([{ id: "t1", desc: "bg" }]));
     expect(session.runState).toBe("working");
     s.handleSDKMessage(result);
@@ -1713,15 +1730,100 @@ describe("stopping a turn, not the session", () => {
     const inner = session as unknown as Internals;
     const close = vi.fn();
     inner.queryInstance = { close, interrupt: () => Promise.resolve() };
-    expect(session.cancelWake()).toBe(false);
+    expect(session.cancelWake()).toBe("No wake-up to cancel");
     inner.wakeAt = Date.now() + 60_000;
     expect(session.wake).toEqual({ at: inner.wakeAt, reason: "" });
     inner.processing = true;
-    expect(session.cancelWake()).toBe(false);
+    expect(session.cancelWake()).toBe("Stop the running turn first");
     inner.processing = false;
-    expect(session.cancelWake()).toBe(true);
+    expect(session.cancelWake()).toBeNull();
     expect(close).toHaveBeenCalled();
     expect(session.wake).toBeNull();
+  });
+
+  it("forgets an unanswered interrupt when the process goes away", async () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    const inner = session as unknown as Internals & { handleSDKMessage(m: unknown): void };
+    inner.queryInstance = { interrupt: () => Promise.resolve(), close: () => {} };
+    inner.processing = true;
+    await session.interrupt();
+    expect(session.interruptPending).toBe(true);
+    session.abort();
+    expect(session.interruptPending).toBe(false);
+    inner.queryInstance = { interrupt: () => Promise.resolve(), close: () => {} };
+    inner.processing = true;
+    inner.handleSDKMessage({
+      type: "result",
+      subtype: "error_during_execution",
+      session_id: "s",
+      errors: ["boom"],
+    });
+    expect(events.at(-1)).toMatchObject({ kind: "error", content: "boom" });
+  });
+
+  it("will not cancel a wake-up by ending the process background tasks run in", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const inner = session as unknown as Internals & { backgroundTasks: Map<string, string> };
+    const close = vi.fn();
+    inner.queryInstance = { close, interrupt: () => Promise.resolve() };
+    inner.wakeAt = Date.now() + 60_000;
+    inner.backgroundTasks.set("b1", "sleep 100");
+    expect(session.cancelWake()).toMatch(/background task/);
+    expect(close).not.toHaveBeenCalled();
+    expect(session.wake).not.toBeNull();
+  });
+
+  it("wakes when the CLI scheduled it, and not at all when the call failed", () => {
+    const scheduleTurn = (result: string, isError = false) => {
+      const session = new ClaudeSession({ cwd: "/tmp" });
+      const events: StreamEvent[] = [];
+      session.on("event", (e: StreamEvent) => events.push(e));
+      const inner = session as unknown as Internals & { handleSDKMessage(m: unknown): void };
+      inner.processing = true;
+      inner.handleSDKMessage({
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "t1",
+              name: "ScheduleWakeup",
+              input: { delaySeconds: 60, reason: "check", prompt: "go" },
+            },
+          ],
+        },
+      });
+      inner.handleSDKMessage({
+        type: "user",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "t1", content: result, is_error: isError }],
+        },
+      });
+      inner.handleSDKMessage({ type: "result", subtype: "success", session_id: "s", result: "" });
+      return { session, notices: events.filter((e) => e.kind === "notice") };
+    };
+
+    const before = Date.now();
+    const { session, notices } = scheduleTurn(
+      "Next wakeup scheduled for 12:51:00 (in 93s). Nothing more to do this turn — the harness re-invokes you when the wakeup fires or a task-notification arrives.",
+    );
+    // The CLI rounds up to a minute boundary: its own delay, not the one asked for.
+    expect(session.wake!.at - before).toBeGreaterThanOrEqual(93_000);
+    expect(session.wake!.at - Date.now()).toBeLessThanOrEqual(93_000);
+    expect(notices.map((n) => n.content)).toEqual([
+      expect.stringMatching(/^Wake up in 2m \(.*\) — check/) as string,
+    ]);
+    expect(session.runState).toBe("sleeping");
+
+    const rejected = scheduleTurn("[Request interrupted by user for tool use]", true);
+    expect(rejected.session.wake).toBeNull();
+    expect(rejected.session.runState).toBe("idle");
+    expect(rejected.notices).toEqual([]);
   });
 
   it("declares per-task stops so an interrupt spares background work", () => {

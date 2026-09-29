@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { Workspace, Message, WorkspaceCallbacks } from "../../src/workspace/workspace";
 import { HostRegistry } from "../../src/session/host";
 import { StreamEvent } from "../../src/session/claude";
@@ -787,6 +787,48 @@ describe("interrupting a workspace", () => {
     await ws.interruptAll();
     const reply = ws.messages.find((m) => m.kind === "agent")!;
     expect(reply).toMatchObject({ status: "done", content: "*\\[interrupted\\]*" });
+  });
+
+  it("takes the process down on a second Stop the backend has not answered", async () => {
+    const { ws, session, agentInfo } = makeWorkspace();
+    let pending = false;
+    const handle = session as FakeSession & {
+      interrupt(): Promise<boolean>;
+      interruptPending: boolean;
+    };
+    handle.interrupt = () => {
+      pending = true;
+      return new Promise<boolean>(() => {});
+    };
+    Object.defineProperty(handle, "interruptPending", { get: () => pending });
+    const abort = vi.spyOn(session, "abort");
+    await ws.sendMessage("stuck");
+    void ws.interruptAgent(agentInfo.id);
+    expect(abort).not.toHaveBeenCalled();
+    await ws.interruptAgent(agentInfo.id);
+    expect(abort).toHaveBeenCalled();
+    expect(ws.messages.find((m) => m.kind === "agent")).toMatchObject({ status: "done" });
+  });
+
+  it("stops a turn whose process is still starting, which has nothing to interrupt yet", async () => {
+    const { ws, session, agentInfo } = makeWorkspace();
+    (session as FakeSession & { interrupt(): Promise<boolean> }).interrupt = () =>
+      Promise.resolve(false);
+    const abort = vi.spyOn(session, "abort");
+    await ws.sendMessage("first after a restart");
+    await ws.interruptAgent(agentInfo.id);
+    expect(abort).toHaveBeenCalled();
+  });
+
+  it("forgets the context figure when the context is cleared", async () => {
+    const { ws, emit, agentInfo, session } = makeWorkspace();
+    await ws.sendMessage("hi");
+    emit({ kind: "result", content: "", context: { tokens: 42000, window: 200000 } });
+    session.isRunning = false;
+    const entry = ws.agents.get(agentInfo.id)!;
+    expect(ws.agentInfo(entry).context).toEqual({ tokens: 42000, window: 200000 });
+    expect(ws.clearContext(agentInfo.id)).toBe(true);
+    expect(ws.agentInfo(entry).context).toBeNull();
   });
 
   it("renders a turn the backend reports as interrupted like a stop", async () => {

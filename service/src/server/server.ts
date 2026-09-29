@@ -429,9 +429,10 @@ export class Server {
 
       case "cancel_wakeup": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
-        if (!workspace?.cancelWake(msg.agentId as string)) {
-          this.sendJson(ws, { type: "error", message: "No wake-up to cancel" });
-        }
+        const refused = workspace
+          ? workspace.cancelWake(msg.agentId as string)
+          : "No wake-up to cancel";
+        if (refused) this.sendJson(ws, { type: "error", message: refused });
         return;
       }
 

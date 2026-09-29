@@ -30,7 +30,9 @@ export interface HostSessionHandle extends EventEmitter {
   setFastMode?(on: boolean): void;
   setGoal?(goal: string | null): void;
   interrupt?(): Promise<boolean>;
-  cancelWake?(): boolean;
+  readonly interruptPending?: boolean;
+  // Null once cancelled, else why it was not.
+  cancelWake?(): string | null;
   readonly wake?: { at: number; reason: string } | null;
   setPanelTools?(tools: PanelToolset | null): void;
   stopTask?(taskId: string): Promise<void>;

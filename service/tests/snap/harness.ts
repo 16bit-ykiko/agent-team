@@ -177,8 +177,9 @@ export async function replay(backend: Backend, rec: Recording): Promise<Replay> 
   const live = { feeder: null as Feeder<unknown> | null };
   const rollouts = new Map<string, ContextUsage>();
   // The recording's own clock, so times in the transcript (wake-ups) are
-  // the same on every run.
-  const base = Date.parse(rec.header.recordedAt) || Date.now();
+  // the same on every run. recordedAt is stamped when the capture ends.
+  const end = rec.entries.at(-1)?.t ?? 0;
+  const base = (Date.parse(rec.header.recordedAt) || Date.now()) - end;
   const at = (t: number) => {
     if (vi.isFakeTimers()) vi.setSystemTime(base + t);
   };
@@ -214,6 +215,15 @@ export async function replay(backend: Backend, rec: Recording): Promise<Replay> 
     };
   }
 
+  // The user's controls, as the panel sends them: Stop (the turn only) and a
+  // background task's own stop. Applied at their step, when the request went
+  // out: frames the CLI sent before acknowledging it come after.
+  const control = async (c: Extract<Entry, { control: unknown }>["control"]) => {
+    if (c.error) return;
+    if (c.op === "interrupt") await ws.interruptAll();
+    if (c.op === "stop_task" && c.taskId) ws.cancelSubagent([...ws.agents.keys()][0], c.taskId);
+    await flush();
+  };
   let pending: Promise<void> | null = null;
   try {
     for (const [i, e] of rec.entries.entries()) {
@@ -244,15 +254,10 @@ export async function replay(backend: Backend, rec: Recording): Promise<Replay> 
         } else if (e.step.op === "abort") {
           for (const s of host.created) s.abort();
           await flush();
+        } else if (e.step.op === "interrupt" || e.step.op === "stopTask") {
+          const next = rec.entries.slice(i + 1).find((x) => "control" in x || "step" in x);
+          if (next && "control" in next) await control(next.control);
         }
-      } else if ("control" in e && !e.control.error) {
-        // The user's controls, as the panel sends them: Stop (the turn
-        // only) and a background task's own stop.
-        if (e.control.op === "interrupt") await ws.interruptAll();
-        if (e.control.op === "stop_task" && e.control.taskId) {
-          ws.cancelSubagent([...ws.agents.keys()][0], e.control.taskId);
-        }
-        await flush();
       } else if ("frame" in e) {
         live.feeder?.push(e.frame);
         await flush();

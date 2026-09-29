@@ -289,6 +289,9 @@ export class ClaudeSession extends EventEmitter {
   // without it is CLI-initiated: a scheduled wake-up, a /loop tick, a
   // background-task notification.
   private expectingTurn = false;
+  // ScheduleWakeup calls of this turn awaiting their result: a call the
+  // interrupt rejected, or that failed, schedules nothing.
+  private scheduleCalls = new Map<string, Record<string, unknown>>();
   // Wake-up scheduled during the current turn; becomes the idle activity
   // label ("sleeping until …") once the turn ends.
   private pendingWake: { at: number; reason: string; stop: boolean } | null = null;
@@ -625,6 +628,7 @@ export class ClaudeSession extends EventEmitter {
     this.setActivity(null);
     this.wakeAt = null;
     this.pendingWake = null;
+    this.scheduleCalls.clear();
     if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
     this.updateRunState();
   }
@@ -639,6 +643,7 @@ export class ClaudeSession extends EventEmitter {
     this.iterating = false;
     this.processing = false;
     this.restartPending = false;
+    this.interruptRequested = false;
     for (const taskId of this.taskInfo.keys()) this.closedTasks.add(taskId);
     for (const taskId of this.agentTaskIds) {
       this.closedTasks.add(taskId);
@@ -1253,7 +1258,9 @@ export class ClaudeSession extends EventEmitter {
           toolUseId: toolId,
           step,
         });
-        if (b.name === "ScheduleWakeup") this.noteSchedule(b.input as Record<string, unknown>);
+        if (b.name === "ScheduleWakeup") {
+          this.scheduleCalls.set(toolId, (b.input as Record<string, unknown>) ?? {});
+        }
       } else if (blockType === "tool_result") {
         const resultContent = toolResultText(b.content);
         if (resultContent) {
@@ -1333,6 +1340,12 @@ export class ClaudeSession extends EventEmitter {
           toolUseId,
           ...(isSubagentResult && { isMarkdown: true }),
         });
+      }
+      const schedule =
+        !parentToolUseId && toolUseId ? this.scheduleCalls.get(toolUseId) : undefined;
+      if (schedule) {
+        this.scheduleCalls.delete(toolUseId!);
+        if (b.is_error !== true) this.noteSchedule(schedule, text);
       }
       this.forgetToolUse(toolUseId);
     }
@@ -1429,6 +1442,7 @@ export class ClaudeSession extends EventEmitter {
     }
 
     this.interruptRequested = false;
+    this.scheduleCalls.clear();
     this.turnThinking = { tokens: 0, durationMs: 0 };
     this.thinkingStartedAt = 0;
     this.usage.turns++;
@@ -1456,10 +1470,11 @@ export class ClaudeSession extends EventEmitter {
     this.updateRunState();
   }
 
-  // A ScheduleWakeup call is the agent announcing what it will do next and
+  // A scheduled wake-up is the agent announcing what it will do next and
   // when. Surface it as a banner now, and as the idle label after the turn.
-  private noteSchedule(input: Record<string, unknown> | undefined): void {
-    if (!input) return;
+  // The CLI rounds the time up to a minute boundary and says by how much in
+  // its result ("… (in 93s)", snap fixture claude/wakeup-interrupt).
+  private noteSchedule(input: Record<string, unknown>, result: string): void {
     if (input.stop) {
       this.pendingWake = { at: 0, reason: "", stop: true };
       this.emit("event", {
@@ -1469,7 +1484,7 @@ export class ClaudeSession extends EventEmitter {
       });
       return;
     }
-    const delay = Number(input.delaySeconds ?? 0);
+    const delay = Number(/\(in (\d+)s\)/.exec(result)?.[1] ?? input.delaySeconds ?? 0);
     const at = Date.now() + delay * 1000;
     const reason = str(input.reason ?? "").trim();
     const prompt = str(input.prompt ?? "").trim();
@@ -1566,13 +1581,23 @@ export class ClaudeSession extends EventEmitter {
     return true;
   }
 
+  // An interrupt sent and not yet answered by the turn's end.
+  get interruptPending(): boolean {
+    return this.interruptRequested;
+  }
+
   // A pending wake-up is no task the CLI can stop, and an interrupt with no
   // turn running leaves it in place (snap fixture claude/wakeup-interrupt):
-  // it goes with the process. The session resumes on the next message.
-  cancelWake(): boolean {
-    if (this.wakeAt === null || this.processing) return false;
+  // it goes with the process, and so would every background task. The
+  // session resumes on the next message. Null once cancelled, else why not.
+  cancelWake(): string | null {
+    if (this.wakeAt === null) return "No wake-up to cancel";
+    if (this.processing) return "Stop the running turn first";
+    if (this.backgroundTasks.size > 0) {
+      return "Stop its background tasks first: the wake-up ends only with the process they run in";
+    }
     this.abort();
-    return true;
+    return null;
   }
 
   get wake(): { at: number; reason: string } | null {
