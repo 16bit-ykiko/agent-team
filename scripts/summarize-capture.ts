@@ -109,6 +109,7 @@ for (const file of process.argv.slice(2)) {
     } else if (e.error) parts.push(`!! error ${str(e.error)}`);
     else if (e.close) parts.push("-- stream closed");
     else if (e.rollout) parts.push(`rollout ${JSON.stringify(e.rollout)}`);
+    else if (e.control) parts.push(`<< control ${JSON.stringify(e.control)}`);
     console.log(parts.join("  "));
   }
 }

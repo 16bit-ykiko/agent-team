@@ -25,7 +25,8 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SNAP = path.join(ROOT, "service", "tests", "snap");
 const PAUSE_MS = 30_000;
 const MAX_PER_RUN = 4;
-const STEP_DEADLINE_MS = 150_000;
+// A request can hang ~2 min before the CLI times it out and retries.
+const STEP_DEADLINE_MS = 300_000;
 
 function trim(v: unknown): unknown {
   if (typeof v === "string") return v.length > 400 ? v.slice(0, 400) + `…(+${v.length - 400})` : v;
@@ -58,15 +59,21 @@ class Tape {
 
 interface Driver {
   send(text: string): Promise<void>;
-  wait(until: "result" | "idle" | number): Promise<void>;
+  wait(until: "result" | "idle" | number | { frame: string }): Promise<void>;
   end(): Promise<void>;
   abort(): Promise<void>;
+  interrupt(): Promise<void>;
+  stopTask(match: { type?: string; ambient?: boolean }): Promise<void>;
   cli(): string | undefined;
 }
 
 // --- claude -----------------------------------------------------------------
 
-async function claudeDriver(tape: Tape, model: string): Promise<Driver> {
+async function claudeDriver(
+  tape: Tape,
+  model: string,
+  extra: Record<string, unknown> = {},
+): Promise<Driver> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
   type UserMsg = import("@anthropic-ai/claude-agent-sdk").SDKUserMessage;
   let sessionId: string | undefined;
@@ -77,10 +84,14 @@ async function claudeDriver(tape: Tape, model: string): Promise<Driver> {
     abort: AbortController;
     finished: Promise<void>;
     ended: boolean;
+    query: import("@anthropic-ai/claude-agent-sdk").Query;
   } | null = null;
   let results = 0;
   let bg = 0;
   let lastAt = Date.now();
+  // Every task the CLI listed, latest last, for stopTask steps.
+  const tasks: Array<{ id: string; type: string; ambient: boolean }> = [];
+  const seen: string[] = [];
 
   const start = () => {
     let resolve: ((r: IteratorResult<UserMsg>) => void) | null = null;
@@ -117,6 +128,7 @@ async function claudeDriver(tape: Tape, model: string): Promise<Driver> {
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         disallowedTools: ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"],
+        ...extra,
       },
     });
     const self = {
@@ -128,6 +140,7 @@ async function claudeDriver(tape: Tape, model: string): Promise<Driver> {
       abort,
       ended: false,
       finished: Promise.resolve(),
+      query: q,
     };
     self.finished = (async () => {
       try {
@@ -136,8 +149,14 @@ async function claudeDriver(tape: Tape, model: string): Promise<Driver> {
           tape.frame(msg);
           if ("session_id" in msg && msg.session_id) sessionId = msg.session_id;
           if (msg.type === "system" && msg.subtype === "init") cli = msg.claude_code_version;
-          if (msg.type === "system" && msg.subtype === "background_tasks_changed")
+          seen.push(JSON.stringify(msg));
+          if (msg.type === "system" && msg.subtype === "background_tasks_changed") {
             bg = msg.tasks.filter((t) => !t.ambient).length;
+            for (const t of msg.tasks) {
+              const task = t as { task_id: string; task_type?: string; ambient?: boolean };
+              tasks.push({ id: task.task_id, type: task.task_type ?? "", ambient: !!task.ambient });
+            }
+          }
           if (msg.type === "result") results++;
         }
       } catch (e) {
@@ -164,26 +183,71 @@ async function claudeDriver(tape: Tape, model: string): Promise<Driver> {
       if (typeof until === "number") return sleep(until);
       const deadline = Date.now() + STEP_DEADLINE_MS;
       while (Date.now() < deadline) {
+        if (typeof until === "object") {
+          if (seen.some((f) => f.includes(until.frame))) return;
+          await sleep(200);
+          continue;
+        }
         const quiet = Date.now() - lastAt;
         if (until === "result" && results > 0 && quiet > 300) return;
         if (until === "idle" && results > 0 && bg === 0 && quiet > 4000) return;
         await sleep(200);
       }
-      throw new Error(`wait(${until}) timed out`);
+      throw new Error(`wait(${JSON.stringify(until)}) timed out`);
     },
+    // `active` is cleared when the stream closes, which can happen while
+    // these wait: hold on to the query they started with.
     async end() {
-      if (!active) return;
-      active.ended = true;
-      active.endInput();
+      const a = active;
+      if (!a) return;
+      a.ended = true;
+      a.endInput();
       await sleep(500);
-      active.abort.abort();
-      await active.finished;
+      a.abort.abort();
+      await a.finished;
     },
     async abort() {
-      if (!active) return;
-      active.ended = true;
-      active.abort.abort();
-      await active.finished;
+      const a = active;
+      if (!a) return;
+      a.ended = true;
+      a.abort.abort();
+      await a.finished;
+    },
+    async interrupt() {
+      if (!active) return tape.add({ control: { op: "interrupt", error: "no query" } });
+      try {
+        tape.add({ control: { op: "interrupt", response: trim(await active.query.interrupt()) } });
+      } catch (e) {
+        tape.add({
+          control: { op: "interrupt", error: e instanceof Error ? e.message : String(e) },
+        });
+      }
+    },
+    async stopTask(match) {
+      const task = [...tasks]
+        .reverse()
+        .find(
+          (t) =>
+            (match.type === undefined || t.type === match.type) &&
+            (match.ambient === undefined || t.ambient === match.ambient),
+        );
+      if (!active || !task) {
+        return tape.add({
+          control: { op: "stop_task", error: `no task matching ${JSON.stringify(match)}` },
+        });
+      }
+      try {
+        await active.query.stopTask(task.id);
+        tape.add({ control: { op: "stop_task", taskId: task.id, response: "ok" } });
+      } catch (e) {
+        tape.add({
+          control: {
+            op: "stop_task",
+            taskId: task.id,
+            error: e instanceof Error ? e.message : String(e),
+          },
+        });
+      }
     },
     cli: () => cli,
   };
@@ -233,6 +297,8 @@ async function codexDriver(tape: Tape, model: string): Promise<Driver> {
       abort?.abort();
       return Promise.resolve();
     },
+    interrupt: () => Promise.reject(new Error("codex has no interrupt")),
+    stopTask: () => Promise.reject(new Error("codex has no background tasks")),
     cli: () => version,
   };
 }
@@ -256,7 +322,9 @@ async function record(backend: Backend, name: string): Promise<void> {
   materialize(fixture.files);
   const tape = new Tape();
   const driver =
-    backend === "claude" ? await claudeDriver(tape, model) : await codexDriver(tape, model);
+    backend === "claude"
+      ? await claudeDriver(tape, model, fixture.options)
+      : await codexDriver(tape, model);
   const run = async (step: Step) => {
     switch (step.op) {
       case "send":
@@ -267,13 +335,30 @@ async function record(backend: Backend, name: string): Promise<void> {
         return driver.end();
       case "abort":
         return driver.abort();
+      case "interrupt":
+        return driver.interrupt();
+      case "stopTask":
+        return driver.stopTask(step.match);
     }
   };
-  for (const [i, step] of fixture.steps.entries()) {
-    tape.add({ step: { i, ...step } });
-    await run(step);
+  // A failed run still leaves its tape (as <name>.failed.jsonl), so the
+  // session it cost is not wasted.
+  let failure: Error | undefined;
+  try {
+    for (const [i, step] of fixture.steps.entries()) {
+      tape.add({ step: { i, ...step } });
+      await run(step);
+    }
+  } catch (e) {
+    failure = e instanceof Error ? e : new Error(JSON.stringify(e));
+    tape.add({ error: failure.message });
   }
-  await driver.end();
+  try {
+    await driver.end();
+  } catch (e) {
+    failure ??= e instanceof Error ? e : new Error(JSON.stringify(e));
+    tape.add({ error: failure.message });
+  }
   const header: Header = {
     backend,
     fixture: name,
@@ -282,12 +367,13 @@ async function record(backend: Backend, name: string): Promise<void> {
     cli: driver.cli(),
     recordedAt: new Date().toISOString(),
   };
-  const out = path.join(SNAP, backend, `${name}.jsonl`);
+  const out = path.join(SNAP, backend, failure ? `${name}.failed.jsonl` : `${name}.jsonl`);
   fs.writeFileSync(
     out,
     [JSON.stringify({ header }), ...tape.entries.map((e) => JSON.stringify(e))].join("\n") + "\n",
   );
   console.log(`${backend}/${name}: ${tape.entries.length} entries -> ${path.relative(ROOT, out)}`);
+  if (failure) throw failure;
 }
 
 const [backend, ...names] = process.argv.slice(2);

@@ -10,12 +10,17 @@ export type Backend = "claude" | "codex";
 export type Step =
   | { op: "send"; text: string }
   // Recording pacing only: "result" = the turn's result frame arrived,
-  // "idle" = result and no live background task, a number = milliseconds.
-  | { op: "wait"; for: "result" | "idle" | number }
+  // "idle" = result and no live background task, a number = milliseconds,
+  // { frame } = a frame whose JSON contains the string arrived.
+  | { op: "wait"; for: "result" | "idle" | number | { frame: string } }
   // End the backend process (a server restart); the next send resumes.
   | { op: "end" }
   // The user's Stop button mid-turn.
-  | { op: "abort" };
+  | { op: "abort" }
+  // Query.interrupt(): stop the running turn, keep the process.
+  | { op: "interrupt" }
+  // Query.stopTask() on the latest listed task matching `match`.
+  | { op: "stopTask"; match: { type?: string; ambient?: boolean } };
 
 export interface Replay {
   messages: Message[];
@@ -28,6 +33,8 @@ export interface Replay {
 export interface Fixture {
   description: string;
   model?: string;
+  // Extra SDK options for the recording (e.g. perTaskStopAffordance).
+  options?: Record<string, unknown>;
   // Files materialised in the recording cwd (skills, images).
   files?: Record<string, string | { base64: string }>;
   steps: Step[];
@@ -36,9 +43,17 @@ export interface Fixture {
 
 export const fixture = (f: Fixture): Fixture => f;
 export const send = (text: string): Step => ({ op: "send", text });
-export const wait = (until: "result" | "idle" | number): Step => ({ op: "wait", for: until });
+export const wait = (until: "result" | "idle" | number | { frame: string }): Step => ({
+  op: "wait",
+  for: until,
+});
 export const end = (): Step => ({ op: "end" });
 export const abort = (): Step => ({ op: "abort" });
+export const interrupt = (): Step => ({ op: "interrupt" });
+export const stopTask = (match: { type?: string; ambient?: boolean }): Step => ({
+  op: "stopTask",
+  match,
+});
 
 export const DEFAULT_MODEL: Record<Backend, string> = {
   claude: "claude-sonnet-5",
@@ -64,6 +79,8 @@ export type Entry = { t: number } & (
   | { close: true }
   // Codex: the rollout's context snapshot after a turn.
   | { rollout: ContextUsage & { threadId: string } }
+  // A control request the recorder made (interrupt, stop_task) and its answer.
+  | { control: { op: string; taskId?: string; response?: unknown; error?: string } }
 );
 
 export interface Recording {
