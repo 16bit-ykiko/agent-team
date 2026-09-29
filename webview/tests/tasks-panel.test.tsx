@@ -169,3 +169,42 @@ describe("Stop in the app", () => {
     });
   });
 });
+
+describe("cancelling a wake-up", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+  const wake = { at: NOW + 60_000, reason: "check CI" };
+  const cancels = (a: AgentInfo) => {
+    const { container, unmount } = render(
+      <TasksPanel
+        sessions={[ws("w", [a])]}
+        actions={{
+          onOpen: vi.fn(),
+          onStopTask: vi.fn(),
+          onCancelWake: vi.fn(),
+          onStopAll: vi.fn(),
+        }}
+      />,
+    );
+    const offered = within(container).queryByRole("button", { name: "Cancel" }) !== null;
+    unmount();
+    return offered;
+  };
+
+  it("is offered only when closing the process takes nothing else with it", () => {
+    expect(cancels(agent("a", { state: "sleeping", wake }))).toBe(true);
+    expect(cancels(agent("a", { state: "working", busy: true, wake }))).toBe(false);
+    expect(
+      cancels(
+        agent("a", {
+          state: "waiting",
+          wake,
+          backgroundTasks: [{ id: "b1", type: "local_bash", description: "sleep", since: NOW }],
+        }),
+      ),
+    ).toBe(false);
+  });
+});

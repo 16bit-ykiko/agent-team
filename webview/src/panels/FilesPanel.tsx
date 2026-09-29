@@ -78,6 +78,8 @@ export function languageFor(path: string): string | null {
 
 function parentOf(path: string): string {
   const trimmed = path.replace(/\/+$/, "");
+  // Not yet resolved by the server (still loading, or failed).
+  if (!trimmed.startsWith("/")) return trimmed === "." ? ".." : `${trimmed}/..`;
   const cut = trimmed.lastIndexOf("/");
   return cut <= 0 ? "/" : trimmed.slice(0, cut);
 }
@@ -195,7 +197,8 @@ export function FilesPanel({
 }) {
   const [ref, setRef] = useState(target);
   const [load, setLoad] = useState<Load>({ loading: true });
-  const [source, setSource] = useState(false);
+  // A line to show is a line of the source, not of the rendered page.
+  const [source, setSource] = useState(!!target.line);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -226,7 +229,7 @@ export function FilesPanel({
   };
   const openRef = (r: string) => {
     const parsed = parseFileRef(r) ?? { path: r };
-    setSource(false);
+    setSource(!!parsed.line);
     setRef({ ...parsed, path: resolveFrom(parentOf(path), parsed.path) });
   };
   // Worktrees usually live inside the repository: the deepest folder wins.
@@ -274,9 +277,13 @@ export function FilesPanel({
           className="btn-ghost fp-btn"
           title="Copy path"
           onClick={() => {
-            void navigator.clipboard?.writeText(path);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
+            navigator.clipboard?.writeText(path).then(
+              () => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              },
+              () => {},
+            );
           }}
         >
           {copied ? "Copied" : "Copy"}

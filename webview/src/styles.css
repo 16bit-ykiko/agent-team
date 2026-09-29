@@ -4065,10 +4065,15 @@ span.katex-display {
     height: 30px;
     font-size: 14px;
   }
+  /* The app height, as the sidebar: pinned top+bottom it would sit under
+     the keyboard. */
   .side-panel.docked,
   .side-panel.floating {
     position: fixed;
-    inset: 0;
+    top: var(--app-offset, 0px);
+    left: 0;
+    right: 0;
+    height: var(--app-height, 100%);
     z-index: 95;
     width: auto !important;
     border-left: none;

@@ -347,3 +347,69 @@ describe("the files panel in a project", () => {
     expect(panel().querySelector(".fp-path")!.textContent).toBe("/repo/clice/src/x.cpp");
   });
 });
+
+describe("files named in a delivered message", () => {
+  const fetchMock = vi.fn((url: string) => {
+    const q = new URLSearchParams(url.split("?")[1]);
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          kind: "text",
+          path: `/${q.get("ws")}/${q.get("path")}`,
+          size: 2,
+          content: "x\n",
+          truncated: false,
+        }),
+    });
+  });
+  beforeEach(() => {
+    fetchMock.mockClear();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  const delivered = (from: Message["from"]): Message => ({
+    ...fromMsg(from),
+    content: "Fixed in `src/a.ts:12`.",
+  });
+
+  it("open in the sender's folder, which may be another checkout", async () => {
+    const { recv } = boot([lead, worker], [project()], "lead");
+    recv({
+      type: "workspace_messages",
+      workspaceId: "lead",
+      messages: [delivered({ workspaceId: "w1", name: "modules", role: "worker" })],
+      hasMore: false,
+    });
+    frame();
+    fireEvent.click(document.querySelector(".file-ref")!);
+    await act(async () => {});
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe("api/file?ws=w1&path=src%2Fa.ts");
+  });
+
+  it("stay open when the sender is another project's lead", async () => {
+    const other = ws("olead", {
+      name: "other · lead",
+      projectLink: { projectId: "p2", role: "lead" },
+    });
+    const { recv } = boot(
+      [lead, worker, other],
+      [project(), project({ id: "p2", name: "other", leadWorkspaceId: "olead" })],
+      "lead",
+    );
+    recv({
+      type: "workspace_messages",
+      workspaceId: "lead",
+      messages: [delivered({ workspaceId: "olead", name: "other · lead", role: "peer" })],
+      hasMore: false,
+    });
+    frame();
+    fireEvent.click(document.querySelector(".file-ref")!);
+    await act(async () => {});
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe("api/file?ws=olead&path=src%2Fa.ts");
+    expect(document.querySelector('aside[aria-label="Files"] .fp-path')!.textContent).toBe(
+      "/olead/src/a.ts",
+    );
+  });
+});

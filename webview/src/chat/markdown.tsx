@@ -1,5 +1,6 @@
 import {
   Fragment,
+  createContext,
   useState,
   useRef,
   useMemo,
@@ -7,12 +8,13 @@ import {
   useContext,
   memo,
   type ComponentProps,
+  type ReactNode,
 } from "react";
-import Markdown, { type ExtraProps, type Options } from "react-markdown";
+import Markdown, { defaultUrlTransform, type ExtraProps, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { rehypeCodeHighlight } from "./highlight";
 import { prepareSource } from "./mdSource";
-import { FileOpenContext, parseFileRef } from "./fileRef";
+import { FileOpenContext, linkFileRef, parseFileRef } from "./fileRef";
 import "highlight.js/styles/github-dark.css";
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
@@ -45,42 +47,86 @@ function ScrollTable(props: ComponentProps<"table">) {
   );
 }
 
+// Inside a link, code is part of the link's text, not a reference of its own.
+const InLink = createContext(false);
+
+function FileRefCode({
+  target,
+  title,
+  children,
+}: {
+  target: string;
+  title?: string;
+  children: ReactNode;
+}) {
+  const openFile = useContext(FileOpenContext)!;
+  return (
+    <code
+      className="file-ref"
+      title={title}
+      role="button"
+      tabIndex={0}
+      onClick={() => openFile(target)}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        openFile(target);
+      }}
+    >
+      {children}
+    </code>
+  );
+}
+
 // A link must never navigate the app itself: a home-screen app has no back
 // button, and agents link local paths ([a.cpp:514](/home/...)) that the
 // server answers with "Not found". Web links open a new tab; the rest show
 // as code with the target on hover, and open in the file viewer.
 function Link({ href, children, node: _node, ...rest }: ComponentProps<"a"> & ExtraProps) {
   const openFile = useContext(FileOpenContext);
-  if (href && /^https?:\/\//i.test(href)) {
+  if (href && /^(https?:|mailto:)/i.test(href)) {
     return (
       <a {...rest} href={href} target="_blank" rel="noopener noreferrer">
-        {children}
+        <InLink.Provider value={true}>{children}</InLink.Provider>
       </a>
     );
   }
-  const target = href?.replace(/^file:\/\//, "");
-  if (openFile && target) {
-    return (
-      <code className="file-ref" title={target} role="button" onClick={() => openFile(target)}>
-        {children}
-      </code>
-    );
-  }
-  return <code title={href}>{children}</code>;
+  const target = href ? linkFileRef(href) : null;
+  return (
+    <InLink.Provider value={true}>
+      {openFile && target ? (
+        <FileRefCode target={target} title={target}>
+          {children}
+        </FileRefCode>
+      ) : (
+        <code title={href}>{children}</code>
+      )}
+    </InLink.Provider>
+  );
 }
 
 // Inline code naming a file ("src/a.ts:12", "/tmp/report.md") opens it.
 function InlineCode({ children, node: _node, ...rest }: ComponentProps<"code"> & ExtraProps) {
   const openFile = useContext(FileOpenContext);
+  const inLink = useContext(InLink);
   const text = typeof children === "string" ? children : null;
-  if (openFile && text && !text.includes("\n") && !rest.className && parseFileRef(text)) {
-    return (
-      <code {...rest} className="file-ref" role="button" onClick={() => openFile(text)}>
-        {children}
-      </code>
-    );
+  if (
+    openFile &&
+    !inLink &&
+    text &&
+    !text.includes("\n") &&
+    !rest.className &&
+    parseFileRef(text)
+  ) {
+    return <FileRefCode target={text}>{children}</FileRefCode>;
   }
   return <code {...rest}>{children}</code>;
+}
+
+// react-markdown blanks hrefs with a scheme it does not know, and "a.ts:12"
+// reads as one; Link decides what a local target is.
+function urlTransform(url: string): string {
+  return /^file:\/\//i.test(url) || linkFileRef(url) ? url : defaultUrlTransform(url);
 }
 
 const mdComponents = { pre: CodeBlock, table: ScrollTable, a: Link, code: InlineCode };
@@ -134,6 +180,7 @@ export const MdBlock = memo(function MdBlock({ children }: { children: string })
       remarkPlugins={math?.remark ?? mdRemarkPlugins}
       rehypePlugins={math?.rehype ?? mdRehypePlugins}
       components={mdComponents}
+      urlTransform={urlTransform}
     >
       {text}
     </Markdown>

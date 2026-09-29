@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from "react";
 import type { AgentInfo, Workspace } from "../state/useServer";
 import { AgentAvatar } from "../workspace/avatar";
+import { agentState } from "../workspace/agents";
 import { formatDuration } from "../format";
 import { sessionState } from "./scope";
 
@@ -89,13 +90,15 @@ export const TasksPanel = memo(function TasksPanel({
                   <span className="tp-when" title={`at ${clock(a.wake.at)}`}>
                     in {soon(a.wake.at - now)}
                   </span>
-                  <button
-                    className="btn-inline tp-stop"
-                    title="A wake-up lives in the session's CLI process: cancelling closes it, and the session resumes on the next message"
-                    onClick={() => actions.onCancelWake(w.id, a.id)}
-                  >
-                    Cancel
-                  </button>
+                  {canCancelWake(a) && (
+                    <button
+                      className="btn-inline tp-stop"
+                      title="A wake-up lives in the session's CLI process: cancelling closes it, and the session resumes on the next message"
+                      onClick={() => actions.onCancelWake(w.id, a.id)}
+                    >
+                      Cancel
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -105,6 +108,12 @@ export const TasksPanel = memo(function TasksPanel({
     </div>
   );
 });
+
+// A wake-up is cancelled by closing the CLI process: not while a turn runs
+// in it, nor while background tasks do (the server refuses both).
+function canCancelWake(a: AgentInfo): boolean {
+  return agentState(a) !== "working" && (a.backgroundTasks?.length ?? 0) === 0;
+}
 
 export function hasWork(a: AgentInfo): boolean {
   return (a.backgroundTasks?.length ?? 0) > 0 || !!a.wake;

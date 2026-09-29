@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type RefObject } from "react";
 import type { AgentPreset, ModelOption, HostInfo } from "../state/useServer";
 import { isImageAvatar } from "./avatar";
 
@@ -20,22 +20,7 @@ export function ConfirmDialog({
   onClose: () => void;
 }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
-  // Parents pass fresh closures on every render (each stream frame);
-  // re-running the effect would pull focus back onto the confirm button.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  useEffect(() => {
-    confirmRef.current?.focus();
-    // Capture phase, and marked handled: a page behind the dialog (the
-    // board) must not take the same Escape as its own.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.preventDefault();
-      onCloseRef.current();
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
-  }, []);
+  useDialogKeys(confirmRef, onClose);
   return (
     <div className="dialog-overlay" onClick={onClose}>
       <div className="dialog dialog-confirm" onClick={(e) => e.stopPropagation()}>
@@ -62,6 +47,25 @@ export function ConfirmDialog({
   );
 }
 
+// Focus moves into the dialog, and Escape closes it. Parents pass fresh
+// closures on every render (each stream frame); re-running the effect would
+// pull focus back. Capture phase, and marked handled: what is behind the
+// dialog (the board, a side panel) must not take the same Escape as its own.
+function useDialogKeys(focus: RefObject<HTMLElement | null>, onClose: () => void): void {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    focus.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      onCloseRef.current();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [focus]);
+}
+
 export function AddAgentDialog({
   presets,
   models,
@@ -82,6 +86,8 @@ export function AddAgentDialog({
 
   const preset = presets[selectedPreset];
   const finalName = customName || preset?.name || "Agent";
+  const nameRef = useRef<HTMLInputElement>(null);
+  useDialogKeys(nameRef, onClose);
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
@@ -125,6 +131,7 @@ export function AddAgentDialog({
         <label className="dialog-field">
           <span>Name (or use preset)</span>
           <input
+            ref={nameRef}
             value={customName}
             onChange={(e) => setCustomName(e.target.value)}
             placeholder={preset?.name}

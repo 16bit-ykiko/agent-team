@@ -172,6 +172,38 @@ describe("AgentsPanel", () => {
   });
 });
 
+describe("a session's actions by its state", () => {
+  const buttons = (state: AgentInfo["state"]) => {
+    const { container, unmount } = render(
+      <AgentsPanel
+        sessions={[ws("s", { agents: [agent("a", { state })] })]}
+        project={undefined}
+        activeWsId="s"
+        connected
+        actions={{
+          onOpen: vi.fn(),
+          onStop: vi.fn(),
+          onArchive: vi.fn(),
+          onRestore: vi.fn(),
+          onAddAgent: vi.fn(),
+          onClearContext: vi.fn(),
+          onRemoveAgent: vi.fn(),
+        }}
+      />,
+    );
+    const names = [...container.querySelectorAll(".ap-actions button")].map((b) => b.textContent);
+    unmount();
+    return names;
+  };
+
+  it("stops only a running turn, and archives a sleeping session like an idle one", () => {
+    expect(buttons("working")).toEqual(["+ Agent", "Stop"]);
+    expect(buttons("waiting")).toEqual(["+ Agent"]);
+    expect(buttons("sleeping")).toEqual(["+ Agent", "Archive"]);
+    expect(buttons("idle")).toEqual(["+ Agent", "Archive"]);
+  });
+});
+
 describe("the agents panel in the app", () => {
   beforeEach(() => {
     const store = new Map<string, string>();
@@ -232,6 +264,38 @@ describe("the agents panel in the app", () => {
     expect(document.querySelector(".side-panel")!.className).toContain("docked");
     expect(localStorage.getItem("panelPinned")).toBe("1");
     fireEvent.keyDown(document.querySelector(".side-panel-body")!, { key: "Escape" });
+    expect(document.querySelector(".side-panel")).toBeNull();
+  });
+
+  it("takes focus when opened, and leaves Escape in a dialog to the dialog", () => {
+    boot();
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    const panel = document.querySelector(".side-panel")!;
+    expect(document.activeElement).toBe(panel);
+    const leadCard = within(document.querySelector('[aria-label="clice · lead"]') as HTMLElement);
+    fireEvent.click(leadCard.getByText("+ Agent"));
+    expect(document.querySelector(".dialog")!.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(document.querySelector(".dialog")).toBeNull();
+    expect(document.querySelector(".side-panel")).not.toBeNull();
+  });
+
+  it("fits a width saved on a wider screen", () => {
+    localStorage.setItem("panelWidth", "5000");
+    vi.stubGlobal("innerWidth", 1000);
+    boot();
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    expect((document.querySelector(".side-panel") as HTMLElement).style.width).toBe("700px");
+  });
+
+  it("steps aside for a session opened on a phone held sideways", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) => ({ matches: q.includes("(max-height: 500px)") }) as MediaQueryList,
+    );
+    boot();
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    fireEvent.click(document.querySelector('[aria-label="clice · lead"] .ap-session-name')!);
     expect(document.querySelector(".side-panel")).toBeNull();
   });
 

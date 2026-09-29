@@ -94,7 +94,9 @@ function SessionCard({
 }) {
   const state = sessionState(w);
   const work = project ? sessionWork(w.id, project.objectives) : [];
-  const busy = state === "working" || state === "waiting" || state === "sleeping";
+  // Stop ends a running turn; background work stops in the Tasks panel, and
+  // a sleeping session archives like an idle one.
+  const busy = state === "working" || state === "waiting";
   return (
     <section className={`ap-session ss-${state}${active ? " active" : ""}`} aria-label={w.name}>
       <header className="ap-session-head">
@@ -143,7 +145,7 @@ function SessionCard({
             <button className="btn-inline" onClick={() => actions.onAddAgent(w.id)}>
               + Agent
             </button>
-            {busy && (
+            {state === "working" && (
               <button className="btn-inline ap-stop" onClick={() => actions.onStop(w.id)}>
                 Stop
               </button>

@@ -298,14 +298,18 @@ export function App() {
     [],
   );
   const closePanel = useCallback(() => setOpenPanel(null), []);
-  // What the Files panel shows: a path named in a reply (relative to the
-  // workspace it was named in) or, opened from the rail, that folder itself.
-  // `seq` starts the panel over for each file opened.
-  const [fileTarget, setFileTarget] = useState<{ wsId: string; ref: FileRef; seq: number } | null>(
-    null,
-  );
-  const showFile = useCallback((wsId: string, ref: FileRef) => {
-    setFileTarget((t) => ({ wsId, ref, seq: (t?.seq ?? 0) + 1 }));
+  // What the Files panel shows: a path named in the chat (relative to the
+  // workspace it was named in), kept while the chat open is in the same
+  // project (`scope`), or else the open workspace's folder. `seq` starts the
+  // panel over for each file opened.
+  const [fileTarget, setFileTarget] = useState<{
+    wsId: string;
+    ref: FileRef;
+    scope: string;
+    seq: number;
+  } | null>(null);
+  const showFile = useCallback((wsId: string, ref: FileRef, scope: string) => {
+    setFileTarget((t) => ({ wsId, ref, scope, seq: (t?.seq ?? 0) + 1 }));
     setOpenPanel("files");
   }, []);
   const togglePin = useCallback(() => setPanelPinned((p) => !p), []);
@@ -456,18 +460,26 @@ export function App() {
       onClick: () => togglePanel("files"),
     },
   ];
-  // A file opened in another project's (or workspace's) chat gives way to
-  // this workspace's folder.
+  const fileScope = activeProject?.id ?? activeWsId ?? "";
   const files =
-    fileTarget && scope.some((w) => w.id === fileTarget.wsId)
+    fileTarget && fileTarget.scope === fileScope
       ? fileTarget
-      : activeWs && { wsId: activeWs.id, ref: WORKSPACE_ROOT, seq: 0 };
+      : activeWs && { wsId: activeWs.id, ref: WORKSPACE_ROOT, scope: fileScope, seq: 0 };
   const roots = useMemo(() => fileRoots(scope), [scope]);
-  const openFileRef = useMemo(
-    () =>
-      activeWsId ? (ref: string) => showFile(activeWsId, parseFileRef(ref) ?? { path: ref }) : null,
-    [activeWsId, showFile],
-  );
+  // Opens a file named in the chat, relative to a workspace's folder: a
+  // message delivered from another session names paths in that session's.
+  const fileOpener = useMemo(() => {
+    const byWs = new Map<string, (ref: string) => void>();
+    return (wsId: string) => {
+      let open = byWs.get(wsId);
+      if (!open) {
+        open = (ref) => showFile(wsId, parseFileRef(ref) ?? { path: ref }, fileScope);
+        byWs.set(wsId, open);
+      }
+      return open;
+    };
+  }, [showFile, fileScope]);
+  const workspaceIds = useMemo(() => new Set(workspaces.map((w) => w.id)), [workspaces]);
   // Sidebar folder groups; explicit expand/collapse choices persist.
   const wsGroups = useMemo(() => groupWorkspaces(workspaces, projects), [workspaces, projects]);
   const [seenTick, setSeenTick] = useState(0);
@@ -574,7 +586,7 @@ export function App() {
     () => ({
       onOpen: (id) => {
         // On a phone the panel covers the chat: step aside for the session.
-        if (window.matchMedia?.("(max-width: 768px)").matches) setOpenPanel(null);
+        if (window.matchMedia?.(PHONE).matches) setOpenPanel(null);
         openWorkspace(id);
       },
       onStop: (id) => void interrupt(id),
@@ -589,7 +601,7 @@ export function App() {
   const taskActions = useMemo<TasksPanelActions>(
     () => ({
       onOpen: (id) => {
-        if (window.matchMedia?.("(max-width: 768px)").matches) setOpenPanel(null);
+        if (window.matchMedia?.(PHONE).matches) setOpenPanel(null);
         openWorkspace(id);
       },
       onStopTask: (id, agentId, taskId) => cancelSubagent(id, agentId, taskId),
@@ -1272,7 +1284,7 @@ export function App() {
             </div>
 
             <div className="messages" ref={messagesContainerRef} onScroll={onMessagesScrollTrack}>
-              <FileOpenContext.Provider value={openFileRef}>
+              <FileOpenContext.Provider value={fileOpener(activeWs.id)}>
                 {(() => {
                   const msgs = activeWs.messages;
                   const total = msgs.length;
@@ -1304,20 +1316,30 @@ export function App() {
                           prev.kind === "agent" &&
                           !!msg.turnId &&
                           msg.turnId === prev.turnId;
+                        const item = (
+                          <MessageItem
+                            msg={msg}
+                            agents={msg.status === "streaming" ? activeWs.agents : settledAgents}
+                            compact={compact}
+                            highlight={msg.id === highlightMsgId}
+                            onQuote={handleQuote}
+                            onLoadSubagentEvents={onLoadSubagentEvents}
+                            onCancelSubagent={onCancelSubagent}
+                            onCancelQueued={onCancelQueued}
+                            onLoadDetails={onLoadDetails}
+                            onOpenWorkspace={openWorkspace}
+                          />
+                        );
+                        const from = msg.from?.workspaceId;
                         return (
                           <MessageBoundary key={msg.id} messageId={msg.id}>
-                            <MessageItem
-                              msg={msg}
-                              agents={msg.status === "streaming" ? activeWs.agents : settledAgents}
-                              compact={compact}
-                              highlight={msg.id === highlightMsgId}
-                              onQuote={handleQuote}
-                              onLoadSubagentEvents={onLoadSubagentEvents}
-                              onCancelSubagent={onCancelSubagent}
-                              onCancelQueued={onCancelQueued}
-                              onLoadDetails={onLoadDetails}
-                              onOpenWorkspace={openWorkspace}
-                            />
+                            {from && from !== activeWs.id && workspaceIds.has(from) ? (
+                              <FileOpenContext.Provider value={fileOpener(from)}>
+                                {item}
+                              </FileOpenContext.Provider>
+                            ) : (
+                              item
+                            )}
                           </MessageBoundary>
                         );
                       })}
@@ -1658,6 +1680,8 @@ function purgeBody(workspaces: Workspace[], projects: Project[]): string {
 
 type PanelId = "agents" | "tasks" | "files";
 const WORKSPACE_ROOT: FileRef = { path: "." };
+// Where side panels become full-screen sheets (styles.css).
+const PHONE = "(max-width: 768px), (max-height: 500px)";
 const DEFAULT_PANEL_WIDTH = 380;
 const DEFAULT_FILES_WIDTH = 560;
 
@@ -1682,6 +1706,7 @@ function writeSetting(key: string, value: string): void {
 function chipLabel(ws: Workspace, connected: boolean): string {
   if (ws.agents.length === 0) return "No agents";
   if (ws.agents.length === 1) return pillLabel(ws.agents[0], connected);
+  if (!connected) return `${ws.agents.length} agents · offline`;
   const busy = stateSummary(
     ws.agents.map((a) => {
       const s = agentState(a);

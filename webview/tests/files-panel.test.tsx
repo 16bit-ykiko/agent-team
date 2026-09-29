@@ -23,6 +23,30 @@ describe("parseFileRef", () => {
       expect(parseFileRef(s), s).toBeNull();
     }
   });
+
+  it("does not take commands, routes, patterns, sites or Windows paths for a file", () => {
+    for (const s of [
+      "/compact",
+      "/model",
+      "/\\d+/",
+      "src/*.ts",
+      "C:\\Users\\me\\a.ts",
+      "C:\\Users\\me\\a.ts:12",
+      "C:/Users/me/a.ts",
+      "example.com/index.html",
+    ]) {
+      expect(parseFileRef(s), s).toBeNull();
+    }
+  });
+
+  it("knows files by name, line anchors without an L, and drops other anchors", () => {
+    expect(parseFileRef(".gitignore")).toEqual({ path: ".gitignore" });
+    expect(parseFileRef("Makefile:3")).toEqual({ path: "Makefile", line: 3 });
+    expect(parseFileRef("docker/Dockerfile")).toEqual({ path: "docker/Dockerfile" });
+    expect(parseFileRef("src/a.ts#12")).toEqual({ path: "src/a.ts", line: 12 });
+    expect(parseFileRef("docs/guide.md#setup")).toEqual({ path: "docs/guide.md" });
+    expect(parseFileRef("/api/file")).toEqual({ path: "/api/file" });
+  });
 });
 
 describe("languageFor", () => {
@@ -164,6 +188,40 @@ describe("FilesPanel", () => {
     expect(other.selectedOptions[0].textContent).toBe("Elsewhere");
   });
 
+  it("shows a markdown file opened at a line as source, with the line marked", async () => {
+    views = {
+      "docs/plan.md": {
+        kind: "text",
+        path: "/w/docs/plan.md",
+        size: 20,
+        content: "# Plan\n\n- one\n- two\n",
+        truncated: false,
+      },
+    };
+    const { container, getByText } = open("docs/plan.md", 3);
+    await waitFor(() => expect(container.querySelector(".code-mark")).not.toBeNull());
+    fireEvent.click(getByText("Preview"));
+    expect(container.querySelector(".file-markdown h1")).not.toBeNull();
+  });
+
+  it("goes up from a path the server has not resolved, not to the root", async () => {
+    views = {};
+    const { container } = open(".");
+    await waitFor(() => expect(container.querySelector(".file-error")).not.toBeNull());
+    fireEvent.click(container.querySelector('[title="Parent folder"]')!);
+    await waitFor(() => expect(requested.at(-1)).toBe(".."));
+  });
+
+  it("says Copied only when the path was copied", async () => {
+    views = {};
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    const { container, getByTitle } = open("x");
+    await waitFor(() => expect(container.querySelector(".file-error")).not.toBeNull());
+    fireEvent.click(getByTitle("Copy path"));
+    await Promise.resolve();
+    expect(getByTitle("Copy path").textContent).toBe("Copy");
+  });
+
   it("offers no folder choice for a single workspace", async () => {
     views = { ".": { kind: "dir", path: "/w", truncated: false, entries: [] } };
     const { container, queryByLabelText } = open(".", undefined, undefined, [
@@ -212,6 +270,50 @@ describe("file references in replies", () => {
     fireEvent.click(refs[0]);
     fireEvent.click(refs[1]);
     expect(open.mock.calls).toEqual([["service/src/index.ts:1182"], ["/tmp/notes.md"]]);
+  });
+
+  const refs = (text: string) => {
+    const open = vi.fn();
+    const { container, unmount } = md(text, open);
+    for (const r of container.querySelectorAll(".file-ref")) fireEvent.click(r);
+    const html = container.innerHTML;
+    unmount();
+    return { calls: open.mock.calls.map((c: unknown[]) => c[0]), html };
+  };
+
+  it("opens links whose target has a line, or a file:// scheme", () => {
+    expect(refs("[a](a.ts:12) and [b](file:///home/me/b.ts)").calls).toEqual([
+      "a.ts:12",
+      "/home/me/b.ts",
+    ]);
+  });
+
+  it("opens link targets decoded, without a query or a section anchor", () => {
+    expect(
+      refs("[说明](docs/说明.md) [x](<my file.md>) [s](docs/setup.md#install) [q](a.ts?plain=1)")
+        .calls,
+    ).toEqual(["docs/说明.md", "my file.md", "docs/setup.md", "a.ts"]);
+    expect(refs("[l](src/a.ts#L3)").calls).toEqual(["src/a.ts#L3"]);
+  });
+
+  it("leaves page anchors plain and mail links as links", () => {
+    const { calls, html } = refs("[Install](#install) [mail](mailto:a@b.c)");
+    expect(calls).toEqual([]);
+    expect(html).toContain('href="mailto:a@b.c"');
+  });
+
+  it("opens code inside a link once, as the link", () => {
+    expect(refs("[`src/a.ts`](https://github.com/o/r/blob/main/src/a.ts#L3)").calls).toEqual([]);
+    expect(refs("[`src/a.ts`](src/a.ts:12)").calls).toEqual(["src/a.ts:12"]);
+  });
+
+  it("opens from the keyboard", () => {
+    const open = vi.fn();
+    const { container } = md("See `src/a.ts:3`.", open);
+    const ref = container.querySelector(".file-ref") as HTMLElement;
+    expect(ref.tabIndex).toBe(0);
+    fireEvent.keyDown(ref, { key: "Enter" });
+    expect(open).toHaveBeenCalledWith("src/a.ts:3");
   });
 
   it("stays plain text where there is no workspace to open it in", () => {
