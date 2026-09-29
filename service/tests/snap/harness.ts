@@ -176,7 +176,9 @@ export async function replay(backend: Backend, rec: Recording): Promise<Replay> 
 
   const live = { feeder: null as Feeder<unknown> | null };
   const rollouts = new Map<string, ContextUsage>();
-  const base = Date.now();
+  // The recording's own clock, so times in the transcript (wake-ups) are
+  // the same on every run.
+  const base = Date.parse(rec.header.recordedAt) || Date.now();
   const at = (t: number) => {
     if (vi.isFakeTimers()) vi.setSystemTime(base + t);
   };
@@ -243,6 +245,14 @@ export async function replay(backend: Backend, rec: Recording): Promise<Replay> 
           for (const s of host.created) s.abort();
           await flush();
         }
+      } else if ("control" in e && !e.control.error) {
+        // The user's controls, as the panel sends them: Stop (the turn
+        // only) and a background task's own stop.
+        if (e.control.op === "interrupt") await ws.interruptAll();
+        if (e.control.op === "stop_task" && e.control.taskId) {
+          ws.cancelSubagent([...ws.agents.keys()][0], e.control.taskId);
+        }
+        await flush();
       } else if ("frame" in e) {
         live.feeder?.push(e.frame);
         await flush();

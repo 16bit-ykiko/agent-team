@@ -3806,6 +3806,88 @@ span.katex-display {
   margin-bottom: 8px;
 }
 
+/* Tasks panel */
+.tp-empty {
+  color: var(--text-muted);
+  line-height: 1.6;
+  font-size: 12px;
+}
+.tasks-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+}
+.tp-session {
+  padding: 9px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.tp-session-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.tp-stop-all {
+  flex-shrink: 0;
+}
+.tp-stop-all:hover,
+.tp-stop:hover {
+  color: var(--error);
+}
+.tp-agent {
+  margin: 8px 0 0 15px;
+}
+.tp-agent-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.tp-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 0 3px 24px;
+}
+.tp-type {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 15px;
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.tp-type.t-local_agent {
+  color: var(--success);
+  background: rgba(152, 195, 121, 0.12);
+}
+.tp-type.t-wake {
+  color: var(--purple);
+  background: rgba(198, 120, 221, 0.12);
+}
+.tp-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.tp-when {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.tp-stop {
+  flex-shrink: 0;
+}
+
 @media (max-width: 768px), (max-height: 500px) {
   .side-rail {
     display: none;

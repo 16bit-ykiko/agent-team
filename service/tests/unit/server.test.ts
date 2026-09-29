@@ -285,6 +285,14 @@ describe("server websocket", () => {
     expect(errors).toEqual(["Agent not found: first", "Agent not found: second"]);
   });
 
+  it("stops turns without a word and says when there is no wake-up to cancel", async () => {
+    const { ws, next } = await connect();
+    ws.send(JSON.stringify({ type: "interrupt", workspaceId: "ws-h" }));
+    ws.send(JSON.stringify({ type: "cancel_wakeup", workspaceId: "ws-h", agentId: "nobody" }));
+    expect((await next("error")).message).toBe("No wake-up to cancel");
+    ws.close();
+  });
+
   it("creates a project with its lead workspace and lists it on connect", async () => {
     const { ws, next } = await connect();
     ws.send(JSON.stringify({ type: "create_project", name: "demo", path: base }));

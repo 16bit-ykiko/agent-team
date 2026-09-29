@@ -236,6 +236,8 @@ export interface AgentInfo {
   account?: string;
   // Context occupancy at the end of its last turn, when known.
   context?: ContextUsage | null;
+  // The scheduled wake-up it sleeps until.
+  wake?: { at: number; reason: string } | null;
 }
 
 export interface BackgroundTask {
@@ -1132,6 +1134,16 @@ export function useServer() {
     ),
     abort: useCallback(
       (wsId: string, agentId?: string) => send({ type: "abort", workspaceId: wsId, agentId }),
+      [send],
+    ),
+    // Stop the running turn only; background tasks and wake-ups go on.
+    interrupt: useCallback(
+      (wsId: string, agentId?: string) => send({ type: "interrupt", workspaceId: wsId, agentId }),
+      [send],
+    ),
+    cancelWakeup: useCallback(
+      (wsId: string, agentId: string) =>
+        send({ type: "cancel_wakeup", workspaceId: wsId, agentId }),
       [send],
     ),
     clearContext: useCallback(

@@ -4,5 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
+    // Wake-up times render as local clock times in the snap transcripts.
+    env: { TZ: "UTC" },
   },
 });

@@ -337,6 +337,31 @@ export const MOCK_PROJECT_WORKSPACES: Workspace[] = [
     name: "edits: 原子落盘",
     cwd: "/home/user/projects/clice-edits",
     projectLink: { projectId: "proj-mock", role: "worker" },
+    agents: [
+      {
+        ...MOCK_AGENTS[0],
+        state: "waiting",
+        backgroundTasks: [
+          {
+            id: "bmock1",
+            type: "local_bash",
+            description: "pixi run test -- --filter edits",
+            since: Date.now() - 4 * 60_000,
+          },
+          {
+            id: "amock1",
+            type: "local_agent",
+            description: "Audit write paths for torn renames",
+            since: Date.now() - 50_000,
+          },
+        ],
+      },
+      {
+        ...MOCK_AGENTS[1],
+        state: "sleeping",
+        wake: { at: Date.now() + 18 * 60_000, reason: "check the CI run on #712" },
+      },
+    ],
     messages: [],
     messagesLoaded: true,
   },

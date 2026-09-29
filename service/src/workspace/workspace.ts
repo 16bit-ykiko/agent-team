@@ -80,6 +80,8 @@ export interface AgentRuntimeInfo extends AgentInfo {
   backgroundTasks: BackgroundTask[];
   // Context occupancy at the end of its last turn, when known.
   context: ContextUsage | null;
+  // A scheduled wake-up it is sleeping until.
+  wake: { at: number; reason: string } | null;
 }
 
 export interface AgentState extends AgentInfo {
@@ -519,7 +521,9 @@ export class Workspace {
           // Defense in depth: a turn that ends with neither text nor any
           // visible event is a failure (CLI crash, network drop, spawn
           // problem) — render a diagnostic instead of a silent empty bubble.
-          if (!entry.currentMsg.content.trim() && !(entry.currentMsg.events ?? []).length) {
+          if (event.interrupted) {
+            entry.currentMsg.content = withInterrupted(entry.currentMsg.content);
+          } else if (!entry.currentMsg.content.trim() && !(entry.currentMsg.events ?? []).length) {
             entry.currentMsg.content =
               "*(no output — the session ended without producing anything; check network/credentials or server logs)*";
           }
@@ -642,6 +646,8 @@ export class Workspace {
       const entry = this.agents.get(agentId);
       if (entry) entry.runState = state;
       this.cb?.onAgentState?.(this.id, agentId, state);
+      // The pending wake-up (and its time) comes and goes with the state.
+      if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
       // A stopped Codex turn ends only when its process has exited, with no
       // terminal event; this is the one signal that the queue may move.
       if (state === "idle") setTimeout(() => this.dequeueNext(agentId), 0);
@@ -1090,13 +1096,33 @@ export class Workspace {
     }
   }
 
+  // Stop the running turns and nothing else: background tasks and pending
+  // wake-ups go on. A backend without interrupts (Codex) stops as by abort.
+  async interruptAgent(agentId: string): Promise<void> {
+    const entry = this.agents.get(agentId);
+    if (!entry) return;
+    if (entry.session.interrupt) {
+      await entry.session.interrupt();
+      return;
+    }
+    this.abortAgent(agentId);
+  }
+
+  async interruptAll(): Promise<void> {
+    await Promise.all([...this.agents.keys()].map((id) => this.interruptAgent(id)));
+  }
+
+  // Drops an agent's pending wake-up; false when it has none (or is busy).
+  cancelWake(agentId: string): boolean {
+    const entry = this.agents.get(agentId);
+    if (!entry?.session.cancelWake?.()) return false;
+    this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
+    return true;
+  }
+
   private finalizeAbort(entry: AgentEntry): void {
     if (entry.currentMsg && entry.currentMsg.status === "streaming") {
-      if (entry.currentMsg.content) {
-        entry.currentMsg.content += "\n\n*\\[interrupted\\]*";
-      } else {
-        entry.currentMsg.content = "*\\[interrupted\\]*";
-      }
+      entry.currentMsg.content = withInterrupted(entry.currentMsg.content);
       entry.currentMsg.status = "done";
       this.cb?.onMessageDone(
         this.id,
@@ -1145,6 +1171,7 @@ export class Workspace {
       goal: a.session.getState().config.goal ?? null,
       backgroundTasks: a.session.backgroundTaskList ?? [],
       context: this.lastContext(a),
+      wake: a.session.wake ?? null,
     };
   }
 
@@ -1363,4 +1390,9 @@ function formatContextUsage(data: Record<string, unknown>): string {
 function renderBar(pct: number): string {
   const filled = Math.max(0, Math.min(20, Math.round(pct / 5)));
   return "█".repeat(filled) + "░".repeat(20 - filled);
+}
+
+// A turn the user stopped keeps what it said, marked.
+function withInterrupted(content: string): string {
+  return content ? `${content}\n\n*\\[interrupted\\]*` : "*\\[interrupted\\]*";
 }

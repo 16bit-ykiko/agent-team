@@ -68,6 +68,9 @@ export interface StreamEvent {
   effort?: string;
   // On result events: thinking tokens and time of the turn's main loop.
   thinking?: ThinkingStats;
+  // On result events: the user stopped the turn (interrupt); the process and
+  // its background work go on.
+  interrupted?: boolean;
   // On thinking events: how long the block took to think, and (patched in
   // by a later thinking_tokens event) how many tokens it spent.
   durationMs?: number;
@@ -289,6 +292,10 @@ export class ClaudeSession extends EventEmitter {
   // Wake-up scheduled during the current turn; becomes the idle activity
   // label ("sleeping until …") once the turn ends.
   private pendingWake: { at: number; reason: string; stop: boolean } | null = null;
+  // Why the agent sleeps, while it does.
+  private wakeReason = "";
+  // An interrupt we asked for: the error result it produces is a stop.
+  private interruptRequested = false;
   // When the pending wake-up fires; set while sleeping. A turn the user
   // starts in the meantime does not cancel it.
   private wakeAt: number | null = null;
@@ -1409,6 +1416,8 @@ export class ClaudeSession extends EventEmitter {
           ? { ...this.turnThinking }
           : undefined;
       this.emit("event", { kind: "result", content: text, context, effort, thinking });
+    } else if (this.interruptRequested) {
+      this.emit("event", { kind: "result", content: "", interrupted: true });
     } else {
       const errResult = msg as Record<string, unknown>;
       const errList = errResult.errors as string[] | undefined;
@@ -1419,6 +1428,7 @@ export class ClaudeSession extends EventEmitter {
       this.emit("event", { kind: "error", content: errMsg });
     }
 
+    this.interruptRequested = false;
     this.turnThinking = { tokens: 0, durationMs: 0 };
     this.thinkingStartedAt = 0;
     this.usage.turns++;
@@ -1438,7 +1448,10 @@ export class ClaudeSession extends EventEmitter {
       if (!this.agentTaskIds.has(parent)) this.nestedToolUseToParent.delete(toolUseId);
     }
     this.setActivity(null);
-    if (this.pendingWake) this.wakeAt = this.pendingWake.stop ? null : this.pendingWake.at;
+    if (this.pendingWake) {
+      this.wakeAt = this.pendingWake.stop ? null : this.pendingWake.at;
+      this.wakeReason = this.pendingWake.stop ? "" : this.pendingWake.reason;
+    }
     this.pendingWake = null;
     this.updateRunState();
   }
@@ -1538,6 +1551,34 @@ export class ClaudeSession extends EventEmitter {
     this.closeQuery();
   }
 
+  // Stops the running turn and nothing else: background tasks and a pending
+  // wake-up live on in the process (perTaskStopAffordance is declared, see
+  // snap fixture claude/interrupt-bg). False when no turn runs.
+  async interrupt(): Promise<boolean> {
+    if (!this.queryInstance || !this.processing) return false;
+    this.interruptRequested = true;
+    try {
+      await this.queryInstance.interrupt();
+    } catch (e) {
+      this.interruptRequested = false;
+      throw e;
+    }
+    return true;
+  }
+
+  // A pending wake-up is no task the CLI can stop, and an interrupt with no
+  // turn running leaves it in place (snap fixture claude/wakeup-interrupt):
+  // it goes with the process. The session resumes on the next message.
+  cancelWake(): boolean {
+    if (this.wakeAt === null || this.processing) return false;
+    this.abort();
+    return true;
+  }
+
+  get wake(): { at: number; reason: string } | null {
+    return this.wakeAt === null ? null : { at: this.wakeAt, reason: this.wakeReason };
+  }
+
   getState(): SessionState {
     return {
       sessionId: this.sessionId,
@@ -1593,6 +1634,8 @@ export class ClaudeSession extends EventEmitter {
       // settings layer outranks the user's settings.json.
       opts.settings = { fastMode: true };
     }
+    // The panel can stop each background task, so an interrupt may spare them.
+    opts.perTaskStopAffordance = true;
     if (this.config.permissionMode) {
       opts.permissionMode = this.config.permissionMode as PermissionMode;
       if (this.config.permissionMode === "bypassPermissions") {

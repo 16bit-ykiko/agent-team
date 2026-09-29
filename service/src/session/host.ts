@@ -29,6 +29,9 @@ export interface HostSessionHandle extends EventEmitter {
   setEffort?(level: string): void;
   setFastMode?(on: boolean): void;
   setGoal?(goal: string | null): void;
+  interrupt?(): Promise<boolean>;
+  cancelWake?(): boolean;
+  readonly wake?: { at: number; reason: string } | null;
   setPanelTools?(tools: PanelToolset | null): void;
   stopTask?(taskId: string): Promise<void>;
   simulateRateLimit?(info: { rateLimitType?: string; resetsAt?: number }): void;

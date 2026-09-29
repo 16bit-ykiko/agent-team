@@ -406,6 +406,29 @@ export class Server {
         this.abortAgent(msg.workspaceId as string, msg.agentId as string | undefined);
         return;
 
+      // Stop the running turn only; background tasks and wake-ups go on.
+      case "interrupt": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        const agentId = msg.agentId as string | undefined;
+        if (!workspace) return;
+        void (agentId ? workspace.interruptAgent(agentId) : workspace.interruptAll()).catch(
+          (e: unknown) =>
+            this.sendJson(ws, {
+              type: "error",
+              message: `Stop failed: ${e instanceof Error ? e.message : String(e)}`,
+            }),
+        );
+        return;
+      }
+
+      case "cancel_wakeup": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        if (!workspace?.cancelWake(msg.agentId as string)) {
+          this.sendJson(ws, { type: "error", message: "No wake-up to cancel" });
+        }
+        return;
+      }
+
       case "set_default_account":
         this.setDefaultAccount(ws, (msg.account as string | null) ?? null);
         return;

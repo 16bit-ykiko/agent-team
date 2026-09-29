@@ -1666,3 +1666,67 @@ describe("background cards when the CLI process goes away", () => {
     expect(nested?.subagent?.taskId).toBe("B");
   });
 });
+
+describe("stopping a turn, not the session", () => {
+  type Internals = {
+    queryInstance: unknown;
+    processing: boolean;
+    wakeAt: number | null;
+    buildOptions(sdk: unknown): Record<string, unknown>;
+  };
+
+  it("interrupts only a running turn and shows its end as the user's stop", async () => {
+    const { events, dispatch, session } = (() => {
+      const s = new ClaudeSession({ cwd: "/tmp" });
+      const evs: StreamEvent[] = [];
+      s.on("event", (e: StreamEvent) => evs.push(e));
+      const d = (msg: unknown) =>
+        (s as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage(msg);
+      return { events: evs, dispatch: d, session: s };
+    })();
+    const inner = session as unknown as Internals;
+    const interrupt = vi.fn(() => Promise.resolve({ still_queued: [] }));
+    inner.queryInstance = { interrupt, close: () => {} };
+    expect(await session.interrupt()).toBe(false);
+    expect(interrupt).not.toHaveBeenCalled();
+
+    inner.processing = true;
+    expect(await session.interrupt()).toBe(true);
+    expect(interrupt).toHaveBeenCalledTimes(1);
+    dispatch({
+      type: "result",
+      subtype: "error_during_execution",
+      session_id: "s",
+      errors: ["[ede_diagnostic] result_type=user"],
+    });
+    expect(events.at(-1)).toMatchObject({ kind: "result", interrupted: true });
+    expect(events.some((e) => e.kind === "error")).toBe(false);
+
+    // The next failure is a failure again.
+    inner.processing = true;
+    dispatch({ type: "result", subtype: "error_during_execution", session_id: "s", errors: ["x"] });
+    expect(events.at(-1)).toMatchObject({ kind: "error", content: "x" });
+  });
+
+  it("cancels a pending wake-up by closing the process, never mid-turn", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const inner = session as unknown as Internals;
+    const close = vi.fn();
+    inner.queryInstance = { close, interrupt: () => Promise.resolve() };
+    expect(session.cancelWake()).toBe(false);
+    inner.wakeAt = Date.now() + 60_000;
+    expect(session.wake).toEqual({ at: inner.wakeAt, reason: "" });
+    inner.processing = true;
+    expect(session.cancelWake()).toBe(false);
+    inner.processing = false;
+    expect(session.cancelWake()).toBe(true);
+    expect(close).toHaveBeenCalled();
+    expect(session.wake).toBeNull();
+  });
+
+  it("declares per-task stops so an interrupt spares background work", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const opts = (session as unknown as Internals).buildOptions({ query: () => null });
+    expect(opts.perTaskStopAffordance).toBe(true);
+  });
+});

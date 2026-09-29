@@ -778,3 +778,25 @@ describe("messages delivered from a project", () => {
     expect(restored.getInfo(false).projectLink).toEqual({ projectId: "proj-1", role: "worker" });
   });
 });
+
+describe("interrupting a workspace", () => {
+  it("falls back to a full stop for a backend without interrupts", async () => {
+    const { ws } = makeWorkspace();
+    await ws.sendMessage("long job");
+    expect(ws.messages.find((m) => m.kind === "agent")!.status).toBe("streaming");
+    await ws.interruptAll();
+    const reply = ws.messages.find((m) => m.kind === "agent")!;
+    expect(reply).toMatchObject({ status: "done", content: "*\\[interrupted\\]*" });
+  });
+
+  it("renders a turn the backend reports as interrupted like a stop", async () => {
+    const { ws, emit } = makeWorkspace();
+    await ws.sendMessage("go");
+    emit({ kind: "text_delta", content: "halfway" });
+    emit({ kind: "result", content: "", interrupted: true });
+    expect(ws.messages.find((m) => m.kind === "agent")).toMatchObject({
+      status: "done",
+      content: "halfway\n\n*\\[interrupted\\]*",
+    });
+  });
+});

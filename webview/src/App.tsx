@@ -12,6 +12,7 @@ import { agentQueues, agentState, isAgentActive, pillLabel } from "./workspace/a
 import { SidePanel } from "./panels/SidePanel";
 import { Rail, type RailItem } from "./panels/Rail";
 import { AgentsPanel, type AgentsPanelActions } from "./panels/AgentsPanel";
+import { TasksPanel, workCount, type TasksPanelActions } from "./panels/TasksPanel";
 import { scopeSessions, sessionState, stateSummary } from "./panels/scope";
 import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
 import { isImeKeyEvent } from "./chat/ime";
@@ -132,6 +133,8 @@ export function App() {
     removeAgent,
     sendMessage,
     abort,
+    interrupt,
+    cancelWakeup,
     clearContext,
     loadMessages,
     loadMessageDetails,
@@ -420,6 +423,14 @@ export function App() {
       badge: scope.filter((w) => sessionState(w) === "working").length,
       onClick: () => togglePanel("agents"),
     },
+    {
+      id: "tasks",
+      label: "Background tasks",
+      icon: "◷",
+      active: openPanel === "tasks",
+      badge: workCount(scope),
+      onClick: () => togglePanel("tasks"),
+    },
   ];
   // Sidebar folder groups; explicit expand/collapse choices persist.
   const wsGroups = useMemo(() => groupWorkspaces(workspaces, projects), [workspaces, projects]);
@@ -530,14 +541,26 @@ export function App() {
         if (window.matchMedia?.("(max-width: 768px)").matches) setOpenPanel(null);
         openWorkspace(id);
       },
-      onStop: (id) => abort(id),
+      onStop: (id) => void interrupt(id),
       onArchive: (id) => archiveWorkspace(id),
       onRestore: (id) => unarchiveWorkspace(id),
       onAddAgent: (id) => setAddAgentFor(id),
       onClearContext: (id, agentId) => clearContext(id, agentId),
       onRemoveAgent: (id, agentId) => removeAgent(id, agentId),
     }),
-    [openWorkspace, abort, archiveWorkspace, unarchiveWorkspace, clearContext, removeAgent],
+    [openWorkspace, interrupt, archiveWorkspace, unarchiveWorkspace, clearContext, removeAgent],
+  );
+  const taskActions = useMemo<TasksPanelActions>(
+    () => ({
+      onOpen: (id) => {
+        if (window.matchMedia?.("(max-width: 768px)").matches) setOpenPanel(null);
+        openWorkspace(id);
+      },
+      onStopTask: (id, agentId, taskId) => cancelSubagent(id, agentId, taskId),
+      onCancelWake: (id, agentId) => cancelWakeup(id, agentId),
+      onStopAll: (id) => abort(id),
+    }),
+    [openWorkspace, cancelSubagent, cancelWakeup, abort],
   );
 
   const onDeleteWorkspace = useCallback(
@@ -1396,8 +1419,8 @@ export function App() {
                 {othersRunning && (
                   <button
                     className="btn-abort btn-abort-others"
-                    title="Stop all running agents"
-                    onClick={() => abort(activeWs.id)}
+                    title="Stop what every agent is doing now; background tasks keep going"
+                    onClick={() => interrupt(activeWs.id)}
                   >
                     <span className="btn-text">Stop all</span>
                     <span className="btn-icon" aria-hidden="true">
@@ -1408,8 +1431,8 @@ export function App() {
                 {targetBusy && (
                   <button
                     className="btn-abort"
-                    title={`Stop ${targetAgent.name}`}
-                    onClick={() => abort(activeWs.id, targetAgent.id)}
+                    title={`Stop ${targetAgent.name}'s turn; background tasks keep going`}
+                    onClick={() => interrupt(activeWs.id, targetAgent.id)}
                   >
                     ◼
                   </button>
@@ -1471,6 +1494,18 @@ export function App() {
             connected={connected}
             actions={agentActions}
           />
+        </SidePanel>
+      )}
+      {activeWs && openPanel === "tasks" && (
+        <SidePanel
+          title={activeProject ? `${activeProject.name} · background` : "Background tasks"}
+          pinned={panelPinned}
+          width={panelWidth}
+          onPin={togglePin}
+          onClose={closePanel}
+          onWidth={setPanelWidth}
+        >
+          <TasksPanel sessions={scope} actions={taskActions} />
         </SidePanel>
       )}
       {activeWs && <Rail className="side-rail" items={railItems} />}
@@ -1565,7 +1600,7 @@ function purgeBody(workspaces: Workspace[], projects: Project[]): string {
   return `Permanently delete ${archived.length - leads} archived workspace(s), including their message history and logs.${kept}`;
 }
 
-type PanelId = "agents";
+type PanelId = "agents" | "tasks";
 const DEFAULT_PANEL_WIDTH = 380;
 
 function readSetting(key: string): string | null {
