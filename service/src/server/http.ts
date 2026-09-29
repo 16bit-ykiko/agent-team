@@ -3,9 +3,10 @@ import * as fs from "fs";
 import * as os from "os";
 import type * as http from "http";
 import * as path from "path";
+import { pipeline } from "stream";
 import * as zlib from "zlib";
 import type { Auth } from "./auth";
-import { readFileView, resolveFilePath } from "../repo/files";
+import { NotRegularFile, readFileView, resolveFilePath } from "../repo/files";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -104,7 +105,7 @@ export class HttpHandler {
         // Uploaded .html/.svg would otherwise run script on the app's origin.
         res.setHeader("Content-Security-Policy", "sandbox");
         res.setHeader("X-Content-Type-Options", "nosniff");
-        fs.createReadStream(target).pipe(res);
+        pipeline(fs.createReadStream(target), res, () => {});
         return;
       }
 
@@ -138,7 +139,7 @@ export class HttpHandler {
         res.end(gz);
         return;
       }
-      fs.createReadStream(target).pipe(res);
+      pipeline(fs.createReadStream(target), res, () => {});
     } catch (e) {
       res.statusCode = 500;
       res.end(String(e));
@@ -165,14 +166,41 @@ export class HttpHandler {
     const input = url.searchParams.get("path") ?? "";
     const cwd = this.cwdOf(url.searchParams.get("ws") ?? "") ?? os.homedir();
     const abs = resolveFilePath(cwd, input || ".");
-    const fail = (status: number, error: string) => {
+    const fail = (e: unknown) => {
+      const code = (e as NodeJS.ErrnoException).code;
+      const [status, error] =
+        e instanceof NotRegularFile
+          ? [400, e.message]
+          : code === "ENOENT" || code === "ENOTDIR"
+            ? [404, "No such file or directory"]
+            : code === "EACCES" || code === "EPERM"
+              ? [403, "Permission denied"]
+              : [500, e instanceof Error ? e.message : String(e)];
       res.statusCode = status;
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.end(JSON.stringify({ error, path: abs }));
     };
-    try {
-      if (raw) {
-        if (!fs.statSync(abs).isFile()) return fail(400, "Not a file");
+    if (raw) {
+      this.sendRaw(abs, res, fail);
+      return;
+    }
+    readFileView(abs).then((view) => {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.end(JSON.stringify(view));
+    }, fail);
+  }
+
+  // Headers go out only once the file is open, so an unreadable file is
+  // still an error response; a cancelled download closes the file.
+  private sendRaw(abs: string, res: http.ServerResponse, fail: (e: unknown) => void): void {
+    fs.promises.stat(abs).then((stat) => {
+      if (!stat.isFile()) return fail(new NotRegularFile());
+      const stream = fs.createReadStream(abs);
+      stream.once("error", (e) => {
+        if (!res.headersSent) fail(e);
+      });
+      stream.once("open", () => {
         const ext = path.extname(abs).toLowerCase();
         res.setHeader("Content-Type", MIME[ext] ?? "application/octet-stream");
         // A previewed .html/.svg must not run script on the app's origin; a
@@ -182,18 +210,9 @@ export class HttpHandler {
         res.setHeader("Cache-Control", "no-store");
         const name = encodeURIComponent(path.basename(abs));
         res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${name}`);
-        fs.createReadStream(abs).pipe(res);
-        return;
-      }
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.setHeader("Cache-Control", "no-store");
-      res.end(JSON.stringify(readFileView(abs)));
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || code === "ENOTDIR") return fail(404, "No such file or directory");
-      if (code === "EACCES" || code === "EPERM") return fail(403, "Permission denied");
-      fail(500, e instanceof Error ? e.message : String(e));
-    }
+        pipeline(stream, res, () => {});
+      });
+    }, fail);
   }
 
   private handleUpload(req: http.IncomingMessage, res: http.ServerResponse): void {

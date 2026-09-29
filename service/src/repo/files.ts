@@ -36,42 +36,56 @@ function looksBinary(head: Buffer): boolean {
   return head.length > 0 && control / head.length > 0.1;
 }
 
-export function readFileView(abs: string): FileView {
-  const stat = fs.statSync(abs);
-  if (stat.isDirectory()) {
-    const dirents = fs.readdirSync(abs, { withFileTypes: true });
-    const entries = dirents.slice(0, DIR_LIMIT).map((d): DirEntry => {
-      let dir = d.isDirectory();
-      let size = 0;
-      try {
-        const s = fs.statSync(path.join(abs, d.name));
-        dir = s.isDirectory();
-        size = s.size;
-      } catch {
-        // A dangling symlink: listed, not followed.
-      }
-      return { name: d.name, dir, size };
-    });
-    entries.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
-    return { kind: "dir", path: abs, entries, truncated: dirents.length > DIR_LIMIT };
+// Only regular files are opened: a FIFO would block until a writer shows up.
+export class NotRegularFile extends Error {
+  constructor() {
+    super("Not a regular file");
   }
+}
+
+// Asynchronous throughout: a huge folder or a slow mount must not stall the
+// server's event loop.
+export async function readFileView(abs: string): Promise<FileView> {
+  const stat = await fs.promises.stat(abs);
+  if (stat.isDirectory()) {
+    const dirents = await fs.promises.readdir(abs, { withFileTypes: true });
+    const entries = await Promise.all(
+      dirents.map(async (d): Promise<DirEntry> => {
+        try {
+          const s = await fs.promises.stat(path.join(abs, d.name));
+          return { name: d.name, dir: s.isDirectory(), size: s.size };
+        } catch {
+          // A dangling symlink: listed, not followed.
+          return { name: d.name, dir: d.isDirectory(), size: 0 };
+        }
+      }),
+    );
+    entries.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name));
+    return {
+      kind: "dir",
+      path: abs,
+      entries: entries.slice(0, DIR_LIMIT),
+      truncated: entries.length > DIR_LIMIT,
+    };
+  }
+  if (!stat.isFile()) throw new NotRegularFile();
   if (IMAGE_EXTS.has(path.extname(abs).toLowerCase())) {
     return { kind: "image", path: abs, size: stat.size };
   }
-  const fd = fs.openSync(abs, "r");
+  const file = await fs.promises.open(abs, "r");
   try {
     const buf = Buffer.alloc(Math.min(stat.size, TEXT_LIMIT));
-    const read = fs.readSync(fd, buf, 0, buf.length, 0);
-    const bytes = buf.subarray(0, read);
+    const { bytesRead } = await file.read(buf, 0, buf.length, 0);
+    const bytes = buf.subarray(0, bytesRead);
     if (looksBinary(bytes.subarray(0, 8192))) return { kind: "binary", path: abs, size: stat.size };
     return {
       kind: "text",
       path: abs,
       size: stat.size,
       content: bytes.toString("utf-8"),
-      truncated: stat.size > read,
+      truncated: stat.size > bytesRead,
     };
   } finally {
-    fs.closeSync(fd);
+    await file.close();
   }
 }
