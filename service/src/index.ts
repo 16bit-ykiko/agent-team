@@ -7,7 +7,7 @@ import * as path from "path";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import { WebSocketServer, WebSocket } from "ws";
-import { Workspace, WorkspaceCallbacks } from "./task";
+import { Workspace, WorkspaceCallbacks } from "./workspace/workspace";
 import {
   saveWorkspace,
   deleteWorkspaceState,
@@ -19,16 +19,16 @@ import {
   loadSettings,
   saveSettings,
   RuntimeSettings,
-} from "./state";
-import { loadConfig, AppConfig, effectiveAccount, pickFailoverAccount } from "./config";
-import { AGENT_PRESETS, MODEL_OPTIONS, backendForModel } from "./presets";
-import { CommandInfo, StreamEvent } from "./claude-session";
-import { gitStatus, getPrInfo, GitInfo, PrInfo } from "./git";
-import { completeDirs, resolveWorkspacePath } from "./dirs";
-import { searchMessages } from "./search";
-import { summarizeMessages } from "./summary";
+} from "./workspace/state";
+import { loadConfig, AppConfig, effectiveAccount, pickFailoverAccount } from "./config/config";
+import { AGENT_PRESETS, MODEL_OPTIONS, backendForModel } from "./config/presets";
+import { CommandInfo, StreamEvent } from "./session/claude";
+import { gitStatus, getPrInfo, GitInfo, PrInfo } from "./repo/git";
+import { completeDirs, resolveWorkspacePath } from "./repo/dirs";
+import { searchMessages } from "./workspace/search";
+import { summarizeMessages } from "./workspace/summary";
 import * as zlib from "zlib";
-import { HostRegistry, LocalHost } from "./host";
+import { HostRegistry, LocalHost } from "./session/host";
 
 // Commands handled by this server (Workspace.tryHandleCommand) rather than
 // forwarded to the agent. Merged into the SDK command list for autocomplete.

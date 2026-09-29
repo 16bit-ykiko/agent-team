@@ -1,11 +1,11 @@
 ---
 name: add-model
-description: Add or rename a Claude or Codex model in agent-team — presets entry, verifying the binary the server actually runs supports it, SDK/CLI bumps, smoke tests. Read BEFORE editing service/src/presets.ts.
+description: Add or rename a Claude or Codex model in agent-team — presets entry, verifying the binary the server actually runs supports it, SDK/CLI bumps, smoke tests. Read BEFORE editing service/src/config/presets.ts.
 ---
 
 # Adding a model
 
-`MODEL_OPTIONS` in `service/src/presets.ts` only populates the picker. Whether the model _works_ depends on the binary the server spawns, and the two backends resolve it in opposite ways. Both have burned a deploy before: the option appeared and every session failed.
+`MODEL_OPTIONS` in `service/src/config/presets.ts` only populates the picker. Whether the model _works_ depends on the binary the server spawns, and the two backends resolve it in opposite ways. Both have burned a deploy before: the option appeared and every session failed.
 
 ## Claude
 
@@ -28,7 +28,7 @@ Then the preset: id, label, `backend: "claude"`, `defaultEffort`, whether it `su
 
 ## Codex
 
-`getCodexBin()` in `service/src/codex-session.ts` tries `which codex` **first**, so the system CLI (`~/.pixi/envs/nodejs/bin/codex`) runs; the `@openai/codex-*` binaries under `node_modules` are never executed. Bump the CLI, not (only) the workspace SDK:
+`getCodexBin()` in `service/src/session/codex.ts` tries `which codex` **first**, so the system CLI (`~/.pixi/envs/nodejs/bin/codex`) runs; the `@openai/codex-*` binaries under `node_modules` are never executed. Bump the CLI, not (only) the workspace SDK:
 
 ```bash
 ~/.pixi/envs/nodejs/bin/npm install -g @openai/codex@latest

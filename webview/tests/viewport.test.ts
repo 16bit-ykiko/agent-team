@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { viewportVars, fullHeight, keyboardOpen, readSafeTop } from "../src/viewport";
+import { viewportVars, fullHeight, keyboardOpen, readSafeTop } from "../src/viewport/viewport";
 
 // A healthy phone in the browser: the layout viewport is the whole story.
 const browser = {

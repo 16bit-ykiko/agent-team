@@ -8,13 +8,13 @@ import { fileURLToPath } from "node:url";
 import { vi } from "vitest";
 import type { Query, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Codex, ThreadEvent } from "@openai/codex-sdk";
-import { ClaudeSession, type StreamEvent } from "../../src/claude-session";
-import { CodexSession } from "../../src/codex-session";
-import type { ContextUsage } from "../../src/claude-session";
-import { LocalHost, HostRegistry, type HostSessionHandle } from "../../src/host";
-import { Workspace, type Message, type WorkspaceCallbacks } from "../../src/task";
-import { backendForModel } from "../../src/presets";
-import { applyEventsToMessage } from "../../../webview/src/stream";
+import { ClaudeSession, type StreamEvent } from "../../src/session/claude";
+import { CodexSession } from "../../src/session/codex";
+import type { ContextUsage } from "../../src/session/claude";
+import { LocalHost, HostRegistry, type HostSessionHandle } from "../../src/session/host";
+import { Workspace, type Message, type WorkspaceCallbacks } from "../../src/workspace/workspace";
+import { backendForModel } from "../../src/config/presets";
+import { applyEventsToMessage } from "../../../webview/src/state/stream";
 
 import {
   type Backend,

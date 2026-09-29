@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
-import { Message, WorkspaceState } from "./task";
-import type { CommandInfo, StreamEvent } from "./claude-session";
+import { Message, WorkspaceState } from "./workspace";
+import type { CommandInfo, StreamEvent } from "../session/claude";
 
 const DATA_DIR = ".agent-team";
 const CACHE_DIR = "cache";

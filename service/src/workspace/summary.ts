@@ -1,5 +1,5 @@
-import type { Message } from "./task";
-import type { StreamEvent } from "./claude-session";
+import type { Message } from "./workspace";
+import type { StreamEvent } from "../session/claude";
 
 // History pages carry only what the collapsed view needs: kinds, chips,
 // counts, banners. Bodies (thinking text, tool output, subagent transcripts)

@@ -1,4 +1,4 @@
-import type { AgentInfo, RunState } from "./useServer";
+import type { AgentInfo, RunState } from "../state/useServer";
 
 // Effective run state of an agent. Servers that predate `state` only send
 // the busy flag, so derive from it.

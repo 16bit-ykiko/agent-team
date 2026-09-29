@@ -6,8 +6,8 @@ import {
   SessionState,
   UsageStats,
   BackgroundTask,
-} from "./claude-session";
-import { CodexSession } from "./codex-session";
+} from "./claude";
+import { CodexSession } from "./codex";
 
 export interface HostSessionHandle extends EventEmitter {
   sessionId: string | null;

@@ -1,4 +1,4 @@
-import type { Workspace, SystemStatus, AgentPreset, ModelOption } from "./useServer";
+import type { Workspace, SystemStatus, AgentPreset, ModelOption } from "../state/useServer";
 
 const MOCK_AGENTS = [
   {

@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { EventEmitter } from "events";
-import { Workspace, Message, WorkspaceCallbacks } from "../../src/task";
-import { HostRegistry, Host, HostSessionHandle, HostInfo } from "../../src/host";
-import { SessionConfig, SessionState, StreamEvent, UsageStats } from "../../src/claude-session";
+import { Workspace, Message, WorkspaceCallbacks } from "../../src/workspace/workspace";
+import { HostRegistry, Host, HostSessionHandle, HostInfo } from "../../src/session/host";
+import { SessionConfig, SessionState, StreamEvent, UsageStats } from "../../src/session/claude";
 
 const emptyUsage: UsageStats = {
   input_tokens: 0,

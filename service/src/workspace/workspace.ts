@@ -7,10 +7,10 @@ import {
   RunState,
   BackgroundTask,
   ThinkingStats,
-} from "./claude-session";
-import type { GitInfo, PrInfo } from "./git";
-import { HostSessionHandle, HostRegistry } from "./host";
-import { backendForModel, effortLevelsForModel, supportsFastMode } from "./presets";
+} from "../session/claude";
+import type { GitInfo, PrInfo } from "../repo/git";
+import { HostSessionHandle, HostRegistry } from "../session/host";
+import { backendForModel, effortLevelsForModel, supportsFastMode } from "../config/presets";
 
 export type MessageStatus = "streaming" | "done" | "error" | "queued";
 export type MessageKind = "user" | "agent" | "system";

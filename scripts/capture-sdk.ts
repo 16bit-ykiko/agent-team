@@ -194,7 +194,7 @@ async function claudeDriver(tape: Tape, model: string): Promise<Driver> {
 async function codexDriver(tape: Tape, model: string): Promise<Driver> {
   const { Codex } = await import("@openai/codex-sdk");
   const { codexHome, findRollout, readRolloutContext } =
-    await import("../service/src/codex-session.ts");
+    await import("../service/src/session/codex.ts");
   const bin = execSync("which codex", { encoding: "utf-8" }).trim();
   const version = execSync(`${bin} --version`, { encoding: "utf-8" }).trim();
   const codex = new Codex({ codexPathOverride: bin });

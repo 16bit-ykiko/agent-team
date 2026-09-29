@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isImeKeyEvent } from "../src/ime";
+import { isImeKeyEvent } from "../src/chat/ime";
 
 const ev = (over: { key?: string; timeStamp?: number; isComposing?: boolean } = {}) => ({
   key: over.key ?? "Enter",

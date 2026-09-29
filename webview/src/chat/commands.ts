@@ -1,4 +1,4 @@
-import type { AgentInfo } from "./useServer";
+import type { AgentInfo } from "../state/useServer";
 
 export interface CommandDef {
   name: string;

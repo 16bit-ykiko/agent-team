@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
-import { EventItem, BannerItem, StepGroup, MessageItem } from "../src/messages";
-import { Sidebar, SidebarProps } from "../src/Sidebar";
-import { ConfirmDialog } from "../src/dialogs";
-import { StreamEvent, Message, AgentInfo, Workspace } from "../src/useServer";
+import { EventItem, BannerItem, StepGroup, MessageItem } from "../src/chat/messages";
+import { Sidebar, SidebarProps } from "../src/sidebar/Sidebar";
+import { ConfirmDialog } from "../src/workspace/dialogs";
+import { StreamEvent, Message, AgentInfo, Workspace } from "../src/state/useServer";
 
 const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent => ({
   kind,
@@ -484,7 +484,7 @@ describe("Sidebar group quick-create", () => {
 
 describe("CreateWorkspaceDialog initial path", () => {
   it("pre-fills the path and derives the default name from it", async () => {
-    const { CreateWorkspaceDialog } = await import("../src/dialogs");
+    const { CreateWorkspaceDialog } = await import("../src/workspace/dialogs");
     const onCreate = vi.fn();
     const { getByPlaceholderText, getByDisplayValue, getByText } = render(
       <CreateWorkspaceDialog
@@ -621,7 +621,7 @@ describe("scheduled banner", () => {
 
 describe("GitBar", () => {
   it("shows branch with dirty/ahead/behind badges and a PR card with state and checks", async () => {
-    const { GitBar } = await import("../src/GitBar");
+    const { GitBar } = await import("../src/workspace/GitBar");
     const { container } = render(
       <GitBar
         git={{ branch: "feat/x", dirty: 3, ahead: 1, behind: 0 }}
@@ -649,7 +649,7 @@ describe("GitBar", () => {
   });
 
   it("renders merged/draft states and nothing when there is no git info", async () => {
-    const { GitBar } = await import("../src/GitBar");
+    const { GitBar } = await import("../src/workspace/GitBar");
     const { container, rerender } = render(
       <GitBar
         git={{ branch: "b", dirty: 0, ahead: 0, behind: 0 }}
@@ -732,7 +732,7 @@ describe("summary pages and lazy details", () => {
 
 describe("HistoryHint", () => {
   it("walks through loading, older-available, and start-of-conversation", async () => {
-    const { HistoryHint } = await import("../src/HistoryHint");
+    const { HistoryHint } = await import("../src/chat/HistoryHint");
     const { container, rerender } = render(
       <HistoryHint hasMore={false} loading={false} loaded={false} count={0} />,
     );

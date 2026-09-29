@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { prepareSource } from "../src/mdSource";
+import { prepareSource } from "../src/chat/mdSource";
 
 const text = (md: string) => prepareSource(md).text;
 const unchanged = (md: string) =>

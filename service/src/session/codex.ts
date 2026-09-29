@@ -11,9 +11,14 @@ import {
   SessionConfig,
   SessionState,
   fenced,
-} from "./claude-session";
+} from "./claude";
 import type { Codex, ThreadEvent, ThreadItem, ThreadOptions } from "@openai/codex-sdk";
-import { codexContextWindow, codexFastTier, codexModelId, defaultEffortForModel } from "./presets";
+import {
+  codexContextWindow,
+  codexFastTier,
+  codexModelId,
+  defaultEffortForModel,
+} from "../config/presets";
 
 // The SDK ships a vendored binary per platform, but we may run against a
 // system-installed codex — resolve it ourselves and pass codexPathOverride.

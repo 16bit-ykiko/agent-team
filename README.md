@@ -133,7 +133,7 @@ State (workspaces, transcripts, debug snapshots) lives under
 ## Available models
 
 The model list is maintained by hand in
-[`service/src/presets.ts`](service/src/presets.ts) — ids, labels, backend,
+[`service/src/config/presets.ts`](service/src/config/presets.ts) — ids, labels, backend,
 which reasoning-effort levels each one accepts, the default effort, and for
 Codex the context window and fast service tier. Adding a model means adding
 an entry there **and** making sure the CLI on your `PATH` is new enough to
@@ -169,8 +169,8 @@ detached from the caller; it logs to `~/.cache/agent-team-deploy.log`.
 
 ```
 service/src/     Node server: HTTP + WebSocket, sessions, config, git, state
-  claude-session.ts / codex-session.ts   one adapter per CLI backend
-  presets.ts                             agent + model lists (hand-maintained)
+  session/claude.ts / session/codex.ts   one adapter per CLI backend
+  config/presets.ts                      agent + model lists (hand-maintained)
 webview/src/     React UI (Vite), one panel per workspace
 scripts/         start script, deferred deploy, SDK capture + smoke tests, one-off migrations
 .claude/         CLAUDE.md + skills: the rules and playbooks agents load when working here

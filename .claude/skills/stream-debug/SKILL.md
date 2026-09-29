@@ -1,13 +1,13 @@
 ---
 name: stream-debug
-description: Frame semantics of the Claude SDK stream and the event model that turns frames into the transcript (cards, steps, banners, summary pages, client/server aggregation). Read BEFORE editing claude-session.ts, task.ts, stream.ts, events.ts or messages.tsx, or when a screenshot shows a rendering oddity.
+description: Frame semantics of the Claude SDK stream and the event model that turns frames into the transcript (cards, steps, banners, summary pages, client/server aggregation). Read BEFORE editing service session/claude.ts or workspace/workspace.ts, webview state/stream.ts, chat/events.ts or chat/messages.tsx, or when a screenshot shows a rendering oddity.
 ---
 
 # Stream debugging
 
 Fixtures for every fact below live in `service/tests/snap/claude/` and `codex/` (capture-sdk skill); the `.snap.md` next to each recording is the transcript the pipeline produces from it.
 
-Pipeline: SDK frames → `service/src/claude-session.ts` (frames → `StreamEvent`) → `service/src/task.ts` (`Workspace.applyInnerEvent`, message list, `contentOffset`) → WebSocket `stream_event` batches → `webview/src/stream.ts` (`applyEventsToMessage`, same aggregation client-side) → `webview/src/events.ts` (`timelineBlocks`, `foldSubagents`) → `webview/src/messages.tsx`. The server and client aggregations must produce the same transcript; `service/tests/snap/snap.test.ts` asserts that on every recorded fixture. Codex goes through `codex-session.ts` into the same event model.
+Pipeline: SDK frames → `service/src/session/claude.ts` (frames → `StreamEvent`) → `service/src/workspace/workspace.ts` (`Workspace.applyInnerEvent`, message list, `contentOffset`) → WebSocket `stream_event` batches → `webview/src/state/stream.ts` (`applyEventsToMessage`, same aggregation client-side) → `webview/src/chat/events.ts` (`timelineBlocks`, `foldSubagents`) → `webview/src/chat/messages.tsx`. The server and client aggregations must produce the same transcript; `service/tests/snap/snap.test.ts` asserts that on every recorded fixture. Codex goes through `session/codex.ts` into the same event model.
 
 ## Frame facts (from recordings, not docs)
 
@@ -18,7 +18,7 @@ Pipeline: SDK frames → `service/src/claude-session.ts` (frames → `StreamEven
 - **Resume after a restart with an orphaned background task** (fixture `claude/resume-orphan-bg`, after its `end` step): the CLI emits `task_notification` (status `stopped`, unknown task id) _before_ `system/init`, then a phantom `result` with `num_turns: 0`, `origin: {kind: "task-notification"}`, then a second `init` and the real turn. That result must not end our turn (`handleResult` skips it while `expectingTurn && awaitingFirstOutput`), or the prompt renders as "no output" and the reply as a wake-up. Real results never carry `origin`.
 - **Agent (Task tool)**: `task_started` with `task_type: "agent"` / `subagent_type`; agents always get a card, and the card replaces the spawning tool_use (`spawnToolUseIds`). Subagent frames carry `parent_tool_use_id`; depth-2 frames carry the child's tool_use id, so the session wraps them per ancestor (`wrapToRoot`) as `subagent_progress` carriers with `_innerEvent`. Both aggregations recurse into nested carriers.
 - **Slash skill typed by the user** (`/hello`): no user frame at all. **Skill tool called by the model**: a `user` frame with `isSynthetic: true` containing the skill text — treat as a `skill` notice, never as a wake-up or a new user turn. `shouldQuery: false` frames append to the transcript without starting a turn.
-- **Wake-up detection** (`claude-session.ts`): a user-shaped frame counts as a wake-up only when not processing, or while expecting a turn before any first output (`awaitingFirstOutput`), and it is not a tool_result, not synthetic, not `shouldQuery === false`.
+- **Wake-up detection** (`session/claude.ts`): a user-shaped frame counts as a wake-up only when not processing, or while expecting a turn before any first output (`awaitingFirstOutput`), and it is not a tool_result, not synthetic, not `shouldQuery === false`.
 - **Init frame**: carries `effort` and `fast_mode_state`; `/fast` sets `settings.fastMode`; warn when the state is not `on`.
 - **Context stats**: from the last main-loop assistant `usage` (not the cumulative result usage). Codex: from the rollout's last `token_count` (`total_tokens - reasoning_output_tokens`, window from `model_context_window`).
 - **Codex** (fixtures `codex/*`): commands are `item.started`/`item.completed` `command_execution` pairs by item id with `exit_code` and `aggregated_output`; a failure stream is `item.completed error` (non-fatal notice) → `error` → `turn.failed` → the SDK generator throws; `codex exec` keeps stdout open ~3 s after `turn.completed`; the terminal event waits for stream close, else the next send races a busy session.
@@ -31,7 +31,7 @@ Pipeline: SDK frames → `service/src/claude-session.ts` (frames → `StreamEven
 - **Cards** are only for agent tasks and backgrounded tasks (`taskType`); they are timeline boundaries (`timelineBlocks`) so step boxes split around them. Everything else lives in the folded step box.
 - **Banners** (`BANNER_KINDS`): compact, notice, retry, error. Long ones fold (`bannerFolds`); truncated content records `contentLength` and is fetched on demand.
 - **Summary pages**: the server sends `summarizeMessages` (`detail: "summary"`, 600-char cap) for history; details load lazily. On reconnect `mergeLatestPage` keeps the richer version; `downgradedMessageIds` triggers re-fetch so live messages never show "tap to load".
-- **Normalisation** (`normalizeEvents` in task.ts): on load, missing content → "", running/status-less messages → stopped.
+- **Normalisation** (`normalizeEvents` in workspace/workspace.ts): on load, missing content → "", running/status-less messages → stopped.
 
 ## Debugging recipe
 

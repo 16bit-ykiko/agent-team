@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { splitEvents, timelineBlocks, hasRunningSubagents } from "../src/events";
-import { StreamEvent } from "../src/useServer";
+import { splitEvents, timelineBlocks, hasRunningSubagents } from "../src/chat/events";
+import { StreamEvent } from "../src/state/useServer";
 
 const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent => ({
   kind,

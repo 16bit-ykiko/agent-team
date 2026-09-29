@@ -1,4 +1,4 @@
-import type { GitInfo, PrInfo } from "./useServer";
+import type { GitInfo, PrInfo } from "../state/useServer";
 
 // Branch, working-tree and PR summary for the workspace header.
 export function GitBar({ git, pr }: { git: GitInfo | null; pr: PrInfo | null }) {

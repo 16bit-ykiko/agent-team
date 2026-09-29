@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { agentState, isAgentActive, agentQueues, pillLabel, stateLabel } from "../src/agents";
-import { AgentInfo } from "../src/useServer";
+import {
+  agentState,
+  isAgentActive,
+  agentQueues,
+  pillLabel,
+  stateLabel,
+} from "../src/workspace/agents";
+import { AgentInfo } from "../src/state/useServer";
 
 const a = (over: Partial<AgentInfo> = {}): AgentInfo => ({
   id: "a",

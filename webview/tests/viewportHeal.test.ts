@@ -6,7 +6,7 @@ import {
   isAtBottom,
   isTextInput,
   settleScroller,
-} from "../src/viewportHeal";
+} from "../src/viewport/viewportHeal";
 
 describe("ViewportTracker", () => {
   it("remembers the tallest viewport seen and flags a lasting shrink", () => {

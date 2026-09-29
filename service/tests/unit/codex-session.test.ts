@@ -3,10 +3,10 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import type { Codex } from "@openai/codex-sdk";
-import { CodexSession, findRollout, readRolloutContext } from "../../src/codex-session";
-import { StreamEvent } from "../../src/claude-session";
-import { HostRegistry, LocalHost } from "../../src/host";
-import { Workspace } from "../../src/task";
+import { CodexSession, findRollout, readRolloutContext } from "../../src/session/codex";
+import { StreamEvent } from "../../src/session/claude";
+import { HostRegistry, LocalHost } from "../../src/session/host";
+import { Workspace } from "../../src/workspace/workspace";
 
 // A real client spawns `codex exec` on the user's account: sessions without
 // a stand-in client of their own get one that throws.

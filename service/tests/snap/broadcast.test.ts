@@ -5,18 +5,18 @@
 // messages (content, status, thinking stats) and the live thinking view.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Query, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { ClaudeSession, type StreamEvent } from "../../src/claude-session";
-import { LocalHost, HostRegistry, type HostSessionHandle } from "../../src/host";
-import { Workspace, type WorkspaceCallbacks } from "../../src/task";
-import { summarizeMessages } from "../../src/summary";
+import { ClaudeSession, type StreamEvent } from "../../src/session/claude";
+import { LocalHost, HostRegistry, type HostSessionHandle } from "../../src/session/host";
+import { Workspace, type WorkspaceCallbacks } from "../../src/workspace/workspace";
+import { summarizeMessages } from "../../src/workspace/summary";
 import { readRecording, recordingPath, RECORD_CWD, DEFAULT_MODEL } from "./harness";
 import {
   applyStreamBatch,
   mergeDetailEvents,
   withoutLiveThinking,
   type PendingEvent,
-} from "../../../webview/src/stream";
-import type { Message as ClientMessage } from "../../../webview/src/useServer";
+} from "../../../webview/src/state/stream";
+import type { Message as ClientMessage } from "../../../webview/src/state/useServer";
 
 const noSdk = {
   query: (): Query => {

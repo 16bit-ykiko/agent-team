@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
 import { SubAgentItem, StepGroup, MessageItem, CreateWorkspaceDialog } from "../src/App";
-import { HostInfo } from "../src/useServer";
-import { StreamEvent, Message, AgentInfo } from "../src/useServer";
+import { HostInfo } from "../src/state/useServer";
+import { StreamEvent, Message, AgentInfo } from "../src/state/useServer";
 
 const sa = (over: Partial<NonNullable<StreamEvent["subagent"]>> = {}): StreamEvent => ({
   kind: "subagent_start",

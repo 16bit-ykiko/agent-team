@@ -5,8 +5,8 @@ import {
   STALE_MS,
   archivedWorkspaces,
   isArchived,
-} from "../src/groups";
-import { Workspace } from "../src/useServer";
+} from "../src/sidebar/groups";
+import { Workspace } from "../src/state/useServer";
 
 const NOW = 1_800_000_000_000;
 

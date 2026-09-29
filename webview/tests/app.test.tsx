@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { render, act, fireEvent } from "@testing-library/react";
 import { App } from "../src/App";
-import type { AgentInfo, Message } from "../src/useServer";
+import type { AgentInfo, Message } from "../src/state/useServer";
 
 // The server end of the socket: the test opens it, feeds frames and reads
 // what the app sent.

@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import { ClaudeSession, StreamEvent } from "../../src/claude-session";
-import { HostRegistry, LocalHost } from "../../src/host";
-import { Workspace } from "../../src/task";
+import { ClaudeSession, StreamEvent } from "../../src/session/claude";
+import { HostRegistry, LocalHost } from "../../src/session/host";
+import { Workspace } from "../../src/workspace/workspace";
 
 // A real query spawns the Claude CLI on the user's account: every test runs
 // against a stub that throws unless the test installs a fake SDK, and the

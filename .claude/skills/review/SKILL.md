@@ -11,7 +11,7 @@ Reviews caught real defects here that the author session was blind to (rendering
 
 - Any change to the event pipeline, WebSocket protocol, persistence format, or session lifecycle.
 - Anything the user calls "彻底" / "深入" — they want the audit, not a quick look.
-- Before pushing a batch of fixes that touched more than two of: `claude-session.ts`, `task.ts`, `stream.ts`, `events.ts`, `messages.tsx`, `useServer.ts`.
+- Before pushing a batch of fixes that touched more than two of: `session/claude.ts`, `workspace/workspace.ts` (service), `state/stream.ts`, `chat/events.ts`, `chat/messages.tsx`, `state/useServer.ts` (webview).
 
 ## How
 

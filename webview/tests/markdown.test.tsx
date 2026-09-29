@@ -13,9 +13,9 @@ vi.mock("react-markdown", async (importOriginal) => {
   return { ...real, default: Counted };
 });
 
-import { MdBlock, StreamingMdBlock, markdownBlocks, loadMath } from "../src/markdown";
-import { MessageItem } from "../src/messages";
-import type { AgentInfo, Message } from "../src/useServer";
+import { MdBlock, StreamingMdBlock, markdownBlocks, loadMath } from "../src/chat/markdown";
+import { MessageItem } from "../src/chat/messages";
+import type { AgentInfo, Message } from "../src/state/useServer";
 
 const agents: AgentInfo[] = [
   { id: "a1", name: "Alice", model: "m", avatar: "🤖", color: "#888", isDefault: true },
@@ -243,15 +243,15 @@ describe("math loading", () => {
   it("retries after a failed load instead of staying raw", async () => {
     vi.resetModules();
     let fail = true;
-    vi.doMock("../src/mathPlugins", async (importOriginal) => {
+    vi.doMock("../src/chat/mathPlugins", async (importOriginal) => {
       if (fail) throw new Error("chunk gone");
       return importOriginal();
     });
-    const { loadMath: load } = await import("../src/markdown");
+    const { loadMath: load } = await import("../src/chat/markdown");
     await expect(load()).rejects.toThrow();
     fail = false;
     const plugins = await load();
     expect(Array.isArray(plugins.remark)).toBe(true);
-    vi.doUnmock("../src/mathPlugins");
+    vi.doUnmock("../src/chat/mathPlugins");
   });
 });

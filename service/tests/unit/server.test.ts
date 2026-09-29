@@ -9,7 +9,7 @@ import * as net from "net";
 import * as os from "os";
 import * as path from "path";
 import WebSocket from "ws";
-import type { Message, WorkspaceState } from "../../src/task";
+import type { Message, WorkspaceState } from "../../src/workspace/workspace";
 
 const ROOT = path.resolve(__dirname, "../../..");
 const TSX = path.join(ROOT, "node_modules/.bin/tsx");

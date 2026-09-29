@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { collectSnapshot, trimmedHtml, SNAPSHOT_SELECTORS } from "../src/debugSnapshot";
+import { collectSnapshot, trimmedHtml, SNAPSHOT_SELECTORS } from "../src/dev/debugSnapshot";
 
 describe("debug snapshot", () => {
   it("collects geometry for the shell elements that exist and trims message bodies", () => {

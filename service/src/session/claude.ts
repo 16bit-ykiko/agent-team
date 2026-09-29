@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { supportsAdaptiveThinking } from "./presets";
+import { supportsAdaptiveThinking } from "../config/presets";
 import type {
   Query,
   SDKMessage,

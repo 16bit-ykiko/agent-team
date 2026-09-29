@@ -1,17 +1,17 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
-import { useServer, Message, AgentInfo } from "./useServer";
-import { groupWorkspaces } from "./groups";
-import { agentQueues, agentState, isAgentActive, pillLabel, stateLabel } from "./agents";
-import { extractImageFiles, installMacCtrlClipboard } from "./clipboard";
-import { isImeKeyEvent } from "./ime";
-import { AgentAvatar } from "./avatar";
+import { useServer, Message, AgentInfo } from "./state/useServer";
+import { groupWorkspaces } from "./sidebar/groups";
+import { agentQueues, agentState, isAgentActive, pillLabel, stateLabel } from "./workspace/agents";
+import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
+import { isImeKeyEvent } from "./chat/ime";
+import { AgentAvatar } from "./workspace/avatar";
 import { formatRelative } from "./format";
-import { MessageItem, MessageBoundary } from "./messages";
-import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs";
-import { Sidebar } from "./Sidebar";
-import { ViewportInfo } from "./ViewportInfo";
-import { GitBar } from "./GitBar";
-import { HistoryHint } from "./HistoryHint";
+import { MessageItem, MessageBoundary } from "./chat/messages";
+import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./workspace/dialogs";
+import { Sidebar } from "./sidebar/Sidebar";
+import { ViewportInfo } from "./viewport/ViewportInfo";
+import { GitBar } from "./workspace/GitBar";
+import { HistoryHint } from "./chat/HistoryHint";
 import {
   viewportVars,
   fullHeight,
@@ -19,21 +19,21 @@ import {
   isStandalone,
   readSafeTop,
   type ViewportMetrics,
-} from "./viewport";
+} from "./viewport/viewport";
 import {
   ViewportTracker,
   healViewport,
   isAtBottom,
   isTextInput,
   settleScroller,
-} from "./viewportHeal";
-import { uploadSnapshot } from "./debugSnapshot";
+} from "./viewport/viewportHeal";
+import { uploadSnapshot } from "./dev/debugSnapshot";
 
 // Re-exported for tests and for anyone importing the old single-file layout.
-export { GitBar } from "./GitBar";
-export { EventItem, SubAgentItem, StepGroup, MessageItem, BannerItem } from "./messages";
-export { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./dialogs";
-export { Sidebar } from "./Sidebar";
+export { GitBar } from "./workspace/GitBar";
+export { EventItem, SubAgentItem, StepGroup, MessageItem, BannerItem } from "./chat/messages";
+export { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./workspace/dialogs";
+export { Sidebar } from "./sidebar/Sidebar";
 
 function compressToBlob(file: File, maxDim = 1600, quality = 0.85): Promise<Blob> {
   return new Promise((resolve, reject) => {

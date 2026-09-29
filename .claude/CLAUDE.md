@@ -6,8 +6,8 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 
 - **deploy** — before building, restarting, or checking the production server. You are usually running _inside_ that server.
 - **capture-sdk** — the snap fixtures (`service/tests/snap/`): whenever behaviour depends on what the Claude CLI or `codex exec` actually emits. Record first, then code.
-- **stream-debug** — before touching the event pipeline (`claude-session.ts` → `task.ts` → `stream.ts`/`events.ts` → `messages.tsx`): frame semantics and the event model.
-- **add-model** — before adding or renaming a model in `presets.ts`.
+- **stream-debug** — before touching the event pipeline (`session/claude.ts` → `workspace/workspace.ts` → `state/stream.ts`/`chat/events.ts` → `chat/messages.tsx`): frame semantics and the event model.
+- **add-model** — before adding or renaming a model in `config/presets.ts`.
 - **review** — before committing anything non-trivial: independent reviewer subagents, findings verified before fixes.
 
 ## Hard Rules
@@ -31,13 +31,13 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 ## Layout
 
 - `service/src/index.ts` — HTTP/WebSocket server, slash commands, settings persistence
-- `service/src/claude-session.ts` / `codex-session.ts` — one adapter per backend, both emit `StreamEvent`s
-- `service/src/task.ts` — workspace: message list, event aggregation, persistence
-- `service/src/summary.ts` — summary pages sent before details are requested
-- `service/src/presets.ts` — agent and model lists (hand-maintained)
-- `webview/src/useServer.ts` — WebSocket client, types, reconnect/resync
-- `webview/src/stream.ts` / `events.ts` — client-side aggregation and timeline blocks
-- `webview/src/messages.tsx` / `App.tsx` — rendering
+- `service/src/session/claude.ts` / `session/codex.ts` — one adapter per backend, both emit `StreamEvent`s
+- `service/src/workspace/workspace.ts` — workspace: message list, event aggregation, persistence
+- `service/src/workspace/summary.ts` — summary pages sent before details are requested
+- `service/src/config/presets.ts` — agent and model lists (hand-maintained)
+- `webview/src/state/useServer.ts` — WebSocket client, types, reconnect/resync
+- `webview/src/state/stream.ts` / `chat/events.ts` — client-side aggregation and timeline blocks
+- `webview/src/chat/messages.tsx` / `App.tsx` — rendering
 - `service/tests/unit/` — unit tests for the server (frame mapping edge cases, config, git, state)
 - `service/tests/snap/{claude,codex}/<name>.{ts,jsonl,snap.md}` — recorded real interactions (script + recording + pinned transcript), replayed by `snap.test.ts` through the real sessions
 - `scripts/` — `deploy-deferred.sh`; `capture-sdk.ts` / `summarize-capture.ts` / `smoke-*.ts` run via `npm run capture|summarize|smoke:claude|smoke:codex`; `flush-events.ts` / `migrate-streams.ts` are one-off migrations from the Discord-era data format

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { StrictMode, type ReactNode } from "react";
 import { renderHook, act } from "@testing-library/react";
-import { useServer, PROBE_TIMEOUT_MS, HEARTBEAT_MS, HIDDEN_FLUSH_MS } from "../src/useServer";
+import { useServer, PROBE_TIMEOUT_MS, HEARTBEAT_MS, HIDDEN_FLUSH_MS } from "../src/state/useServer";
 
 // Minimal WebSocket stand-in: the test opens it, feeds frames, and watches
 // what the hook sends. Never closes on its own, like a socket whose peer

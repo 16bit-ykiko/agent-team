@@ -7,8 +7,8 @@ import {
   downgradedMessageIds,
   toolNameOf,
   toolSummary,
-} from "../src/stream";
-import { Message, StreamEvent } from "../src/useServer";
+} from "../src/state/stream";
+import { Message, StreamEvent } from "../src/state/useServer";
 
 const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent => ({
   kind,

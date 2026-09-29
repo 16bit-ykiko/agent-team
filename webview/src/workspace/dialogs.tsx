@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import type { AgentPreset, ModelOption, HostInfo } from "./useServer";
+import type { AgentPreset, ModelOption, HostInfo } from "../state/useServer";
 import { isImageAvatar } from "./avatar";
 
 // Small modal confirmation used for destructive actions (purging archived

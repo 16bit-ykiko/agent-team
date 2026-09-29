@@ -1,12 +1,12 @@
 import { useState, useCallback, useMemo, memo, Component, useEffect } from "react";
 import type { ReactNode } from "react";
-import type { Message, AgentInfo, StreamEvent } from "./useServer";
+import type { Message, AgentInfo, StreamEvent } from "../state/useServer";
 import { splitEvents, timelineBlocks } from "./events";
-import { toolNameOf, toolSummary } from "./stream";
+import { toolNameOf, toolSummary } from "../state/stream";
 import { copySelectionAsMarkdown } from "./clipboard";
 import { MdBlock, StreamingMdBlock } from "./markdown";
-import { AgentAvatar, Avatar } from "./avatar";
-import { shortModel, formatTokens, formatDuration } from "./format";
+import { AgentAvatar, Avatar } from "../workspace/avatar";
+import { shortModel, formatTokens, formatDuration } from "../format";
 
 function renderMentionContent(content: string, agents: AgentInfo[]) {
   const match = content.match(/^@(\S+)(\s+|$)/);

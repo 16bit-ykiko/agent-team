@@ -1,8 +1,8 @@
 import { memo, useState } from "react";
-import type { Workspace, SystemStatus, SearchHit } from "./useServer";
+import type { Workspace, SystemStatus, SearchHit } from "../state/useServer";
 import { groupWorkspaces, isGroupExpanded, archivedWorkspaces } from "./groups";
-import { isAgentActive } from "./agents";
-import { formatBytes, formatRelative, formatResetTime } from "./format";
+import { isAgentActive } from "../workspace/agents";
+import { formatBytes, formatRelative, formatResetTime } from "../format";
 
 function gitTitle(git: { dirty: number; ahead: number; behind: number }): string {
   const parts: string[] = [];

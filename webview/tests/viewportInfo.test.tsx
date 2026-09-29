@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@testing-library/react";
-import { formatViewportFacts, readViewportFacts, ViewportInfo } from "../src/ViewportInfo";
+import { formatViewportFacts, readViewportFacts, ViewportInfo } from "../src/viewport/ViewportInfo";
 
 describe("viewport diagnostics", () => {
   it("formats the facts compactly", () => {

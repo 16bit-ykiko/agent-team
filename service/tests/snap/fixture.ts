@@ -1,9 +1,9 @@
 // The fixture script: what a recorded interaction does and why it exists.
 // No test or SDK dependencies, so scripts/capture-sdk.ts can load fixtures
 // under plain node.
-import type { Message } from "../../src/task";
-import type { StreamEvent, UsageStats } from "../../src/claude-session";
-import type { ContextUsage } from "../../src/claude-session";
+import type { Message } from "../../src/workspace/workspace";
+import type { StreamEvent, UsageStats } from "../../src/session/claude";
+import type { ContextUsage } from "../../src/session/claude";
 
 export type Backend = "claude" | "codex";
 

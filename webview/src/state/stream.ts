@@ -1,5 +1,5 @@
 import type { StreamEvent, Message, SubAgentInfo } from "./useServer";
-import { SUBAGENT_KINDS } from "./events";
+import { SUBAGENT_KINDS } from "../chat/events";
 
 export interface PendingEvent {
   wsId: string;

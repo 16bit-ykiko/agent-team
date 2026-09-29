@@ -5,7 +5,7 @@ import {
   copySelectionAsMarkdown,
   extractImageFiles,
   MAX_COPY_HTML,
-} from "../src/clipboard";
+} from "../src/chat/clipboard";
 
 function mockSelection(html: string | null) {
   const getSelection = vi.fn(() => {

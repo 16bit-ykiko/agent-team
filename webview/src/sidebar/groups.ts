@@ -1,5 +1,5 @@
-import { Workspace } from "./useServer";
-import { isAgentActive } from "./agents";
+import { Workspace } from "../state/useServer";
+import { isAgentActive } from "../workspace/agents";
 
 // Groups older than this default to collapsed in the sidebar.
 export const STALE_MS = 3 * 86_400_000;

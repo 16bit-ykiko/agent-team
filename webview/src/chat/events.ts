@@ -1,4 +1,4 @@
-import { StreamEvent } from "./useServer";
+import { StreamEvent } from "../state/useServer";
 
 export const SUBAGENT_KINDS = new Set(["subagent_start", "subagent_progress", "subagent_done"]);
 // One-line status banners that render inline rather than inside the

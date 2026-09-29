@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { buildFrames, cancelDemoSubagent, DEMO_WS_ID } from "../src/replayFixture";
-import { startReplay } from "../src/replay";
-import { StreamEvent } from "../src/useServer";
+import { buildFrames, cancelDemoSubagent, DEMO_WS_ID } from "../src/dev/replayFixture";
+import { startReplay } from "../src/dev/replay";
+import { StreamEvent } from "../src/state/useServer";
 
 type Frame = Record<string, unknown>;
 

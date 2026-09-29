@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { MOCK_WORKSPACES, MOCK_SYSTEM_STATUS, MOCK_PRESETS, MOCK_MODELS } from "./mockData";
+import { MOCK_WORKSPACES, MOCK_SYSTEM_STATUS, MOCK_PRESETS, MOCK_MODELS } from "../dev/mockData";
 import {
   applyStreamBatch,
   downgradedMessageIds,
@@ -836,7 +836,7 @@ export function useServer() {
     }
     if (useReplay) {
       setConnected(true);
-      void import("./replay").then(({ startReplay }) =>
+      void import("../dev/replay").then(({ startReplay }) =>
         startReplay(handleServerMessage).catch((e) => console.error("[replay]", e)),
       );
       return;
@@ -915,7 +915,7 @@ export function useServer() {
       (wsId: string, agentId: string, taskId: string) => {
         if (wsId === "replay-demo") {
           // Demo workspace exists only client-side; emulate the stop locally.
-          void import("./replayFixture").then(({ cancelDemoSubagent }) =>
+          void import("../dev/replayFixture").then(({ cancelDemoSubagent }) =>
             cancelDemoSubagent(handleServerMessage, taskId),
           );
           return;
@@ -927,7 +927,7 @@ export function useServer() {
     // Plays the synthetic rendering-review fixture through the same dispatch
     // path as live server frames. Returns the demo workspace id.
     startReplayDemo: useCallback(() => {
-      void import("./replayFixture").then(({ startDemoReplay }) =>
+      void import("../dev/replayFixture").then(({ startDemoReplay }) =>
         startDemoReplay(handleServerMessage).catch((e) => console.error("[replay-demo]", e)),
       );
       return "replay-demo";
