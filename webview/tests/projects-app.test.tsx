@@ -204,7 +204,7 @@ describe("the board page", () => {
 
   it("opens over any workspace from the header or the sidebar, and closes", () => {
     boot([lead, worker], [withBoard], "w1");
-    fireEvent.click(document.querySelector("[aria-haspopup='dialog']")!);
+    fireEvent.click(document.querySelector('.side-rail [aria-label="Objectives of clice"]')!);
     expect(document.querySelector("[role='dialog'][aria-label='clice objectives']")).not.toBeNull();
     fireEvent.click(document.querySelector(".bp-close")!);
     expect(document.querySelector(".board-page")).toBeNull();

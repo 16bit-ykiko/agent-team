@@ -539,6 +539,14 @@ describe("per-message effort and context", () => {
     const m = ws.messages.filter((x) => x.kind === "agent")[0];
     expect(m.effort).toBe("xhigh");
     expect(m.context).toEqual({ tokens: 42000, window: 200000 });
+    // The agent carries it too, for panels that do not load the history.
+    const [agentId] = ws.agents.keys();
+    expect(ws.agentInfo(ws.agents.get(agentId)!).context).toEqual({
+      tokens: 42000,
+      window: 200000,
+    });
+    const restored = Workspace.fromState(ws.getState(), registry);
+    expect(restored.getInfo(false).agents[0].context).toEqual({ tokens: 42000, window: 200000 });
     expect(patches).toEqual([{ context: { tokens: 42000, window: 200000 } }]);
   });
 });

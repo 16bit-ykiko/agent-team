@@ -234,6 +234,8 @@ export interface AgentInfo {
   // Monitor); the CLI reports back on its own when it finishes.
   backgroundTasks?: BackgroundTask[];
   account?: string;
+  // Context occupancy at the end of its last turn, when known.
+  context?: ContextUsage | null;
 }
 
 export interface BackgroundTask {

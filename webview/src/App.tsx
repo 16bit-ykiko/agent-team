@@ -8,7 +8,11 @@ import {
   type Workspace,
 } from "./state/useServer";
 import { groupWorkspaces } from "./sidebar/groups";
-import { agentQueues, agentState, isAgentActive, pillLabel, stateLabel } from "./workspace/agents";
+import { agentQueues, agentState, isAgentActive, pillLabel } from "./workspace/agents";
+import { SidePanel } from "./panels/SidePanel";
+import { Rail, type RailItem } from "./panels/Rail";
+import { AgentsPanel, type AgentsPanelActions } from "./panels/AgentsPanel";
+import { scopeSessions, sessionState, stateSummary } from "./panels/scope";
 import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
 import { isImeKeyEvent } from "./chat/ime";
 import { AgentAvatar } from "./workspace/avatar";
@@ -268,7 +272,23 @@ export function App() {
   const prevWsIdRef = useRef<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [createInPath, setCreateInPath] = useState<string | undefined>(undefined);
-  const [showAddAgent, setShowAddAgent] = useState(false);
+  // The workspace the Add Agent dialog is open for.
+  const [addAgentFor, setAddAgentFor] = useState<string | null>(null);
+  // The side panel open beside the chat, pinned (the chat makes room) or
+  // floating over it; both choices and the width persist.
+  const [openPanel, setOpenPanel] = useState<PanelId | null>(null);
+  const [panelPinned, setPanelPinned] = useState(() => readSetting("panelPinned") === "1");
+  const [panelWidth, setPanelWidth] = useState(
+    () => Number(readSetting("panelWidth")) || DEFAULT_PANEL_WIDTH,
+  );
+  useEffect(() => writeSetting("panelPinned", panelPinned ? "1" : "0"), [panelPinned]);
+  useEffect(() => writeSetting("panelWidth", String(panelWidth)), [panelWidth]);
+  const togglePanel = useCallback(
+    (id: PanelId) => setOpenPanel((cur) => (cur === id ? null : id)),
+    [],
+  );
+  const closePanel = useCallback(() => setOpenPanel(null), []);
+  const togglePin = useCallback(() => setPanelPinned((p) => !p), []);
   // The project whose board page is open, whichever workspace is.
   const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
   const closeBoard = useCallback(() => setBoardProjectId(null), []);
@@ -375,6 +395,32 @@ export function App() {
     [sessionsKey],
   );
 
+  // What the side panels cover: the project's sessions, or this workspace.
+  const scope = useMemo(
+    () => scopeSessions(activeWs, workspaces, activeProject),
+    [activeWs, workspaces, activeProject],
+  );
+  const railItems: RailItem[] = [
+    ...(activeProject
+      ? [
+          {
+            id: "board",
+            label: `Objectives of ${activeProject.name}`,
+            icon: "▦",
+            active: boardProjectId === activeProject.id,
+            onClick: () => setBoardProjectId(activeProject.id),
+          },
+        ]
+      : []),
+    {
+      id: "agents",
+      label: "Agents and sessions",
+      icon: "◉",
+      active: openPanel === "agents",
+      badge: scope.filter((w) => sessionState(w) === "working").length,
+      onClick: () => togglePanel("agents"),
+    },
+  ];
   // Sidebar folder groups; explicit expand/collapse choices persist.
   const wsGroups = useMemo(() => groupWorkspaces(workspaces, projects), [workspaces, projects]);
   const [seenTick, setSeenTick] = useState(0);
@@ -477,6 +523,23 @@ export function App() {
     },
     [onSelectWorkspace],
   );
+  const agentActions = useMemo<AgentsPanelActions>(
+    () => ({
+      onOpen: (id) => {
+        // On a phone the panel covers the chat: step aside for the session.
+        if (window.matchMedia?.("(max-width: 768px)").matches) setOpenPanel(null);
+        openWorkspace(id);
+      },
+      onStop: (id) => abort(id),
+      onArchive: (id) => archiveWorkspace(id),
+      onRestore: (id) => unarchiveWorkspace(id),
+      onAddAgent: (id) => setAddAgentFor(id),
+      onClearContext: (id, agentId) => clearContext(id, agentId),
+      onRemoveAgent: (id, agentId) => removeAgent(id, agentId),
+    }),
+    [openWorkspace, abort, archiveWorkspace, unarchiveWorkspace, clearContext, removeAgent],
+  );
+
   const onDeleteWorkspace = useCallback(
     (id: string) => {
       deleteWorkspace(id);
@@ -1090,68 +1153,23 @@ export function App() {
                 <span className="panel-title">
                   {activeWs.name} — {activeWs.project}
                 </span>
-                <div className="panel-agents">
-                  {activeWs.agents.map((agent) => {
-                    const s = agentState(agent);
-                    const status =
-                      s === "working"
-                        ? "busy"
-                        : s === "idle"
-                          ? connected
-                            ? "online"
-                            : "offline"
-                          : s;
-                    const statusText = pillLabel(agent, connected);
-                    const bg = (agent.backgroundTasks ?? []).map((t) => t.description);
-                    const statusTitle = bg.length
-                      ? `${stateLabel(agent, connected)}\n${bg.map((d) => `• ${d}`).join("\n")}`
-                      : stateLabel(agent, connected);
-                    return (
-                      <div
-                        key={agent.id}
-                        className={`panel-agent panel-agent-${status}`}
-                        title={`${agent.name} (${agent.model}${agent.account ? `, account: ${agent.account}` : ""})`}
-                      >
-                        <AgentAvatar agent={agent} size={22} />
-                        <span className={`agent-status-dot agent-status-${status}`} />
-                        <span className="panel-agent-name">{agent.name}</span>
-                        {agent.account && <span className="agent-account">@{agent.account}</span>}
-                        {agent.fast && (
-                          <span className="agent-mode agent-fast" title="Fast mode on">
-                            ⚡
-                          </span>
-                        )}
-                        {agent.goal && (
-                          <span className="agent-mode agent-goal" title={`Goal: ${agent.goal}`}>
-                            🎯
-                          </span>
-                        )}
-                        <span
-                          className={`agent-status-label agent-status-${status}`}
-                          title={statusTitle}
-                        >
-                          {statusText}
-                        </span>
-                        <button
-                          className="agent-clear"
-                          title="Clear context"
-                          onClick={() => clearContext(activeWs.id, agent.id)}
-                        >
-                          &#8635;
-                        </button>
-                        <button
-                          className="agent-remove"
-                          onClick={() => removeAgent(activeWs.id, agent.id)}
-                        >
-                          x
-                        </button>
-                      </div>
-                    );
-                  })}
-                  <button className="btn-add-agent" onClick={() => setShowAddAgent(true)}>
-                    + Agent
-                  </button>
-                </div>
+                <button
+                  className="agents-chip"
+                  aria-pressed={openPanel === "agents"}
+                  title="Agents and sessions"
+                  onClick={() => togglePanel("agents")}
+                >
+                  <span className="agents-chip-avatars">
+                    {activeWs.agents.slice(0, 3).map((a) => (
+                      <AgentAvatar key={a.id} agent={a} size={20} />
+                    ))}
+                  </span>
+                  <span
+                    className={`agent-status-dot agent-status-${chipDot(activeWs, connected)}`}
+                  />
+                  <span className="agents-chip-label">{chipLabel(activeWs, connected)}</span>
+                </button>
+                <Rail className="header-rail" items={railItems} />
               </div>
               <div className="workspace-info-bar">
                 <span className="ws-info-item" title={activeWs.cwd}>
@@ -1167,20 +1185,6 @@ export function App() {
                     onClick={() => openWorkspace(activeProject.leadWorkspaceId!)}
                   >
                     ◆<span className="ws-project-btn-label"> Lead</span>
-                  </button>
-                )}
-                {activeProject && (
-                  <button
-                    className="btn-ghost ws-project-btn"
-                    title={`Objectives of ${activeProject.name}`}
-                    aria-haspopup="dialog"
-                    onClick={() => setBoardProjectId(activeProject.id)}
-                  >
-                    Board ·{" "}
-                    {
-                      activeProject.objectives.filter((o) => "status" in o && o.status === "active")
-                        .length
-                    }
                   </button>
                 )}
                 {activeWs.archivedAt == null ? (
@@ -1451,6 +1455,26 @@ export function App() {
         )}
       </div>
 
+      {activeWs && openPanel === "agents" && (
+        <SidePanel
+          title={activeProject ? `${activeProject.name} · agents` : "Agents"}
+          pinned={panelPinned}
+          width={panelWidth}
+          onPin={togglePin}
+          onClose={closePanel}
+          onWidth={setPanelWidth}
+        >
+          <AgentsPanel
+            sessions={scope}
+            project={activeProject}
+            activeWsId={activeWsId}
+            connected={connected}
+            actions={agentActions}
+          />
+        </SidePanel>
+      )}
+      {activeWs && <Rail className="side-rail" items={railItems} />}
+
       {showCreate && (
         <CreateWorkspaceDialog
           hosts={hosts}
@@ -1517,13 +1541,13 @@ export function App() {
           );
         })()}
 
-      {showAddAgent && activeWs && (
+      {addAgentFor && (
         <AddAgentDialog
           presets={presets}
           models={models}
           accounts={accounts}
-          onClose={() => setShowAddAgent(false)}
-          onAdd={(name, model, avatar, color) => addAgent(activeWs.id, name, model, avatar, color)}
+          onClose={() => setAddAgentFor(null)}
+          onAdd={(name, model, avatar, color) => addAgent(addAgentFor, name, model, avatar, color)}
         />
       )}
     </div>
@@ -1539,4 +1563,44 @@ function purgeBody(workspaces: Workspace[], projects: Project[]): string {
   ).length;
   const kept = leads ? ` Archived project leads (${leads}) are kept.` : "";
   return `Permanently delete ${archived.length - leads} archived workspace(s), including their message history and logs.${kept}`;
+}
+
+type PanelId = "agents";
+const DEFAULT_PANEL_WIDTH = 380;
+
+function readSetting(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeSetting(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Private mode: the choice lasts for the session.
+  }
+}
+
+// The header chip for the open workspace's agents: one agent's own state, or
+// the counts for several.
+function chipLabel(ws: Workspace, connected: boolean): string {
+  if (ws.agents.length === 0) return "No agents";
+  if (ws.agents.length === 1) return pillLabel(ws.agents[0], connected);
+  const busy = stateSummary(
+    ws.agents.map((a) => {
+      const s = agentState(a);
+      return s === "working" || s === "waiting" || s === "sleeping" ? s : "idle";
+    }),
+  );
+  return `${ws.agents.length} agents · ${busy}`;
+}
+
+function chipDot(ws: Workspace, connected: boolean): string {
+  const s = sessionState(ws);
+  if (s === "working") return "busy";
+  if (s === "waiting" || s === "sleeping") return s;
+  return connected ? "online" : "offline";
 }

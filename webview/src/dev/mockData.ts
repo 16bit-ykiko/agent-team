@@ -319,6 +319,7 @@ export const MOCK_PROJECT_WORKSPACES: Workspace[] = [
     cwd: "/home/user/projects/clice",
     projectLink: { projectId: "proj-mock", role: "lead" },
     messages: [],
+    messagesLoaded: true,
   },
   {
     ...MOCK_WORKSPACES[0],
@@ -328,6 +329,7 @@ export const MOCK_PROJECT_WORKSPACES: Workspace[] = [
     projectLink: { projectId: "proj-mock", role: "worker" },
     agents: [{ ...MOCK_AGENTS[0], busy: true }],
     messages: [],
+    messagesLoaded: true,
   },
   {
     ...MOCK_WORKSPACES[0],
@@ -336,5 +338,6 @@ export const MOCK_PROJECT_WORKSPACES: Workspace[] = [
     cwd: "/home/user/projects/clice-edits",
     projectLink: { projectId: "proj-mock", role: "worker" },
     messages: [],
+    messagesLoaded: true,
   },
 ];

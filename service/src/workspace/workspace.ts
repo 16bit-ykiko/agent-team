@@ -78,6 +78,8 @@ export interface AgentRuntimeInfo extends AgentInfo {
   goal: string | null;
   // Background work the agent is waiting on (see RunState "waiting").
   backgroundTasks: BackgroundTask[];
+  // Context occupancy at the end of its last turn, when known.
+  context: ContextUsage | null;
 }
 
 export interface AgentState extends AgentInfo {
@@ -157,6 +159,8 @@ export interface AgentEntry {
   // Transient "doing X right now" label from the session (see setActivity).
   activity?: string | null;
   runState?: RunState;
+  // Context at the end of the last turn; undefined until looked up.
+  lastContext?: ContextUsage | null;
 }
 
 export interface WorkspaceCallbacks {
@@ -524,7 +528,11 @@ export class Workspace {
           if (entry.currentMsg.events?.some((e) => e.kind === "retry")) {
             entry.currentMsg.events = entry.currentMsg.events.filter((e) => e.kind !== "retry");
           }
-          if (event.context) entry.currentMsg.context = event.context;
+          if (event.context) {
+            entry.currentMsg.context = event.context;
+            entry.lastContext = event.context;
+            this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
+          }
           if (event.effort) entry.currentMsg.effort = event.effort;
           if (event.thinking) entry.currentMsg.thinking = event.thinking;
           const patch = {
@@ -1136,7 +1144,22 @@ export class Workspace {
       fast: Boolean(a.session.getState().config.fast),
       goal: a.session.getState().config.goal ?? null,
       backgroundTasks: a.session.backgroundTaskList ?? [],
+      context: this.lastContext(a),
     };
+  }
+
+  // From the newest reply that recorded one; an unloaded history (archived)
+  // leaves it unknown.
+  private lastContext(a: AgentEntry): ContextUsage | null {
+    if (a.lastContext !== undefined) return a.lastContext;
+    if (!this.messagesLoaded) return null;
+    let found: ContextUsage | null = null;
+    for (let i = this.messages.length - 1; i >= 0 && !found; i--) {
+      const m = this.messages[i];
+      if (m.agentId === a.info.id && m.context) found = m.context;
+    }
+    a.lastContext = found;
+    return found;
   }
 
   getInfo(includeMessages = true): WorkspaceInfo {
