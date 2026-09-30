@@ -446,14 +446,26 @@ export class Server {
         return;
       }
 
-      case "purge_archived":
-        // A project goes with its lead: only an explicit delete does that.
+      case "purge_archived": {
+        // One project's archived sessions, those in no project (null), or
+        // every one (no projectId). A project goes with its lead: only an
+        // explicit delete does that.
+        const scope = msg.projectId as string | null | undefined;
         for (const w of [...this.workspaces.values()]) {
           if (!w.isArchived) continue;
-          const link = w.projectLink;
-          if (link?.role === "lead" && this.projects.get(link.projectId)) continue;
+          const link = w.projectLink && this.projects.get(w.projectLink.projectId) && w.projectLink;
+          if (scope === null && link) continue;
+          if (scope && link?.projectId !== scope) continue;
+          if (link?.role === "lead") continue;
           this.deleteWorkspace(w.id);
         }
+        return;
+      }
+
+      case "archive_project":
+        this.projectAction(ws, () =>
+          this.projects.setArchived(msg.projectId as string, msg.archived !== false),
+        );
         return;
 
       case "cancel_queued": {
@@ -931,6 +943,11 @@ systemctl --user restart agent-team-server
       }
     }
 
+    try {
+      this.projects.adoptAll();
+    } catch (e) {
+      console.error("[projects] workspaces from before projects stay on their own", e);
+    }
     const archived = [...this.workspaces.values()].filter((w) => w.isArchived).length;
     console.log(`Restored ${this.workspaces.size} workspace(s), ${archived} archived`);
   }

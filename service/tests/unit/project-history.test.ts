@@ -63,6 +63,34 @@ describe("a folder's project", () => {
     expect(manager.ensureFor(notes)).toMatchObject({ name: "notes", root: notes });
   });
 
+  it("takes in every workspace from before projects; a folder of archived ones is an archived project", () => {
+    const { manager, root, base, old, workspaces } = setup();
+    fs.mkdirSync(path.join(base, "clice2"));
+    const live = old("parser", root, [msg("m1", "hi", 1)], false);
+    const past = old("older", root, [msg("m2", "hi", 2)]);
+    const stale = old("stale", path.join(base, "clice2"), [msg("m3", "hi", 3)]);
+    manager.adoptAll();
+    const [repo, clice2] = [root, path.join(base, "clice2")].map((r) =>
+      manager.list().find((p) => p.root === r)!,
+    );
+    expect(repo.archivedAt ?? null).toBeNull();
+    expect(clice2.archivedAt).toBeGreaterThan(0);
+    expect([live, past].map((w) => w.projectLink)).toEqual([
+      { projectId: repo.id, role: "worker" },
+      { projectId: repo.id, role: "worker" },
+    ]);
+    expect(stale.projectLink).toEqual({ projectId: clice2.id, role: "worker" });
+    expect(past.isArchived).toBe(true);
+    // Once is enough: nothing is left out the second time.
+    const count = workspaces.size;
+    manager.adoptAll();
+    expect(workspaces.size).toBe(count);
+    expect(manager.list()).toHaveLength(2);
+    // Work in an archived project's folder brings it back.
+    manager.ensureFor(path.join(base, "clice2"));
+    expect(manager.list().find((p) => p.id === clice2.id)!.archivedAt).toBeNull();
+  });
+
   it("takes in a workspace from before projects when it is restored", () => {
     const { manager, root, old } = setup();
     const w = old("parser", root, [msg("m1", "hi", 1)], false);

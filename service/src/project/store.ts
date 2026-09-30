@@ -16,6 +16,9 @@ export interface Project {
   root: string;
   leadWorkspaceId: string | null;
   createdAt: number;
+  // Filed away with its sessions: the sidebar keeps it apart, the lead is
+  // still there to ask.
+  archivedAt?: number | null;
 }
 
 export class ProjectStore {

@@ -1,11 +1,17 @@
-// Moves a panel to projects: every workspace from before them is archived
-// (its history stays, for the leads to search), and each folder given gets
-// a project with its lead. It asks the running server over its WebSocket,
-// so the server's own logic does the work and nothing on disk is edited
-// behind its back. A copy of the history (.agent-team/cache) is made first.
-// A busy workspace is left as it is; run the script again later.
+// Moves a panel to projects, after the server has put every workspace in
+// its folder's project (it does on start): the sessions from before their
+// project are archived (their history stays, for the leads to search), and
+// each folder given has a live project with its lead; the other projects
+// stay archived. It asks the running server over its WebSocket, so the
+// server's own logic does the work and nothing on disk is edited behind its
+// back. A copy of the history (.agent-team/cache) is made first. A busy
+// session is left as it is: run the script again later; sessions made
+// since the projects are never touched.
 //
-//   npm run migrate:projects -- --base . --port 9800 --dry-run ~/workspace/clice ~/workspace/kotatsu
+// With --archive-others (the first run), the projects of folders not given
+// are archived; later runs leave projects made since then alone.
+//
+//   npm run migrate:projects -- --base . --port 9800 --archive-others --dry-run ~/workspace/clice ~/workspace/kotatsu
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -19,8 +25,13 @@ const flag = (name: string) => {
   const [, value] = args.splice(i, 2);
   return value;
 };
-const dryRun = args.includes("--dry-run");
-if (dryRun) args.splice(args.indexOf("--dry-run"), 1);
+const option = (name: string) => {
+  const i = args.indexOf(name);
+  if (i >= 0) args.splice(i, 1);
+  return i >= 0;
+};
+const dryRun = option("--dry-run");
+const archiveOthers = option("--archive-others");
 // npm runs scripts from the package root; relative paths are the caller's.
 const cwd = process.env.INIT_CWD ?? process.cwd();
 const base = path.resolve(cwd, flag("--base") ?? ".");
@@ -40,6 +51,7 @@ interface Info {
   id: string;
   name: string;
   cwd: string;
+  createdAt: number;
   archivedAt?: number | null;
   projectLink?: { projectId: string; role: string };
 }
@@ -47,6 +59,8 @@ interface ProjectInfo {
   id: string;
   name: string;
   root: string;
+  createdAt: number;
+  archivedAt?: number | null;
 }
 
 async function login(): Promise<string> {
@@ -94,14 +108,27 @@ if (!init) throw new Error("No answer from the server");
 const workspaces = init.workspaces as Info[];
 const projects = (init.projects as ProjectInfo[] | undefined) ?? [];
 
-const toArchive = workspaces.filter((w) => !w.archivedAt && !w.projectLink);
+const projectOf = (w: Info) => projects.find((p) => p.id === w.projectLink?.projectId);
+const unlinked = workspaces.filter((w) => !w.projectLink);
+if (unlinked.length) {
+  throw new Error(`${unlinked.length} workspaces have no project: is the server up to date?`);
+}
+const toArchive = workspaces.filter(
+  (w) =>
+    !w.archivedAt && w.projectLink?.role !== "lead" && w.createdAt < (projectOf(w)?.createdAt ?? 0),
+);
 const toCreate = folders.filter((f) => !projects.some((p) => p.root === f));
-console.log(`${toArchive.length} workspaces to archive:`);
+const toRevive = projects.filter((p) => p.archivedAt && folders.includes(p.root));
+const toShelve = archiveOthers
+  ? projects.filter((p) => !p.archivedAt && !folders.includes(p.root))
+  : [];
+console.log(`${toArchive.length} sessions from before their project to archive:`);
 for (const w of toArchive) console.log(`  ${w.id}  ${w.name}  (${w.cwd})`);
-console.log(`${toCreate.length} projects to create:`);
-for (const f of toCreate) console.log(`  ${path.basename(f)}  (${f})`);
-for (const f of folders.filter((x) => !toCreate.includes(x)))
-  console.log(`  already a project: ${f}`);
+console.log(`${toCreate.length} projects to create, ${toRevive.length} to bring back:`);
+for (const f of toCreate) console.log(`  new: ${path.basename(f)}  (${f})`);
+for (const p of toRevive) console.log(`  back: ${p.name}  (${p.root})`);
+console.log(`${toShelve.length} other projects to archive:`);
+for (const p of toShelve) console.log(`  ${p.name}  (${p.root})`);
 
 if (dryRun) {
   socket.close();
@@ -130,8 +157,15 @@ for (const w of toArchive) {
   if (reply?.type !== "workspace_archived") busy.push(w);
 }
 const failed: string[] = [];
-// Newest on top in the sidebar: the first folder given is made last.
-for (const folder of [...toCreate].reverse()) {
+for (const [list, archived] of [
+  [toRevive, false],
+  [toShelve, true],
+] as const) {
+  for (const p of list) {
+    socket.send(JSON.stringify({ type: "archive_project", projectId: p.id, archived }));
+  }
+}
+for (const folder of toCreate) {
   const from = frames.length;
   socket.send(
     JSON.stringify({ type: "create_project", name: path.basename(folder), path: folder }),
@@ -150,5 +184,7 @@ socket.close();
 
 console.log(`archived ${toArchive.length - busy.length} of ${toArchive.length}`);
 for (const w of busy) console.log(`  still busy, left live: ${w.name} (${w.id})`);
-console.log(`created ${toCreate.length - failed.length} of ${toCreate.length} projects`);
+console.log(
+  `created ${toCreate.length - failed.length} of ${toCreate.length} projects, brought back ${toRevive.length}, archived ${toShelve.length}`,
+);
 for (const f of failed) console.log(`  failed: ${f}`);

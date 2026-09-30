@@ -135,10 +135,48 @@ export class ProjectManager {
   // it is written to.
   ensureFor(cwd: string): Project {
     const root = repositoryRoot(cwd);
-    return (
+    const project =
       this.store.list().find((p) => p.root === root) ??
-      this.create(path.basename(root) || root, root)
-    );
+      this.create(path.basename(root) || root, root);
+    // Work there again brings an archived project back.
+    if (project.archivedAt) this.setArchived(project.id, false);
+    return project;
+  }
+
+  // Every workspace is a session of its folder's project: those from before
+  // projects join theirs (made for them if need be) as archived or live
+  // sessions, as they are. A project made only for archived ones starts
+  // archived itself.
+  adoptAll(): void {
+    const byRoot = new Map<string, Workspace[]>();
+    const roots = new Map<string, string>();
+    for (const w of this.host.workspaces()) {
+      if (w.projectLink) continue;
+      let root = roots.get(w.cwd);
+      if (root === undefined) roots.set(w.cwd, (root = repositoryRoot(w.cwd)));
+      byRoot.set(root, [...(byRoot.get(root) ?? []), w]);
+    }
+    for (const [root, list] of byRoot) {
+      let project = this.store.list().find((p) => p.root === root);
+      if (!project) {
+        project = this.create(path.basename(root) || root, root);
+        if (list.every((w) => w.isArchived)) this.setArchived(project.id, true);
+      }
+      for (const w of list) {
+        w.projectLink = { projectId: project.id, role: "worker" };
+        const tools = this.toolsFor(w);
+        for (const a of w.agents.values()) a.session.setPanelTools?.(tools);
+        this.host.saveWorkspaceNow(w);
+      }
+      this.changed(project.id);
+    }
+  }
+
+  setArchived(id: string, archived: boolean): void {
+    const project = this.require(id);
+    project.archivedAt = archived ? Date.now() : null;
+    this.store.save(project);
+    this.changed(id);
   }
 
   // A workspace from before projects (restored from the archive) joins the
@@ -563,7 +601,7 @@ export class ProjectManager {
     return others
       .map((p) => {
         const lead = this.leadOf(p.id);
-        return `- ${p.id} "${p.name}" — ${p.root} — lead ${lead ? sessionState(lead) : "missing"}`;
+        return `- ${p.id} "${p.name}" — ${p.root} — lead ${lead ? sessionState(lead) : "missing"}${p.archivedAt ? " — archived" : ""}`;
       })
       .join("\n");
   }

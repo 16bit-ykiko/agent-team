@@ -339,11 +339,21 @@ describe("server restart with projects", () => {
     const again = await start(base, web);
     try {
       const init = again.frames.find((f) => f.type === "init")!;
-      const infos = init.workspaces as Array<{ id: string; projectLink?: unknown }>;
-      expect(infos.map((w) => w.id).sort()).toEqual(["ws-live", "ws-orphan"]);
-      expect(infos.find((w) => w.id === "ws-live")!.projectLink).toBeUndefined();
-      expect(init.projects).toEqual([]);
+      const infos = init.workspaces as Array<{
+        id: string;
+        cwd: string;
+        projectLink?: { projectId: string; role: string };
+      }>;
       expect(fs.existsSync(path.join(base, ".agent-team", "projects", "proj-1"))).toBe(false);
+      // Every workspace belongs to its folder's project: the deleted project's
+      // live worker joins a new one, with a fresh lead and no memory.
+      const live = infos.find((w) => w.id === "ws-live")!;
+      const projects = init.projects as Array<Project & { objectives: unknown[] }>;
+      expect(projects).toHaveLength(1);
+      expect(projects[0]).toMatchObject({ root: live.cwd, objectives: [] });
+      expect(projects[0].archivedAt ?? null).toBeNull();
+      expect(live.projectLink).toEqual({ projectId: projects[0].id, role: "worker" });
+      expect(infos.map((w) => w.id)).toContain(projects[0].leadWorkspaceId);
     } finally {
       again.stop();
       log.mockRestore();
