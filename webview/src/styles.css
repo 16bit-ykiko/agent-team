@@ -1442,6 +1442,14 @@ span.katex-display {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
+/* A command in a card (a background shell's) or a banner wraps like a tool
+   call in the steps, instead of one long scrolling bar. */
+.subagent-prompt pre,
+.subagent-summary pre,
+.banner-text pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .event-thinking .event-content {
   color: var(--text-secondary);
   font-style: italic;
