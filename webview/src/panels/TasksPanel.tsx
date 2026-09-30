@@ -52,7 +52,7 @@ export const TasksPanel = memo(function TasksPanel({
               {w.name}
             </button>
             <button
-              className="btn-inline tp-stop-all"
+              className="panel-btn danger tp-stop-all"
               title="Stop the turn, every background task and the wake-ups of this session"
               onClick={() => actions.onStopAll(w.id)}
             >
@@ -73,7 +73,7 @@ export const TasksPanel = memo(function TasksPanel({
                   </span>
                   {t.since > 0 && <span className="tp-when">{elapsed(now - t.since)}</span>}
                   <button
-                    className="btn-inline tp-stop"
+                    className="panel-btn danger tp-stop"
                     aria-label={`Stop ${t.description || t.id}`}
                     onClick={() => actions.onStopTask(w.id, a.id, t.id)}
                   >
@@ -92,7 +92,7 @@ export const TasksPanel = memo(function TasksPanel({
                   </span>
                   {canCancelWake(a) && (
                     <button
-                      className="btn-inline tp-stop"
+                      className="panel-btn danger tp-stop"
                       title="A wake-up lives in the session's CLI process: cancelling closes it, and the session resumes on the next message"
                       onClick={() => actions.onCancelWake(w.id, a.id)}
                     >

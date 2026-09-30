@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/react";
 import { FilesPanel, languageFor, type FileRoot, type FileView } from "../src/panels/FilesPanel";
 import { fileRoots } from "../src/panels/scope";
+import { autoPanelWidth } from "../src/panels/SidePanel";
 import { FileOpenContext, parseFileRef } from "../src/chat/fileRef";
 import { MdBlock } from "../src/chat/markdown";
 import type { Workspace } from "../src/state/useServer";
@@ -229,6 +230,17 @@ describe("FilesPanel", () => {
     ]);
     await waitFor(() => expect(container.querySelector(".dir-view")).not.toBeNull());
     expect(queryByLabelText("Folder")).toBeNull();
+  });
+});
+
+describe("automatic panel widths", () => {
+  it("give code more room than lists, and grow with the window within bounds", () => {
+    expect([1000, 1440, 2560, 3840].map((w) => autoPanelWidth("list", w))).toEqual([
+      380, 380, 560, 560,
+    ]);
+    expect([1000, 1440, 2560, 3840].map((w) => autoPanelWidth("wide", w))).toEqual([
+      560, 605, 1075, 1100,
+    ]);
   });
 });
 

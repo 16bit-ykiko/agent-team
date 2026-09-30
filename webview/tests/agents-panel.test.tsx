@@ -281,11 +281,54 @@ describe("the agents panel in the app", () => {
   });
 
   it("fits a width saved on a wider screen", () => {
-    localStorage.setItem("panelWidth", "5000");
+    localStorage.setItem("listPanelWidth", "5000");
     vi.stubGlobal("innerWidth", 1000);
     boot();
     fireEvent.click(document.querySelector(".agents-chip")!);
     expect((document.querySelector(".side-panel") as HTMLElement).style.width).toBe("700px");
+  });
+
+  it("grows with the window until dragged, and goes back to that on a double-click", () => {
+    vi.stubGlobal("innerWidth", 2560);
+    boot();
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    const panel = () => document.querySelector(".side-panel") as HTMLElement;
+    expect(panel().style.width).toBe("560px");
+    expect(localStorage.getItem("listPanelWidth")).toBeNull();
+    const edge = document.querySelector(".side-panel-resize")!;
+    fireEvent.pointerDown(edge, { clientX: 2000, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 1800, pointerId: 1 });
+    fireEvent.pointerUp(edge, { pointerId: 1 });
+    expect(panel().style.width).toBe("760px");
+    expect(localStorage.getItem("listPanelWidth")).toBe("760");
+    fireEvent.doubleClick(edge);
+    expect(panel().style.width).toBe("560px");
+    expect(localStorage.getItem("listPanelWidth")).toBeNull();
+  });
+
+  it("puts the phone's rail on the branch line, not a line of its own", () => {
+    boot();
+    const rail = document.querySelector(".header-rail")!;
+    expect(rail.parentElement!.className).toBe("workspace-info-bar");
+    expect(rail.querySelectorAll(".rail-btn")).toHaveLength(4);
+  });
+
+  it("maximises over the chat until closed", () => {
+    boot();
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    fireEvent.click(document.querySelector(".side-panel-max")!);
+    const panel = () => document.querySelector(".side-panel") as HTMLElement;
+    expect(panel().className).toContain("maximized");
+    expect(panel().style.left).toBe("260px");
+    expect(panel().style.width).toBe("");
+    expect(document.querySelector(".side-panel-pin")).toBeNull();
+    expect(document.querySelector(".side-panel-resize")).toBeNull();
+    fireEvent.click(document.querySelector(".side-panel-max")!);
+    expect(panel().className).not.toContain("maximized");
+    fireEvent.click(document.querySelector(".side-panel-max")!);
+    fireEvent.click(document.querySelector(".side-panel-close")!);
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    expect(panel().className).not.toContain("maximized");
   });
 
   it("steps aside for a session opened on a phone held sideways", () => {

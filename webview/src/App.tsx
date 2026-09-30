@@ -279,25 +279,25 @@ export function App() {
   const [createInPath, setCreateInPath] = useState<string | undefined>(undefined);
   // The workspace the Add Agent dialog is open for.
   const [addAgentFor, setAddAgentFor] = useState<string | null>(null);
-  // The side panel open beside the chat, pinned (the chat makes room) or
-  // floating over it; both choices and the width persist.
+  // The side panel open beside the chat: pinned (the chat makes room),
+  // floating over it, or maximised over the chat area until it closes.
+  // Pinning persists, and so does a width once dragged; code needs more
+  // room than the lists, so the Files panel has its own.
   const [openPanel, setOpenPanel] = useState<PanelId | null>(null);
   const [panelPinned, setPanelPinned] = useState(() => readSetting("panelPinned") === "1");
-  const [panelWidth, setPanelWidth] = useState(
-    () => Number(readSetting("panelWidth")) || DEFAULT_PANEL_WIDTH,
-  );
   useEffect(() => writeSetting("panelPinned", panelPinned ? "1" : "0"), [panelPinned]);
-  useEffect(() => writeSetting("panelWidth", String(panelWidth)), [panelWidth]);
-  // Code needs more room than the lists, so the Files panel has its own width.
-  const [filesWidth, setFilesWidth] = useState(
-    () => Number(readSetting("filesWidth")) || DEFAULT_FILES_WIDTH,
-  );
-  useEffect(() => writeSetting("filesWidth", String(filesWidth)), [filesWidth]);
-  const togglePanel = useCallback(
-    (id: PanelId) => setOpenPanel((cur) => (cur === id ? null : id)),
-    [],
-  );
-  const closePanel = useCallback(() => setOpenPanel(null), []);
+  const [panelMax, setPanelMax] = useState(false);
+  const [listWidth, setListWidth] = useSavedWidth("listPanelWidth");
+  const [filesWidth, setFilesWidth] = useSavedWidth("filesPanelWidth");
+  const togglePanel = useCallback((id: PanelId) => {
+    setOpenPanel((cur) => (cur === id ? null : id));
+    setPanelMax(false);
+  }, []);
+  const closePanel = useCallback(() => {
+    setOpenPanel(null);
+    setPanelMax(false);
+  }, []);
+  const toggleMax = useCallback(() => setPanelMax((m) => !m), []);
   // What the Files panel shows: a path named in the chat (relative to the
   // workspace it was named in), kept while the chat open is in the same
   // project (`scope`), or else the open workspace's folder. `seq` starts the
@@ -1240,7 +1240,6 @@ export function App() {
                   />
                   <span className="agents-chip-label">{chipLabel(activeWs, connected)}</span>
                 </button>
-                <Rail className="header-rail" items={railItems} />
               </div>
               <div className="workspace-info-bar">
                 <span className="ws-info-item" title={activeWs.cwd}>
@@ -1249,6 +1248,8 @@ export function App() {
                 </span>
                 <GitBar git={activeWs.git ?? null} pr={activeWs.pr ?? null} />
                 <span className="ws-info-spacer" />
+                {/* Phones: the panels' rail shares the branch's line. */}
+                <Rail className="header-rail" items={railItems} />
                 {activeProject?.leadWorkspaceId && activeWs.projectLink?.role === "worker" && (
                   <button
                     className="btn-ghost ws-project-btn"
@@ -1542,10 +1543,13 @@ export function App() {
         <SidePanel
           title={activeProject ? `${activeProject.name} · agents` : "Agents"}
           pinned={panelPinned}
-          width={panelWidth}
+          maximized={panelMax}
+          inset={sidebarWidth}
+          width={listWidth}
           onPin={togglePin}
+          onMaximize={toggleMax}
           onClose={closePanel}
-          onWidth={setPanelWidth}
+          onWidth={setListWidth}
         >
           <AgentsPanel
             sessions={scope}
@@ -1560,10 +1564,13 @@ export function App() {
         <SidePanel
           title={activeProject ? `${activeProject.name} · background` : "Background tasks"}
           pinned={panelPinned}
-          width={panelWidth}
+          maximized={panelMax}
+          inset={sidebarWidth}
+          width={listWidth}
           onPin={togglePin}
+          onMaximize={toggleMax}
           onClose={closePanel}
-          onWidth={setPanelWidth}
+          onWidth={setListWidth}
         >
           <TasksPanel sessions={scope} actions={taskActions} />
         </SidePanel>
@@ -1571,9 +1578,13 @@ export function App() {
       {files && openPanel === "files" && (
         <SidePanel
           title="Files"
+          kind="wide"
           pinned={panelPinned}
+          maximized={panelMax}
+          inset={sidebarWidth}
           width={filesWidth}
           onPin={togglePin}
+          onMaximize={toggleMax}
           onClose={closePanel}
           onWidth={setFilesWidth}
           flush
@@ -1682,8 +1693,6 @@ type PanelId = "agents" | "tasks" | "files";
 const WORKSPACE_ROOT: FileRef = { path: "." };
 // Where side panels become full-screen sheets (styles.css).
 const PHONE = "(max-width: 768px), (max-height: 500px)";
-const DEFAULT_PANEL_WIDTH = 380;
-const DEFAULT_FILES_WIDTH = 560;
 
 function readSetting(key: string): string | null {
   try {
@@ -1693,12 +1702,26 @@ function readSetting(key: string): string | null {
   }
 }
 
-function writeSetting(key: string, value: string): void {
+function writeSetting(key: string, value: string | null): void {
   try {
-    localStorage.setItem(key, value);
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
   } catch {
     // Private mode: the choice lasts for the session.
   }
+}
+
+// A panel width the user dragged to, saved; null for the automatic one.
+function useSavedWidth(key: string): [number | null, (width: number | null) => void] {
+  const [width, setWidth] = useState(() => Number(readSetting(key)) || null);
+  const save = useCallback(
+    (w: number | null) => {
+      setWidth(w);
+      writeSetting(key, w === null ? null : String(w));
+    },
+    [key],
+  );
+  return [width, save];
 }
 
 // The header chip for the open workspace's agents: one agent's own state, or

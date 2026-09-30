@@ -137,21 +137,21 @@ function SessionCard({
       </div>
       <footer className="ap-actions">
         {state === "archived" ? (
-          <button className="btn-inline" onClick={() => actions.onRestore(w.id)}>
+          <button className="panel-btn" onClick={() => actions.onRestore(w.id)}>
             Restore
           </button>
         ) : (
           <>
-            <button className="btn-inline" onClick={() => actions.onAddAgent(w.id)}>
+            <button className="panel-btn" onClick={() => actions.onAddAgent(w.id)}>
               + Agent
             </button>
             {state === "working" && (
-              <button className="btn-inline ap-stop" onClick={() => actions.onStop(w.id)}>
+              <button className="panel-btn danger" onClick={() => actions.onStop(w.id)}>
                 Stop
               </button>
             )}
             {!busy && (
-              <button className="btn-inline" onClick={() => actions.onArchive(w.id)}>
+              <button className="panel-btn" onClick={() => actions.onArchive(w.id)}>
                 Archive
               </button>
             )}

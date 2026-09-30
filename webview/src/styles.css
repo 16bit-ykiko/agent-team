@@ -3531,7 +3531,8 @@ span.katex-display {
   position: relative;
   flex-shrink: 0;
 }
-.side-panel.floating {
+.side-panel.floating,
+.side-panel.maximized {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -3566,29 +3567,63 @@ span.katex-display {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-secondary);
 }
-.side-panel-pin,
-.side-panel-close {
-  width: 26px;
-  height: 26px;
-  font: inherit;
-  font-size: 15px;
-  line-height: 1;
+.side-panel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   color: var(--text-muted);
   background: none;
-  border: none;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.side-panel-pin:hover,
-.side-panel-close:hover {
+.side-panel-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.side-panel-btn:hover {
   color: var(--text-primary);
   background: var(--bg-hover);
+}
+.side-panel-btn[aria-pressed="true"] {
+  color: var(--text-primary);
+  border-color: var(--accent-soft);
+}
+/* Small bordered actions inside the panels. */
+.panel-btn {
+  flex-shrink: 0;
+  min-height: 26px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.panel-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+.panel-btn.danger:hover {
+  color: var(--error);
+  border-color: var(--error);
 }
 .side-panel-body {
   flex: 1;
@@ -3651,9 +3686,12 @@ span.katex-display {
   color: var(--text-secondary);
 }
 .fp-btn {
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
+  min-height: 26px;
   font-size: 12px;
-  padding: 3px 8px;
+  padding: 0 9px;
   text-decoration: none;
 }
 .fp-body {
@@ -3941,8 +3979,8 @@ span.katex-display {
   opacity: 1;
 }
 .ap-agent-actions button {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   font: inherit;
   color: var(--text-muted);
   background: none;
@@ -4000,10 +4038,6 @@ span.katex-display {
 }
 .tp-stop-all {
   flex-shrink: 0;
-}
-.tp-stop-all:hover,
-.tp-stop:hover {
-  color: var(--error);
 }
 .tp-agent {
   margin: 8px 0 0 15px;
@@ -4066,9 +4100,9 @@ span.katex-display {
     margin-left: auto;
   }
   .header-rail .rail-btn {
-    width: 30px;
-    height: 30px;
-    font-size: 14px;
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
   }
   /* The app height, as the sidebar: pinned top+bottom it would sit under
      the keyboard. */
@@ -4081,14 +4115,58 @@ span.katex-display {
     height: var(--app-height, 100%);
     z-index: 95;
     width: auto !important;
+    left: 0 !important;
     border-left: none;
   }
   .side-panel-resize,
-  .side-panel-pin {
+  .side-panel-pin,
+  .side-panel-max {
     display: none;
+  }
+  /* Touch targets: 40-44px, text a size up. */
+  .side-panel-head {
+    padding: calc(6px + env(safe-area-inset-top, 0px)) 6px 6px 16px;
+  }
+  .side-panel-title {
+    font-size: 13px;
+  }
+  .side-panel-btn {
+    width: 44px;
+    height: 44px;
+  }
+  .side-panel-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+  .agents-panel,
+  .tasks-panel {
+    font-size: 13px;
+  }
+  .panel-btn {
+    min-height: 40px;
+    padding: 0 14px;
+    font-size: 14px;
   }
   /* Touch has no hover: the per-agent actions are always there. */
   .ap-agent-actions {
     opacity: 1;
+  }
+  .ap-agent-actions button {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+  .fp-roots {
+    min-height: 40px;
+    font-size: 14px;
+  }
+  .fp-btn {
+    min-height: 40px;
+    padding: 0 12px;
+    font-size: 14px;
+  }
+  .dir-entry {
+    padding: 11px 16px;
+    font-size: 14px;
   }
 }
