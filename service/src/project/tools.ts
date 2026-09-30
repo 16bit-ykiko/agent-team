@@ -129,6 +129,7 @@ export interface PanelApi {
   listProjects(projectId: string): string;
   messageProject(projectId: string, targetId: string, text: string): string;
   workerReport(workspaceId: string, text: string, final: boolean, blocked?: boolean): string;
+  currentTask(workspaceId: string, objectiveId?: string): string;
 }
 
 const run = (fn: () => string | Promise<string>) => new Promise<string>((ok) => ok(fn()));
@@ -523,6 +524,7 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
     instructions: [
       `You are a session of the project "${project.name}" (repository ${project.root}). Its lead agent coordinates the work there and may have started you with a task; the user may also talk to you directly.`,
       "When you finish a task the lead gave you, call finish_task with a concise summary for the lead: what changed, where (branch, commits, PR), what is left. If you are blocked and need a decision, call it with blocked set and say what you need. Use report_progress only for milestones the lead should know about before you finish.",
+      "current_task shows what you are working on as it stands: the task the lead gave you, its later messages to you, and your objectives on the project's board (tasks, decisions, what they depend on). A long task or a compacted context loses these; call it whenever you are not sure what exactly the task is or what was decided.",
     ].join("\n\n"),
     tools: [
       {
@@ -541,6 +543,21 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
         },
         handler: (a) =>
           run(() => api.workerReport(workspaceId, String(a.summary), true, a.blocked === true)),
+      },
+      {
+        name: "current_task",
+        description:
+          "What you are working on, as it stands now: the task the lead gave you and its later messages to you, and your objectives on the project's board with their tasks, decisions and dependencies. With objective_id, another objective of the board (one yours depends on, say).",
+        shape: {
+          objective_id: z.string().optional().describe("Another objective to read, by its id"),
+        },
+        handler: (a) =>
+          run(() =>
+            api.currentTask(
+              workspaceId,
+              typeof a.objective_id === "string" ? a.objective_id : undefined,
+            ),
+          ),
       },
     ],
   };

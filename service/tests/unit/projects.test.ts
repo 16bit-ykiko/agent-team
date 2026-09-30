@@ -60,6 +60,7 @@ describe("panel tool arguments", () => {
     listProjects: record("listProjects"),
     messageProject: record("messageProject"),
     workerReport: record("workerReport"),
+    currentTask: record("currentTask"),
   };
   const byName = (tools: ReturnType<typeof leadToolset>) =>
     Object.fromEntries(tools.tools.map((t) => [t.name, t]));
@@ -229,6 +230,42 @@ describe("ProjectManager", () => {
       }),
     ).rejects.toThrow("No task t9 in core/modules");
     expect(workspaces.size).toBe(1);
+  });
+
+  it("tells a worker what it is on, as it stands: the task, the lead's word since, its objective", async () => {
+    const { create, call, workspaces } = setup();
+    const { lead } = create("clice");
+    await withTask(call, lead);
+    await call(lead, "add_items", { objective_id: "core/modules", decisions: ["which std?"] });
+    await call(lead, "write_objective", { id: "core/lexer", title: "Lexer", goal: "tokens" });
+    await call(lead, "start_session", {
+      title: "modules",
+      cwd: "wt",
+      task: "Implement C++20 modules in the scanner.",
+      objective_id: "core/modules",
+      task_id: "t1",
+    });
+    const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
+    await call(lead, "update_item", {
+      objective_id: "core/modules",
+      item_id: "d1",
+      outcome: "C++20",
+    });
+    await call(lead, "message_session", { session_id: worker.id, message: "Skip header units." });
+
+    const now = await call(worker, "current_task");
+    expect(now).toContain(`You are session ${worker.id} "modules"`);
+    expect(now).toContain("Implement C++20 modules in the scanner.");
+    expect(now).toContain("Later from the lead");
+    expect(now).toContain("Skip header units.");
+    expect(now).toContain("core/modules — Modules");
+    expect(now).toContain(`- t1 [doing] implement (session ${worker.id})`);
+    expect(now).toContain("- d1 settled: which std? → C++20");
+    expect(now).not.toContain("core/lexer");
+    // Another objective, by id.
+    expect(await call(worker, "current_task", { objective_id: "core/lexer" })).toContain(
+      "core/lexer — Lexer",
+    );
   });
 
   it("delivers a worker's report to the lead and moves its task to review", async () => {

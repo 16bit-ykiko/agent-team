@@ -283,6 +283,7 @@ describe("server restart with projects", () => {
       expect(launches[1].panel?.tools.map((t) => t.name)).toEqual([
         "report_progress",
         "finish_task",
+        "current_task",
       ]);
       await until(
         () => frames.some((f) => f.type === "new_message" && f.workspaceId === "ws-w"),

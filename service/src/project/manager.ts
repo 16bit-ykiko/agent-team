@@ -956,6 +956,36 @@ export class ProjectManager {
     throw new Error(`No item ${itemId} in ${o.id}`);
   }
 
+  // What a worker session is on, for when its own context no longer holds
+  // it: the task as the lead gave it, the lead's later messages, and its
+  // objectives on the board as they are now.
+  private currentTask(workspaceId: string, objectiveId?: string): string {
+    const w = this.host.workspace(workspaceId);
+    const projectId = w?.projectLink?.projectId;
+    if (!w || !projectId) throw new Error("This session belongs to no project");
+    if (objectiveId) return this.readObjective(projectId, objectiveId);
+    if (!this.host.loadWorkspace(w)) throw new Error(`"${w.name}" cannot be loaded`);
+    const fromLead = w.getMessages().filter((m) => m.from?.role === "lead");
+    const when = (t: number) => new Date(t).toISOString();
+    const cap = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)} …(cut)` : s);
+    const out = [`You are session ${w.id} "${w.name}" in ${w.cwd}.`, ""];
+    const [task, ...later] = fromLead;
+    out.push(
+      task
+        ? `The task, as the lead gave it (${when(task.timestamp)}):\n\n${cap(task.content, 6000)}`
+        : "(no task from the lead in this session)",
+    );
+    for (const m of later.slice(-5)) {
+      out.push("", `Later from the lead (${when(m.timestamp)}):\n\n${cap(m.content, 2000)}`);
+    }
+    const mine = this.objectives(projectId).filter(
+      (o) => o.sessions.includes(w.id) || o.tasks.some((t) => t.session === w.id),
+    );
+    for (const o of mine) out.push("", "---", "", this.readObjective(projectId, o.id));
+    if (mine.length === 0) out.push("", "(no objective on the board names this session)");
+    return out.join("\n");
+  }
+
   // A worker's report to its lead. Finishing moves the tasks it was doing to
   // review; a blocked worker leaves them in progress for the lead to sort out.
   private workerReport(workspaceId: string, text: string, final: boolean, blocked = false): string {
@@ -1023,6 +1053,7 @@ export class ProjectManager {
       this.require(pid);
       return this.readObjective(pid, id);
     },
+    currentTask: (wid, oid) => this.currentTask(wid, oid),
     writeObjective: (pid, patch) => {
       this.require(pid);
       return this.writeObjective(pid, patch);
