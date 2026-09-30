@@ -352,8 +352,8 @@ export class ProjectManager {
 
   // A worker the lead gave work went quiet without reporting on it: the lead
   // hears it once, with how the turn ended and the last reply (the answer to
-  // a question it asked, often). A turn the user started is theirs; the
-  // worker reports on it itself when it changes the task.
+  // a question it asked, often). The user's own turns with the worker after
+  // it are theirs; the notice only says there were some.
   private tellIfSilent(workspaceId: string): void {
     const w = this.host.workspace(workspaceId);
     const link = w?.projectLink;
@@ -361,21 +361,28 @@ export class ProjectManager {
     const project = this.store.get(link.projectId);
     const lead = this.leadOf(link.projectId);
     if (!project || project.archivedAt || !lead || lead.isArchived) return;
-    for (const { input, reply, stopped } of w.lastTurns()) {
+    for (const { input, replies, stopped, since } of w.lastDelivered()) {
       if (input.from?.role !== "lead" || this.answered.has(input.id)) continue;
-      const error = reply?.events?.filter((e) => e.kind === "error").pop();
-      const content = reply?.content ?? "";
-      const text = (
-        content.endsWith(INTERRUPTED) ? content.slice(0, -INTERRUPTED.length) : content
-      ).trim();
+      const last = replies[replies.length - 1];
+      const error = last?.events?.filter((e) => e.kind === "error").pop();
+      const text = replies
+        .map((m) =>
+          (m.content.endsWith(INTERRUPTED)
+            ? m.content.slice(0, -INTERRUPTED.length)
+            : m.content
+          ).trim(),
+        )
+        .filter(Boolean)
+        .pop();
       const how = stopped
         ? "the user stopped it"
-        : reply?.status === "error"
+        : last?.status === "error"
           ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
           : "its turn ended";
       const body = [
-        `No report on your last message (${how}).`,
+        `No report on your message "${oneLine(input.content, 80)}" (${how}).`,
         text ? `Its last reply:\n\n${text.length > 1500 ? `…${text.slice(-1500)}` : text}` : "",
+        since ? "The user has written to it since; that conversation is theirs." : "",
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -383,14 +390,14 @@ export class ProjectManager {
         lead,
         body,
         { workspaceId: w.id, name: w.name, role: "worker" },
-        `[From the panel, about session "${w.name}" (${w.id})]\n\n${body}`,
+        `[From the panel, about session "${w.name}" (${w.id}). Act on it if there is something to do; no reply to the session is needed.]\n\n${body}`,
       );
       this.answered.add(input.id);
     }
   }
 
   private markAnswered(w: Workspace): void {
-    for (const { input } of w.lastTurns()) {
+    for (const { input } of w.lastDelivered()) {
       if (input.from?.role === "lead") this.answered.add(input.id);
     }
   }

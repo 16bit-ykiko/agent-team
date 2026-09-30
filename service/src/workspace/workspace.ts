@@ -172,10 +172,20 @@ export interface AgentEntry {
   runState?: RunState;
   // Context at the end of the last turn; undefined until looked up.
   lastContext?: ContextUsage | null;
-  // The message whose prompt the agent got last, its latest turn's reply
-  // (a wake-up's included, not a local command's), and whether a turn of it
-  // has been stopped since. In memory only: a restart forgets it.
-  input?: { id: string; from?: MessageOrigin; reply?: string; stopped: boolean };
+  // The message the agent got last, and the last one from another session
+  // (the same record while nothing came after it). In memory only: a
+  // restart forgets them.
+  input?: TurnInput;
+  delivered?: TurnInput;
+}
+
+// A message an agent got and the turns it drove: their replies (a wake-up's
+// included, not a local command's) and whether the latest was stopped.
+interface TurnInput {
+  id: string;
+  from?: MessageOrigin;
+  replies: string[];
+  stopped: boolean;
 }
 
 export interface WorkspaceCallbacks {
@@ -348,15 +358,23 @@ export class Workspace {
     return true;
   }
 
-  // Per agent, what drove its last turns: the input message, the agent's
-  // last reply since, and whether it was stopped.
-  lastTurns(): Array<{ agentId: string; input: Message; reply?: Message; stopped: boolean }> {
+  // Per agent, the last message another session sent it and what came of
+  // it: the replies of the turns it drove, whether the latest was stopped,
+  // and whether the user has written to the agent since.
+  lastDelivered(): Array<{
+    agentId: string;
+    input: Message;
+    replies: Message[];
+    stopped: boolean;
+    since: boolean;
+  }> {
     const out = [];
     for (const [agentId, a] of this.agents) {
-      const input = a.input && this.messages.find((m) => m.id === a.input!.id);
+      const d = a.delivered;
+      const input = d && this.messages.find((m) => m.id === d.id);
       if (!input) continue;
-      const reply = a.input!.reply ? this.messages.find((m) => m.id === a.input!.reply) : undefined;
-      out.push({ agentId, input, reply, stopped: a.input!.stopped });
+      const replies = this.messages.filter((m) => d.replies.includes(m.id));
+      out.push({ agentId, input, replies, stopped: d.stopped, since: a.input !== d });
     }
     return out;
   }
@@ -449,7 +467,7 @@ export class Workspace {
   private ensureAgentMsg(entry: AgentEntry): Message {
     if (!entry.currentMsg) {
       entry.currentMsg = this.makeAgentMsg(entry.info.id);
-      if (entry.input) entry.input.reply = entry.currentMsg.id;
+      entry.input?.replies.push(entry.currentMsg.id);
       this.pushMessage(entry.currentMsg);
     }
     return entry.currentMsg;
@@ -726,6 +744,7 @@ export class Workspace {
     session.on("runState", (state: RunState) => {
       const entry = this.agents.get(agentId);
       if (entry) entry.runState = state;
+      if (state === "working" && entry?.input) entry.input.stopped = false;
       this.cb?.onAgentState?.(this.id, agentId, state);
       // The pending wake-up (and its time) comes and goes with the state.
       if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
@@ -751,7 +770,7 @@ export class Workspace {
     if (!entry) return null;
 
     this.releaseSession(agentId, entry);
-    this.finalizeAbort(entry);
+    this.finalizeAbort(entry, false);
     this.agents.delete(agentId);
     const dropped = this.messages
       .filter((m) => m.status === "queued" && m.queuedFor === agentId)
@@ -1109,11 +1128,14 @@ export class Workspace {
 
   private async dispatchPrompt(agent: AgentEntry, prompt: string, input?: Message): Promise<void> {
     agent.lastPrompt = prompt;
-    if (input) agent.input = { id: input.id, from: input.from, stopped: false };
+    if (input) {
+      agent.input = { id: input.id, from: input.from, replies: [], stopped: false };
+      if (input.from) agent.delivered = agent.input;
+    }
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
 
     agent.currentMsg = this.makeAgentMsg(agent.info.id);
-    if (agent.input) agent.input.reply = agent.currentMsg.id;
+    agent.input?.replies.push(agent.currentMsg.id);
     this.pushMessage(agent.currentMsg);
 
     try {
@@ -1220,15 +1242,22 @@ export class Workspace {
   abortAgent(agentId: string): void {
     const entry = this.agents.get(agentId);
     if (!entry) return;
+    const busy = this.hasWork(entry);
     entry.session.abort();
-    this.finalizeAbort(entry);
+    this.finalizeAbort(entry, busy);
   }
 
   abortAll(): void {
     for (const entry of this.agents.values()) {
+      const busy = this.hasWork(entry);
       entry.session.abort();
-      this.finalizeAbort(entry);
+      this.finalizeAbort(entry, busy);
     }
+  }
+
+  // A turn, background task or wake-up that a stop would cut short.
+  private hasWork(entry: AgentEntry): boolean {
+    return entry.currentMsg?.status === "streaming" || this.agentState(entry) !== "idle";
   }
 
   // Stop the running turns and nothing else: background tasks and pending
@@ -1257,12 +1286,13 @@ export class Workspace {
     if (!entry?.session.cancelWake) return "No wake-up to cancel";
     const refused = entry.session.cancelWake();
     if (refused) return refused;
+    if (entry.input) entry.input.stopped = true;
     this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
     return null;
   }
 
-  private finalizeAbort(entry: AgentEntry): void {
-    if (entry.input) entry.input.stopped = true;
+  private finalizeAbort(entry: AgentEntry, busy: boolean): void {
+    if (busy && entry.input) entry.input.stopped = true;
     if (entry.currentMsg && entry.currentMsg.status === "streaming") {
       entry.currentMsg.content = withInterrupted(entry.currentMsg.content);
       entry.currentMsg.status = "done";
@@ -1277,6 +1307,7 @@ export class Workspace {
     const entry = this.agents.get(agentId);
     if (!entry) return false;
     if (entry.session.isRunning) return false;
+    if (this.hasWork(entry) && entry.input) entry.input.stopped = true;
     entry.session.abort();
     entry.session.sessionId = null;
     entry.lastContext = null;
