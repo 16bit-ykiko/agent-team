@@ -52,7 +52,7 @@ describe("summarizeEvent", () => {
     });
     const long = summarizeEvent(
       ev("tool_use", {
-        toolName: "mcp__panel__search_history",
+        toolName: "mcp__panel__message_session",
         content: "x".repeat(700),
         toolResult: "y".repeat(900),
       }),
@@ -62,7 +62,37 @@ describe("summarizeEvent", () => {
       long.bodyLength,
       long.toolResult!.length,
       long.resultLength,
-    ]).toEqual([601, 700, 601, 900]);
+    ]).toEqual([600, 700, 600, 900]);
+    // The panel's reads stay in the steps: their first line, as any tool.
+    expect(
+      summarizeEvent(
+        ev("tool_use", {
+          toolName: "mcp__panel__read_session",
+          content: "**read_session** `ws-1`\nmore",
+          toolResult: "y".repeat(900),
+        }),
+      ),
+    ).toEqual({
+      kind: "tool_use",
+      toolName: "mcp__panel__read_session",
+      content: "**read_session** `ws-1`",
+      bodyLength: "**read_session** `ws-1`\nmore".length,
+      resultLength: 900,
+    });
+  });
+
+  it("marks a cut text by a length longer than it, even one character over the cap", () => {
+    for (const n of [600, 601, 700]) {
+      const text = "e".repeat(n);
+      const banner = summarizeEvent(ev("error", { content: text }));
+      const call = summarizeEvent(
+        ev("tool_use", { toolName: "mcp__panel__finish_task", content: text, toolResult: text }),
+      );
+      const cut = n > 600;
+      expect((banner.contentLength ?? n) > banner.content.length, `banner ${n}`).toBe(cut);
+      expect(call.bodyLength! > call.content.length, `call ${n}`).toBe(cut);
+      expect(call.resultLength! > call.toolResult!.length, `result ${n}`).toBe(cut);
+    }
   });
 
   it("drops thinking/text/result bodies but keeps their length", () => {
@@ -83,7 +113,8 @@ describe("summarizeEvent", () => {
       content: "watch out",
       level: "warning",
     });
-    expect(summarizeEvent(ev("error", { content: "e".repeat(700) })).content).toHaveLength(601);
+    const cut = summarizeEvent(ev("error", { content: "e".repeat(700) }));
+    expect([cut.content.length, cut.contentLength]).toEqual([600, 700]);
   });
 
   it("reduces subagents to their header and counts", () => {

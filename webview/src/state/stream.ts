@@ -370,6 +370,12 @@ function sameEvents(cur: StreamEvent[] = [], next: StreamEvent[] = []): boolean 
     next.every((n, i) => {
       const c = cur[i];
       if (c.kind !== n.kind) return false;
+      // A result that came (or failed) while the socket was down.
+      if (n.kind === "tool_use") {
+        const had = c.toolResult != null || c.resultLength != null;
+        const has = n.toolResult != null || n.resultLength != null;
+        return had === has && !!c.toolResultIsError === !!n.toolResultIsError;
+      }
       if (!n.subagent) return true;
       return (
         !!c.subagent &&

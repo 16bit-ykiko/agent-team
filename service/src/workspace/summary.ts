@@ -1,5 +1,6 @@
 import type { Message } from "./workspace";
 import type { StreamEvent } from "../session/claude";
+import { PANEL_ACTIONS } from "../project/tools";
 
 // History pages carry only what the collapsed view needs: kinds, chips,
 // counts, banners. Bodies (thinking text, tool output, subagent transcripts)
@@ -8,6 +9,12 @@ import type { StreamEvent } from "../session/claude";
 
 const FIRST_LINE_MAX = 200;
 const BANNER_MAX = 600;
+
+// Cut to BANNER_MAX with the ellipsis inside it, so a cut text is always
+// shorter than its recorded length.
+function capped(s: string): string {
+  return s.length > BANNER_MAX ? s.slice(0, BANNER_MAX - 1) + "…" : s;
+}
 
 function firstLine(s: string): string {
   const line = s.split("\n")[0] ?? "";
@@ -31,15 +38,11 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
     case "tool_use":
       // The panel's calls show as lines of their own (a session started, a
       // message sent): what was sent and answered, like a banner's text.
-      if (e.toolName?.startsWith("mcp__panel__")) {
-        const text = e.content ?? "";
-        base.content = text.length > BANNER_MAX ? text.slice(0, BANNER_MAX) + "…" : text;
-        base.bodyLength = text.length;
+      if (PANEL_ACTIONS.has(e.toolName?.replace(/^mcp__panel__/, "") ?? "")) {
+        base.content = capped(e.content ?? "");
+        base.bodyLength = (e.content ?? "").length;
         if (e.toolResult != null) {
-          base.toolResult =
-            e.toolResult.length > BANNER_MAX
-              ? e.toolResult.slice(0, BANNER_MAX) + "…"
-              : e.toolResult;
+          base.toolResult = capped(e.toolResult);
           base.resultLength = e.toolResult.length;
         }
         break;
@@ -53,7 +56,7 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
     case "retry":
     case "error": {
       const text = e.content ?? "";
-      base.content = text.length > BANNER_MAX ? text.slice(0, BANNER_MAX) + "…" : text;
+      base.content = capped(text);
       if (text.length > BANNER_MAX) base.contentLength = text.length;
       break;
     }

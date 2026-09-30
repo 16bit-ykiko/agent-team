@@ -280,6 +280,42 @@ describe("mergeLatestPage", () => {
     expect(out[1].detail).toBe("summary");
   });
 
+  it("takes a result that came or failed while disconnected, on a settled message", () => {
+    const call = ev("tool_use", {
+      toolName: "mcp__panel__message_session",
+      toolUseId: "t1",
+      content: "**message_session** `ws-9`",
+    });
+    const mine = msg({ id: "m1", timestamp: 1, status: "done", events: [call] });
+    const theirs = msg({
+      id: "m1",
+      timestamp: 1,
+      status: "done",
+      detail: "summary",
+      events: [
+        { ...call, toolResult: "No session ws-9", resultLength: 15, toolResultIsError: true },
+      ],
+    });
+    const [out] = mergeLatestPage([mine], [theirs]);
+    expect(out.events![0]).toMatchObject({
+      toolResult: "No session ws-9",
+      toolResultIsError: true,
+    });
+    // Nothing moved: the client keeps its own copy.
+    const settled = msg({
+      id: "m1",
+      timestamp: 1,
+      status: "done",
+      events: [{ ...call, toolResult: "ok" }],
+    });
+    const same = msg({
+      ...settled,
+      detail: "summary",
+      events: [{ ...call, resultLength: 2 }],
+    });
+    expect(mergeLatestPage([settled], [same])[0].events![0].toolResult).toBe("ok");
+  });
+
   it("appends messages that arrived while disconnected, in order", () => {
     const out = mergeLatestPage(
       [msg({ id: "m1", timestamp: 1, status: "done" })],

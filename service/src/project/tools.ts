@@ -58,6 +58,19 @@ export interface ItemPatch {
 
 // What the tools do, implemented by the ProjectManager. Errors are thrown
 // and reach the model as the tool's error result.
+// The calls with an effect elsewhere, which the client shows as lines of
+// their own in a reply (webview chat/events.ts, kept alike by a test):
+// summary pages keep their text and answer.
+export const PANEL_ACTIONS: ReadonlySet<string> = new Set([
+  "start_session",
+  "message_session",
+  "message_project",
+  "stop_session",
+  "archive_session",
+  "report_progress",
+  "finish_task",
+]);
+
 export interface HistorySearch {
   query?: string;
   regex?: string;

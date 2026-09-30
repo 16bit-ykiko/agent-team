@@ -16,7 +16,7 @@ export function isBannerEvent(e: StreamEvent): boolean {
 // The panel's calls with an effect elsewhere — a session started, stopped
 // or archived, a message sent, a report to the lead — stand where they
 // happened as lines of their own, not folded among the steps.
-const PANEL_ACTIONS = new Set([
+export const PANEL_ACTIONS = new Set([
   "start_session",
   "message_session",
   "message_project",
