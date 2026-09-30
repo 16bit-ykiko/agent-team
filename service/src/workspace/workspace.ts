@@ -295,6 +295,9 @@ export class Workspace {
   private cb?: WorkspaceCallbacks;
   private hostRegistry: HostRegistry;
   private disposed = false;
+  // Messages changed since the history was last saved; new and dropped
+  // ones are found without it (HistoryDb.save).
+  private changed = new Set<string>();
 
   constructor(
     id: string,
@@ -326,6 +329,33 @@ export class Workspace {
       if (this.agentState(a) === "waiting") return false;
     }
     return !this.messages.some((m) => m.status === "queued" || m.status === "streaming");
+  }
+
+  takeChanged(): Set<string> {
+    const changed = this.changed;
+    this.changed = new Set();
+    return changed;
+  }
+
+  touch(ids: Iterable<string>): void {
+    for (const id of ids) this.changed.add(id);
+  }
+
+  // Every change a client is told about is one to save.
+  private streamed(msg: Message, event: StreamEvent): void {
+    this.changed.add(msg.id);
+    this.cb?.onStreamEvent(this.id, msg, event);
+  }
+
+  private finished(
+    id: string,
+    status: MessageStatus,
+    content: string,
+    events?: StreamEvent[],
+    patch?: Partial<Pick<Message, "context" | "effort" | "thinking">>,
+  ): void {
+    this.changed.add(id);
+    this.cb?.onMessageDone(this.id, id, status, content, events, patch);
   }
 
   private pushMessage(msg: Message): void {
@@ -405,7 +435,7 @@ export class Workspace {
       if (innerEvent && startIdx >= 0) {
         const saEvents = (msg.events[startIdx].subagent!.events ??= []);
         applyInnerEvent(saEvents, innerEvent);
-        this.cb?.onStreamEvent(this.id, msg, event);
+        this.streamed(msg, event);
         return;
       }
       if (innerEvent) {
@@ -437,7 +467,7 @@ export class Workspace {
       if (progIdx >= 0) msg.events.splice(progIdx, 1);
       msg.events.push(event);
     }
-    this.cb?.onStreamEvent(this.id, msg, event);
+    this.streamed(msg, event);
   }
 
   // Subagent events can arrive after the message containing subagent_start is
@@ -492,8 +522,8 @@ export class Workspace {
             )!;
             call.toolResult = event.content;
             if (event.isMarkdown) call.toolResultIsMarkdown = true;
-            this.cb?.onStreamEvent(this.id, owner, event);
-            this.cb?.onMessageDone(this.id, owner.id, owner.status, owner.content, owner.events);
+            this.streamed(owner, event);
+            this.finished(owner.id, owner.status, owner.content, owner.events);
             return;
           }
         }
@@ -517,17 +547,17 @@ export class Workspace {
       if (event.kind === "text_delta") {
         const msg = this.ensureAgentMsg(entry);
         msg.content += event.content;
-        this.cb?.onStreamEvent(this.id, msg, event);
+        this.streamed(msg, event);
       } else if (event.kind === "thinking_delta") {
         // Live only: relayed so the client can show thinking as it streams;
         // the finished block arrives as a "thinking" event and is what stays.
         const msg = this.ensureAgentMsg(entry);
-        this.cb?.onStreamEvent(this.id, msg, event);
+        this.streamed(msg, event);
       } else if (event.kind === "thinking_tokens") {
         const msg = this.ensureAgentMsg(entry);
         const block = lastThinking(msg.events!);
         if (block && block.tokens == null) block.tokens = event.tokens;
-        this.cb?.onStreamEvent(this.id, msg, event);
+        this.streamed(msg, event);
       } else if (event.kind === "text") {
         // text comes via text_delta streaming; finalized text event is redundant
       } else if (event.kind === "result") {
@@ -558,8 +588,7 @@ export class Workspace {
             ...(event.effort && { effort: event.effort }),
             ...(event.thinking && { thinking: event.thinking }),
           };
-          this.cb?.onMessageDone(
-            this.id,
+          this.finished(
             entry.currentMsg.id,
             "done",
             entry.currentMsg.content,
@@ -577,8 +606,8 @@ export class Workspace {
         msg.status = "error";
         event.contentOffset = msg.content.length;
         msg.events!.push(event);
-        this.cb?.onStreamEvent(this.id, msg, event);
-        this.cb?.onMessageDone(this.id, msg.id, "error", msg.content, msg.events);
+        this.streamed(msg, event);
+        this.finished(msg.id, "error", msg.content, msg.events);
         entry.currentMsg = null;
         this.cb?.onAgentIdle?.(this.id, agentId);
         setTimeout(() => this.dequeueNext(agentId), 0);
@@ -596,7 +625,7 @@ export class Workspace {
           event.contentOffset = msg.content.length;
           msg.events!.push(event);
         }
-        this.cb?.onStreamEvent(this.id, msg, event);
+        this.streamed(msg, event);
       } else if (event.kind === "tool_result" && event.toolUseId) {
         const msg = this.ensureAgentMsg(entry);
         const matchIdx = msg.events!.findIndex(
@@ -609,12 +638,12 @@ export class Workspace {
           event.contentOffset = msg.content.length;
           msg.events!.push(event);
         }
-        this.cb?.onStreamEvent(this.id, msg, event);
+        this.streamed(msg, event);
       } else {
         const msg = this.ensureAgentMsg(entry);
         event.contentOffset = msg.content.length;
         msg.events!.push(event);
-        this.cb?.onStreamEvent(this.id, msg, event);
+        this.streamed(msg, event);
       }
     };
   }
@@ -956,7 +985,7 @@ export class Workspace {
       agentMsg.content = cmdResult;
       agentMsg.status = "done";
       this.pushMessage(agentMsg);
-      this.cb?.onMessageDone(this.id, agentMsg.id, "done", cmdResult);
+      this.finished(agentMsg.id, "done", cmdResult);
       return;
     }
 
@@ -1069,7 +1098,7 @@ export class Workspace {
     msg.status = "done";
     delete msg.queuedPrompt;
     delete msg.queuedFor;
-    this.cb?.onMessageDone(this.id, msg.id, "done", msg.content);
+    this.finished(msg.id, "done", msg.content);
     void this.dispatchPrompt(entry, prompt);
   }
 
@@ -1195,13 +1224,7 @@ export class Workspace {
     if (entry.currentMsg && entry.currentMsg.status === "streaming") {
       entry.currentMsg.content = withInterrupted(entry.currentMsg.content);
       entry.currentMsg.status = "done";
-      this.cb?.onMessageDone(
-        this.id,
-        entry.currentMsg.id,
-        "done",
-        entry.currentMsg.content,
-        entry.currentMsg.events,
-      );
+      this.finished(entry.currentMsg.id, "done", entry.currentMsg.content, entry.currentMsg.events);
     }
     entry.currentMsg = null;
     this.cb?.onAgentIdle?.(this.id, entry.info.id);
@@ -1334,6 +1357,7 @@ export class Workspace {
       // Cut off by a server restart or crash mid-turn.
       if (m.status === "streaming") {
         msg.content = m.content ? `${m.content}\n\n*\\[interrupted\\]*` : "*\\[interrupted\\]*";
+        ws.changed.add(m.id);
       }
       if (msg.events) normalizeEvents(msg.events);
       return msg;

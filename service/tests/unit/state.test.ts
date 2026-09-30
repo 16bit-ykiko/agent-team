@@ -1,23 +1,41 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { DatabaseSync } from "node:sqlite";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
   appendLog,
+  closeHistory,
   deleteWorkspaceState,
-  historyPath,
+  historyFile,
+  historyOf,
   isLoggedEvent,
   loadAll,
   loadWorkspaceMessages,
   saveIndex,
   saveWorkspace,
   stripLegacyRaw,
-  textFileOf,
 } from "../../src/workspace/state";
 import { Message, WorkspaceState } from "../../src/workspace/workspace";
 
+const bases: string[] = [];
 function tmpBase(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-state-"));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-state-"));
+  bases.push(base);
+  return base;
+}
+afterEach(() => {
+  for (const base of bases.splice(0)) {
+    closeHistory(base);
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// A row of history.db changed behind the server's back.
+function setBody(base: string, id: string, body: string): void {
+  const db = new DatabaseSync(historyFile(base));
+  db.prepare("update messages set body = ? where session = ? and id = ?").run(body, "ws-1", id);
+  db.close();
 }
 
 function wsWithRaw(): WorkspaceState {
@@ -66,43 +84,79 @@ describe("legacy raw stripping", () => {
     expect(stripLegacyRaw(ws)).toBe(0);
   });
 
-  it("moves a history saved inside the state file to its own, once, without the legacy raw", () => {
+  it("moves a history saved inside the state file into history.db, once, without the legacy raw", () => {
     const base = tmpBase();
     const dir = path.join(base, ".agent-team", "cache", "workspaces");
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, "ws-1.json");
     fs.writeFileSync(file, JSON.stringify(wsWithRaw()));
     saveIndex(base, ["ws-1"]);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
     const loaded = loadAll(base);
+    expect(log).toHaveBeenCalledWith("Moved 1 histories into history.db");
     expect(loaded).toHaveLength(1);
     expect(loaded[0].messages).toHaveLength(1);
     expect(JSON.stringify(loaded[0])).not.toContain('"raw"');
     expect(JSON.parse(fs.readFileSync(file, "utf-8"))).not.toHaveProperty("messages");
-    const lines = fs.readFileSync(path.join(dir, "ws-1.jsonl"), "utf-8").split("\n");
-    expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0])).toMatchObject({ id: "m1", content: "x" });
-    expect(lines[0]).not.toContain('"raw"');
+    const stored = historyOf(base).load("ws-1");
+    expect(stored).toMatchObject([{ id: "m1", content: "x" }]);
+    expect(JSON.stringify(stored)).not.toContain('"raw"');
     // The file as it was, kept aside.
     const kept = path.join(base, ".agent-team", "backup-v1", "ws-1.json");
     expect((JSON.parse(fs.readFileSync(kept, "utf-8")) as WorkspaceState).messages).toHaveLength(1);
     // Nothing left to move the second time.
-    const before = fs.statSync(path.join(dir, "ws-1.jsonl")).mtimeMs;
-    loadAll(base);
-    expect(fs.statSync(path.join(dir, "ws-1.jsonl")).mtimeMs).toBe(before);
+    log.mockClear();
+    expect(loadAll(base)[0].messages).toMatchObject([{ id: "m1", content: "x" }]);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Moved"));
+    log.mockRestore();
   });
 
-  it("keeps one message per line whatever its text holds", () => {
+  it("keeps any text as it was", () => {
     const base = tmpBase();
     const ws = wsWithRaw();
     ws.messages![0].content = 'line one\nline "two"\n\n中文';
     saveWorkspace(base, ws);
-    const text = fs.readFileSync(
-      path.join(base, ".agent-team", "cache", "workspaces", "ws-1.jsonl"),
-      "utf-8",
-    );
-    expect(text.split("\n")).toHaveLength(2);
+    closeHistory(base);
     expect(loadWorkspaceMessages(base, "ws-1")[0].content).toBe('line one\nline "two"\n\n中文');
+  });
+});
+
+describe("saving a history", () => {
+  const msg = (id: string, content: string): Message => ({
+    id,
+    kind: "user",
+    agentId: null,
+    content,
+    timestamp: 1,
+    status: "done",
+  });
+  const stored = (base: string) => {
+    closeHistory(base);
+    return historyOf(base)
+      .load("ws-1")
+      .map((m) => `${m.id}:${m.content}`);
+  };
+
+  it("writes the messages named as changed, the new ones, and drops the removed", () => {
+    const base = tmpBase();
+    const messages = [msg("a", "one"), msg("b", "two")];
+    const ws = { ...wsWithRaw(), messages };
+    expect(saveWorkspace(base, ws)).toBe(true);
+    messages[0].content = "one, edited";
+    messages[1].content = "two, edited";
+    messages.push(msg("c", "three"));
+    expect(saveWorkspace(base, ws, new Set(["b"]))).toBe(true);
+    expect(stored(base)).toEqual(["a:one", "b:two, edited", "c:three"]);
+    // Nothing named, nothing new: nothing written.
+    expect(saveWorkspace(base, ws, new Set())).toBe(false);
+    // Compared one by one, what was missed is written too.
+    expect(saveWorkspace(base, ws, "all")).toBe(true);
+    expect(saveWorkspace(base, ws, "all")).toBe(false);
+    messages.splice(1, 1);
+    messages.push(msg("d", "four"));
+    expect(saveWorkspace(base, ws, new Set())).toBe(true);
+    expect(stored(base)).toEqual(["a:one, edited", "c:three", "d:four"]);
   });
 });
 
@@ -120,15 +174,6 @@ describe("unloaded workspaces", () => {
     expect(loadWorkspaceMessages(base, "ws-1")).toHaveLength(1);
   });
 
-  it("keeps what was said beside the history, without the tools", () => {
-    const base = tmpBase();
-    saveWorkspace(base, wsWithRaw());
-    const text = fs.readFileSync(textFileOf(historyPath(base, "ws-1")), "utf-8");
-    expect(text).toBe(
-      `${JSON.stringify({ id: "m1", kind: "agent", content: "x", timestamp: 1 })}\n`,
-    );
-  });
-
   it("deleting a workspace removes its files and log directory", () => {
     const base = tmpBase();
     saveWorkspace(base, wsWithRaw());
@@ -139,16 +184,18 @@ describe("unloaded workspaces", () => {
     expect(fs.existsSync(logDir)).toBe(false);
     expect(loadWorkspaceMessages(base, "ws-1")).toEqual([]);
     expect(fs.readdirSync(path.join(base, ".agent-team", "cache", "workspaces"))).toEqual([]);
+    closeHistory(base);
+    expect(loadWorkspaceMessages(base, "ws-1")).toEqual([]);
   });
 
   it("saving an unloaded workspace never touches its history, even one it could not read", () => {
     const base = tmpBase();
     saveWorkspace(base, wsWithRaw());
-    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.jsonl");
-    const truncated = fs.readFileSync(file, "utf-8").slice(0, 40);
-    fs.writeFileSync(file, truncated);
+    setBody(base, "m1", '{"id":"m1","cont');
     saveWorkspace(base, { ...wsWithRaw(), messages: undefined, archivedAt: 1 });
-    expect(fs.readFileSync(file, "utf-8")).toBe(truncated);
+    const db = new DatabaseSync(historyFile(base));
+    expect(db.prepare("select body from messages").get()).toEqual({ body: '{"id":"m1","cont' });
+    db.close();
   });
 
   it("state files are private to the user", () => {
@@ -156,15 +203,16 @@ describe("unloaded workspaces", () => {
     saveWorkspace(base, wsWithRaw());
     const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.json");
     expect(fs.statSync(file).mode & 0o077).toBe(0);
+    for (const f of [historyFile(base), `${historyFile(base)}-wal`]) {
+      expect(fs.statSync(f).mode & 0o077).toBe(0);
+    }
   });
 
   it("an unreadable history is an error, not an empty one", () => {
     const base = tmpBase();
     saveWorkspace(base, wsWithRaw());
-    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.jsonl");
-    fs.chmodSync(file, 0o000);
+    setBody(base, "m1", '{"id":"m1","cont');
     expect(() => loadWorkspaceMessages(base, "ws-1")).toThrow();
-    fs.chmodSync(file, 0o600);
     expect(loadWorkspaceMessages(base, "ws-2")).toEqual([]);
   });
 

@@ -20,6 +20,7 @@ vi.mock("../../src/server/quota", () => ({
 }));
 
 import { Server } from "../../src/server/server";
+import { closeHistory, historyOf } from "../../src/workspace/state";
 import { ClaudeSession } from "../../src/session/claude";
 
 interface FakeTool {
@@ -234,15 +235,13 @@ async function start(base: string, web: string) {
   return { server, frames, send, stop };
 }
 
-// A workspace as saved: what it is, and its history, one message per line.
+// A workspace as saved: what it is, and its history.
 const readState = (base: string, id: string): WorkspaceState => {
   const dir = path.join(base, ".agent-team", "cache", "workspaces");
   const meta = JSON.parse(fs.readFileSync(path.join(dir, `${id}.json`), "utf-8")) as WorkspaceState;
-  const lines = fs
-    .readFileSync(path.join(dir, `${id}.jsonl`), "utf-8")
-    .split("\n")
-    .filter(Boolean);
-  return { ...meta, messages: lines.map((l) => JSON.parse(l) as Message) };
+  const messages = historyOf(base).load(id);
+  closeHistory(base);
+  return { ...meta, messages };
 };
 
 describe("server restart with projects", () => {

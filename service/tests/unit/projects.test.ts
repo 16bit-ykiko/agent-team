@@ -41,9 +41,11 @@ describe("panel tool arguments", () => {
   const api: PanelApi = {
     projectStatus: (...a) => Promise.resolve(record("projectStatus")(...a)),
     startSession: record("startSession"),
-    readSession: record("readSession"),
+    readSession: (...a) => Promise.resolve(record("readSession")(...a)),
     listHistory: (...a) => Promise.resolve(record("listHistory")(...a)),
     searchHistory: (...a) => Promise.resolve(record("searchHistory")(...a)),
+    readEntry: (...a) => Promise.resolve(record("readEntry")(...a)),
+    queryHistory: (...a) => Promise.resolve(record("queryHistory")(...a)),
     messageSession: record("messageSession"),
     stopSession: record("stopSession"),
     archiveSession: record("archiveSession"),
@@ -74,6 +76,17 @@ describe("panel tool arguments", () => {
       task_id: "t2",
     });
     await t.read_session.handler({ session_id: "ws-w" });
+    await t.search_history.handler({
+      query: "PartialSpec",
+      in: ["tool_output"],
+      tool: "Bash",
+      since: "2026-09-01",
+      level: "subagents",
+      limit: 5,
+      offset: 10,
+    });
+    await t.read_entry.handler({ entry: 12 });
+    await t.query_history.handler({ sql: "select 1" });
     await t.write_objective.handler({
       id: "core/modules",
       status: "later",
@@ -95,7 +108,24 @@ describe("panel tool arguments", () => {
           taskId: "t2",
         },
       ],
-      ["readSession", "p1", "ws-w", 6, undefined],
+      ["readSession", "p1", "ws-w", 6, undefined, false],
+      [
+        "searchHistory",
+        "p1",
+        {
+          query: "PartialSpec",
+          in: ["tool_output"],
+          tool: "Bash",
+          since: Date.parse("2026-09-01"),
+          level: "subagents",
+          caseSensitive: false,
+          everywhere: false,
+          limit: 5,
+          offset: 10,
+        },
+      ],
+      ["readEntry", "p1", 12, 1, 200],
+      ["queryHistory", "p1", "select 1"],
       [
         "writeObjective",
         "p1",

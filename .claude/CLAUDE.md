@@ -34,7 +34,7 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 
 - `index.ts` — entry point; `server/` — `server.ts` (WebSocket protocol, workspace lifecycle, accounts, persistence), `auth.ts`, `http.ts` (static files, uploads), `quota.ts`, `system.ts`, `commands.ts` (slash commands handled locally)
 - `session/` — `claude.ts` / `codex.ts`, one adapter per backend, both emit `StreamEvent`s; `host.ts` creates them
-- `workspace/` — `workspace.ts` (message list, event aggregation), `state.ts` (persistence), `summary.ts` (summary pages sent before details are requested), `search.ts`
+- `workspace/` — `workspace.ts` (message list, event aggregation), `state.ts` (persistence: `<id>.json` per workspace), `history-db.ts` (every message in `history.db`, only changed ones written), `history-index.ts` / `history-worker.ts` / `history-service.ts` (search index: messages cut into entries, trigram FTS, read-only SQL, in a worker thread; derived, rebuilt when deleted), `summary.ts` (summary pages sent before details are requested)
 - `project/` — `manager.ts` (project leads, worker sessions, cross-project messages), `tools.ts` (the panel's MCP tools), `store.ts` (projects, objectives, notes under `.agent-team/projects/`)
 - `config/` — `config.ts` (config.toml), `presets.ts` (agent and model lists, hand-maintained)
 - `repo/` — `git.ts`, `scanner.ts` (branch/PR polling), `dirs.ts`
@@ -49,7 +49,7 @@ Tests and tooling:
 
 ## Build, Check, Test
 
-- Node ≥ 22, npm workspaces rooted at the repo top level — `npm install` at the root only. TypeScript scripts run through `tsx` (`npm run capture -- …`), never compiled.
+- Node ≥ 24 (the history is in `node:sqlite`), npm workspaces rooted at the repo top level — `npm install` at the root only. TypeScript scripts run through `tsx` (`npm run capture -- …`), never compiled.
 - `npm run check` — root `tsc` (scripts + cross-package test), per-workspace strict `tsc`, ESLint (`typescript-eslint` recommendedTypeChecked + react-hooks), prettier. Zero tolerance; no `eslint-disable` except `react-hooks/exhaustive-deps` with a stated reason.
 - `npm test` — vitest in `service/` (`tests/unit` + `tests/snap`) then `webview/` (jsdom + testing-library).
 - `npm run build` — Vite bundle then esbuild server bundle into `dist/`. The SDKs are `external`: the server resolves them from `node_modules` at runtime.

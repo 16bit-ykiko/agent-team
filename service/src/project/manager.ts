@@ -3,8 +3,9 @@ import * as path from "path";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "../config/presets";
 import { resolveWorkspacePath } from "../repo/dirs";
 import { gitStatus, gitWorktrees, repositoryRoot } from "../repo/git";
-import { searchMessages } from "../workspace/search";
-import { searchStored } from "../workspace/history-search";
+import type { SQLOutputValue } from "node:sqlite";
+import type { EntryInfo, EntryKind } from "../workspace/history-index";
+import type { HistoryService } from "../workspace/history-service";
 import {
   originLabel,
   type MessageOrigin,
@@ -27,9 +28,18 @@ import {
   type ItemPatch,
   type ObjectivePatch,
   type PanelApi,
+  type HistorySearch,
   type PanelToolset,
   type StartSessionArgs,
 } from "./tools";
+
+// Of the history tools' output: characters per line of read_entry, per
+// cell of query_history; rows of query_history; entries per message of
+// read_session.
+const LINE_CAP = 4000;
+const CELL_CAP = 1000;
+const SQL_ROWS = 200;
+const ENTRIES_SHOWN = 60;
 
 // A long-lived lead has the whole project in its context.
 export const LEAD_MODEL = "claude-opus-5-5";
@@ -57,8 +67,7 @@ export interface ProjectHost {
   // Unarchives and loads the history; false when it cannot be read.
   restoreWorkspace(workspace: Workspace): boolean;
   loadWorkspace(workspace: Workspace): boolean;
-  // Where its history is saved, one message per line.
-  historyFile(workspace: Workspace): string;
+  history: HistoryService;
   persistWorkspace(workspace: Workspace): void;
   // Right away: a shutdown drops pending debounced saves of unloaded
   // (archived) workspaces.
@@ -491,13 +500,13 @@ export class ProjectManager {
       : `${started} Its task goes out in ${Math.ceil(delay / 1000)} s: starts are spaced out.`;
   }
 
-  // A project's own sessions, and the history: archived sessions no other
-  // project holds.
+  // A project's own sessions (its lead's too), and the history: archived
+  // sessions no other project holds.
   private readable(projectId: string, sessionId: string): Workspace {
     const w = this.host.workspace(sessionId);
     const link = w?.projectLink;
-    if (w && link?.projectId === projectId && link.role === "worker") return w;
-    if (w?.isArchived && (!link || link.projectId === projectId)) return w;
+    if (w && link?.projectId === projectId) return w;
+    if (w?.isArchived && !link) return w;
     throw new Error(`No session ${sessionId} in this project or its history`);
   }
 
@@ -521,54 +530,84 @@ export class ProjectManager {
     const all = await this.history(projectId, everywhere);
     if (all.length === 0) return "(no earlier sessions)";
     const day = (t: number) => new Date(t).toISOString().slice(0, 10);
-    const lines = all.slice(0, limit).map((w) => {
-      const transcripts = [...w.agents.values()]
-        .map((a) => a.session.sessionId && claudeTranscript(w.cwd, a.session.sessionId))
-        .filter(Boolean);
-      return [
-        `- ${w.id} "${w.name}" in ${w.cwd} · ${day(w.createdAt)} → ${day(w.lastActivityAt)}`,
-        `  history: ${this.host.historyFile(w)}`,
-        ...transcripts.map((t) => `  transcript: ${t}`),
-      ].join("\n");
-    });
+    const lines = all
+      .slice(0, limit)
+      .map(
+        (w) => `- ${w.id} "${w.name}" in ${w.cwd} · ${day(w.createdAt)} → ${day(w.lastActivityAt)}`,
+      );
     const more = all.length > limit ? [`(${all.length - limit} older not shown)`] : [];
     return [...lines, ...more].join("\n");
   }
 
-  private async searchHistory(
-    projectId: string,
-    query: string,
-    everywhere: boolean,
-    limit: number,
-    toolOutput: boolean,
-  ): Promise<string> {
-    // What is in memory may be newer than its file; the rest is searched on
-    // disk with ripgrep.
-    const all = [...this.workers(projectId), ...(await this.history(projectId, everywhere))];
-    const loaded = all.filter((w) => w.messagesLoaded);
-    const stored = all
-      .filter((w) => !w.messagesLoaded)
-      .map((w) => ({ id: w.id, name: w.name, file: this.host.historyFile(w) }));
-    const hits = [
-      ...searchMessages(
-        loaded.map((w) => ({ id: w.id, name: w.name, messages: w.getMessages() })),
-        query,
-        limit,
-      ),
-      ...(await searchStored(stored, query, { limit, toolOutput })),
-    ]
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, limit);
-    if (hits.length === 0) return `(nothing matches "${query}")`;
-    return hits
-      .map(
-        (h) =>
-          `- ${h.workspaceId} "${h.workspaceName}" · ${new Date(h.timestamp).toISOString()} · message ${h.messageId}\n  ${h.snippet}`,
-      )
-      .join("\n");
+  // What search_history looks through: the project's sessions, its lead's
+  // included, and the history.
+  private async scope(projectId: string, everywhere: boolean, session?: string) {
+    if (session) return [this.readable(projectId, session)];
+    return [
+      ...new Set([...this.members(projectId), ...(await this.history(projectId, everywhere))]),
+    ];
   }
 
-  private readSession(projectId: string, sessionId: string, last: number, around?: string): string {
+  private async searchHistory(projectId: string, a: HistorySearch): Promise<string> {
+    const sessions = await this.scope(projectId, a.everywhere, a.session);
+    const names = new Map(sessions.map((w) => [w.id, w.name]));
+    const kinds: EntryKind[] = a.in ?? (a.tool ? ["tool_call", "tool_output"] : ["said"]);
+    const result = await this.host.history.searchNamed(
+      {
+        terms: (a.query ?? "").trim().split(/\s+/).filter(Boolean),
+        regex: a.regex,
+        caseSensitive: a.caseSensitive,
+        kinds,
+        tool: a.tool,
+        since: a.since,
+        until: a.until,
+        depth: a.level,
+        limit: a.limit,
+        offset: a.offset,
+      },
+      sessions.map((w) => ({ id: w.id, name: w.name })),
+    );
+    const out = result.hits.map((h) =>
+      [
+        `- ${entryHeader(h, names.get(h.session))}`,
+        ...h.lines.map((l) => `  ${l.n}: ${l.text}`),
+        ...(h.moreLines ? [`  (+${h.moreLines} more matching lines)`] : []),
+      ].join("\n"),
+    );
+    if (result.more) out.push(`(more: offset ${a.offset + a.limit})`);
+    if (result.pending) {
+      out.push(`(the index is catching up: ${result.pending} messages are not searchable yet)`);
+    }
+    return out.length ? out.join("\n") : "(nothing matches)";
+  }
+
+  private async readEntry(
+    projectId: string,
+    entry: number,
+    from: number,
+    count: number,
+  ): Promise<string> {
+    const e = await this.host.history.read(entry, from, count);
+    if (!e) throw new Error(`No entry #${entry}`);
+    const w = this.readable(projectId, e.session);
+    const last = e.from + e.lines.length - 1;
+    return [
+      `${entryHeader(e, w.name)} — lines ${e.from}–${last} of ${e.lineCount}`,
+      ...e.lines.map(
+        (l, i) =>
+          `${e.from + i}: ${l.length > LINE_CAP ? `${l.slice(0, LINE_CAP)}…(${l.length - LINE_CAP} more characters)` : l}`,
+      ),
+      ...(last < e.lineCount ? [`(more: from_line ${last + 1})`] : []),
+    ].join("\n");
+  }
+
+  private async readSession(
+    projectId: string,
+    sessionId: string,
+    last: number,
+    around?: string,
+    tools = false,
+  ): Promise<string> {
     const w = this.readable(projectId, sessionId);
     if (!this.host.loadWorkspace(w)) throw new Error(`"${w.name}" cannot be loaded`);
     const agents = new Map([...w.agents.values()].map((a) => [a.info.id, a.info.name]));
@@ -579,20 +618,75 @@ export class ProjectManager {
     const at = around ? messages.findIndex((m) => m.id === around) : -1;
     if (around && at < 0) throw new Error(`No message ${around} in "${w.name}"`);
     const shown = at >= 0 ? messages.slice(Math.max(0, at - 5), at + 6) : messages.slice(-last);
+    const entries = new Map<string, Array<EntryInfo & { head: string }>>();
+    if (tools) {
+      for (const e of await this.host.history.entries(
+        w.id,
+        shown.map((m) => m.id),
+      )) {
+        if (e.kind === "said" && e.depth === 0) continue;
+        const list = entries.get(e.message) ?? [];
+        list.push(e);
+        entries.set(e.message, list);
+      }
+    }
     for (const m of shown) {
       const who = m.from
         ? originLabel(m.from)
         : m.kind === "user"
           ? "user"
           : (agents.get(m.agentId ?? "") ?? "agent");
-      const tools = (m.events ?? []).filter((e) => e.kind === "tool_use").length;
+      const calls = (m.events ?? []).filter((e) => e.kind === "tool_use").length;
       out.push(
         "",
-        `--- ${who} · ${new Date(m.timestamp).toISOString()} · ${m.status}${tools ? ` · ${tools} tool calls` : ""} · ${m.id}`,
+        `--- ${who} · ${new Date(m.timestamp).toISOString()} · ${m.status}${calls ? ` · ${calls} tool calls` : ""} · ${m.id}`,
         m.content.length > 3000 ? m.content.slice(0, 3000) + " …(truncated)" : m.content,
       );
+      if (!tools || !calls) continue;
+      const list = entries.get(m.id);
+      if (!list) {
+        out.push("  (its tool calls are not indexed yet)");
+        continue;
+      }
+      for (const e of list.slice(0, ENTRIES_SHOWN)) {
+        out.push(
+          `  #${e.entry} ${entryLabel(e)} · ${e.lineCount} lines${e.head ? ` · ${oneLine(e.head, 120)}` : ""}`,
+        );
+      }
+      if (list.length > ENTRIES_SHOWN) {
+        out.push(
+          `  (+${list.length - ENTRIES_SHOWN} more: search_history with session ${w.id} and a tool)`,
+        );
+      }
     }
     return out.join("\n");
+  }
+
+  // One read-only SQL statement over every recorded history.
+  private async queryHistory(query: string): Promise<string> {
+    const sessions = [...this.host.workspaces()].map((w) => ({
+      id: w.id,
+      name: w.name,
+      cwd: w.cwd,
+      project: w.projectLink ? (this.store.get(w.projectLink.projectId)?.name ?? null) : null,
+      role: w.projectLink?.role ?? null,
+      created_at: w.createdAt,
+      last_active: w.lastActivityAt,
+      archived_at: w.archivedAt,
+    }));
+    const r = await this.host.history.sql(query, sessions, SQL_ROWS);
+    if (r.rows.length === 0) return "(no rows)";
+    const cell = (v: SQLOutputValue): string => {
+      if (v == null) return "NULL";
+      if (v instanceof Uint8Array) return `<${v.length} bytes>`;
+      const t = String(v).replace(/\t/g, "  ").replace(/\n/g, "\\n");
+      return t.length > CELL_CAP ? `${t.slice(0, CELL_CAP)}…(${t.length - CELL_CAP} more)` : t;
+    };
+    return [
+      r.columns.join("\t"),
+      ...r.rows.map((row) => r.columns.map((c) => cell(row[c])).join("\t")),
+      `(${r.rows.length} rows${r.truncated ? `, stopped at ${SQL_ROWS}: narrow it or page with limit/offset` : ""})`,
+    ].join("\n");
   }
 
   private listProjects(projectId: string): string {
@@ -848,10 +942,11 @@ export class ProjectManager {
   private api: PanelApi = {
     projectStatus: (pid) => this.status(pid),
     startSession: (pid, a) => this.startSession(pid, a),
-    readSession: (pid, sid, last, around) => this.readSession(pid, sid, last, around),
+    readSession: (pid, sid, last, around, tools) => this.readSession(pid, sid, last, around, tools),
     listHistory: (pid, everywhere, limit) => this.listHistory(pid, everywhere, limit),
-    searchHistory: (pid, query, everywhere, limit, toolOutput) =>
-      this.searchHistory(pid, query, everywhere, limit, toolOutput),
+    searchHistory: (pid, a) => this.searchHistory(pid, a),
+    readEntry: (pid, entry, from, count) => this.readEntry(pid, entry, from, count),
+    queryHistory: (_pid, query) => this.queryHistory(query),
     messageSession: (pid, sid, text) => {
       const w = this.session(pid, sid);
       const outcome = this.deliver(w, text, ...this.fromLead(pid, text));
@@ -972,14 +1067,13 @@ function oneLine(s: string, max: number): string {
   return t.length > max ? t.slice(0, max) + "…" : t;
 }
 
-// Where the Claude CLI keeps a session's own transcript (JSON lines, one
-// message per line): under its folder, with every "/" and "." made "-".
-function claudeTranscript(cwd: string, sessionId: string): string {
-  return path.join(
-    os.homedir(),
-    ".claude",
-    "projects",
-    cwd.replace(/[/.]/g, "-"),
-    `${sessionId}.jsonl`,
-  );
+// What an entry of the history is, on one line.
+function entryLabel(e: Pick<EntryInfo, "kind" | "role" | "tool" | "depth">): string {
+  const what =
+    e.kind === "said" ? `said by ${e.role ?? "?"}` : e.tool ? `${e.kind} ${e.tool}` : e.kind;
+  return e.depth > 0 ? `${what}, in a subagent` : what;
+}
+
+function entryHeader(e: EntryInfo, name: string | undefined): string {
+  return `#${e.entry} · ${e.session} "${name ?? "?"}" · ${new Date(e.ts).toISOString()} · ${entryLabel(e)} · message ${e.message}`;
 }

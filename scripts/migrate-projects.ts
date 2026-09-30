@@ -15,6 +15,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { DatabaseSync, backup as copyDatabase } from "node:sqlite";
 import WebSocket from "ws";
 import { loadConfig } from "../service/src/config/config";
 
@@ -141,7 +142,16 @@ const backup = path.join(
   ".agent-team",
   `backup-${new Date().toISOString().replace(/[:.]/g, "-")}`,
 );
-fs.cpSync(cache, path.join(backup, "cache"), { recursive: true });
+// history.db is being written: SQLite copies it whole; the search index is
+// derived from it and left out.
+const live = /^history(-index)?\.db(-wal|-shm)?$/;
+fs.cpSync(cache, path.join(backup, "cache"), {
+  recursive: true,
+  filter: (src) => !live.test(path.basename(src)),
+});
+const history = new DatabaseSync(path.join(cache, "history.db"), { readOnly: true });
+await copyDatabase(history, path.join(backup, "cache", "history.db"));
+history.close();
 console.log(`history copied to ${backup}`);
 
 const busy: Info[] = [];

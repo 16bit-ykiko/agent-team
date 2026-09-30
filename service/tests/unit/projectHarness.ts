@@ -8,17 +8,21 @@ import { ProjectManager, type ProjectHost } from "../../src/project/manager";
 import type { Objective } from "../../src/project/objectives";
 import { Workspace, type Message, type WorkspaceCallbacks } from "../../src/workspace/workspace";
 import { HostRegistry } from "../../src/session/host";
+import { HistoryService } from "../../src/workspace/history-service";
+import { closeHistory, historyFile, historyIndexFile, historyOf } from "../../src/workspace/state";
 import { FakeHost, FakeSession } from "./fakes";
 
 const dirs: string[] = [];
 const managers: ProjectManager[] = [];
+const closers: Array<() => Promise<void> | void> = [];
 export function tmpDir(): string {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-projects-"));
   dirs.push(d);
   return d;
 }
-afterEach(() => {
+afterEach(async () => {
   for (const m of managers.splice(0)) m.close();
+  for (const c of closers.splice(0)) await c();
   for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
@@ -32,11 +36,23 @@ export function setupProjects() {
   registry.register(new FakeHost());
   const workspaces = new Map<string, Workspace>();
   const frames: Array<Record<string, unknown>> = [];
-  const historyFile = (w: Workspace) => path.join(base, `${w.id}.jsonl`);
+  const history = new HistoryService(historyIndexFile(base), historyFile(base));
+  closers.push(
+    () => history.close(),
+    () => closeHistory(base),
+  );
   // Saves a workspace's history where the host finds it, and unloads it.
   const store = (w: Workspace, messages: Message[]) => {
-    fs.writeFileSync(historyFile(w), messages.map((m) => `${JSON.stringify(m)}\n`).join(""));
+    historyOf(base).save(w.id, messages, "all");
+    history.changed();
     w.unloadMessages();
+  };
+  // What the server saves as it goes: every loaded history.
+  const saveAll = () => {
+    for (const w of workspaces.values()) {
+      if (w.messagesLoaded) historyOf(base).save(w.id, w.getMessages(), "all");
+    }
+    history.changed();
   };
   const saved: string[] = [];
   const cb: WorkspaceCallbacks = {
@@ -71,12 +87,11 @@ export function setupProjects() {
       w.archivedAt = null;
       return true;
     },
-    // Histories on disk, one message per line, for workspaces not loaded.
     loadWorkspace: (w) => {
-      if (!w.messagesLoaded) w.setMessages(readHistory(historyFile(w)));
+      if (!w.messagesLoaded) w.setMessages(historyOf(base).load(w.id));
       return true;
     },
-    historyFile: (w) => historyFile(w),
+    history,
     persistWorkspace: () => {},
     saveWorkspaceNow: (w) => void saved.push(w.id),
     workspaceChanged: (w) => void frames.push({ type: "workspace_updated", id: w.id }),
@@ -113,6 +128,7 @@ export function setupProjects() {
     registry,
     host,
     store,
+    saveAll,
     manager,
     workspaces,
     frames,
@@ -133,13 +149,4 @@ export async function withTask(
 ): Promise<void> {
   await call(lead, "write_objective", { id: "core/modules", title: "Modules", goal: "C++20" });
   await call(lead, "add_items", { objective_id: "core/modules", tasks: ["implement"] });
-}
-
-function readHistory(file: string): Message[] {
-  if (!fs.existsSync(file)) return [];
-  return fs
-    .readFileSync(file, "utf-8")
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => JSON.parse(l) as Message);
 }

@@ -12,7 +12,9 @@ import {
   saveIndex,
   loadAll,
   loadWorkspaceMessages,
-  historyPath,
+  historyFile,
+  historyIndexFile,
+  closeHistory,
   appendLog,
   isLoggedEvent,
   loadSettings,
@@ -25,8 +27,7 @@ import { CommandInfo, StreamEvent } from "../session/claude";
 import { HostRegistry, LocalHost } from "../session/host";
 import { completeDirs, resolveWorkspacePath } from "../repo/dirs";
 import { GitScanner } from "../repo/scanner";
-import { searchMessages, type SearchHit } from "../workspace/search";
-import { searchStored } from "../workspace/history-search";
+import { HistoryService, sidebarHits, type SearchHit } from "../workspace/history-service";
 import { summarizeMessages } from "../workspace/summary";
 import { ProjectManager, type ProjectHost } from "../project/manager";
 import { Auth } from "./auth";
@@ -80,9 +81,11 @@ export class Server {
   private system = new SystemMonitor();
   private git: GitScanner<Workspace>;
   private projects: ProjectManager;
+  private history: HistoryService;
 
   constructor(port: number, baseDir: string, webDir: string) {
     this.baseDir = baseDir;
+    this.history = new HistoryService(historyIndexFile(baseDir), historyFile(baseDir));
     this.uploadsDir = path.join(baseDir, "uploads");
     if (!fs.existsSync(this.uploadsDir)) fs.mkdirSync(this.uploadsDir, { recursive: true });
     this.config = loadConfig(baseDir);
@@ -125,6 +128,8 @@ export class Server {
     this.heartbeatTimer = setInterval(() => this.sweepDeadClients(), HEARTBEAT_INTERVAL_MS);
 
     this.restoreState();
+    // The search index catches up with the history in the background.
+    this.history.changed();
     this.statusTimer = setInterval(() => this.broadcastSystemStatus(), 3000);
     this.branchTimer = setInterval(() => {
       void this.git.scan();
@@ -338,9 +343,13 @@ export class Server {
 
       case "search": {
         const query = (msg.query as string) ?? "";
-        void this.search(query).then((hits) =>
-          this.sendJson(ws, { type: "search_results", query, hits }),
-        );
+        this.search(query)
+          .catch((e: unknown) => {
+            console.error("[search]", e);
+            return [];
+          })
+          .then((hits) => this.sendJson(ws, { type: "search_results", query, hits }))
+          .catch(() => {});
         return;
       }
 
@@ -618,6 +627,7 @@ export class Server {
     this.persistTimers.delete(workspaceId);
     this.workspaces.delete(workspaceId);
     deleteWorkspaceState(this.baseDir, workspaceId);
+    this.history.changed();
     this.persistIndex();
     this.broadcastUI({ type: "workspace_deleted", workspaceId });
   }
@@ -885,19 +895,38 @@ systemctl --user restart agent-team-server
       setTimeout(() => {
         this.persistTimers.delete(workspaceId);
         const ws = this.workspaces.get(workspaceId);
-        if (ws) saveWorkspace(this.baseDir, ws.getState());
+        if (ws) this.save(ws);
       }, 500),
     );
   }
 
-  private persistWorkspaceNow(workspaceId: string): void {
+  private persistWorkspaceNow(workspaceId: string, all = false): void {
     const timer = this.persistTimers.get(workspaceId);
     if (timer) {
       clearTimeout(timer);
       this.persistTimers.delete(workspaceId);
     }
     const ws = this.workspaces.get(workspaceId);
-    if (ws) saveWorkspace(this.baseDir, ws.getState());
+    if (ws) this.save(ws, all);
+  }
+
+  // Writes the messages that changed; with `all`, compares every one, which
+  // is done before a history leaves memory.
+  private save(ws: Workspace, all = false): void {
+    const changed = ws.takeChanged();
+    try {
+      if (saveWorkspace(this.baseDir, ws.getState(), all ? "all" : changed)) {
+        this.history.changed();
+      }
+    } catch (e) {
+      ws.touch(changed);
+      throw e;
+    }
+  }
+
+  private unload(ws: Workspace): void {
+    this.persistWorkspaceNow(ws.id, true);
+    ws.unloadMessages();
   }
 
   private persistIndex(): void {
@@ -910,7 +939,7 @@ systemctl --user restart agent-team-server
     for (const ws of this.workspaces.values()) {
       // An unloaded workspace is persisted whenever it changes (archive,
       // unarchive); rewriting it here re-read and re-wrote hundreds of MB.
-      if (ws.messagesLoaded) saveWorkspace(this.baseDir, ws.getState());
+      if (ws.messagesLoaded) this.save(ws, true);
     }
     this.persistIndex();
   }
@@ -973,19 +1002,10 @@ systemctl --user restart agent-team-server
     }
   }
 
-  // Every history: what is in memory as it is, the rest (archived ones) on
-  // disk with ripgrep.
-  private async search(query: string): Promise<SearchHit[]> {
-    const all = [...this.workspaces.values()];
-    const loaded = all
-      .filter((w) => w.messagesLoaded)
-      .map((w) => ({ id: w.id, name: w.name, messages: w.messages }));
-    const stored = all
-      .filter((w) => !w.messagesLoaded)
-      .map((w) => ({ id: w.id, name: w.name, file: historyPath(this.baseDir, w.id) }));
-    return [...searchMessages(loaded, query), ...(await searchStored(stored, query, { limit: 50 }))]
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, 50);
+  // What was said, in every history.
+  private search(query: string): Promise<SearchHit[]> {
+    const sessions = [...this.workspaces.values()].map((w) => ({ id: w.id, name: w.name }));
+    return sidebarHits(this.history, query, sessions, 50);
   }
 
   private projectHost(): ProjectHost {
@@ -1002,7 +1022,7 @@ systemctl --user restart agent-team-server
       },
       restoreWorkspace: (w) => this.unarchiveWorkspace(w),
       loadWorkspace: (w) => this.ensureLoaded(w),
-      historyFile: (w) => historyPath(this.baseDir, w.id),
+      history: this.history,
       persistWorkspace: (w) => this.persistWorkspace(w.id),
       saveWorkspaceNow: (w) => this.persistWorkspaceNow(w.id),
       workspaceChanged: (w) =>
@@ -1042,8 +1062,7 @@ systemctl --user restart agent-team-server
     }
     ws.abortAll();
     ws.archivedAt = Date.now();
-    this.persistWorkspaceNow(workspaceId);
-    ws.unloadMessages();
+    this.unload(ws);
     this.broadcastUI({ type: "workspace_archived", workspaceId, archivedAt: ws.archivedAt });
   }
 
@@ -1069,7 +1088,7 @@ systemctl --user restart agent-team-server
       if (ws.isArchived) {
         // Browsing an archived workspace loads its history; let it go again
         // once nothing is happening there.
-        if (ws.messagesLoaded && ws.isIdle) ws.unloadMessages();
+        if (ws.messagesLoaded && ws.isIdle) this.unload(ws);
         continue;
       }
       if (ws.lastActivityAt > cutoff || ws.projectLink?.role === "lead") continue;
@@ -1220,8 +1239,11 @@ systemctl --user restart agent-team-server
     if (this.branchTimer) clearInterval(this.branchTimer);
     if (this.archiveTimer) clearInterval(this.archiveTimer);
     if (this.quotaTimer) clearInterval(this.quotaTimer);
-    this.persistAll();
+    // Turns cut short are saved as such.
     for (const ws of this.workspaces.values()) ws.abortAll();
+    this.persistAll();
+    void this.history.close();
+    closeHistory(this.baseDir);
     this.wss.close();
     this.httpServer.close();
   }

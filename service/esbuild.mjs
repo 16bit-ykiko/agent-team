@@ -10,8 +10,12 @@ const build = {
   target: "node22",
   sourcemap: true,
   minify: false,
-  entryPoints: ["src/index.ts"],
-  outfile: "../dist/server.js",
+  // The search index runs in a worker thread of its own (history-service.ts).
+  entryPoints: {
+    server: "src/index.ts",
+    "history-worker": "src/workspace/history-worker.ts",
+  },
+  outdir: "../dist",
   external: ["@anthropic-ai/claude-agent-sdk", "@openai/codex-sdk"],
 };
 

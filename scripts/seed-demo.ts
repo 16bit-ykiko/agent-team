@@ -14,7 +14,7 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 import { ProjectStore } from "../service/src/project/store";
 import { ObjectiveStore, type Objective } from "../service/src/project/objectives";
-import { saveIndex, saveWorkspace } from "../service/src/workspace/state";
+import { closeHistory, saveIndex, saveWorkspace } from "../service/src/workspace/state";
 import { LEAD_MODEL } from "../service/src/project/manager";
 import { MODEL_OPTIONS } from "../service/src/config/presets";
 import type {
@@ -548,6 +548,7 @@ function seed(): void {
     w.lastActivityAt = Math.max(...w.messages!.map((m) => m.timestamp));
     saveWorkspace(base, w);
   }
+  closeHistory(base);
 
   // The board.
   const objectives = new ObjectiveStore(store.objectivesDir(project.id));
