@@ -7,6 +7,7 @@ import { pipeline } from "stream";
 import * as zlib from "zlib";
 import type { Auth } from "./auth";
 import { NotRegularFile, readFileView, resolveFilePath } from "../repo/files";
+import { changes, fileDiff, NotARepository } from "../repo/diff";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -45,6 +46,8 @@ export class HttpHandler {
     private baseDir: string,
     // A workspace's folder, for file paths relative to it.
     private cwdOf: (workspaceId: string) => string | undefined = () => undefined,
+    // The base branch of the workspace's pull request, if it has one.
+    private prBaseOf: (workspaceId: string) => string | null | undefined = () => undefined,
   ) {}
 
   handle(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -77,6 +80,11 @@ export class HttpHandler {
 
       if (req.method === "GET" && (pathname === "/api/file" || pathname === "/api/file/raw")) {
         this.handleFile(url, pathname === "/api/file/raw", res);
+        return;
+      }
+
+      if (req.method === "GET" && (pathname === "/api/diff" || pathname === "/api/diff/file")) {
+        this.handleDiff(url, pathname === "/api/diff/file", res);
         return;
       }
 
@@ -189,6 +197,39 @@ export class HttpHandler {
       res.setHeader("Cache-Control", "no-store");
       res.end(JSON.stringify(view));
     }, fail);
+  }
+
+  // The changes of the repository holding `dir` (the workspace's folder by
+  // default) against its base branch, or one file's diff.
+  private handleDiff(url: URL, one: boolean, res: http.ServerResponse): void {
+    const ws = url.searchParams.get("ws") ?? "";
+    const cwd = this.cwdOf(ws) ?? os.homedir();
+    const dir = resolveFilePath(cwd, url.searchParams.get("dir") || ".");
+    const reply = (status: number, body: unknown) => {
+      res.statusCode = status;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.end(JSON.stringify(body));
+    };
+    const q = (k: string) => url.searchParams.get(k) ?? "";
+    const work = one
+      ? fileDiff(
+          dir,
+          {
+            path: q("path"),
+            ...(q("old") && { oldPath: q("old") }),
+            untracked: q("untracked") === "1",
+          },
+          q("against"),
+        )
+      : changes(dir, dir === cwd ? this.prBaseOf(ws) : null);
+    work.then(
+      (body) => reply(200, body),
+      (e: unknown) =>
+        reply(e instanceof NotARepository ? 404 : 400, {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+    );
   }
 
   // Headers go out only once the file is open, so an unreadable file is

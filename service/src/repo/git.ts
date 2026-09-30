@@ -23,6 +23,8 @@ export interface PrInfo {
   draft: boolean;
   // Rolled-up CI status; null when the PR has no checks.
   checks: CheckState | null;
+  // The branch it merges into.
+  base?: string | null;
 }
 
 function run(cmd: string, args: string[], cwd: string, timeout: number): Promise<string | null> {
@@ -138,6 +140,7 @@ export function parsePrJson(raw: unknown): PrInfo | null {
     state,
     draft: !!d.isDraft,
     checks,
+    base: typeof d.baseRefName === "string" ? d.baseRefName : null,
   };
 }
 
@@ -145,7 +148,13 @@ export async function getPrInfo(cwd: string, branch: string | null): Promise<PrI
   if (!branch || branch === "main" || branch === "master" || branch === "HEAD") return null;
   const out = await run(
     "gh",
-    ["pr", "view", branch, "--json", "number,url,title,state,isDraft,statusCheckRollup"],
+    [
+      "pr",
+      "view",
+      branch,
+      "--json",
+      "number,url,title,state,isDraft,statusCheckRollup,baseRefName",
+    ],
     cwd,
     10000,
   );

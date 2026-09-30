@@ -115,6 +115,7 @@ export class Server {
       this.uploadsDir,
       baseDir,
       (id) => this.workspaces.get(id)?.cwd,
+      (id) => this.workspaces.get(id)?.pr?.base,
     );
     this.httpServer = http.createServer((req, res) => this.http.handle(req, res));
     this.wss = new WebSocketServer({

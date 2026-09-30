@@ -66,7 +66,9 @@ describe("parsePrJson", () => {
       state: "open",
       draft: false,
       checks: null,
+      base: null,
     });
+    expect(parsePrJson({ ...base, baseRefName: "release" })?.base).toBe("release");
     expect(
       parsePrJson({
         ...base,

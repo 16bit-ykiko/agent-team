@@ -3961,6 +3961,146 @@ span.katex-display {
   font-size: 11px;
   color: var(--text-muted);
 }
+/* One line-icon family, tinted by what a file holds. */
+.file-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.file-icon .icon {
+  width: 14px;
+  height: 14px;
+}
+.fi-dir {
+  color: var(--accent);
+}
+.fi-code {
+  color: var(--text-secondary);
+}
+.fi-doc {
+  color: var(--success);
+}
+.fi-data,
+.fi-build {
+  color: var(--warning);
+}
+.fi-image {
+  color: var(--purple);
+}
+.fp-toggle.on {
+  color: var(--accent);
+}
+
+/* A branch's changes against its base: the files, then a file's diff. */
+.changes-head {
+  padding: 4px 16px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.changes-base {
+  color: var(--text-secondary);
+}
+.change-status {
+  flex-shrink: 0;
+  width: 1ch;
+  font-size: 11px;
+  font-weight: 600;
+}
+.cs-added,
+.cs-untracked {
+  color: var(--success);
+}
+.cs-modified,
+.cs-renamed {
+  color: var(--warning);
+}
+.cs-deleted {
+  color: var(--error);
+}
+.change-dir {
+  color: var(--text-muted);
+}
+.change-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.diff-plus {
+  color: var(--success);
+}
+.diff-minus {
+  color: var(--error);
+}
+.diff-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-tertiary);
+}
+/* As wide as the widest line: lines scroll sideways, never wrap. */
+.diff-inner {
+  min-width: max-content;
+  padding: 6px 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  background: none;
+}
+.diff-row {
+  display: flex;
+  white-space: pre;
+}
+.diff-gutter {
+  position: sticky;
+  left: 0;
+  display: flex;
+  flex-shrink: 0;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  user-select: none;
+}
+.diff-num {
+  box-sizing: content-box;
+  width: var(--diff-digits, 4ch);
+  padding: 0 4px 0 6px;
+  text-align: right;
+}
+/* Both numbers and the sign: a hunk's line starts where code does. */
+.diff-hunk .diff-gutter,
+.diff-note .diff-gutter {
+  width: calc(2 * var(--diff-digits, 4ch) + 20px + 2ch);
+}
+.diff-sign {
+  width: 2ch;
+  text-align: center;
+}
+.diff-code {
+  padding-right: 16px;
+}
+.diff-add {
+  background: rgba(152, 195, 121, 0.12);
+}
+.diff-add .diff-sign {
+  color: var(--success);
+}
+/* The numbers stay put over sideways scrolling, so they need a solid tint. */
+.diff-add .diff-gutter {
+  background: color-mix(in srgb, var(--success) 12%, var(--bg-tertiary));
+}
+.diff-del .diff-gutter {
+  background: color-mix(in srgb, var(--error) 12%, var(--bg-tertiary));
+}
+.diff-del {
+  background: rgba(224, 108, 117, 0.12);
+}
+.diff-del .diff-sign {
+  color: var(--error);
+}
+.diff-hunk,
+.diff-note {
+  color: var(--text-muted);
+  background: var(--accent-soft);
+}
 
 /* Agents panel */
 .agents-panel {

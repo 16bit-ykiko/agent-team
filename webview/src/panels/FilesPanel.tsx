@@ -5,7 +5,14 @@ import { highlightTree } from "../chat/highlight";
 import { MdBlock } from "../chat/markdown";
 import { FileOpenContext, parseFileRef, type FileRef } from "../chat/fileRef";
 import { formatSize } from "../format";
-import { Icon } from "./Icon";
+import { FileIcon, Icon } from "./Icon";
+import {
+  ChangesList,
+  DiffView,
+  type ChangedFile,
+  type Changes,
+  type FileDiff,
+} from "./ChangesView";
 
 interface DirEntry {
   name: string;
@@ -19,6 +26,23 @@ export type FileView =
   | { kind: "image" | "binary"; path: string; size: number };
 
 type Load = { loading: true } | { error: string; path?: string } | { view: FileView };
+type Fetched<T> = { loading: true } | { error: string } | { value: T };
+
+function fetchJson<T>(url: string, done: (r: Fetched<T>) => void): () => void {
+  let cancelled = false;
+  done({ loading: true });
+  fetch(url)
+    .then(async (res) => {
+      const body = (await res.json()) as T & { error?: string };
+      if (!cancelled) done(res.ok ? { value: body } : { error: body.error ?? res.statusText });
+    })
+    .catch((e: unknown) => {
+      if (!cancelled) done({ error: e instanceof Error ? e.message : String(e) });
+    });
+  return () => {
+    cancelled = true;
+  };
+}
 
 // Fixed so the line gutter, the code and the target-line band stay aligned.
 const LINE_HEIGHT = 18;
@@ -170,6 +194,7 @@ function DirView({
           className={`dir-entry${e.dir ? " is-dir" : ""}`}
           onClick={() => open(`${view.path}/${e.name}`)}
         >
+          <FileIcon name={e.name} dir={e.dir} />
           <span className="dir-entry-name">
             {e.name}
             {e.dir && <span className="dir-slash">/</span>}
@@ -192,7 +217,8 @@ export interface FileRoot {
 
 // Read-only preview of a file or folder, in the Files panel: code with line
 // numbers (jumping to the referenced line), rendered markdown, images,
-// folder listings. Relative paths resolve against `wsId`'s folder; the parent
+// folder listings; and the branch's changes against its base, file by
+// file. Relative paths resolve against `wsId`'s folder; the parent
 // remounts it (a new key) for each file opened from the chat.
 export function FilesPanel({
   wsId,
@@ -208,6 +234,11 @@ export function FilesPanel({
   // A line to show is a line of the source, not of the rendered page.
   const [source, setSource] = useState(!!target.line);
   const [copied, setCopied] = useState(false);
+  // The branch's changes, and the one whose diff is shown.
+  const [changesOn, setChangesOn] = useState(false);
+  const [changes, setChanges] = useState<Fetched<Changes>>({ loading: true });
+  const [changed, setChanged] = useState<ChangedFile | null>(null);
+  const [diff, setDiff] = useState<Fetched<FileDiff>>({ loading: true });
 
   useEffect(() => {
     let cancelled = false;
@@ -247,6 +278,80 @@ export function FilesPanel({
       (a, r) => (a && a.path.length >= r.path.length ? a : r),
       undefined,
     );
+
+  const dir = root?.path ?? ".";
+  const repo = `ws=${encodeURIComponent(wsId)}&dir=${encodeURIComponent(dir)}`;
+  useEffect(
+    () => (changesOn ? fetchJson<Changes>(`api/diff?${repo}`, setChanges) : undefined),
+    [changesOn, repo],
+  );
+  const against = "value" in changes ? changes.value.against : null;
+  useEffect(() => {
+    if (!changed || !against) return;
+    const q = new URLSearchParams({ path: changed.path, against });
+    if (changed.oldPath) q.set("old", changed.oldPath);
+    if (changed.status === "untracked") q.set("untracked", "1");
+    return fetchJson<FileDiff>(`api/diff/file?${repo}&${q}`, setDiff);
+  }, [changed, against, repo]);
+  const top = "value" in changes ? changes.value.top : dir;
+
+  if (changesOn) {
+    const shown = changed ? `${top}/${changed.path}` : top;
+    return (
+      <div className="files-panel">
+        <div className="fp-bar">
+          <button
+            className="fp-btn fp-up"
+            title={changed ? "All changes" : "Files"}
+            onClick={() => (changed ? setChanged(null) : setChangesOn(false))}
+          >
+            <Icon name="up" />
+          </button>
+          <span className="fp-path" title={shown}>
+            <bdi>{changed ? changed.path : "Changes"}</bdi>
+          </span>
+          {changed && changed.status !== "deleted" && (
+            <button
+              className="fp-btn"
+              title="Open the file"
+              onClick={() => {
+                setChangesOn(false);
+                setChanged(null);
+                open(shown);
+              }}
+            >
+              Open
+            </button>
+          )}
+          <button
+            className="fp-btn fp-toggle on"
+            title="Back to the files"
+            aria-pressed="true"
+            onClick={() => {
+              setChangesOn(false);
+              setChanged(null);
+            }}
+          >
+            <Icon name="changes" />
+          </button>
+        </div>
+        <div className="fp-body">
+          {!changed && "loading" in changes && <div className="file-note">Loading…</div>}
+          {!changed && "error" in changes && (
+            <div className="file-note file-error">{changes.error}</div>
+          )}
+          {!changed && "value" in changes && (
+            <ChangesList changes={changes.value} open={setChanged} />
+          )}
+          {changed && "loading" in diff && <div className="file-note">Loading…</div>}
+          {changed && "error" in diff && <div className="file-note file-error">{diff.error}</div>}
+          {changed && "value" in diff && (
+            <DiffView diff={diff.value} lang={languageFor(changed.path)} />
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="files-panel">
@@ -297,6 +402,14 @@ export function FilesPanel({
             Raw
           </a>
         )}
+        <button
+          className="fp-btn fp-toggle"
+          title="Changes against the base branch"
+          aria-pressed="false"
+          onClick={() => setChangesOn(true)}
+        >
+          <Icon name="changes" />
+        </button>
       </div>
       <div className="fp-body">
         {"loading" in load && <div className="file-note">Loading…</div>}

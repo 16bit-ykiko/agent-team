@@ -11,6 +11,9 @@ export const ICONS = {
   close: "M4 4l8 8M12 4l-8 8",
   clear: "M13 8a5 5 0 1 1-1.6-3.7M13 2.8v2.7h-2.7",
   up: "M8 13V3M4 7l4-4 4 4",
+  folder: "M2 3.5h4l1.5 1.5h6.5v7.5H2z",
+  file: "M4 2.5h5l3 3v8H4zM9 2.5v3h3",
+  changes: "M8 2.5v6M5 5.5h6M5 12.5h6",
 } as const;
 
 export type IconName = keyof typeof ICONS;
@@ -20,5 +23,33 @@ export function Icon({ name }: { name: IconName }) {
     <svg className="icon" viewBox="0 0 16 16" aria-hidden="true">
       <path d={ICONS[name]} />
     </svg>
+  );
+}
+
+// Files by what they hold, for a tint on their icon.
+const KINDS: Record<string, string> = {
+  code: "ts tsx js jsx mjs cjs mts cts c h cc cpp cxx hh hpp hxx cs py rs go java lua sh bash zsh ps1 rb swift kt m mm zig",
+  doc: "md markdown txt rst tex adoc org",
+  data: "json jsonl toml yaml yml ini cfg conf xml csv lock env",
+  image: "png jpg jpeg gif svg webp ico bmp avif",
+};
+const KIND_BY_EXT = new Map(
+  Object.entries(KINDS).flatMap(([kind, exts]) => exts.split(" ").map((e) => [e, kind] as const)),
+);
+const BUILD =
+  /^(makefile|gnumakefile|cmakelists\.txt|dockerfile|package\.json|cargo\.toml|xmake\.lua|meson\.build)$/i;
+
+export function fileKind(name: string): string {
+  const base = name.split("/").pop() ?? name;
+  if (BUILD.test(base)) return "build";
+  const ext = base.includes(".") ? base.split(".").pop()!.toLowerCase() : "";
+  return KIND_BY_EXT.get(ext) ?? "other";
+}
+
+export function FileIcon({ name, dir = false }: { name: string; dir?: boolean }) {
+  return (
+    <span className={`file-icon fi-${dir ? "dir" : fileKind(name)}`}>
+      <Icon name={dir ? "folder" : "file"} />
+    </span>
   );
 }
