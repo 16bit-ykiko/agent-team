@@ -1,4 +1,5 @@
-import { execFile } from "child_process";
+import { execFile, execFileSync } from "child_process";
+import * as path from "path";
 
 // Branch/PR lookups run on a timer across every live workspace folder, so
 // they must never block the event loop and must tolerate failures quietly.
@@ -69,6 +70,21 @@ export function parseWorktrees(porcelain: string): string[] {
     .split("\n")
     .filter((l) => l.startsWith("worktree "))
     .map((l) => l.slice("worktree ".length));
+}
+
+// The main checkout a folder belongs to: a git worktree's is the repository
+// it was added to; a folder outside git is its own.
+export function repositoryRoot(cwd: string): string {
+  try {
+    const common = execFileSync(
+      "git",
+      ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      { encoding: "utf-8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
+    return path.basename(common) === ".git" ? path.dirname(common) : cwd;
+  } catch {
+    return cwd;
+  }
 }
 
 export async function gitWorktrees(root: string): Promise<string[]> {

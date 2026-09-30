@@ -209,18 +209,14 @@ export function AddAgentDialog({
   );
 }
 
-// The server's default for a project's lead (project/manager.ts).
-const DEFAULT_LEAD_MODEL = "claude-opus-5-5";
-
-// A workspace is just a name plus a directory. The path field completes
-// directories live against the server (shell-style tab completion). A project
-// is a repository with a lead agent that runs sessions in it.
+// A workspace is just a name plus a directory, a session of that folder's
+// project (the server brings the project and its lead the first time). The
+// path field completes directories live against the server (shell-style
+// tab completion).
 export function CreateWorkspaceDialog({
   hosts,
   onClose,
   onCreate,
-  onCreateProject,
-  models = [],
   onListDirs,
   dirSuggestions,
   initialPath,
@@ -228,9 +224,6 @@ export function CreateWorkspaceDialog({
   hosts: HostInfo[];
   onClose: () => void;
   onCreate: (name: string, path: string, hostId?: string) => void;
-  onCreateProject?: (name: string, path: string, model?: string) => void;
-  // Lead models to choose from; the lead runs Claude.
-  models?: ModelOption[];
   onListDirs: (prefix: string) => void;
   dirSuggestions: { prefix: string; dirs: string[] };
   initialPath?: string;
@@ -240,11 +233,6 @@ export function CreateWorkspaceDialog({
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestIdx, setSuggestIdx] = useState(0);
   const [hostId, setHostId] = useState(hosts[0]?.id ?? "local");
-  const [asProject, setAsProject] = useState(false);
-  const leadModels = models.filter((m) => m.backend === "claude");
-  const [leadModel, setLeadModel] = useState(
-    leadModels.find((m) => m.id === DEFAULT_LEAD_MODEL)?.id ?? leadModels[0]?.id ?? "",
-  );
   const nameRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const blurTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -302,16 +290,14 @@ export function CreateWorkspaceDialog({
     e.preventDefault();
     if (!canSubmit) return;
     const finalName = (name.trim() || defaultName || "workspace").trim();
-    if (asProject && onCreateProject) {
-      onCreateProject(finalName, dirPath.trim(), leadModel || undefined);
-    } else onCreate(finalName, dirPath.trim(), hostId || undefined);
+    onCreate(finalName, dirPath.trim(), hostId || undefined);
     onClose();
   };
 
   return (
     <div className="dialog-overlay" onClick={onClose}>
       <form className="dialog" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
-        <div className="dialog-title">{asProject ? "New Project" : "New Workspace"}</div>
+        <div className="dialog-title">New Workspace</div>
         <label className="dialog-field">
           <span>Name</span>
           <input
@@ -361,29 +347,7 @@ export function CreateWorkspaceDialog({
             </div>
           )}
         </label>
-        {onCreateProject && (
-          <label className="dialog-check">
-            <input
-              type="checkbox"
-              checked={asProject}
-              onChange={(e) => setAsProject(e.target.checked)}
-            />
-            <span>Project: a lead agent that plans the work and runs sessions for it</span>
-          </label>
-        )}
-        {asProject && leadModels.length > 0 && (
-          <label className="dialog-field">
-            <span>Lead model</span>
-            <select value={leadModel} onChange={(e) => setLeadModel(e.target.value)}>
-              {leadModels.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {hosts.length > 1 && !asProject && (
+        {hosts.length > 1 && (
           <label className="dialog-field">
             <span>Host</span>
             <select value={hostId} onChange={(e) => setHostId(e.target.value)}>

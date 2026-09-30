@@ -60,7 +60,14 @@ export interface ItemPatch {
 export interface PanelApi {
   projectStatus(projectId: string): Promise<string>;
   startSession(projectId: string, args: StartSessionArgs): string;
-  readSession(projectId: string, sessionId: string, last: number): string;
+  readSession(projectId: string, sessionId: string, last: number, around?: string): string;
+  listHistory(projectId: string, everywhere: boolean, limit: number): Promise<string>;
+  searchHistory(
+    projectId: string,
+    query: string,
+    everywhere: boolean,
+    limit: number,
+  ): Promise<string>;
   messageSession(projectId: string, sessionId: string, text: string): string;
   stopSession(projectId: string, sessionId: string): string;
   archiveSession(projectId: string, sessionId: string): string;
@@ -102,6 +109,7 @@ export function leadToolset(
       `Longer-lived notes (decisions, background, plans) go in markdown files under ${notesDir}; read and write them with your file tools. Subagents can maintain them too.`,
       "Other projects have leads of their own: list_projects shows them, message_project sends one a message without waiting. Its answer arrives later as a message from that project.",
       "project_status gives the board, the running sessions and the repository's worktrees at a glance.",
+      "Earlier conversations here are the project's history: sessions from before the project and archived ones. When the user refers to past work, search_history finds it and read_session reads it in context; list_history lists those sessions with the files the Claude CLI kept their transcripts in (JSON lines, one message per line), which you can grep for more.",
     ].join("\n\n"),
     tools: [
       {
@@ -136,12 +144,53 @@ export function leadToolset(
       },
       {
         name: "read_session",
-        description: "The latest messages of a worker session, and whether it is working.",
+        description:
+          "Messages of a worker session (the latest, and whether it is working), or of an earlier one from the history; around a message id to read a search hit in context.",
         shape: {
           session_id: z.string(),
           last: z.number().int().min(1).max(50).optional().describe("How many messages (6)"),
+          around: z.string().optional().describe("A message id: the messages around it"),
         },
-        handler: (a) => run(() => api.readSession(id, String(a.session_id), Number(a.last ?? 6))),
+        handler: (a) =>
+          run(() =>
+            api.readSession(
+              id,
+              String(a.session_id),
+              Number(a.last ?? 6),
+              typeof a.around === "string" ? a.around : undefined,
+            ),
+          ),
+      },
+      {
+        name: "list_history",
+        description:
+          "Earlier sessions in this repository (archived, from before the project or since): id, folder, dates, and the Claude transcript files to grep.",
+        shape: {
+          everywhere: z.boolean().optional().describe("Every archived session, in any folder"),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(200)
+            .optional()
+            .describe("How many, newest first (30)"),
+        },
+        handler: (a) =>
+          run(() => api.listHistory(id, a.everywhere === true, Number(a.limit ?? 30))),
+      },
+      {
+        name: "search_history",
+        description:
+          "Find messages in this project's sessions and its history: all words must match. Hits give the session and message ids for read_session.",
+        shape: {
+          query: z.string(),
+          everywhere: z.boolean().optional().describe("Every archived session, in any folder"),
+          limit: z.number().int().min(1).max(100).optional().describe("How many hits (20)"),
+        },
+        handler: (a) =>
+          run(() =>
+            api.searchHistory(id, String(a.query), a.everywhere === true, Number(a.limit ?? 20)),
+          ),
       },
       {
         name: "message_session",
@@ -298,8 +347,8 @@ export function leadToolset(
 export function workerToolset(api: PanelApi, workspaceId: string, project: Project): PanelToolset {
   return {
     instructions: [
-      `You are a worker session of the project "${project.name}", started by its lead agent to carry out a task. The user may also talk to you directly.`,
-      "When the task is done, call finish_task with a concise summary for the lead: what changed, where (branch, commits, PR), what is left. If you are blocked and need a decision, call it with blocked set and say what you need. Use report_progress only for milestones the lead should know about before you finish.",
+      `You are a session of the project "${project.name}" (repository ${project.root}). Its lead agent coordinates the work there and may have started you with a task; the user may also talk to you directly.`,
+      "When you finish a task the lead gave you, call finish_task with a concise summary for the lead: what changed, where (branch, commits, PR), what is left. If you are blocked and need a decision, call it with blocked set and say what you need. Use report_progress only for milestones the lead should know about before you finish.",
     ].join("\n\n"),
     tools: [
       {

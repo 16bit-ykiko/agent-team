@@ -6,7 +6,7 @@ import * as path from "path";
 import { afterEach } from "vitest";
 import { ProjectManager, type ProjectHost } from "../../src/project/manager";
 import type { Objective } from "../../src/project/objectives";
-import { Workspace, type WorkspaceCallbacks } from "../../src/workspace/workspace";
+import { Workspace, type Message, type WorkspaceCallbacks } from "../../src/workspace/workspace";
 import { HostRegistry } from "../../src/session/host";
 import { FakeHost, FakeSession } from "./fakes";
 
@@ -32,6 +32,7 @@ export function setupProjects() {
   registry.register(new FakeHost());
   const workspaces = new Map<string, Workspace>();
   const frames: Array<Record<string, unknown>> = [];
+  const disk = new Map<string, Message[]>();
   const saved: string[] = [];
   const cb: WorkspaceCallbacks = {
     onNewMessage: () => {},
@@ -65,7 +66,12 @@ export function setupProjects() {
       w.archivedAt = null;
       return true;
     },
-    loadWorkspace: () => true,
+    // Histories "on disk", for workspaces whose messages are not loaded.
+    loadWorkspace: (w) => {
+      if (!w.messagesLoaded) w.setMessages(disk.get(w.id) ?? []);
+      return true;
+    },
+    readMessages: (w) => Promise.resolve(disk.get(w.id) ?? w.getMessages()),
     persistWorkspace: () => {},
     saveWorkspaceNow: (w) => void saved.push(w.id),
     workspaceChanged: (w) => void frames.push({ type: "workspace_updated", id: w.id }),
@@ -78,8 +84,13 @@ export function setupProjects() {
     session(w)
       .panelTools!.tools.find((x) => x.name === tool)!
       .handler(args);
+  // The first project in the repository; one folder per project, so any
+  // other gets a repository of its own beside it.
   const create = (name: string) => {
-    const p = manager.create(name, root);
+    const taken = manager.list().some((p) => p.root === root);
+    const at = taken ? path.join(base, `repo-${name}`) : root;
+    fs.mkdirSync(path.join(at, "wt"), { recursive: true });
+    const p = manager.create(name, at);
     return { project: p, lead: workspaces.get(p.leadWorkspaceId!)! };
   };
   const workers = () => [...workspaces.values()].filter((w) => w.projectLink?.role === "worker");
@@ -95,6 +106,8 @@ export function setupProjects() {
     base,
     root,
     registry,
+    host,
+    disk,
     manager,
     workspaces,
     frames,

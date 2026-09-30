@@ -97,7 +97,8 @@ describe("project groups", () => {
     const header = container.querySelector(".ws-group-project")!;
     expect(header.querySelector(".ws-group-label")!.textContent).toBe("clice");
     expect(header.className).toContain("active");
-    expect(container.querySelector(".ws-group-add")).toBeNull();
+    fireEvent.click(header.querySelector('[title="New session in clice"]')!);
+    expect(props.onCreateIn).toHaveBeenCalledWith("/repo/clice");
     const names = [...container.querySelectorAll(".task-name-text")].map((e) => e.textContent);
     expect(names).toEqual(["modules"]);
     expect(header.querySelector(".ws-group-count")!.textContent).toBe("1");
@@ -240,32 +241,23 @@ describe("project frames", () => {
     const { result } = renderHook(() => useServer());
     const ws = FakeSocket.instances.at(-1)!;
     act(() => ws.open());
-    result.current.createProject("clice", "/repo/clice", "claude-opus-5-5");
     result.current.renameProject("p1", "clice 2");
     result.current.deleteProject("p1");
     expect(ws.frames()).toEqual([
-      { type: "create_project", name: "clice", path: "/repo/clice", model: "claude-opus-5-5" },
       { type: "rename_project", projectId: "p1", name: "clice 2" },
       { type: "delete_project", projectId: "p1" },
     ]);
   });
 });
 
-describe("CreateWorkspaceDialog as a project", () => {
-  it("creates a project instead of a workspace when ticked", () => {
+describe("CreateWorkspaceDialog", () => {
+  it("makes a workspace: every folder is a project, so there is no project option", () => {
     const onCreate = vi.fn();
-    const onCreateProject = vi.fn();
-    const { getByPlaceholderText, getByRole, getByText } = render(
+    const { getByPlaceholderText, getByText, queryByRole } = render(
       <CreateWorkspaceDialog
         hosts={[]}
         onClose={() => {}}
         onCreate={onCreate}
-        onCreateProject={onCreateProject}
-        models={[
-          { id: "claude-opus-5-5", label: "Opus 5.5", backend: "claude" },
-          { id: "claude-fable-5-1", label: "Fable 5.1", backend: "claude" },
-          { id: "gpt-5", label: "GPT-5", backend: "codex" },
-        ]}
         onListDirs={() => {}}
         dirSuggestions={{ prefix: "", dirs: [] }}
       />,
@@ -273,16 +265,8 @@ describe("CreateWorkspaceDialog as a project", () => {
     fireEvent.change(getByPlaceholderText("~/workspace/..."), {
       target: { value: "/repo/clice" },
     });
-    fireEvent.click(getByRole("checkbox"));
-    expect(getByText("New Project")).toBeTruthy();
-    const select = getByRole("combobox") as HTMLSelectElement;
-    expect([...select.options].map((o) => o.value)).toEqual([
-      "claude-opus-5-5",
-      "claude-fable-5-1",
-    ]);
-    fireEvent.change(select, { target: { value: "claude-fable-5-1" } });
+    expect(queryByRole("checkbox")).toBeNull();
     fireEvent.click(getByText("Create"));
-    expect(onCreateProject).toHaveBeenCalledWith("clice", "/repo/clice", "claude-fable-5-1");
-    expect(onCreate).not.toHaveBeenCalled();
+    expect(onCreate).toHaveBeenCalledWith("clice", "/repo/clice", "local");
   });
 });

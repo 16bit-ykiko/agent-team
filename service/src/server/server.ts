@@ -12,6 +12,7 @@ import {
   saveIndex,
   loadAll,
   loadWorkspaceMessages,
+  readWorkspaceMessages,
   appendLog,
   isLoggedEvent,
   loadSettings,
@@ -540,7 +541,12 @@ export class Server {
       this.sendJson(ws, { type: "error", message: `Not a directory: ${pathInput}` });
       return;
     }
-    this.makeWorkspace(name, cwd, hostId);
+    // A workspace is a session of its folder's project (made, with its lead,
+    // if the folder has none yet).
+    this.projectAction(ws, () => {
+      const project = this.projects.ensureFor(cwd);
+      this.makeWorkspace(name, cwd, hostId, { projectId: project.id, role: "worker" });
+    });
   }
 
   private makeWorkspace(
@@ -969,6 +975,7 @@ systemctl --user restart agent-team-server
       },
       restoreWorkspace: (w) => this.unarchiveWorkspace(w),
       loadWorkspace: (w) => this.ensureLoaded(w),
+      readMessages: (w) => readWorkspaceMessages(this.baseDir, w.id),
       persistWorkspace: (w) => this.persistWorkspace(w.id),
       saveWorkspaceNow: (w) => this.persistWorkspaceNow(w.id),
       workspaceChanged: (w) =>
@@ -1019,6 +1026,11 @@ systemctl --user restart agent-team-server
     ws.archivedAt = null;
     this.persistWorkspaceNow(ws.id);
     this.broadcastUI({ type: "workspace_unarchived", workspaceId: ws.id });
+    try {
+      this.projects.adopt(ws);
+    } catch (e) {
+      console.error(`[projects] ${ws.id} stays outside a project`, e);
+    }
     return true;
   }
 

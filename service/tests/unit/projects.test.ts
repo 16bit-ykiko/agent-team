@@ -42,6 +42,8 @@ describe("panel tool arguments", () => {
     projectStatus: (...a) => Promise.resolve(record("projectStatus")(...a)),
     startSession: record("startSession"),
     readSession: record("readSession"),
+    listHistory: (...a) => Promise.resolve(record("listHistory")(...a)),
+    searchHistory: (...a) => Promise.resolve(record("searchHistory")(...a)),
     messageSession: record("messageSession"),
     stopSession: record("stopSession"),
     archiveSession: record("archiveSession"),
@@ -93,7 +95,7 @@ describe("panel tool arguments", () => {
           taskId: "t2",
         },
       ],
-      ["readSession", "p1", "ws-w", 6],
+      ["readSession", "p1", "ws-w", 6, undefined],
       [
         "writeObjective",
         "p1",
@@ -521,7 +523,8 @@ describe("message_session and read_session", () => {
       "--- user",
       `--- ${agentName}`,
     ]);
-    expect(headers[1]).toMatch(/ · done · 1 tool calls$/);
+    // The message id, for reading around it later.
+    expect(headers[1]).toMatch(/ · done · 1 tool calls · msg-\S+$/);
     expect(out).toContain("x".repeat(3000) + " …(truncated)");
     const last1 = await call(lead, "read_session", { session_id: worker.id, last: 1 });
     expect(last1.split("\n").filter((l) => l.startsWith("--- "))).toHaveLength(1);

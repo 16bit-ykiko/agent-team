@@ -296,18 +296,18 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                       <Icon name="board" />
                     </button>
                   )}
-                  {!g.project && (
-                    <button
-                      className="ws-group-add"
-                      title={`New workspace in ${g.key}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        p.onCreateIn(g.key);
-                      }}
-                    >
-                      +
-                    </button>
-                  )}
+                  <button
+                    className="ws-group-add"
+                    title={
+                      g.project ? `New session in ${g.project.name}` : `New workspace in ${g.key}`
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      p.onCreateIn(g.project?.root ?? g.key);
+                    }}
+                  >
+                    +
+                  </button>
                   {items.length > 0 && <span className="ws-group-count">{items.length}</span>}
                   {g.running && <span className="streaming-dot" />}
                   {lead && deleteButton(lead)}

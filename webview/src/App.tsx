@@ -127,7 +127,6 @@ export function App() {
     hosts,
     systemStatus,
     createWorkspace,
-    createProject,
     renameProject,
     deleteProject,
     deleteWorkspace,
@@ -1638,8 +1637,6 @@ export function App() {
           hosts={hosts}
           onClose={() => setShowCreate(false)}
           onCreate={createWorkspace}
-          onCreateProject={createProject}
-          models={models}
           onListDirs={listDirs}
           dirSuggestions={dirSuggestions}
           initialPath={createInPath}

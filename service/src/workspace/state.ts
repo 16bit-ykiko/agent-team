@@ -70,6 +70,21 @@ export function saveWorkspace(baseDir: string, ws: WorkspaceState): void {
   writeJson(file, state);
 }
 
+// A workspace's saved history, read without blocking (a long one is tens
+// of megabytes); [] when there is none.
+export async function readWorkspaceMessages(
+  baseDir: string,
+  workspaceId: string,
+): Promise<Message[]> {
+  const file = path.join(wsDir(baseDir), `${workspaceId}.json`);
+  try {
+    const ws = JSON.parse(await fs.promises.readFile(file, "utf-8")) as WorkspaceState;
+    return ws.messages ?? [];
+  } catch {
+    return [];
+  }
+}
+
 // Throws when the history exists but cannot be read: an empty list would
 // be saved over it.
 export function loadWorkspaceMessages(baseDir: string, workspaceId: string): Message[] {

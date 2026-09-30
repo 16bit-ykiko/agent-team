@@ -2,9 +2,11 @@ import * as os from "os";
 import * as path from "path";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "../config/presets";
 import { resolveWorkspacePath } from "../repo/dirs";
-import { gitStatus, gitWorktrees } from "../repo/git";
+import { gitStatus, gitWorktrees, repositoryRoot } from "../repo/git";
+import { searchMessages } from "../workspace/search";
 import {
   originLabel,
+  type Message,
   type MessageOrigin,
   type ProjectLink,
   type Workspace,
@@ -55,6 +57,8 @@ export interface ProjectHost {
   // Unarchives and loads the history; false when it cannot be read.
   restoreWorkspace(workspace: Workspace): boolean;
   loadWorkspace(workspace: Workspace): boolean;
+  // Its saved history, without loading it into the workspace.
+  readMessages(workspace: Workspace): Promise<Message[]>;
   persistWorkspace(workspace: Workspace): void;
   // Right away: a shutdown drops pending debounced saves of unloaded
   // (archived) workspaces.
@@ -103,6 +107,8 @@ export class ProjectManager {
 
   create(name: string, root: string, model = LEAD_MODEL): Project {
     if (!claudeModels().includes(model)) throw new Error(`The lead needs a Claude model: ${model}`);
+    const taken = this.store.list().find((p) => p.root === root);
+    if (taken) throw new Error(`${root} is already the project "${taken.name}"`);
     const project = this.store.create(name, root);
     let lead: Workspace | undefined;
     try {
@@ -121,6 +127,30 @@ export class ProjectManager {
     }
     this.changed(project.id);
     return project;
+  }
+
+  // Every folder is part of a project, the one of its repository (a git
+  // worktree's is the checkout it was added to); the first workspace there
+  // brings the project and its lead into being. The lead runs nothing until
+  // it is written to.
+  ensureFor(cwd: string): Project {
+    const root = repositoryRoot(cwd);
+    return (
+      this.store.list().find((p) => p.root === root) ??
+      this.create(path.basename(root) || root, root)
+    );
+  }
+
+  // A workspace from before projects (restored from the archive) joins the
+  // project of its folder as one of its sessions.
+  adopt(w: Workspace): void {
+    if (w.projectLink) return;
+    const project = this.ensureFor(w.cwd);
+    w.projectLink = { projectId: project.id, role: "worker" };
+    const tools = this.toolsFor(w);
+    for (const a of w.agents.values()) a.session.setPanelTools?.(tools);
+    this.host.saveWorkspaceNow(w);
+    this.host.workspaceChanged(w);
   }
 
   rename(id: string, name: string): void {
@@ -423,15 +453,84 @@ export class ProjectManager {
       : `${started} Its task goes out in ${Math.ceil(delay / 1000)} s: starts are spaced out.`;
   }
 
-  private readSession(projectId: string, sessionId: string, last: number): string {
-    const w = this.session(projectId, sessionId);
+  // A project's own sessions, and the history: archived sessions no other
+  // project holds.
+  private readable(projectId: string, sessionId: string): Workspace {
+    const w = this.host.workspace(sessionId);
+    const link = w?.projectLink;
+    if (w && link?.projectId === projectId && link.role === "worker") return w;
+    if (w?.isArchived && (!link || link.projectId === projectId)) return w;
+    throw new Error(`No session ${sessionId} in this project or its history`);
+  }
+
+  // Archived sessions that belong to no other project, in the project's
+  // folders (the repository, folders in it, its worktrees) or anywhere.
+  private async history(projectId: string, everywhere: boolean): Promise<Workspace[]> {
+    const project = this.require(projectId);
+    const roots = everywhere ? [] : await gitWorktrees(project.root);
+    const inside = (cwd: string) => roots.some((r) => cwd === r || cwd.startsWith(`${r}/`));
+    return [...this.host.workspaces()]
+      .filter((w) => w.isArchived && (!w.projectLink || w.projectLink.projectId === projectId))
+      .filter((w) => everywhere || inside(w.cwd))
+      .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+  }
+
+  private async listHistory(
+    projectId: string,
+    everywhere: boolean,
+    limit: number,
+  ): Promise<string> {
+    const all = await this.history(projectId, everywhere);
+    if (all.length === 0) return "(no earlier sessions)";
+    const day = (t: number) => new Date(t).toISOString().slice(0, 10);
+    const lines = all.slice(0, limit).map((w) => {
+      const transcripts = [...w.agents.values()]
+        .map((a) => a.session.sessionId && claudeTranscript(w.cwd, a.session.sessionId))
+        .filter(Boolean);
+      return [
+        `- ${w.id} "${w.name}" in ${w.cwd} · ${day(w.createdAt)} → ${day(w.lastActivityAt)}`,
+        ...transcripts.map((t) => `  transcript: ${t}`),
+      ].join("\n");
+    });
+    const more = all.length > limit ? [`(${all.length - limit} older not shown)`] : [];
+    return [...lines, ...more].join("\n");
+  }
+
+  private async searchHistory(
+    projectId: string,
+    query: string,
+    everywhere: boolean,
+    limit: number,
+  ): Promise<string> {
+    const sources = [];
+    for (const w of [...this.workers(projectId), ...(await this.history(projectId, everywhere))]) {
+      const messages = w.messagesLoaded ? w.getMessages() : await this.host.readMessages(w);
+      sources.push({ id: w.id, name: w.name, messages });
+      // One file at a time, so the server keeps answering.
+      await new Promise((r) => setImmediate(r));
+    }
+    const hits = searchMessages(sources, query, limit);
+    if (hits.length === 0) return `(nothing matches "${query}")`;
+    return hits
+      .map(
+        (h) =>
+          `- ${h.workspaceId} "${h.workspaceName}" · ${new Date(h.timestamp).toISOString()} · message ${h.messageId}\n  ${h.snippet}`,
+      )
+      .join("\n");
+  }
+
+  private readSession(projectId: string, sessionId: string, last: number, around?: string): string {
+    const w = this.readable(projectId, sessionId);
     if (!this.host.loadWorkspace(w)) throw new Error(`"${w.name}" cannot be loaded`);
     const agents = new Map([...w.agents.values()].map((a) => [a.info.id, a.info.name]));
-    const out = [`Session ${w.id} "${w.name}" in ${w.cwd} — ${sessionState(w)}`];
-    for (const m of w
-      .getMessages()
-      .filter((x) => x.kind !== "system")
-      .slice(-last)) {
+    const out = [
+      `Session ${w.id} "${w.name}" in ${w.cwd} — ${w.isArchived ? "archived" : sessionState(w)}`,
+    ];
+    const messages = w.getMessages().filter((x) => x.kind !== "system");
+    const at = around ? messages.findIndex((m) => m.id === around) : -1;
+    if (around && at < 0) throw new Error(`No message ${around} in "${w.name}"`);
+    const shown = at >= 0 ? messages.slice(Math.max(0, at - 5), at + 6) : messages.slice(-last);
+    for (const m of shown) {
       const who = m.from
         ? originLabel(m.from)
         : m.kind === "user"
@@ -440,7 +539,7 @@ export class ProjectManager {
       const tools = (m.events ?? []).filter((e) => e.kind === "tool_use").length;
       out.push(
         "",
-        `--- ${who} · ${new Date(m.timestamp).toISOString()} · ${m.status}${tools ? ` · ${tools} tool calls` : ""}`,
+        `--- ${who} · ${new Date(m.timestamp).toISOString()} · ${m.status}${tools ? ` · ${tools} tool calls` : ""} · ${m.id}`,
         m.content.length > 3000 ? m.content.slice(0, 3000) + " …(truncated)" : m.content,
       );
     }
@@ -700,7 +799,10 @@ export class ProjectManager {
   private api: PanelApi = {
     projectStatus: (pid) => this.status(pid),
     startSession: (pid, a) => this.startSession(pid, a),
-    readSession: (pid, sid, last) => this.readSession(pid, sid, last),
+    readSession: (pid, sid, last, around) => this.readSession(pid, sid, last, around),
+    listHistory: (pid, everywhere, limit) => this.listHistory(pid, everywhere, limit),
+    searchHistory: (pid, query, everywhere, limit) =>
+      this.searchHistory(pid, query, everywhere, limit),
     messageSession: (pid, sid, text) => {
       const w = this.session(pid, sid);
       const outcome = this.deliver(w, text, ...this.fromLead(pid, text));
@@ -819,4 +921,16 @@ function sessionState(w: Workspace): "archived" | "working" | "waiting to start"
 function oneLine(s: string, max: number): string {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > max ? t.slice(0, max) + "…" : t;
+}
+
+// Where the Claude CLI keeps a session's own transcript (JSON lines, one
+// message per line): under its folder, with every "/" and "." made "-".
+function claudeTranscript(cwd: string, sessionId: string): string {
+  return path.join(
+    os.homedir(),
+    ".claude",
+    "projects",
+    cwd.replace(/[/.]/g, "-"),
+    `${sessionId}.jsonl`,
+  );
 }

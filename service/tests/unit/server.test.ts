@@ -357,27 +357,51 @@ describe("server websocket", () => {
     ws.close();
   });
 
+  it("makes a new workspace a session of its folder's project, bringing the project once", async () => {
+    const { ws, next } = await connect();
+    const folder = path.join(base, "fresh");
+    fs.mkdirSync(folder, { recursive: true });
+    ws.send(JSON.stringify({ type: "create_workspace", name: "first", path: folder }));
+    const lead = (await next("workspace_created")).workspace as Record<string, unknown>;
+    const project = (await next("project_updated")).project as Record<string, unknown>;
+    const first = (await next("workspace_created")).workspace as Record<string, unknown>;
+    expect(lead).toMatchObject({ name: "fresh · lead", projectLink: { role: "lead" } });
+    expect(project).toMatchObject({ name: "fresh", root: folder, leadWorkspaceId: lead.id });
+    expect(first).toMatchObject({
+      name: "first",
+      cwd: folder,
+      projectLink: { projectId: project.id, role: "worker" },
+    });
+    ws.send(JSON.stringify({ type: "create_workspace", name: "second", path: folder }));
+    const second = (await next("workspace_created")).workspace as Record<string, unknown>;
+    ws.close();
+    expect(second).toMatchObject({ projectLink: { projectId: project.id, role: "worker" } });
+  });
+
   it("creates a project with its lead workspace and lists it on connect", async () => {
     const { ws, next } = await connect();
-    ws.send(JSON.stringify({ type: "create_project", name: "demo", path: base }));
+    // Its own folder: the base dir already is a project, brought by a workspace there.
+    const root = path.join(base, "demo");
+    fs.mkdirSync(root, { recursive: true });
+    ws.send(JSON.stringify({ type: "create_project", name: "demo", path: root }));
     const created = (await next("workspace_created")).workspace as Record<string, unknown>;
     const agent = (await next("agent_added")).agent as Record<string, unknown>;
     const project = (await next("project_updated")).project as Record<string, unknown>;
     ws.close();
     expect(created).toMatchObject({
       name: "demo · lead",
-      cwd: base,
+      cwd: root,
       projectLink: { projectId: project.id, role: "lead" },
     });
     expect(agent).toMatchObject({ name: "Lead", model: "claude-opus-5-5" });
-    expect(project).toMatchObject({ name: "demo", root: base, leadWorkspaceId: created.id });
+    expect(project).toMatchObject({ name: "demo", root, leadWorkspaceId: created.id });
     expect(
       fs.existsSync(path.join(base, ".agent-team", "projects", String(project.id), "notes")),
     ).toBe(true);
 
     const again = await connect();
     const init = await again.next("init");
-    expect(init.projects).toEqual([{ ...project, objectives: [] }]);
+    expect(init.projects).toContainEqual({ ...project, objectives: [] });
 
     again.ws.send(JSON.stringify({ type: "rename_project", projectId: project.id, name: "demo2" }));
     const renamed = (await again.next("workspace_updated")).workspace as Record<string, unknown>;

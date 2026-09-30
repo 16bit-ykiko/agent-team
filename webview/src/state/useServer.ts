@@ -1057,11 +1057,6 @@ export function useServer() {
         send({ type: "create_workspace", name, path, hostId }),
       [send],
     ),
-    createProject: useCallback(
-      (name: string, path: string, model?: string) =>
-        send({ type: "create_project", name, path, model }),
-      [send],
-    ),
     renameProject: useCallback(
       (projectId: string, name: string) => send({ type: "rename_project", projectId, name }),
       [send],
