@@ -136,6 +136,32 @@ describe("timelineBlocks", () => {
     expect(card.subagent?.description).toBe("review");
   });
 
+  it("gives the panel's actions a line of their own; its reads stay in the steps", () => {
+    const events = [
+      ev("tool_use", { toolName: "Read" }),
+      ev("tool_use", { toolName: "mcp__panel__read_session" }),
+      ev("tool_use", { toolName: "mcp__panel__start_session" }),
+      ev("tool_use", { toolName: "Bash" }),
+      ev("tool_use", { toolName: "mcp__panel__message_session" }),
+      ev("tool_use", { toolName: "mcp__other__start_session" }),
+    ];
+    const blocks = timelineBlocks(events);
+    expect(blocks.map((b) => (b.kind === "action" ? `action:${b.action}` : b.kind))).toEqual([
+      "steps",
+      "action:start_session",
+      "steps",
+      "action:message_session",
+      "steps",
+    ]);
+    expect((blocks[0] as { events: StreamEvent[] }).events.map((e) => e.toolName)).toEqual([
+      "Read",
+      "mcp__panel__read_session",
+    ]);
+    expect(splitEvents(events).regular.map((e) => e.toolName)).not.toContain(
+      "mcp__panel__start_session",
+    );
+  });
+
   it("keeps consecutive cards as separate blocks and no empty step boxes", () => {
     const events = [
       ev("subagent_start", { subagent: { taskId: "a", description: "one" } }),

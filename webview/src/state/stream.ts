@@ -57,6 +57,7 @@ export function applyEventsToMessage(m: Message, evts: StreamEvent[]): Message {
           ...events[matchIdx],
           toolResult: ev.content,
           ...(ev.isMarkdown && { toolResultIsMarkdown: true }),
+          ...(ev.isError && { toolResultIsError: true }),
         };
         continue;
       }
@@ -187,7 +188,11 @@ function applyInnerEvent(sa: SubAgentInfo, innerEv: StreamEvent): void {
       (e) => e.kind === "tool_use" && e.toolUseId === innerEv.toolUseId,
     );
     if (i >= 0) {
-      sa.events[i] = { ...sa.events[i], toolResult: innerEv.content };
+      sa.events[i] = {
+        ...sa.events[i],
+        toolResult: innerEv.content,
+        ...(innerEv.isError && { toolResultIsError: true }),
+      };
     } else {
       sa.events.push(innerEv);
     }

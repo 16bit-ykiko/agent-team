@@ -951,6 +951,25 @@ describe("scheduled wake-up banner and sleeping label", () => {
     expect(events.map((e) => e.kind)).toEqual(["tool_use", "tool_result", "notice"]);
   });
 
+  it("marks a tool result the tool reported as failed, in the session and in a subagent", () => {
+    const { events, dispatch } = makeSession();
+    const result = (id: string, isError: boolean, parent: string | null = null) => ({
+      type: "user",
+      parent_tool_use_id: parent,
+      session_id: "s",
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: id, content: "No session ws-x", is_error: isError },
+        ],
+      },
+    });
+    dispatch(result("t1", true));
+    dispatch(result("t2", false));
+    const results = events.filter((e) => e.kind === "tool_result");
+    expect(results.map((e) => e.isError)).toEqual([true, undefined]);
+  });
+
   it("sets a sleeping activity after the result and clears it when the wake-up turn starts", () => {
     const session = new ClaudeSession({ cwd: "/tmp" });
     const s = session as unknown as { handleSDKMessage(m: unknown): void; expectingTurn: boolean };

@@ -53,6 +53,17 @@ describe("applyEventsToMessage", () => {
     expect(out.events![1]).toMatchObject({ kind: "tool_result", content: "orphan" });
   });
 
+  it("marks a tool_use whose result was a failure, as the server does", () => {
+    const out = applyEventsToMessage(
+      msg({ events: [ev("tool_use", { toolUseId: "t1" }), ev("tool_use", { toolUseId: "t2" })] }),
+      [
+        ev("tool_result", { toolUseId: "t1", content: "No such session", isError: true }),
+        ev("tool_result", { toolUseId: "t2", content: "ok" }),
+      ],
+    );
+    expect(out.events!.map((e) => e.toolResultIsError)).toEqual([true, undefined]);
+  });
+
   it("keeps one retry event per message, preserving its position", () => {
     const first = applyEventsToMessage(msg(), [
       ev("retry", { content: "retry 1/10", contentOffset: 3 }),

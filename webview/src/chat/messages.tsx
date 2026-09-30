@@ -1,4 +1,13 @@
-import { useState, useCallback, useMemo, memo, Component, useEffect } from "react";
+import {
+  useState,
+  useCallback,
+  useMemo,
+  memo,
+  Component,
+  useEffect,
+  createContext,
+  useContext,
+} from "react";
 import type { ReactNode } from "react";
 import type { Message, MessageOrigin, AgentInfo, StreamEvent } from "../state/useServer";
 import { splitEvents, timelineBlocks } from "./events";
@@ -114,6 +123,118 @@ export const BannerItem = memo(function BannerItem({
           className="btn-inline banner-toggle"
           onClick={() => {
             if (truncated) onLoadDetails?.();
+            setOpen((v) => !v);
+          }}
+        >
+          {open ? "less" : "more"}
+        </button>
+      )}
+    </div>
+  );
+});
+
+// Sessions and projects named in the chat (a panel action's target): their
+// names as they are now, and a session opened on a click.
+export interface SessionLinks {
+  open?: (workspaceId: string) => void;
+  nameOf?: (id: string) => string | undefined;
+}
+export const SessionLinkContext = createContext<SessionLinks>({});
+
+const ACTION_LABEL: Record<string, string> = {
+  start_session: "New session",
+  message_session: "Message",
+  message_project: "Message to project",
+  stop_session: "Stopped",
+  archive_session: "Archived",
+  report_progress: "Progress to lead",
+  finish_task: "Task finished",
+};
+
+// A panel call as the panel renders it (claude.ts formatPanelTool): the
+// line after the tool's name (a title, an id), then the quoted text (a
+// task, a message, a report).
+function actionParts(content: string): { head: string; quote: string } {
+  const lines = (content ?? "").split("\n");
+  const head = lines[0]
+    .replace(/^\*\*[^*]+\*\*\s*/, "")
+    .replace(/`([^`]*)`/g, "$1")
+    .trim();
+  const quote = lines
+    .filter((l) => l.startsWith(">"))
+    .map((l) => l.replace(/^> ?/, ""))
+    .join("\n");
+  return { head, quote };
+}
+
+// A panel call that changed something elsewhere, as a line of its own:
+// what was done, to whom (the session opens on a click), the first line of
+// what was sent, and whether it failed.
+export const PanelActionItem = memo(function PanelActionItem({
+  ev,
+  action,
+  onLoadDetails,
+}: {
+  ev: StreamEvent;
+  action: string;
+  onLoadDetails?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const links = useContext(SessionLinkContext);
+  const { head, quote } = actionParts(ev.content);
+  const failed = !!ev.toolResultIsError;
+  const result = ev.toolResult ?? "";
+  const pending = ev.toolResult == null && ev.resultLength == null;
+  // A summary page cut the text or the answer: expanding fetches them.
+  const partial =
+    (ev.resultLength ?? 0) > result.length || (ev.bodyLength ?? 0) > (ev.content ?? "").length;
+  const session = /\b(ws-[\w-]+)/.exec(failed ? head : `${head} ${result}`)?.[1];
+  const project = /\b(proj-[\w-]+)/.exec(head)?.[1];
+  // The name as it is now; else as the answer quotes it ('Sent to
+  // "modules".'); else a new session's title ("title in folder").
+  const cut = head.lastIndexOf(" in ");
+  const target =
+    links.nameOf?.(session ?? project ?? "") ??
+    ((!failed && /"([^"]+)"/.exec(result)?.[1]) ||
+      (action === "start_session" && cut > 0 ? head.slice(0, cut) : head));
+  const preview = bannerFirstLine(quote);
+  return (
+    <div
+      className={`banner banner-action${open ? "" : " banner-folded"}${failed ? " banner-failed" : ""}${pending ? " banner-pending" : ""}`}
+      data-action={action}
+    >
+      <span className="banner-icon">{failed ? "!" : "◆"}</span>
+      <div className="banner-text">
+        <span className="banner-label">{ACTION_LABEL[action] ?? action}</span>
+        {target &&
+          (session && links.open ? (
+            <button
+              className="action-target"
+              title="Open that session"
+              onClick={() => links.open!(session)}
+            >
+              {target}
+            </button>
+          ) : (
+            <span className="action-target">{target}</span>
+          ))}
+        {failed ? (
+          <span className="action-error">{bannerFirstLine(result)}</span>
+        ) : (
+          !open && preview && <span className="banner-first-line">{preview}</span>
+        )}
+        {open && (
+          <>
+            {quote && <MdBlock>{quote}</MdBlock>}
+            {result && <div className="action-result">{result}</div>}
+          </>
+        )}
+      </div>
+      {(quote || result || partial) && (
+        <button
+          className="btn-inline banner-toggle"
+          onClick={() => {
+            if (partial) onLoadDetails?.();
             setOpen((v) => !v);
           }}
         >
@@ -431,6 +552,16 @@ export const SubAgentItem = memo(function SubAgentItem({
                 }
                 if (block.kind === "banner")
                   return <BannerItem key={`b${bi}`} ev={block.ev} onLoadDetails={onLoadDetails} />;
+                if (block.kind === "action") {
+                  return (
+                    <PanelActionItem
+                      key={`a${bi}`}
+                      ev={block.ev}
+                      action={block.action}
+                      onLoadDetails={onLoadDetails}
+                    />
+                  );
+                }
                 return (
                   <SubAgentItem
                     key={block.ev.subagent!.taskId}
@@ -588,6 +719,16 @@ export function StepGroup({
         }
         if (block.kind === "banner")
           return <BannerItem key={`b${i}`} ev={block.ev} onLoadDetails={onLoadDetails} />;
+        if (block.kind === "action") {
+          return (
+            <PanelActionItem
+              key={`a${i}`}
+              ev={block.ev}
+              action={block.action}
+              onLoadDetails={onLoadDetails}
+            />
+          );
+        }
         return (
           <SubAgentItem
             key={block.ev.subagent!.taskId}
@@ -737,6 +878,11 @@ export const MessageItem = memo(function MessageItem({
     () => (summarized && onLoadDetails ? () => onLoadDetails(msg.id) : undefined),
     [summarized, onLoadDetails, msg.id],
   );
+  const outerLinks = useContext(SessionLinkContext);
+  const sessionLinks = useMemo(
+    () => ({ ...outerLinks, ...(onOpenWorkspace && { open: onOpenWorkspace }) }),
+    [outerLinks, onOpenWorkspace],
+  );
   const agentId = msg.agentId;
   const handleCancelSubagent = useMemo(
     () =>
@@ -843,154 +989,156 @@ export const MessageItem = memo(function MessageItem({
     ) : null;
 
   return (
-    <div
-      id={`msg-${msg.id}`}
-      className={`message${isUser ? " message-user" : " message-agent"}${compact ? " message-compact" : ""}${highlight ? " message-highlight" : ""}${msg.status === "queued" ? " message-queued" : ""}${msg.status === "error" ? " message-error" : ""}`}
-    >
-      <div className="message-gutter">
-        {compact ? null : from ? (
-          <div className="avatar-user avatar-from">{from.role === "worker" ? "◇" : "◆"}</div>
-        ) : isUser ? (
-          <div className="avatar-user">
-            <img
-              src="avatars/ykiko.jpg"
-              alt="You"
-              style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }}
-            />
-          </div>
-        ) : agent ? (
-          <AgentAvatar agent={agent} size={32} />
-        ) : (
-          <div className="avatar-user">?</div>
-        )}
-      </div>
-      <div className="message-body">
-        {!compact && (
-          <div className="message-header">
-            {isUser ? (
-              <>
-                {from ? (
-                  <button
-                    className="message-author from-author"
-                    title="Open that session"
-                    onClick={() => onOpenWorkspace?.(from.workspaceId)}
-                  >
-                    {originLabel(from)}
-                  </button>
-                ) : (
-                  <span className="message-author user-author">You</span>
-                )}
-                {msg.status === "queued" && (
-                  <span className="queued-badge">
-                    queued
-                    {onCancelQueued && (
-                      <button
-                        className="queued-cancel"
-                        title="Remove from queue"
-                        onClick={() => onCancelQueued(msg.id)}
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </span>
-                )}
-              </>
-            ) : agent ? (
-              <>
-                <span className="message-author" style={{ color: agent.color }}>
-                  {agent.name}
-                </span>
-                <span className="message-model">{shortModel(msg.model ?? agent.model)}</span>
-              </>
-            ) : null}
-            <span className="message-time">{time}</span>
-            {streaming && <span className="streaming-dot" />}
-            {activity && <span className="activity-label">{activity}</span>}
-          </div>
-        )}
-        {compact && (
-          <div className="compact-header">
-            <span className="message-time">{time}</span>
-            {streaming && <span className="streaming-dot" />}
-            {activity && <span className="activity-label">{activity}</span>}
-          </div>
-        )}
-        {!isUser && <MessageStatus msg={msg} />}
-
-        {msg.forwardRef && (
-          <div className="forward-ref">
-            <span className="forward-ref-icon">↩</span>
-            <span className="forward-ref-agent">
-              <Avatar
-                avatar={msg.forwardRef.fromAvatar}
-                color={
-                  agents.find((a) => a.name === msg.forwardRef!.fromAgent)?.color ?? "transparent"
-                }
-                name={msg.forwardRef.fromAgent}
-                size={16}
+    <SessionLinkContext.Provider value={sessionLinks}>
+      <div
+        id={`msg-${msg.id}`}
+        className={`message${isUser ? " message-user" : " message-agent"}${compact ? " message-compact" : ""}${highlight ? " message-highlight" : ""}${msg.status === "queued" ? " message-queued" : ""}${msg.status === "error" ? " message-error" : ""}`}
+      >
+        <div className="message-gutter">
+          {compact ? null : from ? (
+            <div className="avatar-user avatar-from">{from.role === "worker" ? "◇" : "◆"}</div>
+          ) : isUser ? (
+            <div className="avatar-user">
+              <img
+                src="avatars/ykiko.jpg"
+                alt="You"
+                style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }}
               />
-              {msg.forwardRef.fromAgent}
-            </span>
-            <span className="forward-ref-preview">{msg.forwardRef.preview}</span>
-          </div>
-        )}
-
-        {streaming &&
-          !thinkingLive &&
-          !msg.content &&
-          detailEvents.length === 0 &&
-          (activity ? (
-            <div className="working-indicator">{activity}</div>
+            </div>
+          ) : agent ? (
+            <AgentAvatar agent={agent} size={32} />
           ) : (
-            <WaitingIndicator progress="start" immediate />
-          ))}
+            <div className="avatar-user">?</div>
+          )}
+        </div>
+        <div className="message-body">
+          {!compact && (
+            <div className="message-header">
+              {isUser ? (
+                <>
+                  {from ? (
+                    <button
+                      className="message-author from-author"
+                      title="Open that session"
+                      onClick={() => onOpenWorkspace?.(from.workspaceId)}
+                    >
+                      {originLabel(from)}
+                    </button>
+                  ) : (
+                    <span className="message-author user-author">You</span>
+                  )}
+                  {msg.status === "queued" && (
+                    <span className="queued-badge">
+                      queued
+                      {onCancelQueued && (
+                        <button
+                          className="queued-cancel"
+                          title="Remove from queue"
+                          onClick={() => onCancelQueued(msg.id)}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </span>
+                  )}
+                </>
+              ) : agent ? (
+                <>
+                  <span className="message-author" style={{ color: agent.color }}>
+                    {agent.name}
+                  </span>
+                  <span className="message-model">{shortModel(msg.model ?? agent.model)}</span>
+                </>
+              ) : null}
+              <span className="message-time">{time}</span>
+              {streaming && <span className="streaming-dot" />}
+              {activity && <span className="activity-label">{activity}</span>}
+            </div>
+          )}
+          {compact && (
+            <div className="compact-header">
+              <span className="message-time">{time}</span>
+              {streaming && <span className="streaming-dot" />}
+              {activity && <span className="activity-label">{activity}</span>}
+            </div>
+          )}
+          {!isUser && <MessageStatus msg={msg} />}
 
-        {msg.images && msg.images.length > 0 && (
-          <div className="msg-images">
-            {msg.images.map((img, i) => (
-              <a key={i} href={img.url} target="_blank" rel="noopener noreferrer">
-                <img src={img.url} alt={img.name} />
-              </a>
+          {msg.forwardRef && (
+            <div className="forward-ref">
+              <span className="forward-ref-icon">↩</span>
+              <span className="forward-ref-agent">
+                <Avatar
+                  avatar={msg.forwardRef.fromAvatar}
+                  color={
+                    agents.find((a) => a.name === msg.forwardRef!.fromAgent)?.color ?? "transparent"
+                  }
+                  name={msg.forwardRef.fromAgent}
+                  size={16}
+                />
+                {msg.forwardRef.fromAgent}
+              </span>
+              <span className="forward-ref-preview">{msg.forwardRef.preview}</span>
+            </div>
+          )}
+
+          {streaming &&
+            !thinkingLive &&
+            !msg.content &&
+            detailEvents.length === 0 &&
+            (activity ? (
+              <div className="working-indicator">{activity}</div>
+            ) : (
+              <WaitingIndicator progress="start" immediate />
             ))}
-          </div>
-        )}
 
-        {isUser
-          ? msg.content && (
-              <div className="message-content" onCopy={copySelectionAsMarkdown}>
-                {renderMentionContent(msg.content, agents)}
-              </div>
-            )
-          : segments.length > 0 && (
-              <div className="message-content" onCopy={copySelectionAsMarkdown}>
-                {!streaming && quoteButton}
-                {segments.map((seg, si) => (
-                  <div key={si}>
-                    {seg.text &&
-                      (streaming ? (
-                        <StreamingMdBlock>{seg.text}</StreamingMdBlock>
-                      ) : (
-                        <MdBlock>{seg.text}</MdBlock>
-                      ))}
-                    {(seg.events.length > 0 || si === liveAt) && (
-                      <StepGroup
-                        group={{ step: si, events: seg.events }}
-                        onLoadEvents={handleLoadEvents}
-                        onCancelSubagent={handleCancelSubagent}
-                        onLoadDetails={handleLoadDetails}
-                        live={si === liveAt ? liveBlock : undefined}
-                      />
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-        {streaming &&
-          !thinkingLive &&
-          !activity &&
-          (msg.content || detailEvents.length > 0) &&
-          !workInFlight(detailEvents) && <WaitingIndicator progress={progressOf(msg)} />}
+          {msg.images && msg.images.length > 0 && (
+            <div className="msg-images">
+              {msg.images.map((img, i) => (
+                <a key={i} href={img.url} target="_blank" rel="noopener noreferrer">
+                  <img src={img.url} alt={img.name} />
+                </a>
+              ))}
+            </div>
+          )}
+
+          {isUser
+            ? msg.content && (
+                <div className="message-content" onCopy={copySelectionAsMarkdown}>
+                  {renderMentionContent(msg.content, agents)}
+                </div>
+              )
+            : segments.length > 0 && (
+                <div className="message-content" onCopy={copySelectionAsMarkdown}>
+                  {!streaming && quoteButton}
+                  {segments.map((seg, si) => (
+                    <div key={si}>
+                      {seg.text &&
+                        (streaming ? (
+                          <StreamingMdBlock>{seg.text}</StreamingMdBlock>
+                        ) : (
+                          <MdBlock>{seg.text}</MdBlock>
+                        ))}
+                      {(seg.events.length > 0 || si === liveAt) && (
+                        <StepGroup
+                          group={{ step: si, events: seg.events }}
+                          onLoadEvents={handleLoadEvents}
+                          onCancelSubagent={handleCancelSubagent}
+                          onLoadDetails={handleLoadDetails}
+                          live={si === liveAt ? liveBlock : undefined}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+          {streaming &&
+            !thinkingLive &&
+            !activity &&
+            (msg.content || detailEvents.length > 0) &&
+            !workInFlight(detailEvents) && <WaitingIndicator progress={progressOf(msg)} />}
+        </div>
       </div>
-    </div>
+    </SessionLinkContext.Provider>
   );
 });

@@ -303,12 +303,15 @@ function renderEvents(events: StreamEvent[], indent: string, out: string[]): voi
         continue;
       }
       case "tool_use": {
-        const result = e.toolResult != null ? ` → ${q(e.toolResult, 80)}` : " → (pending)";
+        const result =
+          e.toolResult == null
+            ? " → (pending)"
+            : ` → ${e.toolResultIsError ? "error " : ""}${q(e.toolResult, 80)}`;
         out.push(`${indent}tool ${e.toolName ?? "?"} ${q(e.content)}${result}`);
         continue;
       }
       case "tool_result":
-        out.push(`${indent}orphan tool_result ${q(e.content, 80)}`);
+        out.push(`${indent}orphan tool_result ${e.isError ? "error " : ""}${q(e.content, 80)}`);
         continue;
       case "notice":
         out.push(`${indent}notice:${e.level ?? "info"} ${q(e.content)}`);

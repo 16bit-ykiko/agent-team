@@ -80,8 +80,11 @@ export interface StreamEvent {
   contentOffset?: number;
   toolUseId?: string;
   isMarkdown?: boolean;
+  // A tool_result the tool reported as failed.
+  isError?: boolean;
   toolResult?: string;
   toolResultIsMarkdown?: boolean;
+  toolResultIsError?: boolean;
   subagent?: SubAgentInfo;
   // Summary-page fields (see summary.ts): sizes of bodies not included.
   contentLength?: number;
@@ -1335,7 +1338,12 @@ export class ClaudeSession extends EventEmitter {
 
       if (text && parentToolUseId) {
         const taskId = this.subagentToolMap.get(parentToolUseId);
-        const inner = { kind: "tool_result", content: text, toolUseId } as StreamEvent;
+        const inner = {
+          kind: "tool_result",
+          content: text,
+          toolUseId,
+          ...(b.is_error === true && { isError: true }),
+        } as StreamEvent;
         if (taskId) this.emitInner(parentToolUseId, taskId, inner);
         else this.parkNested(parentToolUseId, inner);
       } else if (text) {
@@ -1347,6 +1355,7 @@ export class ClaudeSession extends EventEmitter {
           content: text,
           toolUseId,
           ...(isSubagentResult && { isMarkdown: true }),
+          ...(b.is_error === true && { isError: true }),
         });
       }
       const schedule =

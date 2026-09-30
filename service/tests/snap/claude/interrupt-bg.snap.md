@@ -11,7 +11,7 @@
   card general-purpose/local_agent stopped "Run `sleep 240` with the Bash tool in the foreground (not in background; set timeout to 300000 ms). …"
     tool Bash "**Bash** ```bash sleep 240 ```" → (pending)
     summary "Sleep 240 then reply done"
-  tool Bash "**Bash** ```bash sleep 90; echo fg-done ```" → "The user doesn't want to proceed with this tool use. The tool use was rejected (…"
+  tool Bash "**Bash** ```bash sleep 90; echo fg-done ```" → error "The user doesn't want to proceed with this tool use. The tool use was rejected (…"
 ## 4 user done
   text "Without calling any tools, say in one line which of your background tasks are still running."
 ## 5 agent done ctx 18244/1000000 thought 38 tokens

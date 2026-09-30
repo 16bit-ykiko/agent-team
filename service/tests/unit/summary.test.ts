@@ -30,6 +30,41 @@ describe("summarizeEvent", () => {
     });
   });
 
+  it("keeps what a panel call sent and got back, as a banner's text, and whether it failed", () => {
+    const content = "**message_session** `ws-9`\n\n> please rebase";
+    expect(
+      summarizeEvent(
+        ev("tool_use", {
+          toolName: "mcp__panel__message_session",
+          content,
+          toolResult: "No session ws-9 in this project",
+          toolResultIsError: true,
+        }),
+      ),
+    ).toEqual({
+      kind: "tool_use",
+      toolName: "mcp__panel__message_session",
+      content,
+      bodyLength: content.length,
+      toolResult: "No session ws-9 in this project",
+      resultLength: 31,
+      toolResultIsError: true,
+    });
+    const long = summarizeEvent(
+      ev("tool_use", {
+        toolName: "mcp__panel__search_history",
+        content: "x".repeat(700),
+        toolResult: "y".repeat(900),
+      }),
+    );
+    expect([
+      long.content.length,
+      long.bodyLength,
+      long.toolResult!.length,
+      long.resultLength,
+    ]).toEqual([601, 700, 601, 900]);
+  });
+
   it("drops thinking/text/result bodies but keeps their length", () => {
     expect(summarizeEvent(ev("thinking", { content: "long thoughts" }))).toEqual({
       kind: "thinking",

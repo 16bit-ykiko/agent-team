@@ -95,8 +95,11 @@ export interface StreamEvent {
   contentOffset?: number;
   toolUseId?: string;
   isMarkdown?: boolean;
+  // A tool_result the tool reported as failed.
+  isError?: boolean;
   toolResult?: string;
   toolResultIsMarkdown?: boolean;
+  toolResultIsError?: boolean;
   // A finished thinking block: how long it took and, once its API call
   // ends, how many tokens it spent.
   durationMs?: number;

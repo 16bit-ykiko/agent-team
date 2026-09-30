@@ -1579,6 +1579,67 @@ span.katex-display {
 .banner-skill {
   color: var(--text-secondary);
 }
+/* The panel's actions: a session started, a message sent, a report. */
+.banner-action {
+  color: var(--text-primary);
+  border-color: rgba(82, 139, 255, 0.35);
+  background: rgba(82, 139, 255, 0.06);
+}
+.banner-action .banner-icon {
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+}
+.action-target {
+  flex-shrink: 0;
+  max-width: 45%;
+  margin-right: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.action-target {
+  cursor: pointer;
+}
+button.action-target:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.action-error {
+  min-width: 0;
+  flex: 1;
+  color: var(--error);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.action-result {
+  margin-top: 4px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+.banner-action.banner-failed {
+  border-color: rgba(224, 108, 117, 0.35);
+  background: rgba(224, 108, 117, 0.06);
+}
+.banner-action.banner-failed .banner-icon {
+  color: var(--error);
+}
+.banner-action .banner-label {
+  color: var(--accent);
+}
+.banner-action.banner-failed .banner-label {
+  color: var(--error);
+}
+.banner-pending {
+  opacity: 0.7;
+}
 /* Folded: label + first line on one row, the toggle at the right edge. */
 .banner-first-line {
   overflow: hidden;

@@ -13,6 +13,25 @@ export function isBannerEvent(e: StreamEvent): boolean {
   return BANNER_KINDS.has(e.kind);
 }
 
+// The panel's calls with an effect elsewhere — a session started, stopped
+// or archived, a message sent, a report to the lead — stand where they
+// happened as lines of their own, not folded among the steps.
+const PANEL_ACTIONS = new Set([
+  "start_session",
+  "message_session",
+  "message_project",
+  "stop_session",
+  "archive_session",
+  "report_progress",
+  "finish_task",
+]);
+
+export function panelAction(e: StreamEvent): string | null {
+  if (e.kind !== "tool_use" || !e.toolName?.startsWith("mcp__panel__")) return null;
+  const name = e.toolName.slice("mcp__panel__".length);
+  return PANEL_ACTIONS.has(name) ? name : null;
+}
+
 // A subagent's lifecycle arrives as separate start/progress/done events (the
 // done event is appended rather than replacing the start so contentOffset
 // interleaving still works). For display we fold them into one entry per
@@ -95,7 +114,7 @@ function spawnToolUseIds(events: StreamEvent[]): Set<string> {
 }
 
 function isOrdinary(e: StreamEvent, spawns: Set<string>): boolean {
-  if (isSubagentEvent(e) || isBannerEvent(e)) return false;
+  if (isSubagentEvent(e) || isBannerEvent(e) || panelAction(e)) return false;
   return !(e.kind === "tool_use" && e.toolUseId != null && spawns.has(e.toolUseId));
 }
 
@@ -117,6 +136,7 @@ export function splitEvents(events: StreamEvent[]): {
 export type TimelineBlock =
   | { kind: "steps"; events: StreamEvent[] }
   | { kind: "banner"; ev: StreamEvent }
+  | { kind: "action"; ev: StreamEvent; action: string }
   | { kind: "subagent"; ev: StreamEvent };
 
 export function timelineBlocks(events: StreamEvent[]): TimelineBlock[] {
@@ -139,6 +159,9 @@ export function timelineBlocks(events: StreamEvent[]): TimelineBlock[] {
     } else if (isBannerEvent(e)) {
       flush();
       blocks.push({ kind: "banner", ev: e });
+    } else if (panelAction(e)) {
+      flush();
+      blocks.push({ kind: "action", ev: e, action: panelAction(e)! });
     } else if (isOrdinary(e, spawns)) {
       // `step` is per content block, not per model step, so it is not a
       // boundary: cutting on it gave one box per thinking/tool event.

@@ -23,11 +23,27 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
   if (e.step != null) base.step = e.step;
   if (e.isMarkdown) base.isMarkdown = true;
   if (e.toolResultIsMarkdown) base.toolResultIsMarkdown = true;
+  if (e.toolResultIsError) base.toolResultIsError = true;
   if (e.durationMs != null) base.durationMs = e.durationMs;
   if (e.tokens != null) base.tokens = e.tokens;
 
   switch (e.kind) {
     case "tool_use":
+      // The panel's calls show as lines of their own (a session started, a
+      // message sent): what was sent and answered, like a banner's text.
+      if (e.toolName?.startsWith("mcp__panel__")) {
+        const text = e.content ?? "";
+        base.content = text.length > BANNER_MAX ? text.slice(0, BANNER_MAX) + "…" : text;
+        base.bodyLength = text.length;
+        if (e.toolResult != null) {
+          base.toolResult =
+            e.toolResult.length > BANNER_MAX
+              ? e.toolResult.slice(0, BANNER_MAX) + "…"
+              : e.toolResult;
+          base.resultLength = e.toolResult.length;
+        }
+        break;
+      }
       base.content = firstLine(e.content ?? "");
       base.bodyLength = (e.content ?? "").length;
       if (e.toolResult != null) base.resultLength = e.toolResult.length;

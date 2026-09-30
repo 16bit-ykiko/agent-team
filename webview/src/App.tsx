@@ -20,7 +20,7 @@ import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
 import { isImeKeyEvent } from "./chat/ime";
 import { AgentAvatar } from "./workspace/avatar";
 import { formatRelative } from "./format";
-import { MessageItem, MessageBoundary, originLabel } from "./chat/messages";
+import { MessageItem, MessageBoundary, originLabel, SessionLinkContext } from "./chat/messages";
 import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./workspace/dialogs";
 import { Sidebar } from "./sidebar/Sidebar";
 import { ViewportInfo } from "./viewport/ViewportInfo";
@@ -158,6 +158,13 @@ export function App() {
     archiveProject,
     archiveAfterDays,
   } = useServer();
+  // Sessions and projects named in the chat, by their names as they are now;
+  // recomputed only when one of those names changes.
+  const namesKey = [...workspaces, ...projects].map((x) => `${x.id}\t${x.name}`).join("\n");
+  const sessionLinks = useMemo(() => {
+    const names = new Map(namesKey.split("\n").map((l) => l.split("\t") as [string, string]));
+    return { nameOf: (id: string) => names.get(id) };
+  }, [namesKey]);
   // The archived sessions a Clear asked to delete: a project's, or (null)
   // those in no project.
   const [purgeScope, setPurgeScope] = useState<{ projectId: string | null } | null>(null);
@@ -1209,522 +1216,536 @@ export function App() {
   };
 
   return (
-    <div className="app" ref={appRef}>
-      {notice && (
-        <div className="info-toast" onClick={() => setNotice(null)} title="Dismiss">
-          {notice}
+    <SessionLinkContext.Provider value={sessionLinks}>
+      <div className="app" ref={appRef}>
+        {notice && (
+          <div className="info-toast" onClick={() => setNotice(null)} title="Dismiss">
+            {notice}
+          </div>
+        )}
+        {lastError && (
+          <div className="error-toast" onClick={clearError} title="Dismiss">
+            ⚠ {lastError}
+          </div>
+        )}
+        {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+        <div
+          className={`sidebar${sidebarOpen ? " sidebar-open" : ""}`}
+          style={{ width: sidebarWidth }}
+        >
+          <Sidebar
+            workspaces={workspaces}
+            projects={projects}
+            activeWsId={activeWsId}
+            connected={connected}
+            groupOverrides={groupOverrides}
+            seenCounts={seenTick >= 0 ? seenCountRef.current : {}}
+            finishedStatus={finishedStatus}
+            searchQuery={searchQuery}
+            searchHits={searchHits}
+            systemStatus={systemStatus}
+            accounts={accounts}
+            defaultAccount={defaultAccount}
+            onSelect={onSelectWorkspace}
+            onDelete={onDeleteWorkspace}
+            onDeleteProject={askDeleteProject}
+            onOpenBoard={openBoard}
+            onToggleGroup={toggleGroup}
+            onSearchChange={setSearchQuery}
+            onJump={jumpToMessage}
+            onCreate={onCreateWorkspace}
+            onCreateIn={onCreateWorkspaceIn}
+            onReplayDemo={onReplayDemo}
+            onPurgeArchived={onPurgeArchived}
+            onRestoreProject={onRestoreProject}
+            onDebugSnapshot={takeSnapshot}
+            onSetDefaultAccount={setDefaultAccount}
+          />
+          {/* Measures the layout on every viewport resize: only while visible. */}
+          {sidebarOpen && <ViewportInfo />}
         </div>
-      )}
-      {lastError && (
-        <div className="error-toast" onClick={clearError} title="Dismiss">
-          ⚠ {lastError}
-        </div>
-      )}
-      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
-      <div
-        className={`sidebar${sidebarOpen ? " sidebar-open" : ""}`}
-        style={{ width: sidebarWidth }}
-      >
-        <Sidebar
-          workspaces={workspaces}
-          projects={projects}
-          activeWsId={activeWsId}
-          connected={connected}
-          groupOverrides={groupOverrides}
-          seenCounts={seenTick >= 0 ? seenCountRef.current : {}}
-          finishedStatus={finishedStatus}
-          searchQuery={searchQuery}
-          searchHits={searchHits}
-          systemStatus={systemStatus}
-          accounts={accounts}
-          defaultAccount={defaultAccount}
-          onSelect={onSelectWorkspace}
-          onDelete={onDeleteWorkspace}
-          onDeleteProject={askDeleteProject}
-          onOpenBoard={openBoard}
-          onToggleGroup={toggleGroup}
-          onSearchChange={setSearchQuery}
-          onJump={jumpToMessage}
-          onCreate={onCreateWorkspace}
-          onCreateIn={onCreateWorkspaceIn}
-          onReplayDemo={onReplayDemo}
-          onPurgeArchived={onPurgeArchived}
-          onRestoreProject={onRestoreProject}
-          onDebugSnapshot={takeSnapshot}
-          onSetDefaultAccount={setDefaultAccount}
-        />
-        {/* Measures the layout on every viewport resize: only while visible. */}
-        {sidebarOpen && <ViewportInfo />}
-      </div>
 
-      <div className="resize-handle" onMouseDown={onResizeStart} />
+        <div className="resize-handle" onMouseDown={onResizeStart} />
 
-      <div className="main-panel">
-        {activeWs ? (
-          <>
-            <div className="panel-header" ref={headerRef}>
-              <div className="panel-header-top">
+        <div className="main-panel">
+          {activeWs ? (
+            <>
+              <div className="panel-header" ref={headerRef}>
+                <div className="panel-header-top">
+                  <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>
+                    &#9776;
+                  </button>
+                  <span className="panel-title">{headerTitle(activeWs)}</span>
+                  <button
+                    className="agents-chip"
+                    aria-pressed={openPanel === "agents"}
+                    title="Agents and sessions"
+                    onClick={() => togglePanel("agents")}
+                  >
+                    <span className="agents-chip-avatars">
+                      {activeWs.agents.slice(0, 3).map((a) => (
+                        <AgentAvatar key={a.id} agent={a} size={20} />
+                      ))}
+                    </span>
+                    <span
+                      className={`agent-status-dot agent-status-${chipDot(activeWs, connected)}`}
+                    />
+                    <span className="agents-chip-label">{chipLabel(activeWs, connected)}</span>
+                  </button>
+                </div>
+                <div className="workspace-info-bar">
+                  <span className="ws-info-item" title={activeWs.cwd}>
+                    <span className="ws-info-icon">&#128193;</span>
+                    <span className="ws-info-path">
+                      <bdi>{activeWs.cwd}</bdi>
+                    </span>
+                  </span>
+                  <GitBar git={activeWs.git ?? null} pr={activeWs.pr ?? null} />
+                  <span className="ws-info-spacer" />
+                  {/* Phones: the panels' rail shares the branch's line. */}
+                  <Rail className="header-rail" items={railItems} />
+                  {activeProject?.leadWorkspaceId && activeWs.projectLink?.role === "worker" && (
+                    <button
+                      className="btn-ghost ws-project-btn"
+                      title={`Open the lead of ${activeProject.name}`}
+                      onClick={() => openWorkspace(activeProject.leadWorkspaceId!)}
+                    >
+                      ◆<span className="ws-project-btn-label"> Lead</span>
+                    </button>
+                  )}
+                  {/* A lead goes with its project, archived from the board. */}
+                  {activeWs.archivedAt == null && activeWs.projectLink?.role !== "lead" ? (
+                    <button
+                      className="btn-ghost ws-archive-btn"
+                      title="Archive: unload history from memory and stop idle sessions"
+                      disabled={isAnyRunning}
+                      onClick={() => archiveWorkspace(activeWs.id)}
+                    >
+                      Archive
+                    </button>
+                  ) : null}
+                </div>
+                {activeWs.archivedAt != null && (
+                  <div className="archived-banner">
+                    <span>
+                      Archived {formatRelative(activeWs.archivedAt)}
+                      {archiveAfterDays > 0 ? ` · idle for over ${archiveAfterDays} days` : ""}.
+                      Sending a message restores it.
+                    </span>
+                    <button className="btn-inline" onClick={() => unarchiveWorkspace(activeWs.id)}>
+                      Restore
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="messages" ref={messagesContainerRef} onScroll={onMessagesScrollTrack}>
+                <FileOpenContext.Provider value={fileOpener(activeWs.id)}>
+                  {(() => {
+                    const msgs = activeWs.messages;
+                    const total = msgs.length;
+                    if (!activeWs.messagesLoaded) {
+                      return (
+                        <HistoryHint hasMore={false} loading={false} loaded={false} count={0} />
+                      );
+                    }
+                    if (total === 0) {
+                      return (
+                        <div className="empty-state">
+                          {activeWs.agents.length === 0
+                            ? "Add an agent to get started."
+                            : "Send a message to start working."}
+                        </div>
+                      );
+                    }
+                    return (
+                      <>
+                        <HistoryHint
+                          hasMore={!!activeWs.hasMore}
+                          loading={!!activeWs.loadingOlder}
+                          loaded
+                          count={total}
+                        />
+                        {msgs.map((msg, i) => {
+                          const prev = i > 0 ? msgs[i - 1] : null;
+                          const compact =
+                            !!prev &&
+                            msg.kind === "agent" &&
+                            prev.kind === "agent" &&
+                            !!msg.turnId &&
+                            msg.turnId === prev.turnId;
+                          const item = (
+                            <MessageItem
+                              msg={msg}
+                              agents={msg.status === "streaming" ? activeWs.agents : settledAgents}
+                              compact={compact}
+                              highlight={msg.id === highlightMsgId}
+                              onQuote={handleQuote}
+                              onLoadSubagentEvents={onLoadSubagentEvents}
+                              onCancelSubagent={onCancelSubagent}
+                              onCancelQueued={onCancelQueued}
+                              onLoadDetails={onLoadDetails}
+                              onOpenWorkspace={openWorkspace}
+                            />
+                          );
+                          const from = msg.from?.workspaceId;
+                          return (
+                            <MessageBoundary key={msg.id} messageId={msg.id}>
+                              {from && from !== activeWs.id && workspaceIds.has(from) ? (
+                                <FileOpenContext.Provider value={fileOpener(from)}>
+                                  {item}
+                                </FileOpenContext.Provider>
+                              ) : (
+                                item
+                              )}
+                            </MessageBoundary>
+                          );
+                        })}
+                      </>
+                    );
+                  })()}
+                </FileOpenContext.Provider>
+                <div ref={messagesEndRef} />
+              </div>
+
+              <div className="input-area">
+                {quotedMsg &&
+                  (() => {
+                    const qa = activeWs.agents.find((a) => a.id === quotedMsg.agentId);
+                    return (
+                      <div className="quote-bar">
+                        <div className="quote-bar-content">
+                          <span className="quote-bar-agent">
+                            {qa ? (
+                              <AgentAvatar agent={qa} size={16} />
+                            ) : quotedMsg.from ? (
+                              "◆"
+                            ) : (
+                              "👤"
+                            )}{" "}
+                            {qa?.name ?? (quotedMsg.from ? originLabel(quotedMsg.from) : "User")}
+                          </span>
+                          <span className="quote-bar-preview">
+                            {quotedMsg.content.slice(0, 100)}
+                            {quotedMsg.content.length > 100 ? "..." : ""}
+                          </span>
+                        </div>
+                        <button className="quote-bar-close" onClick={() => setQuotedMsg(null)}>
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })()}
+                {cmdQuery !== null && filteredCmds.length > 0 && (
+                  <div className="command-popup">
+                    {filteredCmds.map((cmd, i) => (
+                      <div
+                        key={cmd.name}
+                        className={`command-item ${i === cmdIdx ? "active" : ""}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          applyCommand(cmd.name);
+                        }}
+                      >
+                        <span className="command-name">/{cmd.name}</span>
+                        {cmd.argumentHint && (
+                          <span className="command-hint">{cmd.argumentHint}</span>
+                        )}
+                        <span className="command-desc">{cmd.description}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {mentionQuery !== null && mentionAgents.length > 0 && (
+                  <div className="mention-popup">
+                    {mentionAgents.map((a, i) => (
+                      <div
+                        key={a.id}
+                        className={`mention-item ${i === mentionIdx ? "active" : ""}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          applyMention(a.name);
+                        }}
+                      >
+                        <AgentAvatar agent={a} size={20} />
+                        <span className="mention-name">{a.name}</span>
+                        <span className="mention-model">
+                          {a.model.replace("claude-", "").replace(/-/g, " ")}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {pendingImages.length > 0 && (
+                  <div className="image-preview-strip">
+                    {pendingImages.map((img, i) => (
+                      <div key={i} className="image-preview-item">
+                        <img src={img.preview} alt={img.file.name} />
+                        <button
+                          className="image-preview-remove"
+                          onClick={() => removePendingImage(i)}
+                        >
+                          &times;
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="input-row">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    hidden
+                    onChange={handleFileSelect}
+                  />
+                  <button
+                    className="btn-attach"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={!hasAgents}
+                    title="Attach image"
+                  >
+                    +
+                  </button>
+                  <textarea
+                    ref={textareaRef}
+                    className="chat-input"
+                    name="chat-message"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    onChange={handleTextareaChange}
+                    onKeyDown={handleKeyDown}
+                    onCompositionStart={() => {
+                      composingRef.current = true;
+                    }}
+                    onCompositionEnd={(e) => {
+                      composingRef.current = false;
+                      compositionEndTsRef.current = e.timeStamp;
+                    }}
+                    onPaste={(e) => {
+                      const imgs = extractImageFiles(e.clipboardData);
+                      if (imgs.length === 0) return;
+                      e.preventDefault();
+                      setPendingImages((prev) => [
+                        ...prev,
+                        ...imgs.map((file) => ({ file, preview: URL.createObjectURL(file) })),
+                      ]);
+                    }}
+                    disabled={!hasAgents}
+                    placeholder={
+                      activeWs.agents.length > 1
+                        ? "Type / for commands, @ to mention an agent..."
+                        : "Type / for commands, or send a message..."
+                    }
+                    rows={1}
+                  />
+                  {othersRunning && (
+                    <button
+                      className="btn-abort btn-abort-others"
+                      title="Stop what every agent is doing now; background tasks keep going"
+                      onClick={() => interrupt(activeWs.id)}
+                    >
+                      <span className="btn-text">Stop all</span>
+                      <span className="btn-icon" aria-hidden="true">
+                        ⏹
+                      </span>
+                    </button>
+                  )}
+                  {targetBusy && (
+                    <button
+                      className="btn-abort"
+                      title={`Stop ${targetAgent.name}'s turn; background tasks keep going`}
+                      onClick={() => interrupt(activeWs.id, targetAgent.id)}
+                    >
+                      ◼
+                    </button>
+                  )}
+                  <button
+                    className="btn-primary-slot"
+                    onClick={() => {
+                      void handleSend();
+                    }}
+                    disabled={(!hasInput && pendingImages.length === 0) || !hasAgents || uploading}
+                    title={
+                      targetBusy
+                        ? `${targetAgent.name} is busy — message will run next`
+                        : targetAgent && activeWs.agents.length > 1
+                          ? `Send to ${targetAgent.name}`
+                          : "Send"
+                    }
+                  >
+                    <span className="btn-text">
+                      {uploading ? "Uploading..." : targetBusy ? "Queue" : "Send"}
+                    </span>
+                    <span className="btn-icon" aria-hidden="true">
+                      {uploading ? "…" : targetBusy ? "⇥" : "↑"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="empty-header mobile-only">
                 <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>
                   &#9776;
                 </button>
-                <span className="panel-title">{headerTitle(activeWs)}</span>
-                <button
-                  className="agents-chip"
-                  aria-pressed={openPanel === "agents"}
-                  title="Agents and sessions"
-                  onClick={() => togglePanel("agents")}
-                >
-                  <span className="agents-chip-avatars">
-                    {activeWs.agents.slice(0, 3).map((a) => (
-                      <AgentAvatar key={a.id} agent={a} size={20} />
-                    ))}
-                  </span>
-                  <span
-                    className={`agent-status-dot agent-status-${chipDot(activeWs, connected)}`}
-                  />
-                  <span className="agents-chip-label">{chipLabel(activeWs, connected)}</span>
-                </button>
+                <span>Agent Team</span>
               </div>
-              <div className="workspace-info-bar">
-                <span className="ws-info-item" title={activeWs.cwd}>
-                  <span className="ws-info-icon">&#128193;</span>
-                  <span className="ws-info-path">
-                    <bdi>{activeWs.cwd}</bdi>
-                  </span>
-                </span>
-                <GitBar git={activeWs.git ?? null} pr={activeWs.pr ?? null} />
-                <span className="ws-info-spacer" />
-                {/* Phones: the panels' rail shares the branch's line. */}
-                <Rail className="header-rail" items={railItems} />
-                {activeProject?.leadWorkspaceId && activeWs.projectLink?.role === "worker" && (
-                  <button
-                    className="btn-ghost ws-project-btn"
-                    title={`Open the lead of ${activeProject.name}`}
-                    onClick={() => openWorkspace(activeProject.leadWorkspaceId!)}
-                  >
-                    ◆<span className="ws-project-btn-label"> Lead</span>
-                  </button>
-                )}
-                {/* A lead goes with its project, archived from the board. */}
-                {activeWs.archivedAt == null && activeWs.projectLink?.role !== "lead" ? (
-                  <button
-                    className="btn-ghost ws-archive-btn"
-                    title="Archive: unload history from memory and stop idle sessions"
-                    disabled={isAnyRunning}
-                    onClick={() => archiveWorkspace(activeWs.id)}
-                  >
-                    Archive
-                  </button>
-                ) : null}
+              <div className="empty-state">
+                {workspaces.length === 0
+                  ? "No workspaces yet. Click + to create one."
+                  : "Select a workspace."}
               </div>
-              {activeWs.archivedAt != null && (
-                <div className="archived-banner">
-                  <span>
-                    Archived {formatRelative(activeWs.archivedAt)}
-                    {archiveAfterDays > 0 ? ` · idle for over ${archiveAfterDays} days` : ""}.
-                    Sending a message restores it.
-                  </span>
-                  <button className="btn-inline" onClick={() => unarchiveWorkspace(activeWs.id)}>
-                    Restore
-                  </button>
-                </div>
-              )}
-            </div>
+            </>
+          )}
+        </div>
 
-            <div className="messages" ref={messagesContainerRef} onScroll={onMessagesScrollTrack}>
-              <FileOpenContext.Provider value={fileOpener(activeWs.id)}>
-                {(() => {
-                  const msgs = activeWs.messages;
-                  const total = msgs.length;
-                  if (!activeWs.messagesLoaded) {
-                    return <HistoryHint hasMore={false} loading={false} loaded={false} count={0} />;
-                  }
-                  if (total === 0) {
-                    return (
-                      <div className="empty-state">
-                        {activeWs.agents.length === 0
-                          ? "Add an agent to get started."
-                          : "Send a message to start working."}
-                      </div>
-                    );
-                  }
-                  return (
-                    <>
-                      <HistoryHint
-                        hasMore={!!activeWs.hasMore}
-                        loading={!!activeWs.loadingOlder}
-                        loaded
-                        count={total}
-                      />
-                      {msgs.map((msg, i) => {
-                        const prev = i > 0 ? msgs[i - 1] : null;
-                        const compact =
-                          !!prev &&
-                          msg.kind === "agent" &&
-                          prev.kind === "agent" &&
-                          !!msg.turnId &&
-                          msg.turnId === prev.turnId;
-                        const item = (
-                          <MessageItem
-                            msg={msg}
-                            agents={msg.status === "streaming" ? activeWs.agents : settledAgents}
-                            compact={compact}
-                            highlight={msg.id === highlightMsgId}
-                            onQuote={handleQuote}
-                            onLoadSubagentEvents={onLoadSubagentEvents}
-                            onCancelSubagent={onCancelSubagent}
-                            onCancelQueued={onCancelQueued}
-                            onLoadDetails={onLoadDetails}
-                            onOpenWorkspace={openWorkspace}
-                          />
-                        );
-                        const from = msg.from?.workspaceId;
-                        return (
-                          <MessageBoundary key={msg.id} messageId={msg.id}>
-                            {from && from !== activeWs.id && workspaceIds.has(from) ? (
-                              <FileOpenContext.Provider value={fileOpener(from)}>
-                                {item}
-                              </FileOpenContext.Provider>
-                            ) : (
-                              item
-                            )}
-                          </MessageBoundary>
-                        );
-                      })}
-                    </>
-                  );
-                })()}
-              </FileOpenContext.Provider>
-              <div ref={messagesEndRef} />
-            </div>
+        {activeWs && openPanel === "agents" && (
+          <SidePanel
+            title="Agents"
+            subtitle={scopeSummary(scope, activeProject)}
+            pinned={panelPinned}
+            maximized={panelMax}
+            inset={sidebarWidth}
+            width={listWidth}
+            onPin={togglePin}
+            onMaximize={toggleMax}
+            onClose={closePanel}
+            onWidth={setListWidth}
+          >
+            <AgentsPanel
+              sessions={scope}
+              project={activeProject}
+              activeWsId={activeWsId}
+              connected={connected}
+              models={models}
+              actions={agentActions}
+            />
+          </SidePanel>
+        )}
+        {activeWs && openPanel === "tasks" && (
+          <SidePanel
+            title="Background tasks"
+            subtitle={`${activeProject?.name ?? activeWs.name} · ${plural(workCount(scope), "task")}`}
+            pinned={panelPinned}
+            maximized={panelMax}
+            inset={sidebarWidth}
+            width={listWidth}
+            onPin={togglePin}
+            onMaximize={toggleMax}
+            onClose={closePanel}
+            onWidth={setListWidth}
+          >
+            <TasksPanel sessions={scope} project={activeProject} actions={taskActions} />
+          </SidePanel>
+        )}
+        {files && openPanel === "files" && (
+          <SidePanel
+            title="Files"
+            subtitle={activeProject?.name ?? activeWs?.name}
+            kind="wide"
+            pinned={panelPinned}
+            maximized={panelMax}
+            inset={sidebarWidth}
+            width={filesWidth}
+            onPin={togglePin}
+            onMaximize={toggleMax}
+            onClose={closePanel}
+            onWidth={setFilesWidth}
+            flush
+          >
+            <FilesPanel
+              key={`${files.wsId}:${files.seq}`}
+              wsId={files.wsId}
+              target={files.ref}
+              roots={roots}
+            />
+          </SidePanel>
+        )}
+        {activeWs && <Rail className="side-rail" items={railItems} />}
 
-            <div className="input-area">
-              {quotedMsg &&
-                (() => {
-                  const qa = activeWs.agents.find((a) => a.id === quotedMsg.agentId);
-                  return (
-                    <div className="quote-bar">
-                      <div className="quote-bar-content">
-                        <span className="quote-bar-agent">
-                          {qa ? <AgentAvatar agent={qa} size={16} /> : quotedMsg.from ? "◆" : "👤"}{" "}
-                          {qa?.name ?? (quotedMsg.from ? originLabel(quotedMsg.from) : "User")}
-                        </span>
-                        <span className="quote-bar-preview">
-                          {quotedMsg.content.slice(0, 100)}
-                          {quotedMsg.content.length > 100 ? "..." : ""}
-                        </span>
-                      </div>
-                      <button className="quote-bar-close" onClick={() => setQuotedMsg(null)}>
-                        ✕
-                      </button>
-                    </div>
-                  );
-                })()}
-              {cmdQuery !== null && filteredCmds.length > 0 && (
-                <div className="command-popup">
-                  {filteredCmds.map((cmd, i) => (
-                    <div
-                      key={cmd.name}
-                      className={`command-item ${i === cmdIdx ? "active" : ""}`}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        applyCommand(cmd.name);
-                      }}
-                    >
-                      <span className="command-name">/{cmd.name}</span>
-                      {cmd.argumentHint && <span className="command-hint">{cmd.argumentHint}</span>}
-                      <span className="command-desc">{cmd.description}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {mentionQuery !== null && mentionAgents.length > 0 && (
-                <div className="mention-popup">
-                  {mentionAgents.map((a, i) => (
-                    <div
-                      key={a.id}
-                      className={`mention-item ${i === mentionIdx ? "active" : ""}`}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        applyMention(a.name);
-                      }}
-                    >
-                      <AgentAvatar agent={a} size={20} />
-                      <span className="mention-name">{a.name}</span>
-                      <span className="mention-model">
-                        {a.model.replace("claude-", "").replace(/-/g, " ")}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {pendingImages.length > 0 && (
-                <div className="image-preview-strip">
-                  {pendingImages.map((img, i) => (
-                    <div key={i} className="image-preview-item">
-                      <img src={img.preview} alt={img.file.name} />
-                      <button
-                        className="image-preview-remove"
-                        onClick={() => removePendingImage(i)}
-                      >
-                        &times;
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="input-row">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  hidden
-                  onChange={handleFileSelect}
-                />
-                <button
-                  className="btn-attach"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={!hasAgents}
-                  title="Attach image"
-                >
-                  +
-                </button>
-                <textarea
-                  ref={textareaRef}
-                  className="chat-input"
-                  name="chat-message"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  onChange={handleTextareaChange}
-                  onKeyDown={handleKeyDown}
-                  onCompositionStart={() => {
-                    composingRef.current = true;
-                  }}
-                  onCompositionEnd={(e) => {
-                    composingRef.current = false;
-                    compositionEndTsRef.current = e.timeStamp;
-                  }}
-                  onPaste={(e) => {
-                    const imgs = extractImageFiles(e.clipboardData);
-                    if (imgs.length === 0) return;
-                    e.preventDefault();
-                    setPendingImages((prev) => [
-                      ...prev,
-                      ...imgs.map((file) => ({ file, preview: URL.createObjectURL(file) })),
-                    ]);
-                  }}
-                  disabled={!hasAgents}
-                  placeholder={
-                    activeWs.agents.length > 1
-                      ? "Type / for commands, @ to mention an agent..."
-                      : "Type / for commands, or send a message..."
-                  }
-                  rows={1}
-                />
-                {othersRunning && (
-                  <button
-                    className="btn-abort btn-abort-others"
-                    title="Stop what every agent is doing now; background tasks keep going"
-                    onClick={() => interrupt(activeWs.id)}
-                  >
-                    <span className="btn-text">Stop all</span>
-                    <span className="btn-icon" aria-hidden="true">
-                      ⏹
-                    </span>
-                  </button>
-                )}
-                {targetBusy && (
-                  <button
-                    className="btn-abort"
-                    title={`Stop ${targetAgent.name}'s turn; background tasks keep going`}
-                    onClick={() => interrupt(activeWs.id, targetAgent.id)}
-                  >
-                    ◼
-                  </button>
-                )}
-                <button
-                  className="btn-primary-slot"
-                  onClick={() => {
-                    void handleSend();
-                  }}
-                  disabled={(!hasInput && pendingImages.length === 0) || !hasAgents || uploading}
-                  title={
-                    targetBusy
-                      ? `${targetAgent.name} is busy — message will run next`
-                      : targetAgent && activeWs.agents.length > 1
-                        ? `Send to ${targetAgent.name}`
-                        : "Send"
-                  }
-                >
-                  <span className="btn-text">
-                    {uploading ? "Uploading..." : targetBusy ? "Queue" : "Send"}
-                  </span>
-                  <span className="btn-icon" aria-hidden="true">
-                    {uploading ? "…" : targetBusy ? "⇥" : "↑"}
-                  </span>
-                </button>
-              </div>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="empty-header mobile-only">
-              <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>
-                &#9776;
-              </button>
-              <span>Agent Team</span>
-            </div>
-            <div className="empty-state">
-              {workspaces.length === 0
-                ? "No workspaces yet. Click + to create one."
-                : "Select a workspace."}
-            </div>
-          </>
+        {showCreate && (
+          <CreateWorkspaceDialog
+            hosts={hosts}
+            onClose={() => setShowCreate(false)}
+            onCreate={createWorkspace}
+            onListDirs={listDirs}
+            dirSuggestions={dirSuggestions}
+            initialPath={createInPath}
+          />
+        )}
+
+        {purgeScope && (
+          <ConfirmDialog
+            title="Delete archived sessions"
+            body={purgeBody(workspaces, projects, purgeScope.projectId)}
+            confirmLabel="Delete all"
+            danger
+            onConfirm={() => purgeArchived(purgeScope.projectId)}
+            onClose={closePurge}
+          />
+        )}
+
+        {boardProject && (
+          <BoardPage
+            project={boardProject}
+            sessions={boardSessions}
+            onClose={closeBoard}
+            onOpenSession={openSessionFromBoard}
+            onAskLead={
+              boardProject.leadWorkspaceId &&
+              workspaces.some((w) => w.id === boardProject.leadWorkspaceId)
+                ? askLead
+                : null
+            }
+            onRename={onRenameProject}
+            onArchive={onArchiveBoardProject}
+            onDelete={onDeleteBoardProject}
+          />
+        )}
+
+        {deletingProjectId &&
+          (() => {
+            const project = projects.find((p) => p.id === deletingProjectId);
+            if (!project) return null;
+            const sessions = workspaces.filter(
+              (w) => w.projectLink?.projectId === project.id && w.projectLink.role === "worker",
+            ).length;
+            const kept =
+              sessions === 0
+                ? ""
+                : sessions === 1
+                  ? " The session it started stays as a plain workspace."
+                  : ` The ${sessions} sessions it started stay as plain workspaces.`;
+            return (
+              <ConfirmDialog
+                title={`Delete project ${project.name}`}
+                body={`Deletes its lead session, objectives and notes.${kept}`}
+                confirmLabel="Delete project"
+                danger
+                onConfirm={() => deleteProject(project.id)}
+                onClose={closeDeleteProject}
+              />
+            );
+          })()}
+
+        {addAgentFor && (
+          <AddAgentDialog
+            presets={presets}
+            models={models}
+            accounts={accounts}
+            onClose={() => setAddAgentFor(null)}
+            onAdd={(name, model, avatar, color) =>
+              addAgent(addAgentFor, name, model, avatar, color)
+            }
+          />
         )}
       </div>
-
-      {activeWs && openPanel === "agents" && (
-        <SidePanel
-          title="Agents"
-          subtitle={scopeSummary(scope, activeProject)}
-          pinned={panelPinned}
-          maximized={panelMax}
-          inset={sidebarWidth}
-          width={listWidth}
-          onPin={togglePin}
-          onMaximize={toggleMax}
-          onClose={closePanel}
-          onWidth={setListWidth}
-        >
-          <AgentsPanel
-            sessions={scope}
-            project={activeProject}
-            activeWsId={activeWsId}
-            connected={connected}
-            models={models}
-            actions={agentActions}
-          />
-        </SidePanel>
-      )}
-      {activeWs && openPanel === "tasks" && (
-        <SidePanel
-          title="Background tasks"
-          subtitle={`${activeProject?.name ?? activeWs.name} · ${plural(workCount(scope), "task")}`}
-          pinned={panelPinned}
-          maximized={panelMax}
-          inset={sidebarWidth}
-          width={listWidth}
-          onPin={togglePin}
-          onMaximize={toggleMax}
-          onClose={closePanel}
-          onWidth={setListWidth}
-        >
-          <TasksPanel sessions={scope} project={activeProject} actions={taskActions} />
-        </SidePanel>
-      )}
-      {files && openPanel === "files" && (
-        <SidePanel
-          title="Files"
-          subtitle={activeProject?.name ?? activeWs?.name}
-          kind="wide"
-          pinned={panelPinned}
-          maximized={panelMax}
-          inset={sidebarWidth}
-          width={filesWidth}
-          onPin={togglePin}
-          onMaximize={toggleMax}
-          onClose={closePanel}
-          onWidth={setFilesWidth}
-          flush
-        >
-          <FilesPanel
-            key={`${files.wsId}:${files.seq}`}
-            wsId={files.wsId}
-            target={files.ref}
-            roots={roots}
-          />
-        </SidePanel>
-      )}
-      {activeWs && <Rail className="side-rail" items={railItems} />}
-
-      {showCreate && (
-        <CreateWorkspaceDialog
-          hosts={hosts}
-          onClose={() => setShowCreate(false)}
-          onCreate={createWorkspace}
-          onListDirs={listDirs}
-          dirSuggestions={dirSuggestions}
-          initialPath={createInPath}
-        />
-      )}
-
-      {purgeScope && (
-        <ConfirmDialog
-          title="Delete archived sessions"
-          body={purgeBody(workspaces, projects, purgeScope.projectId)}
-          confirmLabel="Delete all"
-          danger
-          onConfirm={() => purgeArchived(purgeScope.projectId)}
-          onClose={closePurge}
-        />
-      )}
-
-      {boardProject && (
-        <BoardPage
-          project={boardProject}
-          sessions={boardSessions}
-          onClose={closeBoard}
-          onOpenSession={openSessionFromBoard}
-          onAskLead={
-            boardProject.leadWorkspaceId &&
-            workspaces.some((w) => w.id === boardProject.leadWorkspaceId)
-              ? askLead
-              : null
-          }
-          onRename={onRenameProject}
-          onArchive={onArchiveBoardProject}
-          onDelete={onDeleteBoardProject}
-        />
-      )}
-
-      {deletingProjectId &&
-        (() => {
-          const project = projects.find((p) => p.id === deletingProjectId);
-          if (!project) return null;
-          const sessions = workspaces.filter(
-            (w) => w.projectLink?.projectId === project.id && w.projectLink.role === "worker",
-          ).length;
-          const kept =
-            sessions === 0
-              ? ""
-              : sessions === 1
-                ? " The session it started stays as a plain workspace."
-                : ` The ${sessions} sessions it started stay as plain workspaces.`;
-          return (
-            <ConfirmDialog
-              title={`Delete project ${project.name}`}
-              body={`Deletes its lead session, objectives and notes.${kept}`}
-              confirmLabel="Delete project"
-              danger
-              onConfirm={() => deleteProject(project.id)}
-              onClose={closeDeleteProject}
-            />
-          );
-        })()}
-
-      {addAgentFor && (
-        <AddAgentDialog
-          presets={presets}
-          models={models}
-          accounts={accounts}
-          onClose={() => setAddAgentFor(null)}
-          onAdd={(name, model, avatar, color) => addAgent(addAgentFor, name, model, avatar, color)}
-        />
-      )}
-    </div>
+    </SessionLinkContext.Provider>
   );
 }
 

@@ -233,6 +233,7 @@ function applyInnerEvent(saEvents: StreamEvent[], innerEvent: StreamEvent): void
     );
     if (i >= 0) {
       saEvents[i].toolResult = innerEvent.content;
+      if (innerEvent.isError) saEvents[i].toolResultIsError = true;
       return;
     }
   }
@@ -526,6 +527,7 @@ export class Workspace {
             )!;
             call.toolResult = event.content;
             if (event.isMarkdown) call.toolResultIsMarkdown = true;
+            if (event.isError) call.toolResultIsError = true;
             this.streamed(owner, event);
             this.finished(owner.id, owner.status, owner.content, owner.events);
             return;
@@ -638,6 +640,7 @@ export class Workspace {
         if (matchIdx >= 0) {
           msg.events![matchIdx].toolResult = event.content;
           if (event.isMarkdown) msg.events![matchIdx].toolResultIsMarkdown = true;
+          if (event.isError) msg.events![matchIdx].toolResultIsError = true;
         } else {
           event.contentOffset = msg.content.length;
           msg.events!.push(event);

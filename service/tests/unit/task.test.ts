@@ -63,6 +63,15 @@ describe("Workspace event aggregation", () => {
     expect(events[0].toolResult).toBe("file contents");
   });
 
+  it("marks a tool_use whose result was a failure", () => {
+    const { emit, agentMsgs } = makeWorkspace();
+    emit({ kind: "tool_use", content: "**start_session** x", toolUseId: "t1" });
+    emit({ kind: "tool_result", content: "Not a directory", toolUseId: "t1", isError: true });
+    emit({ kind: "tool_use", content: "Read /a", toolUseId: "t2" });
+    emit({ kind: "tool_result", content: "body", toolUseId: "t2" });
+    expect(agentMsgs()[0].events!.map((e) => e.toolResultIsError)).toEqual([true, undefined]);
+  });
+
   it("merges the subagent lifecycle onto the start event", () => {
     const { emit, agentMsgs } = makeWorkspace();
     emit(subagentStart("task-1"));
