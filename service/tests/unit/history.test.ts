@@ -1,6 +1,6 @@
 // The history in history.db, its search index, and what a workspace marks
 // as changed for the next save.
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -120,17 +120,22 @@ describe("the sidebar's search", () => {
 });
 
 describe("a message cut into entries", () => {
-  it("keeps what was said, thought and done, subagents' work one level down", () => {
+  it("keeps what was said, thought and done, a call by its input, subagents' work one level down", () => {
     const events: StreamEvent[] = [
       { kind: "text", content: "Hello (the message's own text)" },
       { kind: "thinking", content: "hm" },
-      { kind: "tool_use", content: "**Bash** `ls`", toolUseId: "t1", toolResult: "a\nb" },
       {
         kind: "tool_use",
-        content: "**Edit** a.cpp",
+        content: "**Bash**\n```bash\nls -la\n```",
+        toolUseId: "t1",
+        toolResult: "a\nb",
+      },
+      {
+        kind: "tool_use",
+        content: "**Edit** `/a.cpp`\n```diff\n- x\n+ y\n```",
         toolInput: { tool: "Edit", file_path: "/a.cpp", old_string: "x", new_string: "y" },
       },
-      { kind: "tool_use", content: "**Read** /x", toolUseId: "t2" },
+      { kind: "tool_use", content: "**Read** `/x`", toolUseId: "t2" },
       { kind: "tool_result", content: "late", toolUseId: "t2" },
       { kind: "error", content: "boom" },
       { kind: "notice", content: "skill text", level: "skill" },
@@ -145,7 +150,12 @@ describe("a message cut into entries", () => {
           agentType: "Explore",
           events: [
             { kind: "text", content: "found it" },
-            { kind: "tool_use", content: "**Grep** x", toolName: "Grep", toolResult: "hit" },
+            {
+              kind: "tool_use",
+              content: "**Grep** `x` in `/src`",
+              toolName: "Grep",
+              toolResult: "hit",
+            },
           ],
         },
       },
@@ -154,21 +164,15 @@ describe("a message cut into entries", () => {
     expect(entries.map((e) => [e.kind, e.role, e.tool, e.depth, e.text])).toEqual([
       ["said", "agent", null, 0, "Hello"],
       ["thinking", null, null, 0, "hm"],
-      ["tool_call", null, "Bash", 0, "**Bash** `ls`"],
+      ["tool_call", null, "Bash", 0, "ls -la"],
       ["tool_output", null, "Bash", 0, "a\nb"],
-      [
-        "tool_call",
-        null,
-        "Edit",
-        0,
-        '**Edit** a.cpp\n{\n  "tool": "Edit",\n  "file_path": "/a.cpp",\n  "old_string": "x",\n  "new_string": "y"\n}',
-      ],
-      ["tool_call", null, "Read", 0, "**Read** /x"],
+      ["tool_call", null, "Edit", 0, "/a.cpp\n- x\n+ y"],
+      ["tool_call", null, "Read", 0, "/x"],
       ["tool_output", null, "Read", 0, "late"],
       ["error", null, null, 0, "boom"],
       ["subagent", null, "Explore", 0, "Explore\n\nlook\n\ndone"],
       ["said", "subagent", null, 1, "found it"],
-      ["tool_call", null, "Grep", 1, "**Grep** x"],
+      ["tool_call", null, "Grep", 1, "x in /src"],
       ["tool_output", null, "Grep", 1, "hit"],
     ]);
     expect(entriesOf(msg("s", "joined", 1, { kind: "system" }))).toEqual([]);
@@ -214,6 +218,25 @@ describe("the search index", () => {
     expect(await find(history, "zebra")).toEqual(["w1/m1"]);
   });
 
+  it("never gives an entry's number to another one", async () => {
+    const { history, save } = setup();
+    save("w1", [msg("m1", "zebra one", 1)]);
+    const [{ entry }] = (await history.search({ terms: ["zebra"], limit: 1 })).hits;
+    save("w1", [msg("m1", "zebra one, edited", 1), msg("m2", "zebra two", 2)]);
+    expect(await history.read(entry, 1, 1)).toBeNull();
+    const now = (await history.search({ terms: ["zebra"], limit: 5 })).hits.map((h) => h.entry);
+    expect(now.every((n) => n > entry)).toBe(true);
+  });
+
+  it("rebuilds a damaged index", async () => {
+    const { history, save, base } = setup();
+    save("w1", [msg("m1", "zebra one", 1)]);
+    fs.writeFileSync(historyIndexFile(base), "not a database at all");
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await find(history, "zebra")).toEqual(["w1/m1"]);
+    log.mockRestore();
+  });
+
   it("says what is wrong with a pattern", async () => {
     const { history, save } = setup();
     save("w1", [msg("m1", "zebra", 1)]);
@@ -225,17 +248,31 @@ describe("the search index", () => {
   it("answers SQL read-only, a fresh connection each time, up to a number of rows", async () => {
     const { history, save } = setup();
     save("w1", [msg("m1", "one", 1), msg("m2", "two", 2), msg("m3", "three", 3)]);
-    const r = await history.sql("select message from entries order by ts", [], 2);
+    const w1 = {
+      id: "w1",
+      name: "one",
+      cwd: "/tmp",
+      project: null,
+      role: null,
+      created_at: 1,
+      last_active: 3,
+      archived_at: null,
+    };
+    const r = await history.sql("select message from entries order by ts", [w1], 2);
     expect(r).toEqual({
       columns: ["message"],
       rows: [{ message: "m1" }, { message: "m2" }],
       truncated: true,
     });
-    await history.sql("detach database history", [], 5);
-    expect((await history.sql("select count(*) as n from messages", [], 5)).rows).toEqual([
+    await history.sql("detach database history", [w1], 5);
+    expect((await history.sql("select count(*) as n from messages", [w1], 5)).rows).toEqual([
       { n: 3 },
     ]);
-    await expect(history.sql("drop table entries", [], 5)).rejects.toThrow("readonly");
+    // Only the sessions given.
+    expect((await history.sql("select count(*) as n from messages", [], 5)).rows).toEqual([
+      { n: 0 },
+    ]);
+    await expect(history.sql("drop table main.entries", [w1], 5)).rejects.toThrow("readonly");
   });
 });
 

@@ -108,7 +108,7 @@ describe("panel tool arguments", () => {
           taskId: "t2",
         },
       ],
-      ["readSession", "p1", "ws-w", 6, undefined, false],
+      ["readSession", "p1", "ws-w", 6, undefined, false, false],
       [
         "searchHistory",
         "p1",
@@ -124,7 +124,7 @@ describe("panel tool arguments", () => {
           offset: 10,
         },
       ],
-      ["readEntry", "p1", 12, 1, 200],
+      ["readEntry", "p1", 12, 1, 200, 0],
       ["queryHistory", "p1", "select 1"],
       [
         "writeObjective",

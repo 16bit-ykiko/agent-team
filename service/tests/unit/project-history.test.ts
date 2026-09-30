@@ -175,7 +175,7 @@ describe("the lead's history tools", () => {
                 { kind: "text", content: "The bug is in resolver.cpp, line 88." },
                 {
                   kind: "tool_use",
-                  content: "**Read** resolver.cpp",
+                  content: "**Read** `/src/resolver.cpp`",
                   toolName: "Read",
                   toolInput: { tool: "Read", file_path: "/src/resolver.cpp" },
                   toolResult: "int resolve();",
@@ -250,7 +250,84 @@ describe("the lead's history tools", () => {
     expect(read).toContain("subagent Explore · 1 lines · Look at the resolver");
   });
 
-  it("answer read-only SQL over every history", async () => {
+  it("search like grep: phrases, context, one message, a tool by its own name, and say where else to look", async () => {
+    const { create, call, root, old } = setup();
+    const { lead } = create("clice");
+    const log = ["build started", "step 1", "error: undefined symbol", "step 3", "done"].join("\n");
+    const call1 = {
+      kind: "tool_use" as const,
+      content: "**Bash**\n```bash\nninja -C build\n```",
+      toolName: "Bash",
+      toolUseId: "t1",
+      toolResult: log,
+    };
+    const panel = {
+      kind: "tool_use" as const,
+      content: "**start_session** fix in `wt`",
+      toolName: "mcp__panel__start_session",
+      toolUseId: "t2",
+    };
+    const w = old("link errors", root, [
+      {
+        ...msg("a1", "The build links now.", Date.parse("2026-09-29T02:00:00Z")),
+        kind: "agent",
+        agentId: "a",
+        events: [call1, panel],
+      },
+      {
+        ...msg("a2", "undefined symbol again", Date.parse("2026-09-29T03:00:00Z")),
+        kind: "agent",
+        agentId: "a",
+        events: [call1],
+      },
+    ]);
+    const context = await call(lead, "search_history", {
+      query: '"undefined symbol"',
+      in: ["tool_output"],
+      message: "a1",
+      context: 1,
+    });
+    expect(context.match(/^- #/gm)).toHaveLength(1);
+    expect(context).toContain(`output of #`);
+    expect(context).toContain(": ninja -C build");
+    expect(context.split("\n").slice(1, 4)).toEqual([
+      "  2- step 1",
+      "  3: error: undefined symbol",
+      "  4- step 3",
+    ]);
+    // A phrase is not its words anywhere.
+    expect(
+      await call(lead, "search_history", { query: '"symbol undefined"', in: ["tool_output"] }),
+    ).toContain("nothing matches");
+    // An MCP tool by its own name; the command first in a call.
+    expect(await call(lead, "search_history", { tool: "start_session" })).toContain("fix in wt");
+    const calls = await call(lead, "search_history", {
+      tool: "bash",
+      in: ["tool_call"],
+      session: w.id,
+    });
+    expect(calls).toContain("  1: ninja -C build");
+    // Nothing said: where else it is; no such tool: the ones there are.
+    const said = await call(lead, "search_history", { query: "ninja", session: w.id });
+    expect(said).toContain("(nothing matches in said)");
+    expect(said).toContain("(it does in 2 tool_call entries: ask with in)");
+    expect(await call(lead, "search_history", { tool: "Rust", session: w.id })).toContain(
+      "(the tools used there: Bash, mcp__panel__start_session)",
+    );
+    // Times without a zone are UTC, as the hits print them.
+    const late = await call(lead, "search_history", {
+      query: "undefined",
+      since: "2026-09-29T02:30",
+    });
+    expect(late).toContain("message a2");
+    expect(late).not.toContain("message a1");
+    // A session from its start.
+    const first = await call(lead, "read_session", { session_id: w.id, start: true, last: 1 });
+    expect(first).toContain("· a1");
+    expect(first).not.toContain("· a2");
+  });
+
+  it("answer read-only SQL over the histories the lead may read", async () => {
     const { create, call, root, old } = setup();
     const { lead } = create("clice");
     const w = old("crash hunt", root, [msg("u1", "one", 1), msg("u2", "two", 2)]);
@@ -264,11 +341,11 @@ describe("the lead's history tools", () => {
         sql: `select json_extract(body, '$.content') as c from messages where session = '${w.id}' order by seq`,
       }),
     ).toBe("c\none\ntwo\n(2 rows)");
+    for (const sql of ["delete from main.entries", "delete from history.messages"]) {
+      await expect(call(lead, "query_history", { sql })).rejects.toThrow("readonly");
+    }
     await expect(call(lead, "query_history", { sql: "delete from entries" })).rejects.toThrow(
-      "readonly",
-    );
-    await expect(call(lead, "query_history", { sql: "delete from messages" })).rejects.toThrow(
-      "readonly",
+      "cannot modify entries",
     );
   });
 
@@ -307,5 +384,8 @@ describe("the lead's history tools", () => {
     await expect(call(a.lead, "read_entry", { entry })).rejects.toThrow(
       "in this project or its history",
     );
+    const count = `select count(*) as n from entries where session = '${theirs.id}'`;
+    expect(await call(a.lead, "query_history", { sql: count })).toBe("n\n0\n(1 rows)");
+    expect(await call(b.lead, "query_history", { sql: count })).not.toBe("n\n0\n(1 rows)");
   });
 });

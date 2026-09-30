@@ -3,8 +3,7 @@ import * as path from "path";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "../config/presets";
 import { resolveWorkspacePath } from "../repo/dirs";
 import { gitStatus, gitWorktrees, repositoryRoot } from "../repo/git";
-import type { SQLOutputValue } from "node:sqlite";
-import type { EntryInfo, EntryKind } from "../workspace/history-index";
+import type { EntryInfo, EntryKind, SessionRow, SqlValue } from "../workspace/history-index";
 import type { HistoryService } from "../workspace/history-service";
 import {
   originLabel,
@@ -33,10 +32,11 @@ import {
   type StartSessionArgs,
 } from "./tools";
 
-// Of the history tools' output: characters per line of read_entry, per
-// cell of query_history; rows of query_history; entries per message of
-// read_session.
+// Of the history tools' output: characters per line and in all of
+// read_entry, per cell of query_history; rows of query_history; entries per
+// message of read_session.
 const LINE_CAP = 4000;
+const OUTPUT_CAP = 60_000;
 const CELL_CAP = 1000;
 const SQL_ROWS = 200;
 const ENTRIES_SHOWN = 60;
@@ -539,8 +539,8 @@ export class ProjectManager {
     return [...lines, ...more].join("\n");
   }
 
-  // What search_history looks through: the project's sessions, its lead's
-  // included, and the history.
+  // What the history tools reach: the project's sessions, its lead's
+  // included, and the history (with everywhere, in any folder).
   private async scope(projectId: string, everywhere: boolean, session?: string) {
     if (session) return [this.readable(projectId, session)];
     return [
@@ -552,33 +552,55 @@ export class ProjectManager {
     const sessions = await this.scope(projectId, a.everywhere, a.session);
     const names = new Map(sessions.map((w) => [w.id, w.name]));
     const kinds: EntryKind[] = a.in ?? (a.tool ? ["tool_call", "tool_output"] : ["said"]);
-    const result = await this.host.history.searchNamed(
-      {
-        terms: (a.query ?? "").trim().split(/\s+/).filter(Boolean),
-        regex: a.regex,
-        caseSensitive: a.caseSensitive,
-        kinds,
-        tool: a.tool,
-        since: a.since,
-        until: a.until,
-        depth: a.level,
-        limit: a.limit,
-        offset: a.offset,
-      },
-      sessions.map((w) => ({ id: w.id, name: w.name })),
-    );
-    const out = result.hits.map((h) =>
-      [
-        `- ${entryHeader(h, names.get(h.session))}`,
-        ...h.lines.map((l) => `  ${l.n}: ${l.text}`),
-        ...(h.moreLines ? [`  (+${h.moreLines} more matching lines)`] : []),
-      ].join("\n"),
-    );
+    const terms = queryTerms(a.query ?? "");
+    const result = await this.host.history.search({
+      terms,
+      regex: a.regex,
+      caseSensitive: a.caseSensitive,
+      kinds,
+      tool: a.tool,
+      sessions: sessions.map((w) => w.id),
+      message: a.message,
+      since: a.since,
+      until: a.until,
+      depth: a.level,
+      limit: a.limit,
+      offset: a.offset,
+      lines: a.lines,
+      context: a.context,
+    });
+    const listed = terms.length === 0 && !a.regex;
+    const out = result.hits.map((h) => {
+      const lines: string[] = [];
+      let last = -1;
+      for (const l of h.lines) {
+        if (a.context && last >= 0 && l.n > last + 1) lines.push("  --");
+        lines.push(`  ${l.n}${l.match || listed ? ":" : "-"} ${l.text}`);
+        last = l.n;
+      }
+      const call = h.call ? ` · output of #${h.call.entry}: ${oneLine(h.call.head, 100)}` : "";
+      const more = h.moreLines
+        ? [`  (+${h.moreLines} more ${listed ? "lines" : "matching lines"})`]
+        : [];
+      return [`- ${entryHeader(h, names.get(h.session))}${call}`, ...lines, ...more].join("\n");
+    });
     if (result.more) out.push(`(more: offset ${a.offset + a.limit})`);
+    if (out.length === 0) {
+      out.push(`(nothing matches in ${kinds.join(", ")})`);
+      const elsewhere = Object.entries(result.elsewhere ?? {});
+      if (elsewhere.length) {
+        out.push(
+          `(it does in ${elsewhere.map(([k, n]) => `${n} ${k}`).join(", ")} entries: ask with in)`,
+        );
+      }
+      if (result.tools) {
+        out.push(`(the tools used there: ${result.tools.join(", ") || "none"})`);
+      }
+    }
     if (result.pending) {
       out.push(`(the index is catching up: ${result.pending} messages are not searchable yet)`);
     }
-    return out.length ? out.join("\n") : "(nothing matches)";
+    return out.join("\n");
   }
 
   private async readEntry(
@@ -586,17 +608,30 @@ export class ProjectManager {
     entry: number,
     from: number,
     count: number,
+    fromChar: number,
   ): Promise<string> {
-    const e = await this.host.history.read(entry, from, count);
+    const e = await this.host.history.read(entry, from, count, fromChar);
     if (!e) throw new Error(`No entry #${entry}`);
     const w = this.readable(projectId, e.session);
-    const last = e.from + e.lines.length - 1;
+    if (e.lines.length === 0) return `#${e.entry} has ${e.lineCount} lines`;
+    const out: string[] = [];
+    let size = 0;
+    let n = e.from;
+    for (const [i, line] of e.lines.entries()) {
+      const offset = i === 0 ? fromChar : 0;
+      const piece =
+        line.length > LINE_CAP
+          ? `${line.slice(0, LINE_CAP)}…(the line goes on: from_line ${n} from_char ${offset + LINE_CAP})`
+          : line;
+      if (out.length && size + piece.length > OUTPUT_CAP) break;
+      out.push(`${n}: ${piece}`);
+      size += piece.length;
+      n++;
+    }
+    const last = n - 1;
     return [
       `${entryHeader(e, w.name)} — lines ${e.from}–${last} of ${e.lineCount}`,
-      ...e.lines.map(
-        (l, i) =>
-          `${e.from + i}: ${l.length > LINE_CAP ? `${l.slice(0, LINE_CAP)}…(${l.length - LINE_CAP} more characters)` : l}`,
-      ),
+      ...out,
       ...(last < e.lineCount ? [`(more: from_line ${last + 1})`] : []),
     ].join("\n");
   }
@@ -604,31 +639,34 @@ export class ProjectManager {
   private async readSession(
     projectId: string,
     sessionId: string,
-    last: number,
+    count: number,
     around?: string,
     tools = false,
+    start = false,
   ): Promise<string> {
     const w = this.readable(projectId, sessionId);
     if (!this.host.loadWorkspace(w)) throw new Error(`"${w.name}" cannot be loaded`);
     const agents = new Map([...w.agents.values()].map((a) => [a.info.id, a.info.name]));
-    const out = [
-      `Session ${w.id} "${w.name}" in ${w.cwd} — ${w.isArchived ? "archived" : sessionState(w)}`,
-    ];
     const messages = w.getMessages().filter((x) => x.kind !== "system");
     const at = around ? messages.findIndex((m) => m.id === around) : -1;
     if (around && at < 0) throw new Error(`No message ${around} in "${w.name}"`);
-    const shown = at >= 0 ? messages.slice(Math.max(0, at - 5), at + 6) : messages.slice(-last);
+    const shown =
+      at >= 0
+        ? messages.slice(Math.max(0, at - 5), at + 6)
+        : start
+          ? messages.slice(0, count)
+          : messages.slice(-count);
+    const out = [
+      `Session ${w.id} "${w.name}" in ${w.cwd} — ${w.isArchived ? "archived" : sessionState(w)} · ${messages.length} messages`,
+    ];
     const entries = new Map<string, Array<EntryInfo & { head: string }>>();
-    if (tools) {
-      for (const e of await this.host.history.entries(
-        w.id,
-        shown.map((m) => m.id),
-      )) {
-        if (e.kind === "said" && e.depth === 0) continue;
-        const list = entries.get(e.message) ?? [];
-        list.push(e);
-        entries.set(e.message, list);
-      }
+    for (const e of await this.host.history.entries(
+      w.id,
+      shown.map((m) => m.id),
+    )) {
+      const list = entries.get(e.message) ?? [];
+      list.push(e);
+      entries.set(e.message, list);
     }
     for (const m of shown) {
       const who = m.from
@@ -637,34 +675,38 @@ export class ProjectManager {
           ? "user"
           : (agents.get(m.agentId ?? "") ?? "agent");
       const calls = (m.events ?? []).filter((e) => e.kind === "tool_use").length;
+      const list = entries.get(m.id);
+      const said = list?.find((e) => e.kind === "said" && e.depth === 0);
       out.push(
         "",
         `--- ${who} · ${new Date(m.timestamp).toISOString()} · ${m.status}${calls ? ` · ${calls} tool calls` : ""} · ${m.id}`,
-        m.content.length > 3000 ? m.content.slice(0, 3000) + " …(truncated)" : m.content,
+        m.content.length > 3000
+          ? `${m.content.slice(0, 3000)} …(truncated${said ? `: read_entry #${said.entry}` : ""})`
+          : m.content,
       );
-      if (!tools || !calls) continue;
-      const list = entries.get(m.id);
-      if (!list) {
-        out.push("  (its tool calls are not indexed yet)");
+      if (!tools) continue;
+      const others = list?.filter((e) => e !== said) ?? [];
+      if (!list && m.events?.length) {
+        out.push("  (not indexed yet)");
         continue;
       }
-      for (const e of list.slice(0, ENTRIES_SHOWN)) {
+      for (const e of others.slice(0, ENTRIES_SHOWN)) {
         out.push(
           `  #${e.entry} ${entryLabel(e)} · ${e.lineCount} lines${e.head ? ` · ${oneLine(e.head, 120)}` : ""}`,
         );
       }
-      if (list.length > ENTRIES_SHOWN) {
+      if (others.length > ENTRIES_SHOWN) {
         out.push(
-          `  (+${list.length - ENTRIES_SHOWN} more: search_history with session ${w.id} and a tool)`,
+          `  (+${others.length - ENTRIES_SHOWN} more: search_history with session ${w.id} and message ${m.id})`,
         );
       }
     }
     return out.join("\n");
   }
 
-  // One read-only SQL statement over every recorded history.
-  private async queryHistory(query: string): Promise<string> {
-    const sessions = [...this.host.workspaces()].map((w) => ({
+  // One read-only SQL statement over the histories this lead may read.
+  private async queryHistory(projectId: string, query: string): Promise<string> {
+    const sessions: SessionRow[] = (await this.scope(projectId, true)).map((w) => ({
       id: w.id,
       name: w.name,
       cwd: w.cwd,
@@ -676,9 +718,8 @@ export class ProjectManager {
     }));
     const r = await this.host.history.sql(query, sessions, SQL_ROWS);
     if (r.rows.length === 0) return "(no rows)";
-    const cell = (v: SQLOutputValue): string => {
+    const cell = (v: SqlValue): string => {
       if (v == null) return "NULL";
-      if (v instanceof Uint8Array) return `<${v.length} bytes>`;
       const t = String(v).replace(/\t/g, "  ").replace(/\n/g, "\\n");
       return t.length > CELL_CAP ? `${t.slice(0, CELL_CAP)}…(${t.length - CELL_CAP} more)` : t;
     };
@@ -942,11 +983,13 @@ export class ProjectManager {
   private api: PanelApi = {
     projectStatus: (pid) => this.status(pid),
     startSession: (pid, a) => this.startSession(pid, a),
-    readSession: (pid, sid, last, around, tools) => this.readSession(pid, sid, last, around, tools),
+    readSession: (pid, sid, count, around, tools, start) =>
+      this.readSession(pid, sid, count, around, tools, start),
     listHistory: (pid, everywhere, limit) => this.listHistory(pid, everywhere, limit),
     searchHistory: (pid, a) => this.searchHistory(pid, a),
-    readEntry: (pid, entry, from, count) => this.readEntry(pid, entry, from, count),
-    queryHistory: (_pid, query) => this.queryHistory(query),
+    readEntry: (pid, entry, from, count, fromChar) =>
+      this.readEntry(pid, entry, from, count, fromChar),
+    queryHistory: (pid, query) => this.queryHistory(pid, query),
     messageSession: (pid, sid, text) => {
       const w = this.session(pid, sid);
       const outcome = this.deliver(w, text, ...this.fromLead(pid, text));
@@ -1065,6 +1108,11 @@ function sessionState(w: Workspace): "archived" | "working" | "waiting to start"
 function oneLine(s: string, max: number): string {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > max ? t.slice(0, max) + "…" : t;
+}
+
+// Words, and "quoted phrases" kept whole.
+function queryTerms(query: string): string[] {
+  return [...query.matchAll(/"([^"]+)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
 }
 
 // What an entry of the history is, on one line.

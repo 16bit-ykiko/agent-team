@@ -20,7 +20,7 @@ vi.mock("../../src/server/quota", () => ({
 }));
 
 import { Server } from "../../src/server/server";
-import { closeHistory, historyOf } from "../../src/workspace/state";
+import { closeHistory, historyOf, saveIndex, saveWorkspace } from "../../src/workspace/state";
 import { ClaudeSession } from "../../src/session/claude";
 
 interface FakeTool {
@@ -206,13 +206,12 @@ function seed(opts: { leadArchived?: boolean } = {}) {
       projectLink: { projectId: "proj-gone", role: "worker" },
     },
   ];
-  for (const s of states) {
-    fs.writeFileSync(path.join(cache, "workspaces", `${s.id}.json`), JSON.stringify(s));
-  }
-  fs.writeFileSync(
-    path.join(cache, "index.json"),
-    JSON.stringify({ workspaceIds: states.map((s) => s.id) }),
+  for (const s of states) saveWorkspace(base, s);
+  saveIndex(
+    base,
+    states.map((s) => s.id),
   );
+  closeHistory(base);
   return { base, root, web };
 }
 

@@ -45,7 +45,7 @@ Tests and tooling:
 
 - `service/tests/unit/` — unit tests for the server (frame mapping edge cases, config, git, state, projects); `fakes.ts` holds in-memory sessions
 - `service/tests/snap/{claude,codex}/<name>.{ts,jsonl,snap.md}` — recorded real interactions (script + recording + pinned transcript), replayed by `snap.test.ts` through the real sessions
-- `scripts/` — `deploy-deferred.sh`; `capture-sdk.ts` / `summarize-capture.ts` / `smoke-*.ts` run via `npm run capture|summarize|smoke:claude|smoke:codex`; `seed-demo.ts` (`npm run demo -- <dir>`) fills an empty dev data dir with a demo project to try the UI on, starting no session; `migrate-projects.ts` (`npm run migrate:projects`) moves a running server to projects (archives the pre-project workspaces, makes a project per folder given) over its WebSocket; `flush-events.ts` / `migrate-streams.ts` are one-off migrations from the Discord-era data format
+- `scripts/` — `deploy-deferred.sh`; `capture-sdk.ts` / `summarize-capture.ts` / `smoke-*.ts` run via `npm run capture|summarize|smoke:claude|smoke:codex`; `seed-demo.ts` (`npm run demo -- <dir>`) fills an empty dev data dir with a demo project to try the UI on, starting no session; `migrate-projects.ts` (`npm run migrate:projects`) moves a running server to projects (archives the pre-project workspaces, makes a project per folder given) over its WebSocket; `migrate-history.ts` (`npm run migrate:history`) moves histories out of the workspace files into `history.db` and builds its index ahead, `restart-migrating-history.sh` is the one restart that runs it (both one-off, deleted once production has moved); `flush-events.ts` / `migrate-streams.ts` are one-off migrations from the Discord-era data format
 
 ## Build, Check, Test
 

@@ -10,6 +10,7 @@ import * as os from "os";
 import * as path from "path";
 import WebSocket from "ws";
 import type { Message, WorkspaceState } from "../../src/workspace/workspace";
+import { closeHistory, saveIndex, saveWorkspace } from "../../src/workspace/state";
 
 const ROOT = path.resolve(__dirname, "../../..");
 const TSX = path.join(ROOT, "node_modules/.bin/tsx");
@@ -140,8 +141,9 @@ type = "local"
     createdAt: 1,
     messages: HISTORY,
   };
-  fs.writeFileSync(path.join(cache, "workspaces", "ws-h.json"), JSON.stringify(state));
-  fs.writeFileSync(path.join(cache, "index.json"), JSON.stringify({ workspaceIds: ["ws-h"] }));
+  saveWorkspace(base, state);
+  saveIndex(base, ["ws-h"]);
+  closeHistory(base);
 
   port = await freePort();
   const env: NodeJS.ProcessEnv = {

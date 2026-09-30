@@ -19,3 +19,4 @@ uploads/
 
 # Local replay fixture (may contain private conversation data)
 webview/public/replay.jsonl
+dist.prev/

@@ -20,6 +20,7 @@
     "summarize": "tsx scripts/summarize-capture.ts",
     "demo": "tsx scripts/seed-demo.ts",
     "migrate:projects": "tsx scripts/migrate-projects.ts",
+    "migrate:history": "tsx scripts/migrate-history.ts",
     "smoke:claude": "tsx scripts/smoke-claude.ts",
     "smoke:codex": "tsx scripts/smoke-codex.ts"
   },

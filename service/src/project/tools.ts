@@ -64,6 +64,7 @@ export interface HistorySearch {
   in?: EntryKind[];
   tool?: string;
   session?: string;
+  message?: string;
   since?: number;
   until?: number;
   level?: "main" | "subagents";
@@ -71,6 +72,8 @@ export interface HistorySearch {
   everywhere: boolean;
   limit: number;
   offset: number;
+  lines?: number;
+  context?: number;
 }
 
 export interface PanelApi {
@@ -79,13 +82,20 @@ export interface PanelApi {
   readSession(
     projectId: string,
     sessionId: string,
-    last: number,
+    count: number,
     around?: string,
     tools?: boolean,
+    start?: boolean,
   ): Promise<string>;
   listHistory(projectId: string, everywhere: boolean, limit: number): Promise<string>;
   searchHistory(projectId: string, search: HistorySearch): Promise<string>;
-  readEntry(projectId: string, entry: number, from: number, count: number): Promise<string>;
+  readEntry(
+    projectId: string,
+    entry: number,
+    from: number,
+    count: number,
+    fromChar: number,
+  ): Promise<string>;
   queryHistory(projectId: string, query: string): Promise<string>;
   messageSession(projectId: string, sessionId: string, text: string): string;
   stopSession(projectId: string, sessionId: string): string;
@@ -108,8 +118,9 @@ export interface PanelApi {
 
 const run = (fn: () => string | Promise<string>) => new Promise<string>((ok) => ok(fn()));
 
+// UTC unless the time says otherwise, as the history prints them.
 function time(name: string, value: string): number {
-  const t = Date.parse(value);
+  const t = Date.parse(/T\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(value) ? `${value}Z` : value);
   if (Number.isNaN(t)) throw new Error(`${name}: not a date or time: ${value}`);
   return t;
 }
@@ -134,7 +145,7 @@ export function leadToolset(
       `Longer-lived notes (decisions, background, plans) go in markdown files under ${notesDir}; read and write them with your file tools. Subagents can maintain them too.`,
       "Other projects have leads of their own: list_projects shows them, message_project sends one a message without waiting. Its answer arrives later as a message from that project.",
       "project_status gives the board, the running sessions and the repository's worktrees at a glance.",
-      "Everything said and done here is recorded: your own conversation, the worker sessions', and the project's history (archived sessions, from before the project too) — what was said, thinking, every tool call with its input and its output, errors, and what subagents did. When the user refers to past work, search_history finds it (by words or a regular expression, filtered by kind, tool, session, time), read_entry reads a hit in full or by lines (a whole command output, a file that was read), and read_session reads a session in context, with its tool calls when you ask. query_history runs read-only SQL over the same records for what search cannot express (counts, grouping, one tool's calls across sessions). list_history lists the earlier sessions.",
+      "Everything said and done here is recorded: your own conversation, the worker sessions', and the project's history (archived sessions, from before the project too) — what was said, thinking, every tool call with its input and its output, errors, and what subagents did. When the user refers to past work, search_history finds it like grep would (words or a regular expression; by kind, tool, session, message, time; with context lines), read_entry reads a hit in full or by lines (a whole command output, a file that was read), and read_session reads a session in context, with its tool calls when you ask. query_history runs read-only SQL over the same records for what search cannot express (counts, grouping, one tool's calls across sessions). list_history lists the earlier sessions.",
     ].join("\n\n"),
     tools: [
       {
@@ -170,10 +181,11 @@ export function leadToolset(
       {
         name: "read_session",
         description:
-          "Messages of a session (a worker's latest, and whether it is working; yours; or an earlier one from the history); around a message id to read a search hit in context. With tools, each message's tool calls and their output are listed by entry (read_entry reads one).",
+          "Messages of a session (a worker's latest, and whether it is working; yours; or an earlier one from the history): the last ones, the first ones, or those around a message id (a search hit in context). With tools, each message's tool calls and outputs are listed by entry (read_entry reads one).",
         shape: {
           session_id: z.string(),
           last: z.number().int().min(1).max(50).optional().describe("How many messages (6)"),
+          start: z.boolean().optional().describe("From the first message instead of the last"),
           around: z.string().optional().describe("A message id: the messages around it"),
           tools: z.boolean().optional().describe("List each message's tool calls by entry"),
         },
@@ -185,6 +197,7 @@ export function leadToolset(
               Number(a.last ?? 6),
               typeof a.around === "string" ? a.around : undefined,
               a.tools === true,
+              a.start === true,
             ),
           ),
       },
@@ -208,37 +221,59 @@ export function leadToolset(
       {
         name: "search_history",
         description:
-          "Search the recorded sessions of this project (yours, the workers', the history), newest first. A hit is one entry — something said, a thinking block, a tool call, a tool's output, an error, a subagent's task — with its matching lines and the ids for read_entry and read_session. Without words or a pattern it lists entries (all Bash calls of a session, say).",
+          "Search the recorded sessions of this project (yours, the workers', the history), newest first, like grep: a hit is one entry (something said, a thinking block, a tool call, a tool's output, an error, a subagent's task) with its matching lines numbered, and the ids for read_entry and read_session. By default only what was said is searched; when that finds nothing, the answer says which other kinds would match. Without words or a pattern it lists entries (every Bash call of a session, say).",
         shape: {
           query: z
             .string()
             .optional()
             .describe(
-              "Words that must all be in the entry: substrings, any case (a path, an identifier, Chinese). A word may also be the session's name.",
+              'Words that must all be in the entry: substrings in any case (a path, an identifier, Chinese); "a quoted phrase" keeps its spaces.',
             ),
           regex: z
             .string()
             .optional()
             .describe(
-              "A JavaScript regular expression the entry must match; ^ and $ match at lines",
+              "A JavaScript regular expression the entry must match, in any case unless case_sensitive; ^ and $ match at lines",
             ),
           in: z
             .array(z.enum(ENTRY_KINDS as [EntryKind, ...EntryKind[]]))
             .optional()
             .describe(
-              "Kinds of entry: said (what the user, agents and subagents wrote), thinking, tool_call (a tool's name and input: commands, paths, edits), tool_output (what it returned), error, subagent (a subagent's task and summary). Default said, or tool_call and tool_output with tool.",
+              "Kinds of entry: said (what the user, agents and subagents wrote), thinking, tool_call (a tool's input: the command, the path, the edit), tool_output (what it returned; a failed command's output often starts with \"Exit code\"), error (the session itself failing), subagent (a subagent's task and summary). Default said; with tool, tool_call and tool_output.",
             ),
           tool: z
             .string()
             .optional()
-            .describe("Only this tool's calls or output: Bash, Read, Edit, …"),
+            .describe(
+              "Only this tool's calls and output: Bash, Read, Edit, Write, Grep, Agent, …; an MCP tool by its own name (start_session)",
+            ),
           session: z.string().optional().describe("Only this session"),
-          since: z.string().optional().describe("From this date or time (ISO)"),
-          until: z.string().optional().describe("Before this date or time (ISO)"),
+          message: z.string().optional().describe("Only this message of it"),
+          since: z
+            .string()
+            .optional()
+            .describe(
+              "From this date or time (ISO, UTC unless it gives a zone); an entry has its message's start time",
+            ),
+          until: z.string().optional().describe("Before this date or time"),
           level: z
             .enum(["main", "subagents"])
             .optional()
             .describe("Only the sessions' own turns, or only what their subagents did"),
+          lines: z
+            .number()
+            .int()
+            .min(1)
+            .max(50)
+            .optional()
+            .describe("Matching lines shown per hit (3)"),
+          context: z
+            .number()
+            .int()
+            .min(0)
+            .max(20)
+            .optional()
+            .describe("Lines shown before and after each matching line (0)"),
           case_sensitive: z.boolean().optional(),
           everywhere: z.boolean().optional().describe("Every archived session, in any folder"),
           limit: z.number().int().min(1).max(100).optional().describe("How many hits (20)"),
@@ -252,9 +287,12 @@ export function leadToolset(
               ...(Array.isArray(a.in) && a.in.length > 0 && { in: a.in as EntryKind[] }),
               ...(typeof a.tool === "string" && { tool: a.tool }),
               ...(typeof a.session === "string" && { session: a.session }),
+              ...(typeof a.message === "string" && { message: a.message }),
               ...(typeof a.since === "string" && { since: time("since", a.since) }),
               ...(typeof a.until === "string" && { until: time("until", a.until) }),
               ...((a.level === "main" || a.level === "subagents") && { level: a.level }),
+              ...(typeof a.lines === "number" && { lines: a.lines }),
+              ...(typeof a.context === "number" && { context: a.context }),
               caseSensitive: a.case_sensitive === true,
               everywhere: a.everywhere === true,
               limit: Number(a.limit ?? 20),
@@ -265,23 +303,36 @@ export function leadToolset(
       {
         name: "read_entry",
         description:
-          "Read an entry found by search_history or read_session in full, or some of its lines: a whole command output, a file a tool read, a long message.",
+          "Read an entry found by search_history or read_session in full, or some of its lines: a whole command output, a file a tool read, a long message. A very long line is cut; from_char reads on from where it was cut.",
         shape: {
           entry: z.number().int().describe("The entry's number (#123)"),
           from_line: z.number().int().min(1).optional().describe("First line (1)"),
           lines: z.number().int().min(1).max(2000).optional().describe("How many lines (200)"),
+          from_char: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe("Where the first line starts, in characters (0)"),
         },
         handler: (a) =>
           run(() =>
-            api.readEntry(id, Number(a.entry), Number(a.from_line ?? 1), Number(a.lines ?? 200)),
+            api.readEntry(
+              id,
+              Number(a.entry),
+              Number(a.from_line ?? 1),
+              Number(a.lines ?? 200),
+              Number(a.from_char ?? 0),
+            ),
           ),
       },
       {
         name: "query_history",
         description: [
-          "One read-only SQL statement (SQLite) over every recorded session, for what search_history cannot express: counts, grouping, one tool's use across sessions. At most 200 rows; long cells are cut (read_entry reads an entry in full).",
-          "Tables: sessions(id, name, cwd, project, role, created_at, last_active, archived_at); entries(id, session, message, ts, kind, role, tool, depth, lines, text) — kind as in search_history, depth 0 in the session itself and more inside subagents; entries_fts, a trigram full-text index of entries.text (`where id in (select rowid from entries_fts where entries_fts match '\"words\"')`); messages(session, id, seq, ts, kind, status, body) — body is the message as JSON (json_extract(body, '$.model')).",
-          "Times are milliseconds since the epoch. regexp(pattern, text) and iregexp (any case) match JavaScript regular expressions.",
+          "One read-only SQL statement (SQLite) over the sessions search_history reaches with everywhere, for what search cannot express: counts, grouping, one tool's use across sessions. At most 200 rows; long cells are cut (read_entry reads an entry in full).",
+          "Tables: sessions(id, name, cwd, project, role, created_at, last_active, archived_at); entries(id, session, message, ts, kind, role, tool, depth, lines, text) — kind as in search_history, depth 0 in the session itself and more inside subagents, lines its line count; messages(session, id, seq, ts, kind, status, hash, body) — body is the message as JSON (json_extract(body, '$.model')).",
+          "entries_fts is a trigram index of entries.text, for words of 3 characters or more: `entries.id in (select rowid from entries_fts where entries_fts match '\"words\"')`; shorter ones with instr(text, 'x'). regexp(pattern, text) and iregexp (any case) match JavaScript regular expressions. Times are milliseconds since the epoch.",
+          "For example: select s.name, count(*) as n from entries e join sessions s on s.id = e.session where e.tool = 'Bash' group by s.name order by n desc.",
         ].join(" "),
         shape: { sql: z.string() },
         handler: (a) => run(() => api.queryHistory(id, String(a.sql))),

@@ -895,7 +895,15 @@ systemctl --user restart agent-team-server
       setTimeout(() => {
         this.persistTimers.delete(workspaceId);
         const ws = this.workspaces.get(workspaceId);
-        if (ws) this.save(ws);
+        if (!ws) return;
+        try {
+          this.save(ws);
+        } catch (e) {
+          // A full disk, another process holding the database: the changes
+          // stay marked for the next try.
+          console.error(`[state] ${workspaceId}: not saved, trying again`, e);
+          setTimeout(() => this.persistWorkspace(workspaceId), 5000);
+        }
       }, 500),
     );
   }
@@ -939,7 +947,12 @@ systemctl --user restart agent-team-server
     for (const ws of this.workspaces.values()) {
       // An unloaded workspace is persisted whenever it changes (archive,
       // unarchive); rewriting it here re-read and re-wrote hundreds of MB.
-      if (ws.messagesLoaded) this.save(ws, true);
+      if (!ws.messagesLoaded) continue;
+      try {
+        this.save(ws, true);
+      } catch (e) {
+        console.error(`[state] ${ws.id}: not saved`, e);
+      }
     }
     this.persistIndex();
   }
@@ -955,6 +968,8 @@ systemctl --user restart agent-team-server
       const workspace = Workspace.fromState(wsState, this.hostRegistry, this.makeCallbacks());
       if (workspace.isArchived) workspace.unloadMessages();
       this.workspaces.set(workspace.id, workspace);
+      // Turns the stop cut short are written (and searchable) right away.
+      if (workspace.hasChanges()) this.persistWorkspaceNow(workspace.id);
       const tools = this.projects.toolsFor(workspace);
       if (tools) for (const a of workspace.agents.values()) a.session.setPanelTools?.(tools);
     }
@@ -1184,6 +1199,9 @@ systemctl --user restart agent-team-server
           messageId: agentMsg.id,
           event,
         });
+        // A finished message changed later (a background task's end): its
+        // turn will not save it.
+        if (agentMsg.status !== "streaming") this.persistWorkspace(wsId);
       },
       onMessageDone: (wsId, msgId, status, content, events, patch) => {
         this.broadcastUI({
@@ -1240,7 +1258,13 @@ systemctl --user restart agent-team-server
     if (this.archiveTimer) clearInterval(this.archiveTimer);
     if (this.quotaTimer) clearInterval(this.quotaTimer);
     // Turns cut short are saved as such.
-    for (const ws of this.workspaces.values()) ws.abortAll();
+    for (const ws of this.workspaces.values()) {
+      try {
+        ws.abortAll();
+      } catch (e) {
+        console.error(`[close] ${ws.id}:`, e);
+      }
+    }
     this.persistAll();
     void this.history.close();
     closeHistory(this.baseDir);

@@ -59,6 +59,6 @@ describe("panel tools via createSdkMcpServer", () => {
       extra,
     );
     console.log(JSON.stringify(res), JSON.stringify(calls));
-    expect(calls).toContainEqual(["readSession", "p1", "ws-1", 3, undefined, false]);
+    expect(calls).toContainEqual(["readSession", "p1", "ws-1", 3, undefined, false, false]);
   });
 });

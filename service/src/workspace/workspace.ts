@@ -337,6 +337,10 @@ export class Workspace {
     return changed;
   }
 
+  hasChanges(): boolean {
+    return this.changed.size > 0;
+  }
+
   touch(ids: Iterable<string>): void {
     for (const id of ids) this.changed.add(id);
   }
@@ -1348,6 +1352,9 @@ export class Workspace {
     ws.createdAt = state.createdAt;
     ws.archivedAt = state.archivedAt ?? null;
     ws.projectLink = state.projectLink;
+    // No messages: the history could not be read, and a save must not
+    // write an empty one over it.
+    ws.messagesLoaded = state.messages !== undefined;
     ws.messages = (state.messages ?? []).map((m) => {
       const msg = {
         ...m,

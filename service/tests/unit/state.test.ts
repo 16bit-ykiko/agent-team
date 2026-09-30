@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import * as fs from "fs";
 import * as os from "os";
@@ -14,7 +14,6 @@ import {
   loadWorkspaceMessages,
   saveIndex,
   saveWorkspace,
-  stripLegacyRaw,
 } from "../../src/workspace/state";
 import { Message, WorkspaceState } from "../../src/workspace/workspace";
 
@@ -73,43 +72,17 @@ function wsWithRaw(): WorkspaceState {
   };
 }
 
-describe("legacy raw stripping", () => {
-  it("removes raw from top-level and nested subagent events", () => {
-    const ws = wsWithRaw();
-    expect(stripLegacyRaw(ws)).toBe(3);
-    const events = ws.messages![0].events as unknown as Array<Record<string, unknown>>;
-    expect(events.every((e) => !("raw" in e))).toBe(true);
-    const inner = (events[1].subagent as { events: Array<Record<string, unknown>> }).events;
-    expect("raw" in inner[0]).toBe(false);
-    expect(stripLegacyRaw(ws)).toBe(0);
-  });
-
-  it("moves a history saved inside the state file into history.db, once, without the legacy raw", () => {
+describe("loading", () => {
+  it("refuses a workspace file that still holds its messages, and leaves it as it is", () => {
     const base = tmpBase();
     const dir = path.join(base, ".agent-team", "cache", "workspaces");
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, "ws-1.json");
-    fs.writeFileSync(file, JSON.stringify(wsWithRaw()));
+    const text = JSON.stringify(wsWithRaw());
+    fs.writeFileSync(file, text);
     saveIndex(base, ["ws-1"]);
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-
-    const loaded = loadAll(base);
-    expect(log).toHaveBeenCalledWith("Moved 1 histories into history.db");
-    expect(loaded).toHaveLength(1);
-    expect(loaded[0].messages).toHaveLength(1);
-    expect(JSON.stringify(loaded[0])).not.toContain('"raw"');
-    expect(JSON.parse(fs.readFileSync(file, "utf-8"))).not.toHaveProperty("messages");
-    const stored = historyOf(base).load("ws-1");
-    expect(stored).toMatchObject([{ id: "m1", content: "x" }]);
-    expect(JSON.stringify(stored)).not.toContain('"raw"');
-    // The file as it was, kept aside.
-    const kept = path.join(base, ".agent-team", "backup-v1", "ws-1.json");
-    expect((JSON.parse(fs.readFileSync(kept, "utf-8")) as WorkspaceState).messages).toHaveLength(1);
-    // Nothing left to move the second time.
-    log.mockClear();
-    expect(loadAll(base)[0].messages).toMatchObject([{ id: "m1", content: "x" }]);
-    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Moved"));
-    log.mockRestore();
+    expect(() => loadAll(base)).toThrow("npm run migrate:history -- --finish");
+    expect(fs.readFileSync(file, "utf-8")).toBe(text);
   });
 
   it("keeps any text as it was", () => {
@@ -137,6 +110,34 @@ describe("saving a history", () => {
       .load("ws-1")
       .map((m) => `${m.id}:${m.content}`);
   };
+
+  it("writes what a failed save left out the next time", () => {
+    const base = tmpBase();
+    const messages = [msg("a", "one"), msg("b", "two")];
+    const ws = { ...wsWithRaw(), messages };
+    saveWorkspace(base, ws);
+    // A full disk: SQLite rolls the transaction back by itself.
+    const db = new DatabaseSync(historyFile(base));
+    const pages = (db.prepare("pragma page_count").get() as { page_count: number }).page_count;
+    db.close();
+    const history = historyOf(base) as unknown as { db: DatabaseSync };
+    history.db.exec(`pragma max_page_count = ${pages}`);
+    messages[0].content = "one, edited";
+    messages.push(msg("c", "x".repeat(200_000)));
+    expect(() => saveWorkspace(base, ws, new Set(["a"]))).toThrow(/full/);
+    history.db.exec("pragma max_page_count = 1073741823");
+    // Named again, as the server does after a failed save.
+    saveWorkspace(base, ws, new Set(["a"]));
+    expect(stored(base)).toEqual(["a:one, edited", "b:two", `c:${"x".repeat(200_000)}`]);
+  });
+
+  it("leaves the whole history in history.db itself when closed", () => {
+    const base = tmpBase();
+    saveWorkspace(base, { ...wsWithRaw(), messages: [msg("a", "one")] });
+    closeHistory(base);
+    const wal = `${historyFile(base)}-wal`;
+    expect(fs.existsSync(wal) ? fs.statSync(wal).size : 0).toBe(0);
+  });
 
   it("writes the messages named as changed, the new ones, and drops the removed", () => {
     const base = tmpBase();
@@ -244,6 +245,7 @@ describe("unloaded workspaces", () => {
         },
       },
     ];
+    delete ws.messages;
     fs.writeFileSync(file, JSON.stringify(ws), { mode: 0o664 });
     fs.chmodSync(file, 0o664);
     saveIndex(base, ["ws-1"]);

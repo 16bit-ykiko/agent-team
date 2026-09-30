@@ -1,9 +1,11 @@
+import { spawn } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { Worker } from "worker_threads";
 import {
   answer,
   HistoryIndex,
+  querySql,
   type EntryInfo,
   type EntryText,
   type Hit,
@@ -14,8 +16,8 @@ import {
   type SqlResult,
 } from "./history-index";
 
-// A question that runs longer (a heavy SQL query) is abandoned and the
-// worker restarted.
+// A question that runs longer is abandoned: the worker restarted, an SQL
+// query's process killed.
 const TIMEOUT_MS = 20_000;
 
 export interface NamedSession {
@@ -60,7 +62,8 @@ export class HistoryService {
   }
 
   // A word of the query may be a session's name ("clice crash" finds
-  // "crash" in the clice sessions); at least one must be in the entry.
+  // "crash" in the clice sessions); in a session whose name holds them all,
+  // they are all looked for in the text.
   async searchNamed(
     query: Omit<SearchQuery, "sessions">,
     sessions: NamedSession[],
@@ -69,8 +72,8 @@ export class HistoryService {
     const groups = new Map<string, { terms: string[]; sessions: string[] }>();
     for (const s of sessions) {
       const name = s.name.toLowerCase();
-      const terms = query.terms.filter((t) => !name.includes(t.toLowerCase()));
-      if (terms.length === 0 && query.terms.length > 0) continue;
+      const rest = query.terms.filter((t) => !name.includes(t.toLowerCase()));
+      const terms = rest.length ? rest : query.terms;
       const key = terms.join("\n");
       let g = groups.get(key);
       if (!g) groups.set(key, (g = { terms, sessions: [] }));
@@ -89,8 +92,14 @@ export class HistoryService {
     };
   }
 
-  read(entry: number, from: number, count: number): Promise<EntryText | null> {
-    return this.request({ type: "read", entry, from, count }) as Promise<EntryText | null>;
+  read(entry: number, from: number, count: number, fromChar = 0): Promise<EntryText | null> {
+    return this.request({
+      type: "read",
+      entry,
+      from,
+      count,
+      fromChar,
+    }) as Promise<EntryText | null>;
   }
 
   entries(session: string, messages: string[]): Promise<Array<EntryInfo & { head: string }>> {
@@ -99,8 +108,50 @@ export class HistoryService {
     >;
   }
 
-  sql(query: string, sessions: SessionRow[], maxRows: number): Promise<SqlResult> {
-    return this.request({ type: "sql", query, sessions, maxRows }) as Promise<SqlResult>;
+  // In a process of its own, killed if it runs too long: a statement in
+  // SQLite cannot be interrupted, not even by stopping its thread.
+  async sql(query: string, sessions: SessionRow[], maxRows: number): Promise<SqlResult> {
+    // The index there and caught up first.
+    await this.entries("", []);
+    if (!fs.existsSync(this.workerFile)) {
+      return querySql(this.file, this.historyFile, query, sessions, maxRows);
+    }
+    return new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [this.workerFile], {
+        stdio: ["pipe", "pipe", "inherit"],
+      });
+      let out = "";
+      const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
+      child.stdout.setEncoding("utf-8");
+      child.stdout.on("data", (chunk: string) => (out += chunk));
+      child.on("error", (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+      child.on("close", (_code, signal) => {
+        clearTimeout(timer);
+        if (signal === "SIGKILL") {
+          reject(new Error(`It took longer than ${TIMEOUT_MS / 1000} s and was stopped`));
+          return;
+        }
+        try {
+          const reply = JSON.parse(out) as { result?: SqlResult; error?: string };
+          if (reply.error !== undefined) reject(new Error(reply.error));
+          else resolve(reply.result!);
+        } catch {
+          reject(new Error("The query's process gave no answer"));
+        }
+      });
+      child.stdin.end(
+        JSON.stringify({
+          file: this.file,
+          historyFile: this.historyFile,
+          query,
+          sessions,
+          maxRows,
+        }),
+      );
+    });
   }
 
   async close(): Promise<void> {
@@ -124,6 +175,12 @@ export class HistoryService {
       }
     }
     const worker = this.ensureWorker();
+    // A change not passed on yet goes first, so the answer includes it.
+    if (this.notifyTimer) {
+      clearTimeout(this.notifyTimer);
+      this.notifyTimer = null;
+      worker.postMessage({ changed: true });
+    }
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

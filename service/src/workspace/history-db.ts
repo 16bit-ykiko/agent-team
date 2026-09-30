@@ -6,9 +6,9 @@ import type { Message } from "./workspace";
 
 // Every workspace's messages, one row each, the Message as JSON. A save
 // writes only the messages that changed: a long history is tens of
-// megabytes, and a turn in progress is saved every half second. The search
-// index (history-index.ts) is built from this file in a worker thread and
-// can be deleted at any time; this one is the history itself.
+// megabytes. The search index (history-index.ts) is built from this file in
+// a worker thread and can be deleted at any time; this one is the history
+// itself.
 export class HistoryDb {
   private db: DatabaseSync;
   // Per workspace: the hash of each message as last written, and the next
@@ -92,10 +92,11 @@ export class HistoryDb {
       }
       this.db.exec("commit");
     } catch (e) {
-      this.db.exec("rollback");
-      // What is cached may no longer match the file.
+      // What is cached may no longer match the file; SQLite may have rolled
+      // back already (a full disk does).
       this.written.delete(session);
       this.nextSeq.delete(session);
+      if (this.db.isTransaction) this.db.exec("rollback");
       throw e;
     }
     this.nextSeq.set(session, seq);
@@ -108,7 +109,14 @@ export class HistoryDb {
     this.nextSeq.delete(session);
   }
 
+  // Everything in the file itself, none left in its -wal: a copy of
+  // history.db alone is then the whole history.
+  checkpoint(): void {
+    this.db.exec("pragma wal_checkpoint(truncate)");
+  }
+
   close(): void {
+    this.checkpoint();
     this.db.close();
   }
 

@@ -152,6 +152,7 @@ fs.cpSync(cache, path.join(backup, "cache"), {
 const history = new DatabaseSync(path.join(cache, "history.db"), { readOnly: true });
 await copyDatabase(history, path.join(backup, "cache", "history.db"));
 history.close();
+fs.chmodSync(path.join(backup, "cache", "history.db"), 0o600);
 console.log(`history copied to ${backup}`);
 
 const busy: Info[] = [];

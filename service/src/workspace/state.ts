@@ -103,23 +103,11 @@ export function loadWorkspaceMessages(baseDir: string, workspaceId: string): Mes
   return historyOf(baseDir).load(workspaceId);
 }
 
-// Workspaces saved before history.db carry their history inside <id>.json.
-// It moves to history.db; the old file stays, hard-linked (no extra space),
-// under .agent-team/backup-v1/ until someone deletes it.
-function moveHistory(baseDir: string, ws: WorkspaceState): void {
-  const file = metaPath(baseDir, ws.id);
-  historyOf(baseDir).save(ws.id, ws.messages ?? [], "all");
-  const backup = path.join(dataRoot(baseDir), "backup-v1");
-  ensureDir(backup);
-  const kept = path.join(backup, `${ws.id}.json`);
-  if (!fs.existsSync(kept)) fs.linkSync(file, kept);
-  const { messages: _messages, ...meta } = ws;
-  writeJson(file, meta);
-}
-
+// The history first: a stop in between leaves a workspace to delete again,
+// not rows nothing lists.
 export function deleteWorkspaceState(baseDir: string, workspaceId: string): void {
-  fs.rmSync(metaPath(baseDir, workspaceId), { force: true });
   historyOf(baseDir).delete(workspaceId);
+  fs.rmSync(metaPath(baseDir, workspaceId), { force: true });
   const logs = path.join(dataRoot(baseDir), LOGS_DIR, workspaceId);
   fs.rmSync(logs, { recursive: true, force: true });
   ensuredLogDirs.delete(logs);
@@ -137,25 +125,23 @@ export function loadAll(baseDir: string): WorkspaceState[] {
   if (!index) return [];
 
   const results: WorkspaceState[] = [];
-  let moved = 0;
   for (const id of index.workspaceIds) {
     const file = metaPath(baseDir, id);
     const ws = readJson<WorkspaceState>(file);
     if (!ws) continue;
-    stripLegacyRaw(ws);
-    const stripped = stripProviderEnv(ws);
-    const inline = ws.messages;
-    if (inline) {
-      moveHistory(baseDir, ws);
-      moved++;
-    } else if (stripped) writeJson(file, ws);
+    // Saved before history.db (scripts/migrate-history.ts moves it there):
+    // loaded as it is, the first save would drop the history.
+    if (ws.messages) {
+      throw new Error(
+        `${file} still holds its messages: with the server stopped, run \`npm run migrate:history -- --finish\``,
+      );
+    }
+    if (stripProviderEnv(ws)) writeJson(file, ws);
     else if ((fs.statSync(file).mode & 0o077) !== 0) fs.chmodSync(file, 0o600);
-    // Archived histories stay on disk until opened; holding every one of
-    // them until the whole list was parsed peaked at over a gigabyte.
-    delete ws.messages;
+    // Archived histories stay on disk until opened.
     if (!ws.archivedAt) {
       try {
-        ws.messages = inline ?? loadWorkspaceMessages(baseDir, id);
+        ws.messages = loadWorkspaceMessages(baseDir, id);
       } catch (e) {
         // Left unloaded, so nothing saves an empty history over it.
         console.error(`[state] ${id}: history unreadable`, e);
@@ -163,28 +149,7 @@ export function loadAll(baseDir: string): WorkspaceState[] {
     }
     results.push(ws);
   }
-  if (moved) console.log(`Moved ${moved} histories into history.db`);
   return results;
-}
-
-// Older builds stored the full SDK message on every event as `raw`, which
-// made state files tens of megabytes. Drop it on load (once — the rewrite
-// makes the next load clean). Returns the number of fields removed.
-export function stripLegacyRaw(ws: WorkspaceState): number {
-  let removed = 0;
-  const strip = (events: unknown[] | undefined) => {
-    for (const ev of events ?? []) {
-      const e = ev as Record<string, unknown>;
-      if ("raw" in e) {
-        delete e.raw;
-        removed++;
-      }
-      const sub = e.subagent as { events?: unknown[] } | undefined;
-      if (sub?.events) strip(sub.events);
-    }
-  };
-  for (const m of ws.messages ?? []) strip(m.events);
-  return removed;
 }
 
 // Older builds persisted account tokens and provider keys with the agents.
