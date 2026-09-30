@@ -48,6 +48,10 @@ npm run smoke:codex -- gpt-6-astra high            # prints binary path/version 
 
 Preset fields for Codex: `codexModelId` strips the `[1m]` suffix; `[1m]` variants set `contextWindow: 872_000` and are passed as `model_context_window`; `fastTier: "priority"` backs `/fast`.
 
+## Retiring a model
+
+The picker lists only current models. A model dropped from `MODEL_OPTIONS` moves to `LEGACY_MODELS` (same file): agents still on it keep their effort levels and thinking settings, and move with `/model <id>` (or the model menu in the Agents panel) — the session resumes on the new model with its history. An id in neither list is treated as a newer Claude model (fast mode, adaptive thinking), so a just-released model can be tried with `/model` before its preset exists; the CLI rejects ids it does not know on the next turn.
+
 ## Tests
 
 `service/tests/unit/presets.test.ts` covers the helper functions (`backendForModel`, `codexModelId`, `codexContextWindow`, `supportsFastMode`, `defaultEffortForModel`). Add the new id to whichever cases enumerate models. Restart is a separate, user-approved step (deploy skill).

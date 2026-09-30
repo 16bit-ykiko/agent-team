@@ -43,66 +43,9 @@ const CODEX_CONTEXT_1M = 872_000;
 // Every ChatGPT codex model lists Fast as service tier "priority".
 const CODEX_FAST = "priority";
 
+// The picker's list. Models dropped from it move to LEGACY_MODELS, so agents
+// still on one keep their settings until switched with /model.
 export const MODEL_OPTIONS: ModelOption[] = [
-  {
-    id: "claude-opus-4-6",
-    label: "Claude Opus 4.6",
-    backend: "claude",
-    effort: "high",
-    effortLevels: EFFORT_FOUR,
-  },
-  {
-    id: "claude-opus-4-6[1m]",
-    label: "Claude Opus 4.6 (1M)",
-    backend: "claude",
-    effort: "high",
-    effortLevels: EFFORT_FOUR,
-  },
-  {
-    id: "claude-sonnet-4-6",
-    label: "Claude Sonnet 4.6",
-    backend: "claude",
-    effortLevels: EFFORT_FOUR,
-  },
-  {
-    id: "claude-haiku-4-5-20251001",
-    label: "Claude Haiku 4.5",
-    backend: "claude",
-    effortLevels: [],
-  },
-  {
-    id: "claude-opus-5",
-    label: "Claude Opus 5",
-    backend: "claude",
-    effort: "xhigh",
-    effortLevels: EFFORT_FIVE,
-  },
-  {
-    id: "claude-opus-5[1m]",
-    label: "Claude Opus 5 (1M)",
-    backend: "claude",
-    effort: "xhigh",
-    effortLevels: EFFORT_FIVE,
-  },
-  { id: "claude-fable-5", label: "Claude Fable 5", backend: "claude", effortLevels: EFFORT_FIVE },
-  {
-    id: "claude-fable-5[1m]",
-    label: "Claude Fable 5 (1M)",
-    backend: "claude",
-    effortLevels: EFFORT_FIVE,
-  },
-  {
-    id: "claude-fable-5-1",
-    label: "Claude Fable 5.1",
-    backend: "claude",
-    effortLevels: EFFORT_FIVE,
-  },
-  {
-    id: "claude-fable-5-1[1m]",
-    label: "Claude Fable 5.1 (1M)",
-    backend: "claude",
-    effortLevels: EFFORT_FIVE,
-  },
   {
     id: "claude-opus-5-5",
     label: "Claude Opus 5.5",
@@ -115,6 +58,18 @@ export const MODEL_OPTIONS: ModelOption[] = [
     label: "Claude Opus 5.5 (1M)",
     backend: "claude",
     effort: "xhigh",
+    effortLevels: EFFORT_FIVE,
+  },
+  {
+    id: "claude-fable-5-1",
+    label: "Claude Fable 5.1",
+    backend: "claude",
+    effortLevels: EFFORT_FIVE,
+  },
+  {
+    id: "claude-fable-5-1[1m]",
+    label: "Claude Fable 5.1 (1M)",
+    backend: "claude",
     effortLevels: EFFORT_FIVE,
   },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", backend: "claude" },
@@ -205,11 +160,49 @@ export const MODEL_OPTIONS: ModelOption[] = [
   },
 ];
 
-function findModelOption(modelId: string): ModelOption | undefined {
-  return (
-    MODEL_OPTIONS.find((m) => m.id === modelId) ??
-    MODEL_OPTIONS.find((m) => m.id === modelId.replace(/\[1m\]$/, ""))
-  );
+export const LEGACY_MODELS: ModelOption[] = [
+  {
+    id: "claude-opus-4-6",
+    label: "Claude Opus 4.6",
+    backend: "claude",
+    effort: "high",
+    effortLevels: EFFORT_FOUR,
+  },
+  {
+    id: "claude-sonnet-4-6",
+    label: "Claude Sonnet 4.6",
+    backend: "claude",
+    effortLevels: EFFORT_FOUR,
+  },
+  {
+    id: "claude-haiku-4-5-20251001",
+    label: "Claude Haiku 4.5",
+    backend: "claude",
+    effortLevels: [],
+  },
+  {
+    id: "claude-opus-5",
+    label: "Claude Opus 5",
+    backend: "claude",
+    effort: "xhigh",
+    effortLevels: EFFORT_FIVE,
+  },
+  { id: "claude-fable-5", label: "Claude Fable 5", backend: "claude", effortLevels: EFFORT_FIVE },
+];
+
+export function findModelOption(modelId: string): ModelOption | undefined {
+  const base = modelId.replace(/\[1m\]$/, "");
+  for (const list of [MODEL_OPTIONS, LEGACY_MODELS]) {
+    const hit = list.find((m) => m.id === modelId) ?? list.find((m) => m.id === base);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+// An id in neither list is a Claude model newer than both (tried with /model
+// before it is added): it gets what current Claude models have.
+function isNewClaude(modelId: string): boolean {
+  return !findModelOption(modelId) && modelId.startsWith("claude-");
 }
 
 export function backendForModel(modelId: string): "claude" | "codex" {
@@ -234,7 +227,7 @@ export function codexContextWindow(modelId: string): number | null {
 // it report a disabled reason at init); codex needs a service tier.
 export function supportsFastMode(modelId: string): boolean {
   const opt = findModelOption(modelId);
-  if (!opt) return false;
+  if (!opt) return isNewClaude(modelId);
   return opt.backend === "claude" ? opt.id.startsWith("claude-") : Boolean(opt.fastTier);
 }
 
@@ -257,5 +250,6 @@ export function effortLevelsForModel(modelId: string): string[] {
 // models carry effort levels too, so gate on backend as well.
 export function supportsAdaptiveThinking(modelId: string): boolean {
   const opt = findModelOption(modelId);
-  return opt?.backend === "claude" && (opt.effortLevels?.length ?? 0) > 0;
+  if (!opt) return isNewClaude(modelId);
+  return opt.backend === "claude" && (opt.effortLevels?.length ?? 0) > 0;
 }

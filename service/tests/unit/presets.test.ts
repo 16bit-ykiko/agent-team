@@ -59,3 +59,27 @@ describe("codex model presets", () => {
     expect(backendForModel("claude-fable-5-1")).toBe("claude");
   });
 });
+
+describe("the model list", () => {
+  it("offers only current models, and still knows the ones dropped from it", () => {
+    expect(MODEL_OPTIONS.filter((m) => m.backend === "claude").map((m) => m.id)).toEqual([
+      "claude-opus-5-5",
+      "claude-opus-5-5[1m]",
+      "claude-fable-5-1",
+      "claude-fable-5-1[1m]",
+      "deepseek-v4-pro",
+      "deepseek-v4-flash",
+    ]);
+    // An agent still on a dropped model keeps its effort levels and thinking.
+    expect(effortLevelsForModel("claude-opus-4-6[1m]")).toEqual(["low", "medium", "high", "max"]);
+    expect(supportsAdaptiveThinking("claude-opus-4-6")).toBe(true);
+    expect(supportsAdaptiveThinking("claude-haiku-4-5-20251001")).toBe(false);
+  });
+
+  it("treats a Claude id in neither list as a newer Claude model", () => {
+    expect(backendForModel("claude-opus-6")).toBe("claude");
+    expect(supportsAdaptiveThinking("claude-opus-6")).toBe(true);
+    expect(supportsFastMode("claude-opus-6")).toBe(true);
+    expect(supportsFastMode("gpt-7")).toBe(false);
+  });
+});

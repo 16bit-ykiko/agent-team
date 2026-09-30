@@ -11,7 +11,7 @@ const MOCK_AGENTS = [
   {
     id: "agent-1",
     name: "Coder",
-    model: "claude-sonnet-4-6",
+    model: "claude-fable-5-1",
     avatar: "🧑‍💻",
     color: "#528bff",
     isDefault: true,
@@ -19,7 +19,7 @@ const MOCK_AGENTS = [
   {
     id: "agent-2",
     name: "Reviewer",
-    model: "claude-opus-4-6",
+    model: "claude-opus-5-5",
     avatar: "🔍",
     color: "#e5c07b",
     isDefault: false,
@@ -183,8 +183,8 @@ export const MOCK_PRESETS: AgentPreset[] = [
 ];
 
 export const MOCK_MODELS: ModelOption[] = [
-  { id: "claude-sonnet-4-6", label: "Sonnet 4.6", backend: "claude" },
-  { id: "claude-opus-4-6", label: "Opus 4.6", backend: "claude" },
+  { id: "claude-opus-5-5", label: "Opus 5.5", backend: "claude" },
+  { id: "claude-fable-5-1", label: "Fable 5.1", backend: "claude" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", backend: "codex" },
 ];
 
