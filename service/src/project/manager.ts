@@ -456,11 +456,7 @@ export class ProjectManager {
       throw new Error(`No task ${a.taskId} in ${objective!.id}`);
     }
 
-    const lead = this.leadOf(projectId);
-    const leadModel = [...(lead?.agents.values() ?? [])]
-      .map((e) => e.info.model)
-      .find((m) => models.includes(m));
-    const model = a.model ?? leadModel ?? LEAD_MODEL;
+    const model = a.model ?? LEAD_MODEL;
     const preset = AGENT_PRESETS[this.workers(projectId).length % AGENT_PRESETS.length];
     const w = this.host.createWorkspace(a.title, cwd, { projectId, role: "worker" });
     try {

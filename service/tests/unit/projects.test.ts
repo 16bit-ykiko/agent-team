@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
+import { z } from "zod";
 import { ProjectStore } from "../../src/project/store";
 import { leadToolset, workerToolset, type PanelApi } from "../../src/project/tools";
 import { START_SPACING_MS } from "../../src/project/manager";
@@ -474,6 +475,23 @@ describe("project edge cases", () => {
       "on claude-opus-5-5",
     );
     expect([...workers()[0].agents.values()][0].info.model).toBe("claude-opus-5-5");
+  });
+
+  it("default workers to Opus 5.5 whatever model the lead was switched to", async () => {
+    const { create, workers, manager } = setup();
+    const { lead } = create("a");
+    const [agent] = lead.agents.values();
+    agent.info.model = "claude-fable-5-1";
+    const start = manager.toolsFor(lead)!.tools.find((t) => t.name === "start_session")!;
+    expect((start.shape.model as z.ZodString).description).toContain("defaults to claude-opus-5-5");
+    expect(await start.handler({ title: "w", cwd: "wt", task: "t" })).toContain(
+      "on claude-opus-5-5",
+    );
+    await start.handler({ title: "f", cwd: "wt", task: "t", model: "claude-fable-5-1" });
+    expect(workers().map((w) => [...w.agents.values()][0].info.model)).toEqual([
+      "claude-opus-5-5",
+      "claude-fable-5-1",
+    ]);
   });
 
   it("refuse board updates for a deleted project instead of recreating its folder", async () => {

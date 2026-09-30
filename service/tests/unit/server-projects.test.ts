@@ -29,6 +29,8 @@ interface FakeTool {
 }
 interface Launch {
   cwd: string | undefined;
+  model?: string;
+  effort?: string;
   panel?: { instructions: string; tools: FakeTool[] };
 }
 
@@ -45,7 +47,12 @@ beforeEach(() => {
   ClaudeSession.sdk = {
     query: ({ options }: { options: Record<string, unknown> }) => {
       const servers = options.mcpServers as Record<string, Launch["panel"]> | undefined;
-      launches.push({ cwd: options.cwd as string | undefined, panel: servers?.panel });
+      launches.push({
+        cwd: options.cwd as string | undefined,
+        model: options.model as string | undefined,
+        effort: options.effort as string | undefined,
+        panel: servers?.panel,
+      });
       let finish: (r: IteratorResult<unknown>) => void = () => {};
       const pending = new Promise<IteratorResult<unknown>>((r) => (finish = r));
       return {
@@ -319,6 +326,35 @@ describe("server restart with projects", () => {
         "A lead goes with its project: archive the project from its board",
       );
       expect(frames.some((f) => f.type === "workspace_archived")).toBe(false);
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("runs a new lead and the workers it starts on Opus 5.5 at xhigh unless asked otherwise", async () => {
+    const { base, web } = seed();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { frames, send, stop } = await start(base, web);
+    try {
+      const root = path.join(base, "other");
+      fs.mkdirSync(root);
+      send({ type: "create_project", name: "other", path: root });
+      const created = () =>
+        frames.find(
+          (f) => f.type === "workspace_created" && (f.workspace as { cwd: string }).cwd === root,
+        );
+      await until(() => created() !== undefined, "the new lead");
+      const leadId = (created()!.workspace as { id: string }).id;
+      send({ type: "send_message", workspaceId: leadId, content: "hello" });
+      await until(() => launches.length === 1, "lead query");
+      expect(launches[0]).toMatchObject({ model: "claude-opus-5-5", effort: "xhigh" });
+
+      const start_session = launches[0].panel!.tools.find((t) => t.name === "start_session")!;
+      await start_session.handler({ title: "w", cwd: ".", task: "t" });
+      await until(() => launches.length === 2, "worker query");
+      expect(launches[1]).toMatchObject({ model: "claude-opus-5-5", effort: "xhigh" });
     } finally {
       stop();
       log.mockRestore();

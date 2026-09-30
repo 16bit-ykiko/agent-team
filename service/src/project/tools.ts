@@ -178,7 +178,12 @@ export function leadToolset(
           title: z.string().describe("Short title shown in the panel"),
           cwd: z.string().describe("Folder the session works in (repository or a worktree)"),
           task: z.string().describe("The complete task description sent as the first message"),
-          model: z.string().optional().describe("Model id; defaults to yours"),
+          model: z
+            .string()
+            .optional()
+            .describe(
+              `Model id; defaults to ${models[0]}. Another only when the user asked for it`,
+            ),
           objective_id: z.string().optional().describe("Objective this session works on"),
           task_id: z.string().optional().describe("Its task this session carries out"),
         },
