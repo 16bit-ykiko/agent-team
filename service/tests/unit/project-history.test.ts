@@ -295,6 +295,24 @@ describe("the lead's history tools", () => {
       "  3: error: undefined symbol",
       "  4- step 3",
     ]);
+    // The output of a command, whatever it printed.
+    const ninja = await call(lead, "search_history", {
+      call: "ninja",
+      query: "done",
+      session: w.id,
+    });
+    expect(ninja.match(/^- #/gm)).toHaveLength(2);
+    expect(ninja).toContain("tool_output Bash");
+    expect(
+      await call(lead, "search_history", { call: "cmake", query: "done", session: w.id }),
+    ).toContain("nothing matches");
+    // Sessions in a folder.
+    expect(
+      await call(lead, "search_history", { query: "undefined", folder: "wt", in: ["said"] }),
+    ).toContain("nothing matches");
+    expect(
+      await call(lead, "search_history", { query: "undefined", folder: root, in: ["said"] }),
+    ).toContain("message a2");
     // A phrase is not its words anywhere.
     expect(
       await call(lead, "search_history", { query: '"symbol undefined"', in: ["tool_output"] }),

@@ -549,9 +549,13 @@ export class ProjectManager {
   }
 
   private async searchHistory(projectId: string, a: HistorySearch): Promise<string> {
-    const sessions = await this.scope(projectId, a.everywhere, a.session);
+    const folder = a.folder && path.resolve(this.require(projectId).root, a.folder);
+    const sessions = (await this.scope(projectId, a.everywhere, a.session)).filter(
+      (w) => !folder || w.cwd === folder || w.cwd.startsWith(`${folder}/`),
+    );
     const names = new Map(sessions.map((w) => [w.id, w.name]));
-    const kinds: EntryKind[] = a.in ?? (a.tool ? ["tool_call", "tool_output"] : ["said"]);
+    const kinds: EntryKind[] =
+      a.in ?? (a.call ? ["tool_output"] : a.tool ? ["tool_call", "tool_output"] : ["said"]);
     const terms = queryTerms(a.query ?? "");
     const result = await this.host.history.search({
       terms,
@@ -559,6 +563,7 @@ export class ProjectManager {
       caseSensitive: a.caseSensitive,
       kinds,
       tool: a.tool,
+      call: a.call,
       sessions: sessions.map((w) => w.id),
       message: a.message,
       since: a.since,

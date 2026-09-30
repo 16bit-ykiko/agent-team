@@ -63,6 +63,8 @@ export interface HistorySearch {
   regex?: string;
   in?: EntryKind[];
   tool?: string;
+  call?: string;
+  folder?: string;
   session?: string;
   message?: string;
   since?: number;
@@ -239,13 +241,25 @@ export function leadToolset(
             .array(z.enum(ENTRY_KINDS as [EntryKind, ...EntryKind[]]))
             .optional()
             .describe(
-              "Kinds of entry: said (what the user, agents and subagents wrote), thinking, tool_call (a tool's input: the command, the path, the edit), tool_output (what it returned; a failed command's output often starts with \"Exit code\"), error (the session itself failing), subagent (a subagent's task and summary). Default said; with tool, tool_call and tool_output.",
+              "Kinds of entry: said (what the user, agents and subagents wrote), thinking, tool_call (a tool's input: the command, the path, the edit), tool_output (what it returned; a failed command's output often starts with \"Exit code\"), error (the session itself failing), subagent (a subagent's task and summary). Default said; with tool, tool_call and tool_output; with call, tool_output.",
             ),
           tool: z
             .string()
             .optional()
             .describe(
               "Only this tool's calls and output: Bash, Read, Edit, Write, Grep, Agent, …; an MCP tool by its own name (start_session)",
+            ),
+          call: z
+            .string()
+            .optional()
+            .describe(
+              "Only the output of calls holding this text: the command (ctest, ninja), the path",
+            ),
+          folder: z
+            .string()
+            .optional()
+            .describe(
+              "Only sessions working in this folder or below (absolute, or in the repository)",
             ),
           session: z.string().optional().describe("Only this session"),
           message: z.string().optional().describe("Only this message of it"),
@@ -286,6 +300,8 @@ export function leadToolset(
               ...(typeof a.regex === "string" && { regex: a.regex }),
               ...(Array.isArray(a.in) && a.in.length > 0 && { in: a.in as EntryKind[] }),
               ...(typeof a.tool === "string" && { tool: a.tool }),
+              ...(typeof a.call === "string" && { call: a.call }),
+              ...(typeof a.folder === "string" && { folder: a.folder }),
               ...(typeof a.session === "string" && { session: a.session }),
               ...(typeof a.message === "string" && { message: a.message }),
               ...(typeof a.since === "string" && { since: time("since", a.since) }),
@@ -330,8 +346,8 @@ export function leadToolset(
         name: "query_history",
         description: [
           "One read-only SQL statement (SQLite) over the sessions search_history reaches with everywhere, for what search cannot express: counts, grouping, one tool's use across sessions. At most 200 rows; long cells are cut (read_entry reads an entry in full).",
-          "Tables: sessions(id, name, cwd, project, role, created_at, last_active, archived_at); entries(id, session, message, ts, kind, role, tool, depth, lines, text) — kind as in search_history, depth 0 in the session itself and more inside subagents, lines its line count; messages(session, id, seq, ts, kind, status, hash, body) — body is the message as JSON (json_extract(body, '$.model')).",
-          "entries_fts is a trigram index of entries.text, for words of 3 characters or more: `entries.id in (select rowid from entries_fts where entries_fts match '\"words\"')`; shorter ones with instr(text, 'x'). regexp(pattern, text) and iregexp (any case) match JavaScript regular expressions. Times are milliseconds since the epoch.",
+          "Tables: sessions(id, name, cwd, project, role, created_at, last_active, archived_at); entries(id, session, message, ts, kind, role, tool, depth, lines, call, text) — kind as in search_history, depth 0 in the session itself and more inside subagents, lines its line count, call a tool_output's tool_call entry id; messages(session, id, seq, ts, kind, status, hash, body) — body is the message as JSON (json_extract(body, '$.model')).",
+          "entries_fts is a trigram index of entries.text (its rowid is entries.id), for words of 3 characters or more: `entries.id in (select rowid from entries_fts where entries_fts match '\"words\"')`; shorter ones with instr(text, 'x'). regexp(pattern, text) and iregexp (any case) match JavaScript regular expressions. Times are milliseconds since the epoch.",
           "For example: select s.name, count(*) as n from entries e join sessions s on s.id = e.session where e.tool = 'Bash' group by s.name order by n desc.",
         ].join(" "),
         shape: { sql: z.string() },

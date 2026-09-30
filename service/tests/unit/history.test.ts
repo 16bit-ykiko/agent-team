@@ -128,7 +128,7 @@ describe("a message cut into entries", () => {
         kind: "tool_use",
         content: "**Bash**\n```bash\nls -la\n```",
         toolUseId: "t1",
-        toolResult: "a\nb",
+        toolResult: "\x1b[31ma\x1b[0m\nb",
       },
       {
         kind: "tool_use",
@@ -161,6 +161,10 @@ describe("a message cut into entries", () => {
       },
     ];
     const entries = entriesOf(msg("m", "Hello", 1, { events }));
+    // An output knows its call; colours are gone.
+    expect(
+      entries.filter((e) => e.kind === "tool_output").map((e) => entries[e.call!].tool),
+    ).toEqual(["Bash", "Read", "Grep"]);
     expect(entries.map((e) => [e.kind, e.role, e.tool, e.depth, e.text])).toEqual([
       ["said", "agent", null, 0, "Hello"],
       ["thinking", null, null, 0, "hm"],

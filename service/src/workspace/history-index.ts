@@ -10,7 +10,7 @@ import type { Message } from "./workspace";
 // so any substring (a path, an identifier, Chinese) is found. Built in a
 // worker thread (history-worker.ts); derived, so a new INDEX_VERSION or a
 // deleted or damaged file just rebuilds it.
-const INDEX_VERSION = 2;
+const INDEX_VERSION = 3;
 
 export type EntryKind = "said" | "thinking" | "tool_call" | "tool_output" | "error" | "subagent";
 export const ENTRY_KINDS: readonly EntryKind[] = [
@@ -30,6 +30,8 @@ export interface Entry {
   // 0 in the conversation itself, 1 and more inside subagents.
   depth: number;
   text: string;
+  // A tool's output: where its call is among the message's entries.
+  call?: number;
 }
 
 export function entriesOf(m: Message): Entry[] {
@@ -58,10 +60,21 @@ function callText(content: string): string {
   return lines.join("\n");
 }
 
+// Terminal colours and cursor moves in command output.
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+
 function walk(events: StreamEvent[], depth: number, out: Entry[]): void {
-  const tools = new Map<string, string | null>();
-  const add = (kind: EntryKind, text: string | undefined, tool: string | null = null) => {
-    if (text?.trim()) out.push({ kind, role: null, tool, depth, text });
+  const tools = new Map<string, { tool: string | null; call: number }>();
+  // Where the entry went, -1 for none.
+  const add = (
+    kind: EntryKind,
+    text: string | undefined,
+    tool: string | null = null,
+    call = -1,
+  ) => {
+    if (!text?.trim()) return -1;
+    out.push({ kind, role: null, tool, depth, text, ...(call >= 0 && { call }) });
+    return out.length - 1;
   };
   for (const e of events) {
     switch (e.kind) {
@@ -76,15 +89,17 @@ function walk(events: StreamEvent[], depth: number, out: Entry[]): void {
         break;
       case "tool_use": {
         const tool = toolOf(e);
-        if (e.toolUseId) tools.set(e.toolUseId, tool);
-        add("tool_call", callText(e.content) || tool || "", tool);
-        add("tool_output", e.toolResult, tool);
+        const call = add("tool_call", callText(e.content) || tool || "", tool);
+        if (e.toolUseId) tools.set(e.toolUseId, { tool, call });
+        add("tool_output", e.toolResult?.replace(ANSI, ""), tool, call);
         break;
       }
-      case "tool_result":
+      case "tool_result": {
         // Only kept on its own when its call was not found.
-        add("tool_output", e.content, (e.toolUseId && tools.get(e.toolUseId)) || null);
+        const of = e.toolUseId ? tools.get(e.toolUseId) : undefined;
+        add("tool_output", e.content.replace(ANSI, ""), of?.tool ?? null, of?.call ?? -1);
         break;
+      }
       case "error":
         add("error", e.content);
         break;
@@ -113,6 +128,8 @@ export interface SearchQuery {
   kinds?: EntryKind[];
   // A tool's name, or the end of one after "__" (an MCP tool's).
   tool?: string;
+  // Only outputs whose call holds this text (the command, the path).
+  call?: string;
   sessions?: string[];
   message?: string;
   since?: number;
@@ -193,6 +210,7 @@ interface Row {
   tool: string | null;
   depth: number;
   lines: number;
+  call: number | null;
   text?: string;
 }
 
@@ -248,17 +266,17 @@ function matchingLines(text: string, q: SearchQuery, re: RegExp | null) {
     return { lines, moreLines: all.length - lines.length };
   }
   const terms = q.caseSensitive ? q.terms : q.terms.map((t) => t.toLowerCase());
+  // Where the pattern or a word is in the line; -1 for neither.
   const at = (line: string): number => {
-    if (re) {
-      const m = re.exec(line);
-      return m ? m.index : -1;
-    }
+    const found: number[] = [];
+    const m = re?.exec(line);
+    if (m) found.push(m.index);
     const hay = q.caseSensitive ? line : line.toLowerCase();
     for (const t of terms) {
       const i = hay.indexOf(t);
-      if (i >= 0) return i;
+      if (i >= 0) found.push(i);
     }
-    return -1;
+    return found.length ? Math.min(...found) : -1;
   };
   const matches: Array<{ i: number; pos: number }> = [];
   all.forEach((line, i) => {
@@ -313,6 +331,12 @@ function conditions(q: SearchQuery, withKinds = true) {
   if (q.tool) {
     where.push("(lower(e.tool) = lower(?) or lower(e.tool) like ? escape '\\')");
     params.push(q.tool, `%\\_\\_${escapeLike(q.tool.toLowerCase())}`);
+  }
+  if (q.call) {
+    where.push(
+      "exists (select 1 from entries c where c.id = e.call and instr(lower(c.text), lower(?)) > 0)",
+    );
+    params.push(q.call);
   }
   if (q.sessions) {
     where.push("e.session in (select value from json_each(?))");
@@ -394,6 +418,7 @@ export class HistoryIndex {
             tool text,
             depth integer not null,
             lines integer not null,
+            call integer,
             text text not null
           );
           create index entries_message on entries (session, message);
@@ -498,9 +523,10 @@ export class HistoryIndex {
       db.prepare("delete from entries where session = ? and message = ?").run(session, message);
       if (row) {
         const insert = db.prepare(
-          "insert into entries (session, message, ts, kind, role, tool, depth, lines, text) values (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "insert into entries (session, message, ts, kind, role, tool, depth, lines, call, text) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         );
         const fts = db.prepare("insert into entries_fts (rowid, text) values (?, ?)");
+        const ids: Array<number | bigint> = [];
         for (const e of entries) {
           const lines = e.text.split("\n").length;
           const { lastInsertRowid } = insert.run(
@@ -512,8 +538,10 @@ export class HistoryIndex {
             e.tool,
             e.depth,
             lines,
+            e.call !== undefined ? ids[e.call] : null,
             e.text,
           );
+          ids.push(lastInsertRowid);
           fts.run(lastInsertRowid, e.text);
         }
         db.prepare("insert or replace into docs (session, message, hash) values (?, ?, ?)").run(
@@ -537,16 +565,11 @@ export class HistoryIndex {
     const rows = this.db
       .prepare(`select e.* from entries e ${where} order by e.ts desc, e.id desc limit ? offset ?`)
       .all(...params, q.limit + 1, q.offset ?? 0) as unknown as Row[];
-    const callOf = this.db.prepare(
-      `select id, text from entries
-       where session = ? and message = ? and kind = 'tool_call' and id < ?
-       order by id desc limit 1`,
-    );
+    const callOf = this.db.prepare("select id, text from entries where id = ?");
     const hits = rows.slice(0, q.limit).map((r): Hit => {
       const hit: Hit = { ...info(r), ...matchingLines(r.text!, q, re) };
-      if (r.kind === "tool_output") {
-        const call = callOf.get(r.session, r.message, r.id) as
-          { id: number; text: string } | undefined;
+      if (r.call != null) {
+        const call = callOf.get(r.call) as { id: number; text: string } | undefined;
         if (call) hit.call = { entry: call.id, head: call.text.split("\n")[0].slice(0, 160) };
       }
       return hit;
