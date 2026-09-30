@@ -48,61 +48,81 @@ function readJson<T>(file: string): T | null {
   }
 }
 
-// A state without `messages` describes an unloaded (archived) workspace:
-// write its metadata but keep the history already on disk.
-export function saveWorkspace(baseDir: string, ws: WorkspaceState): void {
-  const file = path.join(wsDir(baseDir), `${ws.id}.json`);
-  let state = ws;
-  if (!ws.messages) {
-    let messages: Message[] = [];
-    try {
-      messages = (JSON.parse(fs.readFileSync(file, "utf-8")) as WorkspaceState).messages ?? [];
-    } catch (e) {
-      // Only a missing file means "no history"; overwriting one that failed
-      // to read would replace recoverable bytes with an empty list.
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
-        console.error(`[state] ${ws.id}: history unreadable, not saving`, e);
-        return;
-      }
-    }
-    state = { ...ws, messages };
-  }
-  writeJson(file, state);
+// A workspace is two files: <id>.json, what it is (name, folder, agents),
+// and <id>.jsonl, its history, one message per line, so a search finds a
+// message with ripgrep and parses only the lines that match.
+function metaPath(baseDir: string, id: string): string {
+  return path.join(wsDir(baseDir), `${id}.json`);
 }
 
-// A workspace's saved history, read without blocking (a long one is tens
-// of megabytes); [] when there is none.
-export async function readWorkspaceMessages(
-  baseDir: string,
-  workspaceId: string,
-): Promise<Message[]> {
-  const file = path.join(wsDir(baseDir), `${workspaceId}.json`);
-  try {
-    const ws = JSON.parse(await fs.promises.readFile(file, "utf-8")) as WorkspaceState;
-    return ws.messages ?? [];
-  } catch {
-    return [];
-  }
+export function historyPath(baseDir: string, id: string): string {
+  return path.join(wsDir(baseDir), `${id}.jsonl`);
+}
+
+function writeHistory(file: string, messages: Message[]): void {
+  ensureDir(path.dirname(file));
+  const tmp = `${file}.${process.pid}-${++tmpCounter}.tmp`;
+  fs.writeFileSync(tmp, messages.map((m) => `${JSON.stringify(m)}\n`).join(""), { mode: 0o600 });
+  fs.renameSync(tmp, file);
+}
+
+// JSON.stringify escapes newlines in strings: every line is one message.
+function parseHistory(text: string): Message[] {
+  return text
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Message);
+}
+
+// A state without `messages` describes an unloaded (archived) workspace:
+// its history on disk stays as it is.
+export function saveWorkspace(baseDir: string, ws: WorkspaceState): void {
+  const { messages, ...meta } = ws;
+  if (messages) writeHistory(historyPath(baseDir, ws.id), messages);
+  writeJson(metaPath(baseDir, ws.id), meta);
 }
 
 // Throws when the history exists but cannot be read: an empty list would
 // be saved over it.
 export function loadWorkspaceMessages(baseDir: string, workspaceId: string): Message[] {
-  const file = path.join(wsDir(baseDir), `${workspaceId}.json`);
-  let ws: WorkspaceState;
   try {
-    ws = JSON.parse(fs.readFileSync(file, "utf-8")) as WorkspaceState;
+    return parseHistory(fs.readFileSync(historyPath(baseDir, workspaceId), "utf-8"));
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw e;
   }
-  stripLegacyRaw(ws);
-  return ws.messages ?? [];
+}
+
+// The same without blocking (a long history is tens of megabytes); [] when
+// there is none or it cannot be read.
+export async function readWorkspaceMessages(
+  baseDir: string,
+  workspaceId: string,
+): Promise<Message[]> {
+  try {
+    return parseHistory(await fs.promises.readFile(historyPath(baseDir, workspaceId), "utf-8"));
+  } catch {
+    return [];
+  }
+}
+
+// Workspaces saved before the split carry their history inside <id>.json.
+// It moves to <id>.jsonl; the old file stays, hard-linked (no extra space),
+// under .agent-team/backup-v1/ until someone deletes it.
+function splitHistory(baseDir: string, ws: WorkspaceState): void {
+  const file = metaPath(baseDir, ws.id);
+  writeHistory(historyPath(baseDir, ws.id), ws.messages ?? []);
+  const backup = path.join(dataRoot(baseDir), "backup-v1");
+  ensureDir(backup);
+  const kept = path.join(backup, `${ws.id}.json`);
+  if (!fs.existsSync(kept)) fs.linkSync(file, kept);
+  const { messages: _messages, ...meta } = ws;
+  writeJson(file, meta);
 }
 
 export function deleteWorkspaceState(baseDir: string, workspaceId: string): void {
-  const file = path.join(wsDir(baseDir), `${workspaceId}.json`);
-  if (fs.existsSync(file)) fs.unlinkSync(file);
+  fs.rmSync(metaPath(baseDir, workspaceId), { force: true });
+  fs.rmSync(historyPath(baseDir, workspaceId), { force: true });
   const logs = path.join(dataRoot(baseDir), LOGS_DIR, workspaceId);
   fs.rmSync(logs, { recursive: true, force: true });
   ensuredLogDirs.delete(logs);
@@ -120,17 +140,32 @@ export function loadAll(baseDir: string): WorkspaceState[] {
   if (!index) return [];
 
   const results: WorkspaceState[] = [];
+  let split = 0;
   for (const id of index.workspaceIds) {
-    const file = path.join(wsDir(baseDir), `${id}.json`);
+    const file = metaPath(baseDir, id);
     const ws = readJson<WorkspaceState>(file);
     if (!ws) continue;
-    if (stripLegacyRaw(ws) + stripProviderEnv(ws) > 0) writeJson(file, ws);
+    stripLegacyRaw(ws);
+    const stripped = stripProviderEnv(ws);
+    if (ws.messages) {
+      splitHistory(baseDir, ws);
+      split++;
+    } else if (stripped) writeJson(file, ws);
     else if ((fs.statSync(file).mode & 0o077) !== 0) fs.chmodSync(file, 0o600);
     // Archived histories stay on disk until opened; holding every one of
     // them until the whole list was parsed peaked at over a gigabyte.
-    if (ws.archivedAt) delete ws.messages;
+    delete ws.messages;
+    if (!ws.archivedAt) {
+      try {
+        ws.messages = loadWorkspaceMessages(baseDir, id);
+      } catch (e) {
+        // Left unloaded, so nothing saves an empty history over it.
+        console.error(`[state] ${id}: history unreadable`, e);
+      }
+    }
     results.push(ws);
   }
+  if (split) console.log(`Moved ${split} histories to one message per line (.jsonl)`);
   return results;
 }
 

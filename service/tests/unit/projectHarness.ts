@@ -32,7 +32,12 @@ export function setupProjects() {
   registry.register(new FakeHost());
   const workspaces = new Map<string, Workspace>();
   const frames: Array<Record<string, unknown>> = [];
-  const disk = new Map<string, Message[]>();
+  const historyFile = (w: Workspace) => path.join(base, `${w.id}.jsonl`);
+  // Saves a workspace's history where the host finds it, and unloads it.
+  const store = (w: Workspace, messages: Message[]) => {
+    fs.writeFileSync(historyFile(w), messages.map((m) => `${JSON.stringify(m)}\n`).join(""));
+    w.unloadMessages();
+  };
   const saved: string[] = [];
   const cb: WorkspaceCallbacks = {
     onNewMessage: () => {},
@@ -66,12 +71,12 @@ export function setupProjects() {
       w.archivedAt = null;
       return true;
     },
-    // Histories "on disk", for workspaces whose messages are not loaded.
+    // Histories on disk, one message per line, for workspaces not loaded.
     loadWorkspace: (w) => {
-      if (!w.messagesLoaded) w.setMessages(disk.get(w.id) ?? []);
+      if (!w.messagesLoaded) w.setMessages(readHistory(historyFile(w)));
       return true;
     },
-    readMessages: (w) => Promise.resolve(disk.get(w.id) ?? w.getMessages()),
+    historyFile: (w) => historyFile(w),
     persistWorkspace: () => {},
     saveWorkspaceNow: (w) => void saved.push(w.id),
     workspaceChanged: (w) => void frames.push({ type: "workspace_updated", id: w.id }),
@@ -107,7 +112,7 @@ export function setupProjects() {
     root,
     registry,
     host,
-    disk,
+    store,
     manager,
     workspaces,
     frames,
@@ -128,4 +133,13 @@ export async function withTask(
 ): Promise<void> {
   await call(lead, "write_objective", { id: "core/modules", title: "Modules", goal: "C++20" });
   await call(lead, "add_items", { objective_id: "core/modules", tasks: ["implement"] });
+}
+
+function readHistory(file: string): Message[] {
+  if (!fs.existsSync(file)) return [];
+  return fs
+    .readFileSync(file, "utf-8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as Message);
 }

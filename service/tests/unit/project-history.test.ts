@@ -31,8 +31,7 @@ function setup() {
     w.lastActivityAt = messages.at(-1)?.timestamp ?? 0;
     if (archived) {
       w.archivedAt = 1;
-      s.disk.set(w.id, messages);
-      w.unloadMessages();
+      s.store(w, messages);
     } else w.setMessages(messages);
     s.workspaces.set(w.id, w);
     return w;

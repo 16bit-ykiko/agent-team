@@ -234,10 +234,16 @@ async function start(base: string, web: string) {
   return { server, frames, send, stop };
 }
 
-const readState = (base: string, id: string) =>
-  JSON.parse(
-    fs.readFileSync(path.join(base, ".agent-team", "cache", "workspaces", `${id}.json`), "utf-8"),
-  ) as WorkspaceState;
+// A workspace as saved: what it is, and its history, one message per line.
+const readState = (base: string, id: string): WorkspaceState => {
+  const dir = path.join(base, ".agent-team", "cache", "workspaces");
+  const meta = JSON.parse(fs.readFileSync(path.join(dir, `${id}.json`), "utf-8")) as WorkspaceState;
+  const lines = fs
+    .readFileSync(path.join(dir, `${id}.jsonl`), "utf-8")
+    .split("\n")
+    .filter(Boolean);
+  return { ...meta, messages: lines.map((l) => JSON.parse(l) as Message) };
+};
 
 describe("server restart with projects", () => {
   it("re-attaches the panel tools and delivers to an archived worker without losing its history", async () => {

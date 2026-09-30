@@ -4,9 +4,9 @@ import { AGENT_PRESETS, MODEL_OPTIONS } from "../config/presets";
 import { resolveWorkspacePath } from "../repo/dirs";
 import { gitStatus, gitWorktrees, repositoryRoot } from "../repo/git";
 import { searchMessages } from "../workspace/search";
+import { searchStored } from "../workspace/history-search";
 import {
   originLabel,
-  type Message,
   type MessageOrigin,
   type ProjectLink,
   type Workspace,
@@ -57,8 +57,8 @@ export interface ProjectHost {
   // Unarchives and loads the history; false when it cannot be read.
   restoreWorkspace(workspace: Workspace): boolean;
   loadWorkspace(workspace: Workspace): boolean;
-  // Its saved history, without loading it into the workspace.
-  readMessages(workspace: Workspace): Promise<Message[]>;
+  // Where its history is saved, one message per line.
+  historyFile(workspace: Workspace): string;
   persistWorkspace(workspace: Workspace): void;
   // Right away: a shutdown drops pending debounced saves of unloaded
   // (archived) workspaces.
@@ -489,6 +489,7 @@ export class ProjectManager {
         .filter(Boolean);
       return [
         `- ${w.id} "${w.name}" in ${w.cwd} · ${day(w.createdAt)} → ${day(w.lastActivityAt)}`,
+        `  history: ${this.host.historyFile(w)}`,
         ...transcripts.map((t) => `  transcript: ${t}`),
       ].join("\n");
     });
@@ -501,16 +502,25 @@ export class ProjectManager {
     query: string,
     everywhere: boolean,
     limit: number,
+    toolOutput: boolean,
   ): Promise<string> {
-    // One history at a time, keeping only its hits: all of them together are
-    // hundreds of megabytes, and the server keeps answering in between.
-    const found = [];
-    for (const w of [...this.workers(projectId), ...(await this.history(projectId, everywhere))]) {
-      const messages = w.messagesLoaded ? w.getMessages() : await this.host.readMessages(w);
-      found.push(...searchMessages([{ id: w.id, name: w.name, messages }], query, limit));
-      await new Promise((r) => setImmediate(r));
-    }
-    const hits = found.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+    // What is in memory may be newer than its file; the rest is searched on
+    // disk with ripgrep.
+    const all = [...this.workers(projectId), ...(await this.history(projectId, everywhere))];
+    const loaded = all.filter((w) => w.messagesLoaded);
+    const stored = all
+      .filter((w) => !w.messagesLoaded)
+      .map((w) => ({ id: w.id, name: w.name, file: this.host.historyFile(w) }));
+    const hits = [
+      ...searchMessages(
+        loaded.map((w) => ({ id: w.id, name: w.name, messages: w.getMessages() })),
+        query,
+        limit,
+      ),
+      ...(await searchStored(stored, query, { limit, toolOutput })),
+    ]
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, limit);
     if (hits.length === 0) return `(nothing matches "${query}")`;
     return hits
       .map(
@@ -802,8 +812,8 @@ export class ProjectManager {
     startSession: (pid, a) => this.startSession(pid, a),
     readSession: (pid, sid, last, around) => this.readSession(pid, sid, last, around),
     listHistory: (pid, everywhere, limit) => this.listHistory(pid, everywhere, limit),
-    searchHistory: (pid, query, everywhere, limit) =>
-      this.searchHistory(pid, query, everywhere, limit),
+    searchHistory: (pid, query, everywhere, limit, toolOutput) =>
+      this.searchHistory(pid, query, everywhere, limit, toolOutput),
     messageSession: (pid, sid, text) => {
       const w = this.session(pid, sid);
       const outcome = this.deliver(w, text, ...this.fromLead(pid, text));

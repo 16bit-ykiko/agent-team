@@ -12,7 +12,7 @@ import {
   saveIndex,
   loadAll,
   loadWorkspaceMessages,
-  readWorkspaceMessages,
+  historyPath,
   appendLog,
   isLoggedEvent,
   loadSettings,
@@ -25,7 +25,8 @@ import { CommandInfo, StreamEvent } from "../session/claude";
 import { HostRegistry, LocalHost } from "../session/host";
 import { completeDirs, resolveWorkspacePath } from "../repo/dirs";
 import { GitScanner } from "../repo/scanner";
-import { searchMessages } from "../workspace/search";
+import { searchMessages, type SearchHit } from "../workspace/search";
+import { searchStored } from "../workspace/history-search";
 import { summarizeMessages } from "../workspace/summary";
 import { ProjectManager, type ProjectHost } from "../project/manager";
 import { Auth } from "./auth";
@@ -337,15 +338,9 @@ export class Server {
 
       case "search": {
         const query = (msg.query as string) ?? "";
-        // Archived workspaces are unloaded; search covers what is in memory.
-        const sources = [...this.workspaces.values()]
-          .filter((w) => w.messagesLoaded)
-          .map((w) => ({ id: w.id, name: w.name, messages: w.messages }));
-        this.sendJson(ws, {
-          type: "search_results",
-          query,
-          hits: searchMessages(sources, query),
-        });
+        void this.search(query).then((hits) =>
+          this.sendJson(ws, { type: "search_results", query, hits }),
+        );
         return;
       }
 
@@ -961,6 +956,21 @@ systemctl --user restart agent-team-server
     }
   }
 
+  // Every history: what is in memory as it is, the rest (archived ones) on
+  // disk with ripgrep.
+  private async search(query: string): Promise<SearchHit[]> {
+    const all = [...this.workspaces.values()];
+    const loaded = all
+      .filter((w) => w.messagesLoaded)
+      .map((w) => ({ id: w.id, name: w.name, messages: w.messages }));
+    const stored = all
+      .filter((w) => !w.messagesLoaded)
+      .map((w) => ({ id: w.id, name: w.name, file: historyPath(this.baseDir, w.id) }));
+    return [...searchMessages(loaded, query), ...(await searchStored(stored, query, { limit: 50 }))]
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 50);
+  }
+
   private projectHost(): ProjectHost {
     return {
       workspaces: () => this.workspaces.values(),
@@ -975,7 +985,7 @@ systemctl --user restart agent-team-server
       },
       restoreWorkspace: (w) => this.unarchiveWorkspace(w),
       loadWorkspace: (w) => this.ensureLoaded(w),
-      readMessages: (w) => readWorkspaceMessages(this.baseDir, w.id),
+      historyFile: (w) => historyPath(this.baseDir, w.id),
       persistWorkspace: (w) => this.persistWorkspace(w.id),
       saveWorkspaceNow: (w) => this.persistWorkspaceNow(w.id),
       workspaceChanged: (w) =>

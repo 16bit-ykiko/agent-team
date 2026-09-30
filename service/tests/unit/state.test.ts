@@ -64,17 +64,43 @@ describe("legacy raw stripping", () => {
     expect(stripLegacyRaw(ws)).toBe(0);
   });
 
-  it("rewrites the state file on load so the cleanup happens once", () => {
+  it("moves a history saved inside the state file to its own, once, without the legacy raw", () => {
     const base = tmpBase();
-    saveWorkspace(base, wsWithRaw());
+    const dir = path.join(base, ".agent-team", "cache", "workspaces");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "ws-1.json");
+    fs.writeFileSync(file, JSON.stringify(wsWithRaw()));
     saveIndex(base, ["ws-1"]);
-    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.json");
-    expect(fs.readFileSync(file, "utf-8")).toContain('"raw"');
 
     const loaded = loadAll(base);
     expect(loaded).toHaveLength(1);
+    expect(loaded[0].messages).toHaveLength(1);
     expect(JSON.stringify(loaded[0])).not.toContain('"raw"');
-    expect(fs.readFileSync(file, "utf-8")).not.toContain('"raw"');
+    expect(JSON.parse(fs.readFileSync(file, "utf-8"))).not.toHaveProperty("messages");
+    const lines = fs.readFileSync(path.join(dir, "ws-1.jsonl"), "utf-8").split("\n");
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0])).toMatchObject({ id: "m1", content: "x" });
+    expect(lines[0]).not.toContain('"raw"');
+    // The file as it was, kept aside.
+    const kept = path.join(base, ".agent-team", "backup-v1", "ws-1.json");
+    expect((JSON.parse(fs.readFileSync(kept, "utf-8")) as WorkspaceState).messages).toHaveLength(1);
+    // Nothing left to move the second time.
+    const before = fs.statSync(path.join(dir, "ws-1.jsonl")).mtimeMs;
+    loadAll(base);
+    expect(fs.statSync(path.join(dir, "ws-1.jsonl")).mtimeMs).toBe(before);
+  });
+
+  it("keeps one message per line whatever its text holds", () => {
+    const base = tmpBase();
+    const ws = wsWithRaw();
+    ws.messages![0].content = 'line one\nline "two"\n\n中文';
+    saveWorkspace(base, ws);
+    const text = fs.readFileSync(
+      path.join(base, ".agent-team", "cache", "workspaces", "ws-1.jsonl"),
+      "utf-8",
+    );
+    expect(text.split("\n")).toHaveLength(2);
+    expect(loadWorkspaceMessages(base, "ws-1")[0].content).toBe('line one\nline "two"\n\n中文');
   });
 });
 
@@ -103,10 +129,10 @@ describe("unloaded workspaces", () => {
     expect(loadWorkspaceMessages(base, "ws-1")).toEqual([]);
   });
 
-  it("saving an unloaded workspace never overwrites a history it could not read", () => {
+  it("saving an unloaded workspace never touches its history, even one it could not read", () => {
     const base = tmpBase();
     saveWorkspace(base, wsWithRaw());
-    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.json");
+    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.jsonl");
     const truncated = fs.readFileSync(file, "utf-8").slice(0, 40);
     fs.writeFileSync(file, truncated);
     saveWorkspace(base, { ...wsWithRaw(), messages: undefined, archivedAt: 1 });
@@ -123,7 +149,7 @@ describe("unloaded workspaces", () => {
   it("an unreadable history is an error, not an empty one", () => {
     const base = tmpBase();
     saveWorkspace(base, wsWithRaw());
-    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.json");
+    const file = path.join(base, ".agent-team", "cache", "workspaces", "ws-1.jsonl");
     fs.chmodSync(file, 0o000);
     expect(() => loadWorkspaceMessages(base, "ws-1")).toThrow();
     fs.chmodSync(file, 0o600);
