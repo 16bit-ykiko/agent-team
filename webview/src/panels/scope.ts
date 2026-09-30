@@ -58,12 +58,28 @@ export function stateSummary(states: SessionState[]): string {
   return parts.length ? parts.join(" · ") : "idle";
 }
 
-// Under a panel's title: whose sessions, how many, and what they do.
+// Under a panel's title: whose sessions, how many, and what they do; for a
+// workspace on its own, what its agents do.
 export function scopeSummary(sessions: Workspace[], project: Project | undefined): string {
+  if (!project) {
+    const w = sessions[0];
+    if (!w) return "";
+    if (w.archivedAt != null) return `${w.name} · archived`;
+    const n = w.agents.length;
+    return `${w.name} · ${n} agent${n === 1 ? "" : "s"} · ${stateSummary(w.agents.map(agentState))}`;
+  }
   const live = sessions.filter((w) => w.archivedAt == null);
-  const whose = project?.name ?? sessions[0]?.name ?? "";
-  const count = project ? ` · ${live.length} session${live.length === 1 ? "" : "s"}` : "";
-  return `${whose}${count} · ${stateSummary(live.map(sessionState))}`;
+  const count = `${live.length} session${live.length === 1 ? "" : "s"}`;
+  return `${project.name} · ${count} · ${stateSummary(live.map(sessionState))}`;
+}
+
+// Within its project a session goes by what follows the project's name
+// ("clice · lead" is the lead).
+export function sessionName(w: Workspace, project: Project | undefined): string {
+  const prefix = project ? `${project.name} · ` : null;
+  return prefix && w.name.startsWith(prefix) && w.name.length > prefix.length
+    ? w.name.slice(prefix.length)
+    : w.name;
 }
 
 // The folders the Files panel offers: each live session's working directory

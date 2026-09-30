@@ -301,12 +301,13 @@ describe("the agents panel in the app", () => {
     expect(document.querySelector(".side-panel")).not.toBeNull();
   });
 
-  it("fits a width saved on a wider screen", () => {
+  it("fits a width saved on a wider screen, leaving the chat its room", () => {
     localStorage.setItem("listPanelWidth", "5000");
     vi.stubGlobal("innerWidth", 1000);
     boot();
     fireEvent.click(document.querySelector(".agents-chip")!);
-    expect((document.querySelector(".side-panel") as HTMLElement).style.width).toBe("700px");
+    // 1000 - 260 (sidebar) - 44 (rail) - 360 (the chat's least).
+    expect((document.querySelector(".side-panel") as HTMLElement).style.width).toBe("336px");
   });
 
   it("grows with the window until dragged, and goes back to that on a double-click", () => {
@@ -373,5 +374,70 @@ describe("the agents panel in the app", () => {
       workspaceId: "lead",
       model: "claude-opus-5-5",
     });
+  });
+});
+
+describe("an agent's state line", () => {
+  const task = { id: "t1", type: "local_bash", description: "build", since: 1 };
+  const lines = (session: Workspace, connected = true) => {
+    const { container, unmount } = render(
+      <AgentsPanel
+        sessions={[session]}
+        project={undefined}
+        activeWsId={session.id}
+        connected={connected}
+        actions={{
+          onOpen: vi.fn(),
+          onStop: vi.fn(),
+          onArchive: vi.fn(),
+          onRestore: vi.fn(),
+          onAddAgent: vi.fn(),
+          onClearContext: vi.fn(),
+          onRemoveAgent: vi.fn(),
+        }}
+      />,
+    );
+    const out = Object.fromEntries(
+      [...container.querySelectorAll(".ap-agent")].map((row) => [
+        row.querySelector(".ap-agent-name")!.textContent,
+        row.querySelector(".ap-agent-state")?.textContent ?? null,
+      ]),
+    );
+    unmount();
+    return out;
+  };
+
+  it("is left out for an idle agent, kept for anything worth knowing", () => {
+    expect(
+      lines(
+        ws("s", {
+          agents: [
+            agent("idle"),
+            agent("busy", { state: "working", activity: "running tests" }),
+            agent("bg", { state: "waiting", backgroundTasks: [task] }),
+            agent("nap", { state: "sleeping", backgroundTasks: [task] }),
+          ],
+        }),
+      ),
+    ).toEqual({
+      idle: null,
+      busy: "running tests",
+      bg: "waiting on background work",
+      nap: "sleeping · 1 in background",
+    });
+    expect(lines(ws("s", { agents: [agent("idle")] }), false)).toEqual({ idle: "offline" });
+    expect(lines(ws("s", { agents: [agent("idle")], archivedAt: 1 }))).toEqual({
+      idle: "archived",
+    });
+  });
+});
+
+describe("the summary of a workspace on its own", () => {
+  it("counts its agents, not its one session", () => {
+    const solo = ws("solo", {
+      agents: [agent("a", { state: "working" }), agent("b", { state: "working" })],
+    });
+    expect(scopeSummary([solo], undefined)).toBe("solo · 2 agents · 2 working");
+    expect(scopeSummary([{ ...solo, archivedAt: 1 }], undefined)).toBe("solo · archived");
   });
 });

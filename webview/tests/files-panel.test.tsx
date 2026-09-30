@@ -346,3 +346,91 @@ describe("file references in replies", () => {
     expect(container.querySelector(".file-ref")).toBeNull();
   });
 });
+
+describe("the Files panel's bar and listing", () => {
+  let views: Record<string, FileView>;
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const path = new URLSearchParams(url.split("?")[1]).get("path")!;
+        const v = views[path];
+        return Promise.resolve({
+          ok: !!v,
+          status: v ? 200 : 404,
+          json: () => Promise.resolve(v ?? { error: "No such file or directory" }),
+        });
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const repoRoots: FileRoot[] = [
+    { label: "repo · main", path: "/repo" },
+    { label: "fix · fix/crash", path: "/repo/.worktrees/fix" },
+  ];
+  const open = (path: string, roots: FileRoot[]) =>
+    render(<FilesPanel wsId="w1" target={{ path }} roots={roots} />);
+  const text = (path: string): FileView => ({
+    kind: "text",
+    path,
+    size: 2,
+    content: "x\n",
+    truncated: false,
+  });
+
+  it("lists a folder without a '..' row, the folder picker inline after Up", async () => {
+    views = {
+      "/repo/src": {
+        kind: "dir",
+        path: "/repo/src",
+        truncated: false,
+        entries: [
+          { name: "a.ts", dir: false, size: 10 },
+          { name: "lib", dir: true, size: 0 },
+        ],
+      },
+    };
+    const { container } = open("/repo/src", repoRoots);
+    await waitFor(() => expect(container.querySelector(".dir-view")).not.toBeNull());
+    const names = [...container.querySelectorAll(".dir-entry-name")].map((n) => n.textContent);
+    expect(names).toEqual(["a.ts", "lib/"]);
+    const bar = container.querySelector(".fp-bar")!;
+    expect([...bar.children].slice(0, 3).map((c) => c.className)).toEqual([
+      "fp-btn fp-up",
+      "fp-roots",
+      "fp-path",
+    ]);
+  });
+
+  it("shows a path from the deepest folder holding it, '/' at a folder's top", async () => {
+    views = {
+      "/repo/.worktrees/fix/src/a.ts": text("/repo/.worktrees/fix/src/a.ts"),
+      "/repo": { kind: "dir", path: "/repo", truncated: false, entries: [] },
+      ".": { kind: "dir", path: "/w", truncated: false, entries: [] },
+    };
+    const inTree = open("/repo/.worktrees/fix/src/a.ts", repoRoots);
+    await waitFor(() => expect(inTree.container.querySelector(".code-view")).not.toBeNull());
+    expect(inTree.container.querySelector(".fp-path")!.textContent).toBe("src/a.ts");
+    inTree.unmount();
+    const top = open("/repo", repoRoots);
+    await waitFor(() => expect(top.container.querySelector(".dir-view")).not.toBeNull());
+    expect(top.container.querySelector(".fp-path")!.textContent).toBe("/");
+    top.unmount();
+    const single = open(".", [{ label: "w", path: "/w" }]);
+    await waitFor(() => expect(single.container.querySelector(".dir-view")).not.toBeNull());
+    expect(single.container.querySelector(".fp-path")!.textContent).toBe("w");
+    expect(single.container.querySelector(".fp-path")!.getAttribute("title")).toBe("/w");
+  });
+
+  it("counts a path under the root folder '/' as in it", async () => {
+    views = { "/etc/hosts": text("/etc/hosts") };
+    const { container, getByLabelText } = open("/etc/hosts", [
+      { label: "root", path: "/" },
+      { label: "repo", path: "/repo" },
+    ]);
+    await waitFor(() => expect(container.querySelector(".code-view")).not.toBeNull());
+    expect((getByLabelText("Folder") as HTMLSelectElement).value).toBe("/");
+    expect(container.querySelector(".fp-path")!.textContent).toBe("etc/hosts");
+  });
+});

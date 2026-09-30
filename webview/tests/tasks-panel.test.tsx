@@ -209,3 +209,39 @@ describe("cancelling a wake-up", () => {
     ).toBe(false);
   });
 });
+
+describe("session names in a project", () => {
+  it("go without the project's name, as in the Agents panel", () => {
+    const project = {
+      id: "p1",
+      name: "clice",
+      root: "/w",
+      leadWorkspaceId: "l",
+      createdAt: 0,
+      objectives: [],
+    };
+    const leadSession = ws(
+      "l",
+      [
+        agent("a", {
+          state: "waiting",
+          backgroundTasks: [{ id: "b", type: "local_bash", description: "x", since: NOW }],
+        }),
+      ],
+      { name: "clice · lead", projectLink: { projectId: "p1", role: "lead" } },
+    );
+    const { container } = render(
+      <TasksPanel
+        sessions={[leadSession]}
+        project={project}
+        actions={{
+          onOpen: vi.fn(),
+          onStopTask: vi.fn(),
+          onCancelWake: vi.fn(),
+          onStopAll: vi.fn(),
+        }}
+      />,
+    );
+    expect(container.querySelector(".ap-session-name")!.textContent).toBe("lead");
+  });
+});

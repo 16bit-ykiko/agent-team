@@ -9,7 +9,7 @@ import {
 } from "./state/useServer";
 import { groupWorkspaces } from "./sidebar/groups";
 import { agentQueues, agentState, isAgentActive, pillLabel } from "./workspace/agents";
-import { SidePanel } from "./panels/SidePanel";
+import { SidePanel, useViewportWidth } from "./panels/SidePanel";
 import { Rail, type RailItem } from "./panels/Rail";
 import { AgentsPanel, type AgentsPanelActions } from "./panels/AgentsPanel";
 import { TasksPanel, workCount, type TasksPanelActions } from "./panels/TasksPanel";
@@ -268,7 +268,7 @@ export function App() {
     const observer = new ResizeObserver(() =>
       appRef.current?.style.setProperty("--chat-header-height", `${el.offsetHeight}px`),
     );
-    observer.observe(el);
+    observer.observe(el, { box: "border-box" });
     return () => observer.disconnect();
   }, []);
 
@@ -295,22 +295,30 @@ export function App() {
   const [openPanel, setOpenPanel] = useState<PanelId | null>(null);
   // Pinned unless chosen otherwise where the chat keeps room beside a panel:
   // floating over it, a panel cuts its lines mid-word.
-  const [panelPinned, setPanelPinned] = useState(() => {
+  const [dockChoice, setDockChoice] = useState(() => {
     const saved = readSetting("panelDock");
-    return saved ? saved === "1" : window.innerWidth >= WIDE_WINDOW;
+    return saved ? saved === "1" : null;
   });
-  const [panelMax, setPanelMax] = useState(false);
+  const viewport = useViewportWidth();
+  const panelPinned = dockChoice ?? viewport >= WIDE_WINDOW;
+  // Maximised for the workspace it was maximised in: opening another one
+  // shows its chat.
+  const [maxFor, setMaxFor] = useState<string | null>(null);
+  const panelMax = maxFor !== null && maxFor === activeWsId;
   const [listWidth, setListWidth] = useSavedWidth("listPanelWidth");
   const [filesWidth, setFilesWidth] = useSavedWidth("filesPanelWidth");
   const togglePanel = useCallback((id: PanelId) => {
     setOpenPanel((cur) => (cur === id ? null : id));
-    setPanelMax(false);
+    setMaxFor(null);
   }, []);
   const closePanel = useCallback(() => {
     setOpenPanel(null);
-    setPanelMax(false);
+    setMaxFor(null);
   }, []);
-  const toggleMax = useCallback(() => setPanelMax((m) => !m), []);
+  const toggleMax = useCallback(
+    () => setMaxFor((m) => (m === activeWsId ? null : activeWsId)),
+    [activeWsId],
+  );
   // What the Files panel shows: a path named in the chat (relative to the
   // workspace it was named in), kept while the chat open is in the same
   // project (`scope`), or else the open workspace's folder. `seq` starts the
@@ -327,7 +335,7 @@ export function App() {
   }, []);
   const togglePin = useCallback(() => {
     writeSetting("panelDock", panelPinned ? "0" : "1");
-    setPanelPinned(!panelPinned);
+    setDockChoice(!panelPinned);
   }, [panelPinned]);
   // The project whose board page is open, whichever workspace is.
   const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
@@ -1588,7 +1596,7 @@ export function App() {
           onClose={closePanel}
           onWidth={setListWidth}
         >
-          <TasksPanel sessions={scope} actions={taskActions} />
+          <TasksPanel sessions={scope} project={activeProject} actions={taskActions} />
         </SidePanel>
       )}
       {files && openPanel === "files" && (
@@ -1698,7 +1706,9 @@ export function App() {
 // "name — folder", unless the name already starts with the folder's
 // ("clice · lead" of the project clice).
 function headerTitle(ws: Workspace): string {
-  return ws.name.startsWith(ws.project) ? ws.name : `${ws.name} — ${ws.project}`;
+  return ws.name === ws.project || ws.name.startsWith(`${ws.project} `)
+    ? ws.name
+    : `${ws.name} — ${ws.project}`;
 }
 
 function plural(n: number, noun: string): string {

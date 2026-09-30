@@ -242,7 +242,7 @@ export function FilesPanel({
   };
   // Worktrees usually live inside the repository: the deepest folder wins.
   const root = roots
-    .filter((r) => path === r.path || path.startsWith(`${r.path}/`))
+    .filter((r) => path === r.path || path.startsWith(r.path.endsWith("/") ? r.path : `${r.path}/`))
     .reduce<FileRoot | undefined>(
       (a, r) => (a && a.path.length >= r.path.length ? a : r),
       undefined,

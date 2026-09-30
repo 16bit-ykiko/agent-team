@@ -3,7 +3,7 @@ import type { AgentInfo, Project, Workspace } from "../state/useServer";
 import { AgentAvatar } from "../workspace/avatar";
 import { agentState, stateLabel } from "../workspace/agents";
 import { formatRelative, formatTokens, shortModel } from "../format";
-import { sessionState, sessionWork } from "./scope";
+import { sessionName, sessionState, sessionWork } from "./scope";
 import { Icon } from "./Icon";
 
 export interface AgentsPanelActions {
@@ -92,7 +92,7 @@ function SessionCard({
   // Stop ends a running turn; background work stops in the Tasks panel, and
   // a sleeping session archives like an idle one.
   const busy = state === "working" || state === "waiting";
-  const name = shortName(w, project);
+  const name = sessionName(w, project);
   return (
     <section className={`ap-session ss-${state}${active ? " active" : ""}`} aria-label={w.name}>
       <header className="ap-session-head">
@@ -223,15 +223,6 @@ function AgentRow({
       )}
     </div>
   );
-}
-
-// Within its project a session goes by what follows the project's name
-// ("clice · lead" is the lead).
-function shortName(w: Workspace, project: Project | undefined): string {
-  const prefix = project ? `${project.name} · ` : null;
-  return prefix && w.name.startsWith(prefix) && w.name.length > prefix.length
-    ? w.name.slice(prefix.length)
-    : w.name;
 }
 
 // The last two folders of a path: enough to tell worktrees apart.

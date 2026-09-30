@@ -1,9 +1,9 @@
 import { memo, useEffect, useState } from "react";
-import type { AgentInfo, Workspace } from "../state/useServer";
+import type { AgentInfo, Project, Workspace } from "../state/useServer";
 import { AgentAvatar } from "../workspace/avatar";
 import { agentState } from "../workspace/agents";
 import { formatDuration } from "../format";
-import { sessionState } from "./scope";
+import { sessionName, sessionState } from "./scope";
 
 export interface TasksPanelActions {
   onOpen: (workspaceId: string) => void;
@@ -23,9 +23,11 @@ const TYPE_LABEL: Record<string, string> = {
 // chat's Stop ends a turn and leaves all of this running.
 export const TasksPanel = memo(function TasksPanel({
   sessions,
+  project,
   actions,
 }: {
   sessions: Workspace[];
+  project?: Project;
   actions: TasksPanelActions;
 }) {
   const now = useNow(1000);
@@ -49,7 +51,7 @@ export const TasksPanel = memo(function TasksPanel({
               title="Open this session"
               onClick={() => actions.onOpen(w.id)}
             >
-              {w.name}
+              {sessionName(w, project)}
             </button>
             <button
               className="panel-btn danger tp-stop-all"

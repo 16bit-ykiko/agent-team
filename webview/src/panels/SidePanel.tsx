@@ -2,6 +2,19 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "./Icon";
 
 export const PANEL_MIN_WIDTH = 300;
+// The chat beside (or under) a panel keeps at least this much.
+const MIN_CHAT_WIDTH = 360;
+const RAIL_WIDTH = 44;
+
+export function useViewportWidth(): number {
+  const [width, setWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return width;
+}
 
 // Width until the user drags one: lists (agents, tasks) and code grow with
 // the window, so a full-screen window gives them the room it has.
@@ -49,13 +62,11 @@ export function SidePanel({
   const drag = useRef<{ x: number; w: number } | null>(null);
   const self = useRef<HTMLElement>(null);
   // A width saved on a wide screen must not bury the chat on a narrow one.
-  const [viewport, setViewport] = useState(window.innerWidth);
-  useEffect(() => {
-    const onResize = () => setViewport(window.innerWidth);
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-  const maxWidth = Math.max(PANEL_MIN_WIDTH, viewport * 0.7);
+  const viewport = useViewportWidth();
+  const maxWidth = Math.max(
+    PANEL_MIN_WIDTH,
+    Math.min(viewport * 0.7, viewport - inset - RAIL_WIDTH - MIN_CHAT_WIDTH),
+  );
   const shown = Math.round(Math.min(width ?? autoPanelWidth(kind, viewport), maxWidth));
   // Focus moves in, so Escape closes the panel just opened.
   useEffect(() => self.current?.focus({ preventScroll: true }), []);
