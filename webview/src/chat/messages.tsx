@@ -696,6 +696,13 @@ export class MessageBoundary extends Component<
   }
 }
 
+// The server leads an agent's notices with its avatar ("avatars/Alice.jpg
+// **Alice** joined the team"): an image, not text to show.
+function systemAvatar(content: string): [string | null, string] {
+  const m = /^(avatars\/[^\s]+\.(?:jpe?g|png|webp|gif)) (.*)$/is.exec(content);
+  return m ? [m[1], m[2]] : [null, content];
+}
+
 export const MessageItem = memo(function MessageItem({
   msg,
   agents,
@@ -740,9 +747,11 @@ export const MessageItem = memo(function MessageItem({
   );
 
   if (msg.kind === "system") {
+    const [avatar, text] = systemAvatar(msg.content);
     return (
       <div className="system-message">
-        <MdBlock>{msg.content}</MdBlock>
+        {avatar && <img className="system-avatar" src={avatar} alt="" />}
+        <MdBlock>{text}</MdBlock>
       </div>
     );
   }

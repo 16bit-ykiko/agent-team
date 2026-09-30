@@ -456,3 +456,32 @@ describe("legacy messages without any contentOffset", () => {
     expect(order).toEqual(["step", "text"]);
   });
 });
+
+describe("system messages", () => {
+  const system = (content: string): Message => ({
+    id: "s",
+    kind: "system",
+    agentId: null,
+    content,
+    timestamp: 1,
+    status: "done",
+  });
+
+  it("show an image avatar as the image, not its path", () => {
+    const { container } = render(
+      <MessageItem msg={system("avatars/Alice.jpg **Alice** joined the team")} agents={[]} />,
+    );
+    expect(container.querySelector(".system-avatar")!.getAttribute("src")).toBe(
+      "avatars/Alice.jpg",
+    );
+    expect(container.textContent).toBe("Alice joined the team");
+  });
+
+  it("leave an emoji avatar, and other text, as written", () => {
+    const { container } = render(
+      <MessageItem msg={system("🤖 **Bot** context cleared")} agents={[]} />,
+    );
+    expect(container.querySelector(".system-avatar")).toBeNull();
+    expect(container.textContent).toBe("🤖 Bot context cleared");
+  });
+});

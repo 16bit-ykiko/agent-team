@@ -1735,6 +1735,14 @@ span.katex-display {
 .system-message p {
   margin: 0;
 }
+.system-avatar {
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  border-radius: 50%;
+  object-fit: cover;
+  align-self: center;
+}
 .system-message strong {
   color: var(--text-secondary);
   font-weight: 600;
