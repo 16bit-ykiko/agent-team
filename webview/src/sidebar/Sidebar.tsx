@@ -1,6 +1,11 @@
 import { memo, useState } from "react";
 import type { Workspace, Project, SystemStatus, SearchHit } from "../state/useServer";
-import { groupWorkspaces, isGroupExpanded, archivedWorkspaces } from "./groups";
+import {
+  groupWorkspaces,
+  isGroupExpanded,
+  archivedWorkspaces,
+  type WorkspaceGroup,
+} from "./groups";
 import { isAgentActive } from "../workspace/agents";
 import { Icon } from "../panels/Icon";
 import { formatBytes, formatRelative, formatResetTime } from "../format";
@@ -134,7 +139,9 @@ export interface SidebarProps {
   onReplayDemo: () => void;
   // Save a layout snapshot on the server (see debugSnapshot.ts).
   onDebugSnapshot: () => void;
-  onPurgeArchived: () => void;
+  // One project's archived sessions, or (null) those in no project.
+  onPurgeArchived: (projectId: string | null) => void;
+  onRestoreProject?: (projectId: string) => void;
   onSetDefaultAccount: (account: string | null) => void;
 }
 
@@ -161,10 +168,230 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
     );
   };
   const groups = groupWorkspaces(p.workspaces, p.projects);
-  const archived = archivedWorkspaces(p.workspaces);
+  const archived = archivedWorkspaces(p.workspaces, p.projects);
   const [archivedOpen, setArchivedOpen] = useState(false);
   const activeIsArchived = archived.some((w) => w.id === p.activeWsId);
   const showArchived = archivedOpen || activeIsArchived;
+  const live = groups.filter((g) => !g.project?.archivedAt);
+  const shelved = groups.filter((g) => g.project?.archivedAt);
+  const [shelfOpen, setShelfOpen] = useState(false);
+  const showShelf =
+    shelfOpen ||
+    shelved.some((g) => [...g.workspaces, ...g.archived].some((w) => w.id === p.activeWsId));
+  // Groups whose archived sessions are unfolded.
+  const [openArchives, setOpenArchives] = useState<ReadonlySet<string>>(new Set());
+  const toggleArchive = (key: string) =>
+    setOpenArchives((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+
+  const archivedItem = (ws: Workspace, folder: string | null) => (
+    <div
+      key={ws.id}
+      className={`task-item task-item-archived ${ws.id === p.activeWsId ? "active" : ""}`}
+      onClick={() => p.onSelect(ws.id)}
+      title={ws.cwd}
+    >
+      <div className="task-status idle" />
+      <div className="task-info">
+        <div className="task-name">
+          <span className="task-name-text">{ws.name}</span>
+          <span className="task-time">{formatRelative(ws.lastMessageAt ?? ws.createdAt, now)}</span>
+        </div>
+        {folder && <div className="task-meta">{folder}</div>}
+      </div>
+      {deleteButton(ws)}
+    </div>
+  );
+
+  // A group's archived sessions, folded until asked for (or one is open).
+  const archiveList = (g: WorkspaceGroup) => {
+    const open = openArchives.has(g.key) || g.archived.some((w) => w.id === p.activeWsId);
+    const root = g.project?.root;
+    return (
+      <>
+        <div
+          className="ws-archive-toggle"
+          role="button"
+          aria-expanded={open}
+          onClick={() => toggleArchive(g.key)}
+        >
+          <span className="events-toggle">{open ? "▾" : "▸"}</span>
+          <span>Archived</span>
+          <span className="ws-group-count">{g.archived.length}</span>
+          {g.project && (
+            <button
+              className="ws-archived-purge"
+              title={`Delete the archived sessions of ${g.label}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                p.onPurgeArchived(g.project!.id);
+              }}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        {open &&
+          g.archived.map((w) =>
+            archivedItem(
+              w,
+              w.cwd === root ? null : (w.cwd.split("/").filter(Boolean).pop() ?? w.cwd),
+            ),
+          )}
+      </>
+    );
+  };
+
+  // A folder's group or a project's (its row is its lead), with its archived
+  // sessions folded under it; `shelf` for an archived project's.
+  const renderGroup = (g: WorkspaceGroup, shelf = false) => {
+    const expanded = isGroupExpanded(
+      g,
+      p.groupOverrides,
+      now,
+      [...g.workspaces, ...g.archived].some((w) => w.id === p.activeWsId),
+    );
+    const toggle = () => p.onToggleGroup(g.key, !expanded);
+    // A project's own row is its lead: it opens the lead, which is not
+    // listed again under it; the arrow folds the sessions it started.
+    const lead = g.project ? g.workspaces.find((w) => w.projectLink?.role === "lead") : undefined;
+    const items = lead ? g.workspaces.filter((w) => w !== lead) : g.workspaces;
+    const leadUnread = lead ? lead.messages.length - (p.seenCounts[lead.id] ?? 0) : 0;
+    const hasContent = items.length > 0 || g.archived.length > 0;
+    // A project of archived sessions only (its lead archived too) has no live one.
+    const git = (g.workspaces[0] ?? g.archived[0])?.git;
+    return (
+      <div key={g.key} className="ws-group">
+        <div
+          className={`ws-group-header${g.project ? " ws-group-project" : ""}${lead && lead.id === p.activeWsId ? " active" : ""}`}
+          title={lead ? `Open the lead of ${g.label}` : (g.project?.root ?? g.key)}
+          onClick={() => (lead ? p.onSelect(lead.id) : toggle())}
+        >
+          {lead && !hasContent ? (
+            // Nothing to fold: an empty slot keeps the name in line.
+            <span className="events-toggle" />
+          ) : lead ? (
+            <button
+              className="events-toggle ws-group-toggle"
+              aria-label={expanded ? `Fold ${g.label}` : `Unfold ${g.label}`}
+              aria-expanded={expanded}
+              onClick={(e) => {
+                e.stopPropagation();
+                toggle();
+              }}
+            >
+              {expanded ? "▾" : "▸"}
+            </button>
+          ) : (
+            <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
+          )}
+          <span className="ws-group-label">{g.label}</span>
+          {leadUnread > 0 && lead!.id !== p.activeWsId && (
+            <span className="unread-badge">{leadUnread}</span>
+          )}
+          {git?.branch && (
+            <span className="ws-group-branch" title={gitTitle(git)}>
+              {git.branch}
+              {git.dirty > 0 && <span className="ws-group-dirty">●</span>}
+            </span>
+          )}
+          {g.project && p.onOpenBoard && (
+            <button
+              className="ws-group-add ws-group-board"
+              title={`Objectives of ${g.project.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                p.onOpenBoard!(g.project!.id);
+              }}
+            >
+              <Icon name="board" />
+            </button>
+          )}
+          <button
+            className="ws-group-add"
+            title={g.project ? `New session in ${g.project.name}` : `New workspace in ${g.key}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              p.onCreateIn(g.project?.root ?? g.key);
+            }}
+          >
+            +
+          </button>
+          {items.length > 0 && <span className="ws-group-count">{items.length}</span>}
+          {g.running && <span className="streaming-dot" />}
+          {shelf && g.project && p.onRestoreProject && (
+            <button
+              className="ws-group-restore"
+              title={`Bring ${g.label} back among the projects`}
+              onClick={(e) => {
+                e.stopPropagation();
+                p.onRestoreProject!(g.project!.id);
+              }}
+            >
+              Restore
+            </button>
+          )}
+          {lead && deleteButton(lead)}
+        </div>
+        {expanded && hasContent && (
+          <div className="ws-group-items">
+            {items.map((ws) => {
+              const activeAgents = ws.agents.filter(isAgentActive);
+              const running = activeAgents.length > 0;
+              const unread = ws.messages.length - (p.seenCounts[ws.id] ?? 0);
+              return (
+                <div
+                  key={ws.id}
+                  className={`task-item ${ws.id === p.activeWsId ? "active" : ""}${running ? " task-item-active" : ""}`}
+                  onClick={() => p.onSelect(ws.id)}
+                >
+                  <div
+                    className={`task-status ${running ? "running" : (p.finishedStatus[ws.id] ?? "idle")}`}
+                  />
+                  <div className="task-info">
+                    <div className="task-name">
+                      <span className="task-name-text">
+                        {ws.projectLink?.role === "lead" && (
+                          <span className="task-lead-tag">lead</span>
+                        )}
+                        {ws.name}
+                        {unread > 0 && ws.id !== p.activeWsId && (
+                          <span className="unread-badge">{unread}</span>
+                        )}
+                      </span>
+                      <span className="task-time">
+                        {formatRelative(ws.lastMessageAt ?? ws.createdAt, now)}
+                      </span>
+                    </div>
+                    {activeAgents.length > 0 && (
+                      <div className="task-active-agents">
+                        {activeAgents.map((a) => (
+                          <span
+                            key={a.id}
+                            className="task-active-agent"
+                            style={{ background: a.color }}
+                            title={a.activity ?? undefined}
+                          >
+                            {a.name}
+                            {a.activity ? ` · ${a.activity}` : ""}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {deleteButton(ws)}
+                </div>
+              );
+            })}
+            {g.archived.length > 0 && archiveList(g)}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -237,139 +464,21 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
           {groups.length === 0 && archived.length === 0 && (
             <div className="sidebar-empty">No workspaces yet</div>
           )}
-          {groups.map((g) => {
-            const expanded = isGroupExpanded(
-              g,
-              p.groupOverrides,
-              now,
-              g.workspaces.some((w) => w.id === p.activeWsId),
-            );
-            const toggle = () => p.onToggleGroup(g.key, !expanded);
-            // A project's own row is its lead: it opens the lead, which is not
-            // listed again under it; the arrow folds the sessions it started.
-            const lead = g.project
-              ? g.workspaces.find((w) => w.projectLink?.role === "lead")
-              : undefined;
-            const items = lead ? g.workspaces.filter((w) => w !== lead) : g.workspaces;
-            const leadUnread = lead ? lead.messages.length - (p.seenCounts[lead.id] ?? 0) : 0;
-            return (
-              <div key={g.key} className="ws-group">
-                <div
-                  className={`ws-group-header${g.project ? " ws-group-project" : ""}${lead && lead.id === p.activeWsId ? " active" : ""}`}
-                  title={lead ? `Open the lead of ${g.label}` : (g.project?.root ?? g.key)}
-                  onClick={() => (lead ? p.onSelect(lead.id) : toggle())}
-                >
-                  {lead && items.length === 0 ? (
-                    // Nothing to fold: an empty slot keeps the name in line.
-                    <span className="events-toggle" />
-                  ) : lead ? (
-                    <button
-                      className="events-toggle ws-group-toggle"
-                      aria-label={expanded ? `Fold ${g.label}` : `Unfold ${g.label}`}
-                      aria-expanded={expanded}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggle();
-                      }}
-                    >
-                      {expanded ? "▾" : "▸"}
-                    </button>
-                  ) : (
-                    <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
-                  )}
-                  <span className="ws-group-label">{g.label}</span>
-                  {leadUnread > 0 && lead!.id !== p.activeWsId && (
-                    <span className="unread-badge">{leadUnread}</span>
-                  )}
-                  {g.workspaces[0].git?.branch && (
-                    <span className="ws-group-branch" title={gitTitle(g.workspaces[0].git)}>
-                      {g.workspaces[0].git.branch}
-                      {g.workspaces[0].git.dirty > 0 && <span className="ws-group-dirty">●</span>}
-                    </span>
-                  )}
-                  {g.project && p.onOpenBoard && (
-                    <button
-                      className="ws-group-add ws-group-board"
-                      title={`Objectives of ${g.project.name}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        p.onOpenBoard!(g.project!.id);
-                      }}
-                    >
-                      <Icon name="board" />
-                    </button>
-                  )}
-                  <button
-                    className="ws-group-add"
-                    title={
-                      g.project ? `New session in ${g.project.name}` : `New workspace in ${g.key}`
-                    }
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      p.onCreateIn(g.project?.root ?? g.key);
-                    }}
-                  >
-                    +
-                  </button>
-                  {items.length > 0 && <span className="ws-group-count">{items.length}</span>}
-                  {g.running && <span className="streaming-dot" />}
-                  {lead && deleteButton(lead)}
-                </div>
-                {expanded && items.length > 0 && (
-                  <div className="ws-group-items">
-                    {items.map((ws) => {
-                      const activeAgents = ws.agents.filter(isAgentActive);
-                      const running = activeAgents.length > 0;
-                      const unread = ws.messages.length - (p.seenCounts[ws.id] ?? 0);
-                      return (
-                        <div
-                          key={ws.id}
-                          className={`task-item ${ws.id === p.activeWsId ? "active" : ""}${running ? " task-item-active" : ""}`}
-                          onClick={() => p.onSelect(ws.id)}
-                        >
-                          <div
-                            className={`task-status ${running ? "running" : (p.finishedStatus[ws.id] ?? "idle")}`}
-                          />
-                          <div className="task-info">
-                            <div className="task-name">
-                              <span className="task-name-text">
-                                {ws.projectLink?.role === "lead" && (
-                                  <span className="task-lead-tag">lead</span>
-                                )}
-                                {ws.name}
-                                {unread > 0 && ws.id !== p.activeWsId && (
-                                  <span className="unread-badge">{unread}</span>
-                                )}
-                              </span>
-                              <span className="task-time">
-                                {formatRelative(ws.lastMessageAt ?? ws.createdAt, now)}
-                              </span>
-                            </div>
-                            {activeAgents.length > 0 && (
-                              <div className="task-active-agents">
-                                {activeAgents.map((a) => (
-                                  <span
-                                    key={a.id}
-                                    className="task-active-agent"
-                                    style={{ background: a.color }}
-                                    title={a.activity ?? undefined}
-                                  >
-                                    {a.name}
-                                    {a.activity ? ` · ${a.activity}` : ""}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          {deleteButton(ws)}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+          {live.map((g) => renderGroup(g))}
+          {shelved.length > 0 && (
+            <div className="ws-group ws-shelf">
+              <div
+                className="ws-group-header ws-archived-header"
+                onClick={() => setShelfOpen((v) => !v)}
+                title="Projects filed away. Their leads and history are still there."
+              >
+                <span className="events-toggle">{showShelf ? "▾" : "▸"}</span>
+                <span className="ws-group-label">Archived projects</span>
+                <span className="ws-group-count">{shelved.length}</span>
               </div>
-            );
-          })}
+              {showShelf && shelved.map((g) => renderGroup(g, true))}
+            </div>
+          )}
           {archived.length > 0 && (
             <div className="ws-group ws-archived">
               <div
@@ -382,10 +491,10 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                 <span className="ws-group-count">{archived.length}</span>
                 <button
                   className="ws-archived-purge"
-                  title="Delete all archived workspaces"
+                  title="Delete the archived workspaces that belong to no project"
                   onClick={(e) => {
                     e.stopPropagation();
-                    p.onPurgeArchived();
+                    p.onPurgeArchived(null);
                   }}
                 >
                   Clear
@@ -393,26 +502,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
               </div>
               {showArchived && (
                 <div className="ws-group-items">
-                  {archived.map((ws) => (
-                    <div
-                      key={ws.id}
-                      className={`task-item task-item-archived ${ws.id === p.activeWsId ? "active" : ""}`}
-                      onClick={() => p.onSelect(ws.id)}
-                      title={ws.cwd}
-                    >
-                      <div className="task-status idle" />
-                      <div className="task-info">
-                        <div className="task-name">
-                          <span className="task-name-text">{ws.name}</span>
-                          <span className="task-time">
-                            {formatRelative(ws.lastMessageAt ?? ws.createdAt, now)}
-                          </span>
-                        </div>
-                        <div className="task-meta">{ws.project}</div>
-                      </div>
-                      {deleteButton(ws)}
-                    </div>
-                  ))}
+                  {archived.map((ws) => archivedItem(ws, ws.project))}
                 </div>
               )}
             </div>

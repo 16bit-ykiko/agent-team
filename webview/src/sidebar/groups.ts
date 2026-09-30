@@ -11,6 +11,9 @@ export interface WorkspaceGroup {
   label: string;
   project?: Project;
   workspaces: Workspace[];
+  // A project's archived sessions, newest first, shown under it on demand.
+  archived: Workspace[];
+  // Newest activity, the archived sessions' included.
   lastActive: number;
   running: boolean;
 }
@@ -23,9 +26,13 @@ export function isArchived(ws: Workspace): boolean {
   return ws.archivedAt != null;
 }
 
-// Archived workspaces live in their own flat section, newest first.
-export function archivedWorkspaces(workspaces: Workspace[]): Workspace[] {
-  return workspaces.filter(isArchived).sort((a, b) => lastActive(b) - lastActive(a));
+// Archived workspaces no project holds, in a flat section of their own,
+// newest first; a project's are listed under it.
+export function archivedWorkspaces(workspaces: Workspace[], projects: Project[] = []): Workspace[] {
+  const known = new Set(projects.map((p) => p.id));
+  return workspaces
+    .filter((w) => isArchived(w) && !(w.projectLink && known.has(w.projectLink.projectId)))
+    .sort((a, b) => lastActive(b) - lastActive(a));
 }
 
 // Two-level sidebar: live workspaces grouped by folder, groups sorted by most
@@ -36,28 +43,31 @@ export function groupWorkspaces(
   projects: Project[] = [],
 ): WorkspaceGroup[] {
   const byId = new Map(projects.map((p) => [p.id, p]));
-  const byCwd = new Map<string, Workspace[]>();
+  const byKey = new Map<string, { live: Workspace[]; archived: Workspace[] }>();
   for (const ws of workspaces) {
-    if (isArchived(ws)) continue;
     const project = ws.projectLink && byId.get(ws.projectLink.projectId);
+    // Archived ones without a project are in the flat archived section.
+    if (isArchived(ws) && !project) continue;
     const key = project ? `project:${project.id}` : ws.cwd || "(no path)";
-    const list = byCwd.get(key);
-    if (list) list.push(ws);
-    else byCwd.set(key, [ws]);
+    let entry = byKey.get(key);
+    if (!entry) byKey.set(key, (entry = { live: [], archived: [] }));
+    (isArchived(ws) ? entry.archived : entry.live).push(ws);
   }
 
   const groups: WorkspaceGroup[] = [];
-  for (const [key, list] of byCwd) {
+  for (const [key, { live, archived }] of byKey) {
     const project = byId.get(key.slice("project:".length));
     const isLead = (w: Workspace) => (w.projectLink?.role === "lead" ? 1 : 0);
-    list.sort((a, b) => isLead(b) - isLead(a) || lastActive(b) - lastActive(a));
+    live.sort((a, b) => isLead(b) - isLead(a) || lastActive(b) - lastActive(a));
+    archived.sort((a, b) => lastActive(b) - lastActive(a));
     groups.push({
       key,
       label: project?.name ?? key.split("/").filter(Boolean).pop() ?? key,
       ...(project && { project }),
-      workspaces: list,
-      lastActive: Math.max(...list.map(lastActive)),
-      running: list.some((w) => w.agents.some(isAgentActive)),
+      workspaces: live,
+      archived,
+      lastActive: Math.max(...[...live, ...archived].map(lastActive)),
+      running: live.some((w) => w.agents.some(isAgentActive)),
     });
   }
   groups.sort((a, b) => (b.project ? 1 : 0) - (a.project ? 1 : 0) || b.lastActive - a.lastActive);

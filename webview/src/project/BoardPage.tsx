@@ -61,6 +61,7 @@ export const BoardPage = memo(function BoardPage({
   onOpenSession,
   onAskLead,
   onRename,
+  onArchive,
   onDelete,
 }: {
   project: Project;
@@ -69,6 +70,8 @@ export const BoardPage = memo(function BoardPage({
   onOpenSession: (workspaceId: string) => void;
   onAskLead: ((objectiveId: string) => void) | null;
   onRename: (name: string) => void;
+  // File the project away (true) or bring it back (false).
+  onArchive?: (archived: boolean) => void;
   onDelete: () => void;
 }) {
   const [view, setView] = useState<"list" | "graph">("list");
@@ -228,6 +231,11 @@ export const BoardPage = memo(function BoardPage({
                 Archive <span className="bp-count">{archivedCount}</span>
               </button>
             </div>
+            {onArchive && (
+              <button className="bp-archive" onClick={() => onArchive(!project.archivedAt)}>
+                {project.archivedAt ? "Restore project" : "Archive project"}
+              </button>
+            )}
             <button className="bp-delete" onClick={onDelete}>
               Delete project
             </button>

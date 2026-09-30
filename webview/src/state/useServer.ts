@@ -184,6 +184,8 @@ export interface Project {
   root: string;
   leadWorkspaceId: string | null;
   createdAt: number;
+  // Filed away: listed apart in the sidebar.
+  archivedAt?: number | null;
   objectives: Array<Objective | BrokenObjective>;
 }
 
@@ -1157,6 +1159,15 @@ export function useServer() {
       (wsId: string) => send({ type: "unarchive_workspace", workspaceId: wsId }),
       [send],
     ),
-    purgeArchived: useCallback(() => send({ type: "purge_archived" }), [send]),
+    // One project's archived sessions, or (null) those in no project.
+    purgeArchived: useCallback(
+      (projectId: string | null) => send({ type: "purge_archived", projectId }),
+      [send],
+    ),
+    archiveProject: useCallback(
+      (projectId: string, archived: boolean) =>
+        send({ type: "archive_project", projectId, archived }),
+      [send],
+    ),
   };
 }

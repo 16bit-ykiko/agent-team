@@ -318,8 +318,8 @@ describe("Sidebar archived section", () => {
     fireEvent.click(item);
     expect(props.onSelect).toHaveBeenCalledWith("dusty");
 
-    fireEvent.click(getByTitle("Delete all archived workspaces"));
-    expect(props.onPurgeArchived).toHaveBeenCalled();
+    fireEvent.click(getByTitle("Delete the archived workspaces that belong to no project"));
+    expect(props.onPurgeArchived).toHaveBeenCalledWith(null);
     // Clicking Clear must not toggle the section.
     expect(container.querySelector(".task-item-archived")).toBeTruthy();
   });

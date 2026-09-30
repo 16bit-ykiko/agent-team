@@ -155,9 +155,12 @@ export function App() {
     archiveWorkspace,
     unarchiveWorkspace,
     purgeArchived,
+    archiveProject,
     archiveAfterDays,
   } = useServer();
-  const [showPurge, setShowPurge] = useState(false);
+  // The archived sessions a Clear asked to delete: a project's, or (null)
+  // those in no project.
+  const [purgeScope, setPurgeScope] = useState<{ projectId: string | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
     if (!notice) return;
@@ -660,8 +663,21 @@ export function App() {
     setActiveWsId(wsId);
     setSidebarOpen(false);
   }, [startReplayDemo]);
-  const onPurgeArchived = useCallback(() => setShowPurge(true), []);
-  const closePurge = useCallback(() => setShowPurge(false), []);
+  const onPurgeArchived = useCallback(
+    (projectId: string | null) => setPurgeScope({ projectId }),
+    [],
+  );
+  const closePurge = useCallback(() => setPurgeScope(null), []);
+  const onRestoreProject = useCallback(
+    (projectId: string) => archiveProject(projectId, false),
+    [archiveProject],
+  );
+  const onArchiveBoardProject = useCallback(
+    (archived: boolean) => {
+      if (boardProjectId) archiveProject(boardProjectId, archived);
+    },
+    [boardProjectId, archiveProject],
+  );
 
   useEffect(() => {
     for (const ws of workspaces) {
@@ -1233,6 +1249,7 @@ export function App() {
           onCreateIn={onCreateWorkspaceIn}
           onReplayDemo={onReplayDemo}
           onPurgeArchived={onPurgeArchived}
+          onRestoreProject={onRestoreProject}
           onDebugSnapshot={takeSnapshot}
           onSetDefaultAccount={setDefaultAccount}
         />
@@ -1643,13 +1660,13 @@ export function App() {
         />
       )}
 
-      {showPurge && (
+      {purgeScope && (
         <ConfirmDialog
-          title="Delete archived workspaces"
-          body={purgeBody(workspaces, projects)}
+          title="Delete archived sessions"
+          body={purgeBody(workspaces, projects, purgeScope.projectId)}
           confirmLabel="Delete all"
           danger
-          onConfirm={purgeArchived}
+          onConfirm={() => purgeArchived(purgeScope.projectId)}
           onClose={closePurge}
         />
       )}
@@ -1667,6 +1684,7 @@ export function App() {
               : null
           }
           onRename={onRenameProject}
+          onArchive={onArchiveBoardProject}
           onDelete={onDeleteBoardProject}
         />
       )}
@@ -1722,14 +1740,17 @@ function plural(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
-function purgeBody(workspaces: Workspace[], projects: Project[]): string {
-  const archived = workspaces.filter((w) => w.archivedAt != null);
-  const leads = archived.filter(
-    (w) =>
-      w.projectLink?.role === "lead" && projects.some((p) => p.id === w.projectLink!.projectId),
-  ).length;
-  const kept = leads ? ` Archived project leads (${leads}) are kept.` : "";
-  return `Permanently delete ${archived.length - leads} archived workspace(s), including their message history and logs.${kept}`;
+function purgeBody(workspaces: Workspace[], projects: Project[], projectId: string | null): string {
+  const known = new Set(projects.map((p) => p.id));
+  const project = projects.find((p) => p.id === projectId);
+  // A project's lead is never purged: the project goes with it.
+  const doomed = workspaces.filter((w) => {
+    const link = w.projectLink && known.has(w.projectLink.projectId) ? w.projectLink : null;
+    if (w.archivedAt == null || link?.role === "lead") return false;
+    return projectId === null ? !link : link?.projectId === projectId;
+  });
+  const whose = project ? ` of ${project.name}` : " that belong to no project";
+  return `Permanently delete the ${doomed.length} archived session(s)${whose}, with their message history and logs.`;
 }
 
 type PanelId = "agents" | "tasks" | "files";

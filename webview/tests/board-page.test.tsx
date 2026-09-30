@@ -270,3 +270,32 @@ describe("BoardPage header", () => {
     expect(onClose).toHaveBeenCalled();
   });
 });
+
+describe("archiving the project from its board", () => {
+  it("files it away, or brings an archived one back", () => {
+    const onArchive = vi.fn();
+    const p = {
+      id: "p1",
+      name: "clice",
+      root: "/r",
+      leadWorkspaceId: null,
+      createdAt: 0,
+      objectives: [],
+    };
+    const props = {
+      sessions: new Map(),
+      onClose: vi.fn(),
+      onOpenSession: vi.fn(),
+      onAskLead: null,
+      onRename: vi.fn(),
+      onArchive,
+      onDelete: vi.fn(),
+    };
+    const { getByText, rerender } = render(<BoardPage project={p} {...props} />);
+    fireEvent.click(getByText("Archive project"));
+    expect(onArchive).toHaveBeenCalledWith(true);
+    rerender(<BoardPage project={{ ...p, archivedAt: 1 }} {...props} />);
+    fireEvent.click(getByText("Restore project"));
+    expect(onArchive).toHaveBeenLastCalledWith(false);
+  });
+});

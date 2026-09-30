@@ -118,3 +118,31 @@ describe("archived workspaces", () => {
     expect(groupWorkspaces([a, b])).toEqual([]);
   });
 });
+
+describe("a project's archive", () => {
+  it("holds its archived sessions, dated by them too; those in no project stay apart", () => {
+    const project = {
+      id: "p1",
+      name: "clice",
+      root: "/repo/clice",
+      leadWorkspaceId: "lead",
+      createdAt: 0,
+      objectives: [],
+    };
+    const lead = {
+      ...ws("lead", "/repo/clice", 1000),
+      projectLink: { projectId: "p1", role: "lead" as const },
+    };
+    const old = {
+      ...ws("old", "/repo/clice", 5000),
+      archivedAt: 6000,
+      projectLink: { projectId: "p1", role: "worker" as const },
+    };
+    const loose = { ...ws("loose", "/repo/other", 3000), archivedAt: 4000 };
+    const [g] = groupWorkspaces([lead, old, loose], [project]);
+    expect(g.workspaces.map((w) => w.id)).toEqual(["lead"]);
+    expect(g.archived.map((w) => w.id)).toEqual(["old"]);
+    expect(g.lastActive).toBe(5000);
+    expect(archivedWorkspaces([lead, old, loose], [project]).map((w) => w.id)).toEqual(["loose"]);
+  });
+});

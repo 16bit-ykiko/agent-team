@@ -154,14 +154,23 @@ describe("a sender that no longer exists", () => {
 });
 
 describe("purging archived workspaces", () => {
-  it("does not count archived project leads, which are kept", () => {
+  it("counts what a Clear deletes: a project's archived sessions but never its lead, or those in no project", () => {
     const archivedLead = { ...lead, archivedAt: NOW - 100 };
+    const archivedWorker = { ...worker, archivedAt: NOW - 100 };
     const archivedPlain = ws("old", { archivedAt: NOW - 100 });
     const live = ws("live", { lastMessageAt: NOW });
-    boot([live, archivedLead, archivedPlain], [project()], "live");
-    fireEvent.click(document.querySelector(".ws-archived-purge")!);
-    expect(document.querySelector(".dialog-body")!.textContent).toBe(
-      "Permanently delete 1 archived workspace(s), including their message history and logs. Archived project leads (1) are kept.",
+    boot([live, archivedLead, archivedWorker, archivedPlain], [project()], "live");
+    const body = () => document.querySelector(".dialog-body")!.textContent;
+    fireEvent.click(document.querySelector('[title="Delete the archived sessions of clice"]')!);
+    expect(body()).toBe(
+      "Permanently delete the 1 archived session(s) of clice, with their message history and logs.",
+    );
+    fireEvent.click(document.querySelector(".dialog .btn-secondary")!);
+    fireEvent.click(
+      document.querySelector('[title="Delete the archived workspaces that belong to no project"]')!,
+    );
+    expect(body()).toBe(
+      "Permanently delete the 1 archived session(s) that belong to no project, with their message history and logs.",
     );
   });
 });
@@ -297,7 +306,7 @@ describe("a lead whose project the server could not read", () => {
     boot([{ ...orphan, archivedAt: NOW - 100 }], [], "lead");
     fireEvent.click(document.querySelector(".ws-archived-purge")!);
     expect(document.querySelector(".dialog-body")!.textContent).toBe(
-      "Permanently delete 1 archived workspace(s), including their message history and logs.",
+      "Permanently delete the 1 archived session(s) that belong to no project, with their message history and logs.",
     );
   });
 });

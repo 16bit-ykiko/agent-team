@@ -2810,6 +2810,7 @@ span.katex-display {
   background: var(--bg-active);
 }
 /* Out of the way, at the foot of the filters: not beside Close. */
+.bp-archive,
 .bp-delete {
   flex-shrink: 0;
   align-self: flex-start;
@@ -2826,6 +2827,13 @@ span.katex-display {
 .bp-delete:hover {
   color: var(--error);
   border-color: var(--error);
+}
+.bp-archive:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+.bp-archive + .bp-delete {
+  margin-top: 0;
 }
 .bp-back {
   flex-shrink: 0;

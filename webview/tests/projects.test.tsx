@@ -277,3 +277,102 @@ describe("CreateWorkspaceDialog", () => {
     expect(onCreate).toHaveBeenCalledWith("clice", "/repo/clice", "local");
   });
 });
+
+describe("archives in the sidebar", () => {
+  const archived = (id: string, over: Partial<Workspace> = {}) =>
+    ws(id, {
+      name: id,
+      cwd: "/repo/clice",
+      projectLink: { projectId: "p1", role: "worker" },
+      archivedAt: NOW - 1000,
+      lastMessageAt: NOW - 2000,
+      ...over,
+    });
+  const props = (over: Partial<SidebarProps> = {}): SidebarProps => ({
+    workspaces: [lead, worker, archived("old-a"), archived("old-b", { cwd: "/wt/clice-x" })],
+    projects: [project],
+    activeWsId: "lead",
+    connected: true,
+    groupOverrides: {},
+    seenCounts: {},
+    finishedStatus: {},
+    searchQuery: "",
+    searchHits: null,
+    systemStatus: null,
+    accounts: [],
+    defaultAccount: null,
+    now: NOW,
+    onSelect: vi.fn(),
+    onDelete: vi.fn(),
+    onToggleGroup: vi.fn(),
+    onSearchChange: vi.fn(),
+    onJump: vi.fn(),
+    onCreate: vi.fn(),
+    onCreateIn: vi.fn(),
+    onReplayDemo: vi.fn(),
+    onDebugSnapshot: vi.fn(),
+    onPurgeArchived: vi.fn(),
+    onRestoreProject: vi.fn(),
+    onSetDefaultAccount: vi.fn(),
+    onDeleteProject: vi.fn(),
+    ...over,
+  });
+  const names = (c: HTMLElement) =>
+    [...c.querySelectorAll(".task-item .task-name-text")].map((e) => e.textContent);
+
+  it("fold a project's archived sessions under it, and clear only those", () => {
+    const p = props();
+    const { container, getByTitle } = render(<Sidebar {...p} />);
+    expect(names(container)).toEqual(["modules"]);
+    expect(container.querySelector(".ws-archived")).toBeNull();
+    const toggle = container.querySelector(".ws-archive-toggle")!;
+    expect(toggle.querySelector(".ws-group-count")!.textContent).toBe("2");
+    fireEvent.click(toggle);
+    expect(names(container)).toEqual(["modules", "old-a", "old-b"]);
+    // A session in a worktree names its folder.
+    expect(
+      [...container.querySelectorAll(".task-item-archived .task-meta")].map((e) => e.textContent),
+    ).toEqual(["clice-x"]);
+    fireEvent.click(getByTitle("Delete the archived sessions of clice"));
+    expect(p.onPurgeArchived).toHaveBeenCalledWith("p1");
+  });
+
+  it("open the archive that holds the open session", () => {
+    const { container } = render(<Sidebar {...props({ activeWsId: "old-a" })} />);
+    expect(names(container)).toContain("old-a");
+  });
+
+  it("keep archived projects apart, restorable", () => {
+    const shelved = { ...project, id: "p2", name: "clice2", root: "/repo/clice2", archivedAt: 1 };
+    const lead2 = ws("lead2", {
+      name: "clice2 · lead",
+      cwd: "/repo/clice2",
+      projectLink: { projectId: "p2", role: "lead" },
+    });
+    const p = props({
+      workspaces: [
+        lead,
+        lead2,
+        archived("gone", { projectLink: { projectId: "p2", role: "worker" } }),
+      ],
+      projects: [project, shelved],
+    });
+    const { container, getByTitle } = render(<Sidebar {...p} />);
+    const labels = () =>
+      [...container.querySelectorAll(".ws-group-label")].map((e) => e.textContent);
+    expect(labels()).toEqual(["clice", "Archived projects"]);
+    fireEvent.click(container.querySelector(".ws-shelf .ws-archived-header")!);
+    expect(labels()).toEqual(["clice", "Archived projects", "clice2"]);
+    fireEvent.click(getByTitle("Bring clice2 back among the projects"));
+    expect(p.onRestoreProject).toHaveBeenCalledWith("p2");
+  });
+
+  it("show a project whose lead is archived too", () => {
+    const { container } = render(
+      <Sidebar
+        {...props({ workspaces: [{ ...lead, archivedAt: NOW - 10 }, archived("old-a")] })}
+      />,
+    );
+    expect(container.querySelector(".ws-group-project .ws-group-label")!.textContent).toBe("clice");
+  });
+});
