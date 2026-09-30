@@ -244,15 +244,40 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
               now,
               g.workspaces.some((w) => w.id === p.activeWsId),
             );
+            const toggle = () => p.onToggleGroup(g.key, !expanded);
+            // A project's own row is its lead: it opens the lead, which is not
+            // listed again under it; the arrow folds the sessions it started.
+            const lead = g.project
+              ? g.workspaces.find((w) => w.projectLink?.role === "lead")
+              : undefined;
+            const items = lead ? g.workspaces.filter((w) => w !== lead) : g.workspaces;
+            const leadUnread = lead ? lead.messages.length - (p.seenCounts[lead.id] ?? 0) : 0;
             return (
               <div key={g.key} className="ws-group">
                 <div
-                  className={`ws-group-header${g.project ? " ws-group-project" : ""}`}
-                  title={g.project?.root ?? g.key}
-                  onClick={() => p.onToggleGroup(g.key, !expanded)}
+                  className={`ws-group-header${g.project ? " ws-group-project" : ""}${lead && lead.id === p.activeWsId ? " active" : ""}`}
+                  title={lead ? `Open the lead of ${g.label}` : (g.project?.root ?? g.key)}
+                  onClick={() => (lead ? p.onSelect(lead.id) : toggle())}
                 >
-                  <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
+                  {lead ? (
+                    <button
+                      className="events-toggle ws-group-toggle"
+                      aria-label={expanded ? `Fold ${g.label}` : `Unfold ${g.label}`}
+                      aria-expanded={expanded}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggle();
+                      }}
+                    >
+                      {expanded ? "▾" : "▸"}
+                    </button>
+                  ) : (
+                    <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
+                  )}
                   <span className="ws-group-label">{g.label}</span>
+                  {leadUnread > 0 && lead!.id !== p.activeWsId && (
+                    <span className="unread-badge">{leadUnread}</span>
+                  )}
                   {g.workspaces[0].git?.branch && (
                     <span className="ws-group-branch" title={gitTitle(g.workspaces[0].git)}>
                       {g.workspaces[0].git.branch}
@@ -283,12 +308,13 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                       +
                     </button>
                   )}
-                  <span className="ws-group-count">{g.workspaces.length}</span>
+                  {items.length > 0 && <span className="ws-group-count">{items.length}</span>}
                   {g.running && <span className="streaming-dot" />}
+                  {lead && deleteButton(lead)}
                 </div>
-                {expanded && (
+                {expanded && items.length > 0 && (
                   <div className="ws-group-items">
-                    {g.workspaces.map((ws) => {
+                    {items.map((ws) => {
                       const activeAgents = ws.agents.filter(isAgentActive);
                       const running = activeAgents.length > 0;
                       const unread = ws.messages.length - (p.seenCounts[ws.id] ?? 0);
@@ -307,8 +333,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                                 {ws.projectLink?.role === "lead" && (
                                   <span className="task-lead-tag">lead</span>
                                 )}
-                                {/* Under its project's header the tag says it all. */}
-                                {!(g.project && ws.projectLink?.role === "lead") && ws.name}
+                                {ws.name}
                                 {unread > 0 && ws.id !== p.activeWsId && (
                                   <span className="unread-badge">{unread}</span>
                                 )}

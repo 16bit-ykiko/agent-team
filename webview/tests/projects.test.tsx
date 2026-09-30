@@ -46,6 +46,15 @@ const worker = ws("w1", {
   lastMessageAt: NOW - 1000,
 });
 
+const msgOf = (id: string): Message => ({
+  id,
+  kind: "agent",
+  agentId: "a",
+  content: "x",
+  timestamp: NOW,
+  status: "done",
+});
+
 describe("project groups", () => {
   it("fold a project's sessions under it wherever they work, lead first, projects on top", () => {
     const groups = groupWorkspaces([ws("other", { lastMessageAt: NOW }), worker, lead], [project]);
@@ -82,12 +91,47 @@ describe("project groups", () => {
     onDeleteProject: vi.fn(),
   });
 
-  it("show the lead tag and no quick-create on the project header", () => {
-    const { container } = render(<Sidebar {...sidebarProps()} />);
-    expect(container.querySelector(".ws-group-project .ws-group-label")!.textContent).toBe("clice");
+  it("stand for their lead: the project's row opens it, and it is not listed again", () => {
+    const props = sidebarProps();
+    const { container } = render(<Sidebar {...props} />);
+    const header = container.querySelector(".ws-group-project")!;
+    expect(header.querySelector(".ws-group-label")!.textContent).toBe("clice");
+    expect(header.className).toContain("active");
     expect(container.querySelector(".ws-group-add")).toBeNull();
     const names = [...container.querySelectorAll(".task-name-text")].map((e) => e.textContent);
-    expect(names).toEqual(["lead", "modules"]);
+    expect(names).toEqual(["modules"]);
+    expect(header.querySelector(".ws-group-count")!.textContent).toBe("1");
+    fireEvent.click(header);
+    expect(props.onSelect).toHaveBeenCalledWith("lead");
+    expect(props.onToggleGroup).not.toHaveBeenCalled();
+  });
+
+  it("fold the project's sessions from the arrow only", () => {
+    const props = sidebarProps();
+    const { getByLabelText } = render(<Sidebar {...props} />);
+    fireEvent.click(getByLabelText("Fold clice"));
+    expect(props.onToggleGroup).toHaveBeenCalledWith("project:p1", false);
+    expect(props.onSelect).not.toHaveBeenCalled();
+  });
+
+  it("show the lead's unread count on the project's row", () => {
+    const props = {
+      ...sidebarProps(),
+      activeWsId: "w1",
+      workspaces: [{ ...lead, messages: [msgOf("a"), msgOf("b")] }, worker],
+    };
+    const { container } = render(<Sidebar {...props} />);
+    const header = container.querySelector(".ws-group-project")!;
+    expect(header.className).not.toContain("active");
+    expect(header.querySelector(".unread-badge")!.textContent).toBe("2");
+  });
+
+  it("fold from anywhere on the row when the lead is gone", () => {
+    const props = { ...sidebarProps(), workspaces: [worker], activeWsId: "w1" };
+    const { container } = render(<Sidebar {...props} />);
+    fireEvent.click(container.querySelector(".ws-group-project")!);
+    expect(props.onToggleGroup).toHaveBeenCalledWith("project:p1", false);
+    expect(props.onSelect).not.toHaveBeenCalled();
   });
 
   it("delete the whole project from the lead's ×, a session on its own", () => {
