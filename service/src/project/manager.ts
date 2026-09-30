@@ -502,14 +502,15 @@ export class ProjectManager {
     everywhere: boolean,
     limit: number,
   ): Promise<string> {
-    const sources = [];
+    // One history at a time, keeping only its hits: all of them together are
+    // hundreds of megabytes, and the server keeps answering in between.
+    const found = [];
     for (const w of [...this.workers(projectId), ...(await this.history(projectId, everywhere))]) {
       const messages = w.messagesLoaded ? w.getMessages() : await this.host.readMessages(w);
-      sources.push({ id: w.id, name: w.name, messages });
-      // One file at a time, so the server keeps answering.
+      found.push(...searchMessages([{ id: w.id, name: w.name, messages }], query, limit));
       await new Promise((r) => setImmediate(r));
     }
-    const hits = searchMessages(sources, query, limit);
+    const hits = found.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
     if (hits.length === 0) return `(nothing matches "${query}")`;
     return hits
       .map(

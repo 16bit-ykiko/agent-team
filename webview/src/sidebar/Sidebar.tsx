@@ -259,7 +259,10 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                   title={lead ? `Open the lead of ${g.label}` : (g.project?.root ?? g.key)}
                   onClick={() => (lead ? p.onSelect(lead.id) : toggle())}
                 >
-                  {lead ? (
+                  {lead && items.length === 0 ? (
+                    // Nothing to fold: an empty slot keeps the name in line.
+                    <span className="events-toggle" />
+                  ) : lead ? (
                     <button
                       className="events-toggle ws-group-toggle"
                       aria-label={expanded ? `Fold ${g.label}` : `Unfold ${g.label}`}

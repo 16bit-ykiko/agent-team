@@ -2,7 +2,8 @@
 // try the UI on: a clone of this repository with worktrees, a project with
 // its lead and worker sessions (history with tools, cards, delivered messages
 // and file references), an objectives board with dependencies and an
-// archive, and a workspace outside the project. No session is started: the
+// archive, and an archived workspace from before projects (the lead's
+// history). No session is started: the
 // agents are idle until someone writes to them, and then they work in the
 // clone, which has no remote.
 //
@@ -501,9 +502,9 @@ function seed(): void {
     ),
   ];
 
-  // A workspace of its own, outside the project.
+  // A session the user opened in the project (a worktree of its repository).
   const soloAgent = agent("Kisara", "avatars/Kisara.jpg", "#D8A0D8", tree("readme"));
-  const solo = session("readme", tree("readme"), soloAgent, null, 20);
+  const solo = session("readme", tree("readme"), soloAgent, "worker", 20);
   solo.messages = [
     joined(20, soloAgent),
     user(18, "README 里的部署一节还准确吗？"),
@@ -526,7 +527,23 @@ function seed(): void {
     ),
   ];
 
-  const all = [lead, mobile, wake, routes, solo];
+  // A workspace from before projects, archived: the lead's history.
+  const pastAgent = agent("Alice", "avatars/Alice.jpg", "#F0D264", repo);
+  const past = session("parser crash", repo, pastAgent, null, 60 * 24 * 9);
+  past.archivedAt = ago(60 * 24 * 7);
+  past.messages = [
+    joined(60 * 24 * 9, pastAgent),
+    user(60 * 24 * 9, "clice 在打开 `src/Index/Parser.cpp` 时崩了，帮我看下。"),
+    reply(
+      pastAgent,
+      60 * 24 * 9 - 30,
+      "ASAN 报告指向 `TemplateResolver::resolve` 的 use-after-free：缓存的 `Decl*` 在重新解析后失效。改成按 USR 重新查找，已修复并加了回归测试。",
+      [bash("ctest -R parser", "100% tests passed", 1)],
+      88_000,
+    ),
+  ];
+
+  const all = [lead, mobile, wake, routes, solo, past];
   for (const w of all) {
     w.lastActivityAt = Math.max(...w.messages!.map((m) => m.timestamp));
     saveWorkspace(base, w);

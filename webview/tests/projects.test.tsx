@@ -107,6 +107,13 @@ describe("project groups", () => {
     expect(props.onToggleGroup).not.toHaveBeenCalled();
   });
 
+  it("offer no arrow while the lead has no sessions under it", () => {
+    const props = { ...sidebarProps(), workspaces: [lead] };
+    const { container, queryByLabelText } = render(<Sidebar {...props} />);
+    expect(queryByLabelText("Fold clice")).toBeNull();
+    expect(container.querySelector(".ws-group-project .events-toggle")!.textContent).toBe("");
+  });
+
   it("fold the project's sessions from the arrow only", () => {
     const props = sidebarProps();
     const { getByLabelText } = render(<Sidebar {...props} />);
