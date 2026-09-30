@@ -41,13 +41,18 @@ Compare `ActiveEnterTimestamp` with the log's timestamp and `dist/server.js` mti
 
 ## Testing a build without touching production
 
-Start a second instance on another port and drive it yourself:
+Run a second instance on another port with its **own base dir and its own build**. Without `AGENT_TEAM_BASE_DIR` it would read and write production's data (the repo root's `.agent-team/`); built into `dist/`, production would serve the new bundle.
 
 ```bash
-AGENT_TEAM_PORT=9801 node dist/server.js > /tmp/agent-team-9801.log 2>&1 &
+D=$PWD/.agent-team/dev-9801                      # needs a config.toml (copy config.example.toml)
+(cd webview && npx vite build --outDir $D/build/webview --emptyOutDir)
+npx esbuild service/src/index.ts --bundle --format=cjs --platform=node --target=node22 \
+  --outfile=$D/build/server.js --external:@anthropic-ai/claude-agent-sdk --external:@openai/codex-sdk
+npm run demo -- $D                               # optional, on an empty base dir: demo project and history
+AGENT_TEAM_PORT=9801 AGENT_TEAM_BASE_DIR=$D node $D/build/server.js > /tmp/agent-team-9801.log 2>&1 &
 ```
 
-Stop it by PID (`kill $!`), never with `pkill -f` on the command line — that pattern matches your own shell.
+Stop it by PID (`kill $!`), never with `pkill -f` on the command line — that pattern matches your own shell. Writing to an agent there starts a real session on the user's account.
 
 ## Never
 
