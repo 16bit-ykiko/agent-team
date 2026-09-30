@@ -1072,6 +1072,15 @@ systemctl --user restart agent-team-server
   private archiveWorkspace(workspaceId: string, auto: boolean): void {
     const ws = this.workspaces.get(workspaceId);
     if (!ws || ws.isArchived) return;
+    if (ws.projectLink?.role === "lead") {
+      if (!auto) {
+        this.broadcastUI({
+          type: "error",
+          message: "A lead goes with its project: archive the project from its board",
+        });
+      }
+      return;
+    }
     if (!ws.isIdle) {
       if (!auto) this.broadcastUI({ type: "error", message: "Workspace is still busy" });
       return;

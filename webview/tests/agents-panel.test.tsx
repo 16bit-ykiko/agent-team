@@ -165,8 +165,8 @@ describe("AgentsPanel", () => {
     expect(a.onRemoveAgent).toHaveBeenCalledWith("w1", "kisara");
     const leadCard = within(container.querySelector('[aria-label="clice · lead"]') as HTMLElement);
     expect(leadCard.queryByText("Stop")).toBeNull();
-    fireEvent.click(leadCard.getByText("Archive"));
-    expect(a.onArchive).toHaveBeenCalledWith("lead");
+    // A lead goes with its project, archived from the board.
+    expect(leadCard.queryByText("Archive")).toBeNull();
   });
 
   it("keeps archived sessions folded away, restorable", () => {

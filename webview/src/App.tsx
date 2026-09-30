@@ -1305,7 +1305,8 @@ export function App() {
                     ◆<span className="ws-project-btn-label"> Lead</span>
                   </button>
                 )}
-                {activeWs.archivedAt == null ? (
+                {/* A lead goes with its project, archived from the board. */}
+                {activeWs.archivedAt == null && activeWs.projectLink?.role !== "lead" ? (
                   <button
                     className="btn-ghost ws-archive-btn"
                     title="Archive: unload history from memory and stop idle sessions"

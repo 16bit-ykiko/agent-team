@@ -124,7 +124,8 @@ function SessionCard({
             Stop
           </button>
         ) : (
-          !busy && (
+          !busy &&
+          w.projectLink?.role !== "lead" && (
             <button className="panel-btn" onClick={() => actions.onArchive(w.id)}>
               Archive
             </button>

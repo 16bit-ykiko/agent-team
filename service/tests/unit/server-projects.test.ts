@@ -307,6 +307,24 @@ describe("server restart with projects", () => {
     fs.rmSync(base, { recursive: true, force: true });
   });
 
+  it("keeps a lead out of the archive: its project is archived instead", async () => {
+    const { base, web } = seed();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { frames, send, stop } = await start(base, web);
+    try {
+      send({ type: "archive_workspace", workspaceId: "ws-lead" });
+      await until(() => frames.some((f) => f.type === "error"), "the refusal");
+      expect(frames.find((f) => f.type === "error")!.message).toBe(
+        "A lead goes with its project: archive the project from its board",
+      );
+      expect(frames.some((f) => f.type === "workspace_archived")).toBe(false);
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
   it("purges archived workers but never an archived lead, and the board forgets them", async () => {
     const { base, web } = seed({ leadArchived: true });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});

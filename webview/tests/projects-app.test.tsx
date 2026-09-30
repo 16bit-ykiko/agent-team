@@ -192,6 +192,23 @@ describe("deleting a project", () => {
   });
 });
 
+describe("archiving from the chat header", () => {
+  it("is offered for a session, not for a lead, which goes with its project", () => {
+    const { sock } = boot([lead, worker], [project()], "lead");
+    expect(document.querySelector(".ws-archive-btn")).toBeNull();
+    fireEvent.click(
+      [...document.querySelectorAll(".task-item .task-name-text")].find(
+        (e) => e.textContent === "modules",
+      )!,
+    );
+    fireEvent.click(document.querySelector(".ws-archive-btn")!);
+    expect(sock.sent.map((m) => JSON.parse(m) as { type: string }).at(-1)).toMatchObject({
+      type: "archive_workspace",
+      workspaceId: "w1",
+    });
+  });
+});
+
 describe("the board page", () => {
   const withBoard = project({
     objectives: [
