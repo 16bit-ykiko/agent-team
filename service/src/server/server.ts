@@ -1234,6 +1234,7 @@ systemctl --user restart agent-team-server
         // moved; refresh it on the next scan instead of waiting a minute.
         const ws = this.workspaces.get(wsId);
         if (ws) this.git.requestPrRefresh(ws.cwd);
+        if (ws) this.projects.workerIdle(ws);
       },
       onAgentState: (wsId, agentId, state) => {
         this.broadcastUI({ type: "agent_state", workspaceId: wsId, agentId, state });

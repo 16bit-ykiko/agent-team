@@ -7,6 +7,7 @@ import type { EntryInfo, EntryKind, SessionRow, SqlValue } from "../workspace/hi
 import type { HistoryService } from "../workspace/history-service";
 import {
   originLabel,
+  type Message,
   type MessageOrigin,
   type ProjectLink,
   type Workspace,
@@ -47,6 +48,11 @@ export const LEAD_MODEL = "claude-opus-5-5";
 // A lead asked to start everything at once must not spawn a burst of CLI
 // sessions on the user's account: worker tasks go out this far apart.
 export const START_SPACING_MS = 15_000;
+
+// A worker's turn has ended this long ago with nothing after it (a queued
+// message, a rate-limit pause coming in behind the error) before the lead is
+// told it went idle without reporting.
+export const SETTLE_MS = 5_000;
 
 // Two leads can keep answering each other with nobody watching; past this
 // many messages between two projects within the window, message_project is
@@ -89,6 +95,9 @@ export class ProjectManager {
   private peerLog = new Map<string, number[]>();
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private boards = new Map<string, ObjectiveStore>();
+  // Per worker, the lead message its last report (or the lead's own stop, or
+  // the notice that it went idle) answered.
+  private answered = new Map<string, string>();
   private closed = false;
 
   constructor(
@@ -322,6 +331,67 @@ export class ProjectManager {
     return link.role === "lead"
       ? leadToolset(this.api, project, this.store.notesDir(project.id), claudeModels())
       : workerToolset(this.api, workspace.id, project);
+  }
+
+  // A worker's turn ended (done, failed or stopped).
+  workerIdle(w: Workspace): void {
+    if (w.projectLink?.role !== "worker") return;
+    this.later(SETTLE_MS, () => this.tellIfSilent(w.id));
+  }
+
+  // A worker the lead gave work went quiet without reporting on it: the lead
+  // hears it once, with how the turn ended and the last reply (the answer to
+  // a question it asked, often). A turn the user started is theirs; the
+  // worker reports on it itself when it changes the task.
+  private tellIfSilent(workspaceId: string): void {
+    const w = this.host.workspace(workspaceId);
+    const link = w?.projectLink;
+    if (!w || link?.role !== "worker" || w.isArchived || !w.messagesLoaded || !w.isQuiet) return;
+    const project = this.store.get(link.projectId);
+    const lead = this.leadOf(link.projectId);
+    if (!project || project.archivedAt || !lead || lead.isArchived) return;
+    const messages = w.getMessages();
+    const last = (from: number, ok: (m: Message) => boolean) => {
+      for (let i = messages.length - 1; i >= from; i--) if (ok(messages[i])) return i;
+      return -1;
+    };
+    const input = last(0, (m) => m.kind === "user");
+    const prompt = messages[input];
+    if (prompt?.from?.role !== "lead" || this.answered.get(w.id) === prompt.id) return;
+    this.answered.set(w.id, prompt.id);
+    const reply = messages[last(input + 1, (m) => m.kind === "agent")];
+    const error = reply?.events?.filter((e) => e.kind === "error").pop();
+    const stopped = !!reply?.content.endsWith(INTERRUPTED);
+    const text = (reply?.content.slice(0, stopped ? -INTERRUPTED.length : undefined) ?? "").trim();
+    const how =
+      reply?.status === "error"
+        ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
+        : stopped
+          ? "it was stopped"
+          : "its turn ended";
+    const body = [
+      `Went idle without reporting (${how}).`,
+      text ? `Its last reply:\n\n${text.length > 1500 ? `…${text.slice(-1500)}` : text}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    this.deliver(
+      lead,
+      body,
+      { workspaceId: w.id, name: w.name, role: "worker" },
+      `[From the panel, about session "${w.name}" (${w.id})]\n\n${body}`,
+    );
+  }
+
+  private markAnswered(w: Workspace): void {
+    const messages = w.getMessages();
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.from?.role === "lead" && m.status !== "queued") {
+        this.answered.set(w.id, m.id);
+        return;
+      }
+    }
   }
 
   // What the lead said that has not run yet (a task still waiting for its
@@ -989,6 +1059,7 @@ export class ProjectManager {
     const projectId = w?.projectLink?.role === "worker" ? w.projectLink.projectId : undefined;
     const lead = projectId ? this.leadOf(projectId) : undefined;
     if (!w || !projectId || !lead) throw new Error("This session has no project lead");
+    if (final) this.markAnswered(w);
     const body = `${!final ? "Progress" : blocked ? "Blocked" : "Finished"}:\n\n${text}`;
     this.deliver(
       lead,
@@ -1029,6 +1100,7 @@ export class ProjectManager {
     stopSession: (pid, sid) => {
       const w = this.session(pid, sid);
       this.dropQueuedFromLead(w);
+      this.markAnswered(w);
       w.abortAll();
       this.host.persistWorkspace(w);
       return `Stopped "${w.name}".`;
@@ -1124,7 +1196,7 @@ export class ProjectManager {
   };
 }
 
-// How the workspace marks a turn cut off by a restart.
+// How the workspace marks a turn cut off (a stop, a restart).
 const INTERRUPTED = "*\\[interrupted\\]*";
 
 function claudeModels(): string[] {

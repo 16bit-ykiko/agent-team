@@ -4,7 +4,7 @@ import * as path from "path";
 import { z } from "zod";
 import { ProjectStore } from "../../src/project/store";
 import { leadToolset, workerToolset, type PanelApi } from "../../src/project/tools";
-import { START_SPACING_MS } from "../../src/project/manager";
+import { SETTLE_MS, START_SPACING_MS } from "../../src/project/manager";
 import { Workspace } from "../../src/workspace/workspace";
 import { saveIndex, saveWorkspace, loadAll } from "../../src/workspace/state";
 import { summarizeMessages } from "../../src/workspace/summary";
@@ -689,6 +689,159 @@ describe("worker tasks held back for spacing", () => {
       expect(w1.messages.some((m) => m.status === "queued")).toBe(false);
       await vi.advanceTimersByTimeAsync(START_SPACING_MS);
       expect(session(w1).sent).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("a worker that goes idle without reporting", () => {
+  // A lead with one worker running the task it was given.
+  const started = async () => {
+    const h = setup();
+    const { lead, project } = h.create("a");
+    await h.call(lead, "start_session", { title: "w", cwd: "wt", task: "do it" });
+    const w = h.workers()[0];
+    const say = (text: string) => h.session(w).emit("event", { kind: "text_delta", content: text });
+    const told = () =>
+      lead
+        .getMessages()
+        .filter((m) => m.from?.role === "worker")
+        .map((m) => m.content);
+    const settle = () => vi.advanceTimersByTimeAsync(SETTLE_MS);
+    return { ...h, lead, project, w, say, told, settle };
+  };
+
+  it("tells the lead once, with the last reply, when its turn ends without a report", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, told, settle, endTurn, session } = await started();
+      say("Which branch should this go on?");
+      endTurn(w);
+      await vi.advanceTimersByTimeAsync(SETTLE_MS - 100);
+      expect(told()).toEqual([]);
+      await settle();
+      expect(told()).toEqual([
+        "Went idle without reporting (its turn ended).\n\nIts last reply:\n\nWhich branch should this go on?",
+      ]);
+      // A wake-up turn after it (a background task) is no new work from the lead.
+      session(w).emit("event", { kind: "text_delta", content: "late output" });
+      endTurn(w);
+      await settle();
+      expect(told()).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says nothing more once it reported, finished or blocked", async () => {
+    vi.useFakeTimers();
+    try {
+      const { lead, w, call, say, told, settle, endTurn } = await started();
+      say("Done.");
+      await call(w, "finish_task", { summary: "merged" });
+      endTurn(w);
+      await settle();
+      expect(told()).toEqual(["Finished:\n\nmerged"]);
+
+      await call(lead, "message_session", { session_id: w.id, message: "and the docs?" });
+      await call(w, "finish_task", { summary: "which docs?", blocked: true });
+      endTurn(w);
+      await settle();
+      expect(told()).toEqual(["Finished:\n\nmerged", "Blocked:\n\nwhich docs?"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tells how a failed or stopped turn ended", async () => {
+    vi.useFakeTimers();
+    try {
+      const { lead, w, call, say, told, settle, session } = await started();
+      say("Working on it");
+      session(w).isRunning = false;
+      session(w).emit("event", { kind: "error", content: "API Error: 529 overloaded" });
+      await settle();
+      expect(told()).toEqual([
+        "Went idle without reporting (its turn failed: API Error: 529 overloaded).\n\nIts last reply:\n\nWorking on it",
+      ]);
+
+      await call(lead, "message_session", { session_id: w.id, message: "try again" });
+      say("Retrying");
+      session(w).isRunning = false;
+      w.abortAll();
+      await settle();
+      expect(told()[1]).toBe(
+        "Went idle without reporting (it was stopped).\n\nIts last reply:\n\nRetrying",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves the lead's own stop and the user's turns alone", async () => {
+    vi.useFakeTimers();
+    try {
+      const { lead, w, call, told, settle, session, endTurn } = await started();
+      session(w).isRunning = false;
+      await call(lead, "stop_session", { session_id: w.id });
+      await settle();
+      expect(told()).toEqual([]);
+
+      // The user takes the worker over: its turns are theirs to follow.
+      await call(lead, "message_session", { session_id: w.id, message: "go on" });
+      await w.sendMessage("actually, do it differently");
+      endTurn(w);
+      await settle();
+      endTurn(w);
+      await settle();
+      expect(told()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits while anything is still to run: a queued message, a pause, a background task", async () => {
+    vi.useFakeTimers();
+    try {
+      const { lead, w, call, say, told, settle, session, endTurn } = await started();
+      await call(lead, "message_session", { session_id: w.id, message: "also this" });
+      endTurn(w);
+      await settle();
+      expect(told()).toEqual([]);
+
+      const [agentId] = w.agents.keys();
+      w.pauseAgent(agentId, Date.now() + 60_000);
+      say("Also done.");
+      endTurn(w);
+      await settle();
+      expect(told()).toEqual([]);
+      w.pauseAgent(agentId, 0);
+
+      session(w).emit("runState", "waiting");
+      endTurn(w);
+      await settle();
+      expect(told()).toEqual([]);
+
+      session(w).emit("runState", "idle");
+      endTurn(w);
+      await settle();
+      expect(told()).toEqual([
+        "Went idle without reporting (its turn ended).\n\nIts last reply:\n\nAlso done.",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays quiet for an archived project", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, told, settle, endTurn, manager, project } = await started();
+      manager.setArchived(project.id, true);
+      endTurn(w);
+      await settle();
+      expect(told()).toEqual([]);
     } finally {
       vi.useRealTimers();
     }

@@ -332,6 +332,18 @@ export class Workspace {
     return !this.messages.some((m) => m.status === "queued" || m.status === "streaming");
   }
 
+  // Nothing will run here until a message arrives: no turn, queued message,
+  // background task, scheduled wake-up or rate-limit pause.
+  get isQuiet(): boolean {
+    if (!this.isIdle) return false;
+    const now = Date.now();
+    for (const a of this.agents.values()) {
+      if (this.agentState(a) !== "idle") return false;
+      if (a.pausedUntil && now < a.pausedUntil) return false;
+    }
+    return true;
+  }
+
   takeChanged(): Set<string> {
     const changed = this.changed;
     this.changed = new Set();
