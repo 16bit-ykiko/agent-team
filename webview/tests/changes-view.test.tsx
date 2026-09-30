@@ -5,7 +5,7 @@ import { render, fireEvent, waitFor } from "@testing-library/react";
 import css from "../src/styles.css?raw";
 import { FilesPanel } from "../src/panels/FilesPanel";
 import { parseDiff } from "../src/panels/ChangesView";
-import { fileKind } from "../src/panels/Icon";
+import { setiIcon } from "../src/panels/Icon";
 
 const listing = {
   kind: "dir",
@@ -70,23 +70,32 @@ describe("the Files panel's icons and changes", () => {
   const panel = () =>
     render(<FilesPanel wsId="w1" target={{ path: "." }} roots={[{ label: "w", path: "/w" }]} />);
 
-  it("gives folders and files an icon of one family, tinted by kind", async () => {
+  it("shows files with VS Code's icons, folders with its chevron", async () => {
     const { container } = panel();
     await waitFor(() => expect(container.querySelectorAll(".dir-entry")).toHaveLength(4));
-    const icons = [...container.querySelectorAll(".dir-entry .file-icon")].map((i) => i.className);
-    expect(icons).toEqual([
-      "file-icon fi-dir",
-      "file-icon fi-doc",
-      "file-icon fi-code",
-      "file-icon fi-build",
+    const icons = [...container.querySelectorAll<HTMLElement>(".dir-entry .file-icon")];
+    expect(icons[0].className).toBe("file-icon fi-dir");
+    expect(icons[0].querySelector("svg.icon")).not.toBeNull();
+    const code = (el: HTMLElement) => [
+      (el.textContent ?? "").codePointAt(0)?.toString(16),
+      el.style.color,
+    ];
+    expect(icons.slice(1).map(code)).toEqual([
+      ["e04d", "rgb(81, 154, 186)"],
+      ["e01a", "rgb(81, 154, 186)"],
+      ["e05f", "rgb(81, 154, 186)"],
     ]);
-    expect(container.querySelectorAll(".dir-entry .file-icon svg.icon")).toHaveLength(4);
-    expect([
-      fileKind("a/b.tsx"),
-      fileKind("x.json"),
-      fileKind("pic.PNG"),
-      fileKind("LICENSE"),
-    ]).toEqual(["code", "data", "image", "other"]);
+    // By name, by the longest extension, by language, else the default.
+    const pick = (n: string) => {
+      const { char, color } = setiIcon(n);
+      return `${char.codePointAt(0)!.toString(16)} ${color}`;
+    };
+    expect(pick("package.json")).toBe("e055 #cbcb41");
+    expect(pick("Makefile")).toBe("e05f #e37933");
+    expect(pick("src/a.test.ts")).toBe("e099 #e37933");
+    expect(pick("b.ts")).toBe("e099 #519aba");
+    expect(pick("x.h")).toBe("e00c #a074c4");
+    expect(pick("notes.unknown")).toBe("e023 #d4d7d6");
   });
 
   it("lists the changes against the base, then a file's diff, and goes back", async () => {

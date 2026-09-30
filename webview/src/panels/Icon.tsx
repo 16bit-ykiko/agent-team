@@ -1,3 +1,5 @@
+import seti from "./seti/icons.json";
+
 // The panels' icons: 16px line drawings in one stroke, so the rail, the
 // panel headers and the row actions read as one family.
 export const ICONS = {
@@ -11,9 +13,8 @@ export const ICONS = {
   close: "M4 4l8 8M12 4l-8 8",
   clear: "M13 8a5 5 0 1 1-1.6-3.7M13 2.8v2.7h-2.7",
   up: "M8 13V3M4 7l4-4 4 4",
-  folder: "M2 3.5h4l1.5 1.5h6.5v7.5H2z",
-  file: "M4 2.5h5l3 3v8H4zM9 2.5v3h3",
   changes: "M8 2.5v6M5 5.5h6M5 12.5h6",
+  chevron: "M6 3.5l4.5 4.5L6 12.5",
 } as const;
 
 export type IconName = keyof typeof ICONS;
@@ -26,30 +27,40 @@ export function Icon({ name }: { name: IconName }) {
   );
 }
 
-// Files by what they hold, for a tint on their icon.
-const KINDS: Record<string, string> = {
-  code: "ts tsx js jsx mjs cjs mts cts c h cc cpp cxx hh hpp hxx cs py rs go java lua sh bash zsh ps1 rb swift kt m mm zig",
-  doc: "md markdown txt rst tex adoc org",
-  data: "json jsonl toml yaml yml ini cfg conf xml csv lock env",
-  image: "png jpg jpeg gif svg webp ico bmp avif",
-};
-const KIND_BY_EXT = new Map(
-  Object.entries(KINDS).flatMap(([kind, exts]) => exts.split(" ").map((e) => [e, kind] as const)),
-);
-const BUILD =
-  /^(makefile|gnumakefile|cmakelists\.txt|dockerfile|package\.json|cargo\.toml|xmake\.lua|meson\.build)$/i;
+interface SetiIcons {
+  file: number;
+  // Its character and colour.
+  icons: string[][];
+  names: Record<string, number>;
+  exts: Record<string, number>;
+}
+const SETI = seti as SetiIcons;
 
-export function fileKind(name: string): string {
-  const base = name.split("/").pop() ?? name;
-  if (BUILD.test(base)) return "build";
-  const ext = base.includes(".") ? base.split(".").pop()!.toLowerCase() : "";
-  return KIND_BY_EXT.get(ext) ?? "other";
+// The icon VS Code shows for a file with its default (Seti) theme: by the
+// file's name, by its longest extension, by its language (folded into
+// both by scripts/seti-icons.ts), else the default one.
+export function setiIcon(name: string): { char: string; color: string } {
+  const base = (name.split("/").pop() ?? name).toLowerCase();
+  let i: number | undefined = SETI.names[base];
+  const parts = base.split(".");
+  for (let k = 1; i === undefined && k < parts.length; k++) i = SETI.exts[parts.slice(k).join(".")];
+  const [char, color] = SETI.icons[i ?? SETI.file];
+  return { char, color };
 }
 
+// A file's icon as in VS Code; a folder's is its chevron, as there.
 export function FileIcon({ name, dir = false }: { name: string; dir?: boolean }) {
+  if (dir) {
+    return (
+      <span className="file-icon fi-dir">
+        <Icon name="chevron" />
+      </span>
+    );
+  }
+  const { char, color } = setiIcon(name);
   return (
-    <span className={`file-icon fi-${dir ? "dir" : fileKind(name)}`}>
-      <Icon name={dir ? "folder" : "file"} />
+    <span className="file-icon seti" style={{ color }} aria-hidden="true">
+      {char}
     </span>
   );
 }

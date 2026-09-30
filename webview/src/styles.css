@@ -3961,31 +3961,30 @@ span.katex-display {
   font-size: 11px;
   color: var(--text-muted);
 }
-/* One line-icon family, tinted by what a file holds. */
+/* Files as VS Code shows them (its Seti icons), folders by a chevron. */
+@font-face {
+  font-family: "seti";
+  src: url("./panels/seti/seti.woff") format("woff");
+  font-display: block;
+}
 .file-icon {
   display: inline-flex;
   flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   color: var(--text-muted);
 }
 .file-icon .icon {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
-.fi-dir {
-  color: var(--accent);
-}
-.fi-code {
-  color: var(--text-secondary);
-}
-.fi-doc {
-  color: var(--success);
-}
-.fi-data,
-.fi-build {
-  color: var(--warning);
-}
-.fi-image {
-  color: var(--purple);
+.file-icon.seti {
+  font-family: "seti";
+  font-size: 19px;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
 }
 .fp-toggle.on {
   color: var(--accent);
