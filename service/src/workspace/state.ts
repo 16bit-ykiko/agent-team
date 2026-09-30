@@ -48,9 +48,12 @@ function readJson<T>(file: string): T | null {
   }
 }
 
-// A workspace is two files: <id>.json, what it is (name, folder, agents),
-// and <id>.jsonl, its history, one message per line, so a search finds a
-// message with ripgrep and parses only the lines that match.
+// A workspace is <id>.json, what it is (name, folder, agents), and
+// <id>.jsonl, its history, one message per line, so a search finds a
+// message with ripgrep and parses only the lines that match. Tool calls and
+// their output are 98% of a history: <id>.text.jsonl holds the same
+// messages without them, and is what a search reads unless asked for tool
+// output.
 function metaPath(baseDir: string, id: string): string {
   return path.join(wsDir(baseDir), `${id}.json`);
 }
@@ -59,11 +62,23 @@ export function historyPath(baseDir: string, id: string): string {
   return path.join(wsDir(baseDir), `${id}.jsonl`);
 }
 
-function writeHistory(file: string, messages: Message[]): void {
+export function textFileOf(history: string): string {
+  return history.replace(/\.jsonl$/, ".text.jsonl");
+}
+
+function writeLines(file: string, rows: unknown[]): void {
   ensureDir(path.dirname(file));
   const tmp = `${file}.${process.pid}-${++tmpCounter}.tmp`;
-  fs.writeFileSync(tmp, messages.map((m) => `${JSON.stringify(m)}\n`).join(""), { mode: 0o600 });
+  fs.writeFileSync(tmp, rows.map((r) => `${JSON.stringify(r)}\n`).join(""), { mode: 0o600 });
   fs.renameSync(tmp, file);
+}
+
+function writeHistory(file: string, messages: Message[]): void {
+  writeLines(file, messages);
+  writeLines(
+    textFileOf(file),
+    messages.map(({ id, kind, content, timestamp }) => ({ id, kind, content, timestamp })),
+  );
 }
 
 // JSON.stringify escapes newlines in strings: every line is one message.
@@ -123,6 +138,7 @@ function splitHistory(baseDir: string, ws: WorkspaceState): void {
 export function deleteWorkspaceState(baseDir: string, workspaceId: string): void {
   fs.rmSync(metaPath(baseDir, workspaceId), { force: true });
   fs.rmSync(historyPath(baseDir, workspaceId), { force: true });
+  fs.rmSync(textFileOf(historyPath(baseDir, workspaceId)), { force: true });
   const logs = path.join(dataRoot(baseDir), LOGS_DIR, workspaceId);
   fs.rmSync(logs, { recursive: true, force: true });
   ensuredLogDirs.delete(logs);

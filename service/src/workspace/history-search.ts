@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import * as fs from "fs";
 import * as readline from "readline";
 import { searchMessages, type SearchHit } from "./search";
+import { textFileOf } from "./state";
 import type { Message } from "./workspace";
 
 export interface StoredHistory {
@@ -22,14 +23,20 @@ export interface StoredSearch {
 // the query's words, a line being one message, and only those lines are
 // parsed and checked for every word (a word may also be the history's
 // name, so no single word has to be in the line). Without rg, each history
-// is read in turn. Newest first.
+// is read in turn. What was said is read from the text beside a history
+// (state.ts), where there is one. Newest first.
 export async function searchStored(
   histories: StoredHistory[],
   query: string,
   opts: StoredSearch,
 ): Promise<SearchHit[]> {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const present = histories.filter((h) => fs.existsSync(h.file));
+  const present = histories
+    .filter((h) => fs.existsSync(h.file))
+    .map((h) => {
+      const text = textFileOf(h.file);
+      return !opts.toolOutput && fs.existsSync(text) ? { ...h, file: text } : h;
+    });
   if (terms.length === 0 || present.length === 0) return [];
   const hits =
     (await ripgrep(present, terms, query, opts)) ?? (await readAll(present, query, opts));

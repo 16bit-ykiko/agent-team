@@ -110,7 +110,7 @@ export function leadToolset(
       `Longer-lived notes (decisions, background, plans) go in markdown files under ${notesDir}; read and write them with your file tools. Subagents can maintain them too.`,
       "Other projects have leads of their own: list_projects shows them, message_project sends one a message without waiting. Its answer arrives later as a message from that project.",
       "project_status gives the board, the running sessions and the repository's worktrees at a glance.",
-      "Earlier conversations here are the project's history: sessions from before the project and archived ones. When the user refers to past work, search_history finds it and read_session reads it in context; list_history lists those sessions with their history files (JSON lines, one message per line; search them with rg, not grep) and the Claude CLI's own transcripts.",
+      "Earlier conversations here are the project's history: sessions from before the project and archived ones. When the user refers to past work, search_history finds it and read_session reads it in context; list_history lists those sessions with their history files (JSON lines, one message per line, and beside each a .text.jsonl with only what was said, no tool calls; search them with rg, not grep) and the Claude CLI's own transcripts.",
     ].join("\n\n"),
     tools: [
       {

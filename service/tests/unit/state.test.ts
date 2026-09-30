@@ -5,12 +5,14 @@ import * as path from "path";
 import {
   appendLog,
   deleteWorkspaceState,
+  historyPath,
   isLoggedEvent,
   loadAll,
   loadWorkspaceMessages,
   saveIndex,
   saveWorkspace,
   stripLegacyRaw,
+  textFileOf,
 } from "../../src/workspace/state";
 import { Message, WorkspaceState } from "../../src/workspace/workspace";
 
@@ -118,7 +120,16 @@ describe("unloaded workspaces", () => {
     expect(loadWorkspaceMessages(base, "ws-1")).toHaveLength(1);
   });
 
-  it("deleting a workspace removes its state file and log directory", () => {
+  it("keeps what was said beside the history, without the tools", () => {
+    const base = tmpBase();
+    saveWorkspace(base, wsWithRaw());
+    const text = fs.readFileSync(textFileOf(historyPath(base, "ws-1")), "utf-8");
+    expect(text).toBe(
+      `${JSON.stringify({ id: "m1", kind: "agent", content: "x", timestamp: 1 })}\n`,
+    );
+  });
+
+  it("deleting a workspace removes its files and log directory", () => {
     const base = tmpBase();
     saveWorkspace(base, wsWithRaw());
     appendLog(base, "ws-1", { hello: 1 });
@@ -127,6 +138,7 @@ describe("unloaded workspaces", () => {
     deleteWorkspaceState(base, "ws-1");
     expect(fs.existsSync(logDir)).toBe(false);
     expect(loadWorkspaceMessages(base, "ws-1")).toEqual([]);
+    expect(fs.readdirSync(path.join(base, ".agent-team", "cache", "workspaces"))).toEqual([]);
   });
 
   it("saving an unloaded workspace never touches its history, even one it could not read", () => {

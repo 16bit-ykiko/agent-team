@@ -5,6 +5,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { searchStored, type StoredHistory } from "../../src/workspace/history-search";
+import { historyPath, saveWorkspace } from "../../src/workspace/state";
 import type { Message } from "../../src/workspace/workspace";
 
 const dirs: string[] = [];
@@ -93,5 +94,35 @@ describe.each([
     const hits = await search("partialspec", true);
     expect(hits.map((h) => h.messageId)).toEqual(["a3"]);
     expect(hits[0].snippet).toMatch(/^\[tool\] /);
+  });
+
+  it("read what was said from the text beside a history, the tools from the history", async () => {
+    at();
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-search-"));
+    dirs.push(base);
+    saveWorkspace(base, {
+      id: "w3",
+      name: "clice",
+      project: "p",
+      hostId: "local",
+      cwd: base,
+      agents: [],
+      createdAt: 1,
+      messages: [
+        msg("c1", "TemplateResolver crash", 1, {
+          events: [{ kind: "tool_result", content: "", toolResult: "FAILED: PartialSpec" }],
+        }),
+      ],
+    });
+    const file = historyPath(base, "w3");
+    const find = (q: string, toolOutput = false) =>
+      searchStored([{ id: "w3", name: "clice", file }], q, { limit: 5, toolOutput });
+    expect((await find("templateresolver")).map((h) => h.messageId)).toEqual(["c1"]);
+    expect((await find("partialspec", true)).map((h) => h.snippet)).toEqual([
+      "[tool] FAILED: PartialSpec",
+    ]);
+    fs.writeFileSync(file, "");
+    expect((await find("templateresolver")).map((h) => h.messageId)).toEqual(["c1"]);
+    expect(await find("partialspec", true)).toEqual([]);
   });
 });
