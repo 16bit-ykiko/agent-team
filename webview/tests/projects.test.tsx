@@ -6,6 +6,7 @@ import { MessageItem, chipLabelFor } from "../src/chat/messages";
 import { CreateWorkspaceDialog } from "../src/workspace/dialogs";
 import { useServer, type Message, type Project, type Workspace } from "../src/state/useServer";
 import { FakeSocket } from "./fakeSocket";
+import css from "../src/styles.css?raw";
 
 const NOW = 1_800_000_000_000;
 
@@ -365,6 +366,37 @@ describe("archives in the sidebar", () => {
     expect(labels()).toEqual(["clice", "Archived projects", "clice2"]);
     fireEvent.click(getByTitle("Bring clice2 back among the projects"));
     expect(p.onRestoreProject).toHaveBeenCalledWith("p2");
+  });
+
+  it("style an archive's row and Restore like the sidebar's own, not bare text and buttons", () => {
+    const sheet = document.createElement("style");
+    sheet.textContent = css;
+    document.head.appendChild(sheet);
+    try {
+      const shelved = { ...project, id: "p2", name: "clice2", root: "/repo/clice2", archivedAt: 1 };
+      const lead2 = ws("lead2", {
+        cwd: "/repo/clice2",
+        projectLink: { projectId: "p2", role: "lead" },
+      });
+      const { container, getByTitle } = render(
+        <Sidebar
+          {...props({
+            workspaces: [...props().workspaces, lead2],
+            projects: [project, shelved],
+          })}
+        />,
+      );
+      const toggle = container.querySelector(".ws-archive-toggle")!;
+      expect(getComputedStyle(toggle).fontSize).toBe("11px");
+      expect(getComputedStyle(toggle).display).toBe("flex");
+      fireEvent.click(container.querySelector(".ws-shelf .ws-archived-header")!);
+      const restore = getByTitle("Bring clice2 back among the projects");
+      expect(getComputedStyle(restore).borderRadius).toBe("8px");
+      // Shown on hover, like the header's other actions.
+      expect(getComputedStyle(restore).opacity).toBe("0");
+    } finally {
+      sheet.remove();
+    }
   });
 
   it("show a project whose lead is archived too", () => {

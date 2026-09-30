@@ -8,5 +8,7 @@ export default defineConfig({
     // Required for @testing-library/react's automatic DOM cleanup between tests.
     globals: true,
     include: ["tests/**/*.test.{ts,tsx}"],
+    // Otherwise every stylesheet reads as empty, even with ?raw.
+    css: { include: [/styles\.css/] },
   },
 });

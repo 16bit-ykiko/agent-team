@@ -361,7 +361,8 @@ button {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 400;
-  flex-shrink: 1;
+  /* Only the room the name leaves. */
+  flex: 1 1 0;
   min-width: 0;
   max-width: 40%;
   overflow: hidden;
@@ -585,6 +586,53 @@ button {
 }
 .task-item-archived {
   opacity: 0.65;
+}
+/* A group's archived sessions: one dim row under its live ones. */
+.ws-archive-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 1px 0 1px 4px;
+  padding: 3px 8px 3px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.ws-archive-toggle:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+.ws-archive-toggle:hover .ws-archived-purge {
+  opacity: 1;
+}
+.ws-group-restore {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 15px;
+  padding: 0 6px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0;
+}
+.ws-group-header:hover .ws-group-restore,
+.ws-group-restore:focus-visible {
+  opacity: 1;
+}
+.ws-group-restore:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+@media (hover: none) {
+  .ws-group-restore {
+    opacity: 1;
+  }
 }
 .task-item-archived:hover,
 .task-item-archived.active {
