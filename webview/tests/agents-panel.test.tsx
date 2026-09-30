@@ -118,6 +118,7 @@ describe("AgentsPanel", () => {
     onAddAgent: vi.fn(),
     onClearContext: vi.fn(),
     onRemoveAgent: vi.fn(),
+    onSetModel: vi.fn(),
   });
   const panel = (a = actions()) => {
     const utils = render(
@@ -126,6 +127,7 @@ describe("AgentsPanel", () => {
         project={project}
         activeWsId="w1"
         connected
+        models={[]}
         actions={a}
       />,
     );
@@ -184,6 +186,7 @@ describe("a session's actions by its state", () => {
         project={undefined}
         activeWsId="s"
         connected
+        models={[]}
         actions={{
           onOpen: vi.fn(),
           onStop: vi.fn(),
@@ -192,6 +195,7 @@ describe("a session's actions by its state", () => {
           onAddAgent: vi.fn(),
           onClearContext: vi.fn(),
           onRemoveAgent: vi.fn(),
+          onSetModel: vi.fn(),
         }}
       />,
     );
@@ -369,6 +373,18 @@ describe("the agents panel in the app", () => {
     expect(document.querySelector(".side-panel")).toBeNull();
   });
 
+  it("switches an agent's model through the chat, so the switch shows where it happened", () => {
+    const sock = boot();
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    const card = document.querySelector('[aria-label="modules"]')!;
+    fireEvent.change(card.querySelector(".ap-model")!, { target: { value: "claude-opus-5-5" } });
+    expect(sock.frames().find((f) => f.type === "send_message")).toMatchObject({
+      workspaceId: "w1",
+      content: "/model claude-opus-5-5",
+      target: "kisara",
+    });
+  });
+
   it("adds an agent to the session it was asked from", () => {
     const sock = boot();
     fireEvent.click(document.querySelector(".agents-chip")!);
@@ -391,6 +407,7 @@ describe("an agent's state line", () => {
         project={undefined}
         activeWsId={session.id}
         connected={connected}
+        models={[]}
         actions={{
           onOpen: vi.fn(),
           onStop: vi.fn(),
@@ -399,6 +416,7 @@ describe("an agent's state line", () => {
           onAddAgent: vi.fn(),
           onClearContext: vi.fn(),
           onRemoveAgent: vi.fn(),
+          onSetModel: vi.fn(),
         }}
       />,
     );
@@ -444,5 +462,57 @@ describe("the summary of a workspace on its own", () => {
     });
     expect(scopeSummary([solo], undefined)).toBe("solo · 2 agents · 2 working");
     expect(scopeSummary([{ ...solo, archivedAt: 1 }], undefined)).toBe("solo · archived");
+  });
+});
+
+describe("switching an agent's model", () => {
+  const models = [
+    { id: "claude-opus-5-5", label: "Opus 5.5", backend: "claude" as const },
+    { id: "claude-fable-5-1", label: "Fable 5.1", backend: "claude" as const },
+    { id: "gpt-6-astra", label: "GPT-6 Astra", backend: "codex" as const },
+  ];
+  const render1 = (a: AgentInfo, connected = true) => {
+    const onSetModel = vi.fn();
+    const utils = render(
+      <AgentsPanel
+        sessions={[ws("s", { agents: [a] })]}
+        project={undefined}
+        activeWsId="s"
+        connected={connected}
+        models={models}
+        actions={{
+          onOpen: vi.fn(),
+          onStop: vi.fn(),
+          onArchive: vi.fn(),
+          onRestore: vi.fn(),
+          onAddAgent: vi.fn(),
+          onClearContext: vi.fn(),
+          onRemoveAgent: vi.fn(),
+          onSetModel,
+        }}
+      />,
+    );
+    return { ...utils, onSetModel };
+  };
+
+  it("offers the Claude models, the current one first when the list has dropped it", () => {
+    const { container, onSetModel } = render1(agent("a", { model: "claude-opus-4-6" }));
+    const select = container.querySelector(".ap-model") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual([
+      "claude-opus-4-6",
+      "claude-opus-5-5",
+      "claude-fable-5-1",
+    ]);
+    fireEvent.change(select, { target: { value: "claude-fable-5-1" } });
+    expect(onSetModel).toHaveBeenCalledWith("s", "a", "claude-fable-5-1");
+  });
+
+  it("offers no switch for a Codex thread or while offline", () => {
+    expect(
+      render1(agent("c", { model: "gpt-6-astra" })).container.querySelector(".ap-model"),
+    ).toBeNull();
+    expect(
+      render1(agent("a", { model: "claude-opus-5-5" }), false).container.querySelector(".ap-model"),
+    ).toBeNull();
   });
 });

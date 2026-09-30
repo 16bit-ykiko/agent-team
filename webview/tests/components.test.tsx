@@ -485,3 +485,32 @@ describe("system messages", () => {
     expect(container.textContent).toBe("🤖 Bot context cleared");
   });
 });
+
+describe("the model in a reply's header", () => {
+  it("is the one the turn ran on, not the agent's model now", () => {
+    const agents: AgentInfo[] = [
+      {
+        id: "a",
+        name: "A",
+        model: "claude-fable-5-1",
+        avatar: "A",
+        color: "#fff",
+        isDefault: true,
+      },
+    ];
+    const reply = (model?: string): Message => ({
+      id: "r",
+      kind: "agent",
+      agentId: "a",
+      content: "done",
+      timestamp: 1,
+      status: "done",
+      ...(model && { model }),
+    });
+    const before = render(<MessageItem msg={reply("claude-opus-5-5")} agents={agents} />);
+    expect(before.container.querySelector(".message-model")!.textContent).toBe("opus 5.5");
+    before.unmount();
+    const old = render(<MessageItem msg={reply()} agents={agents} />);
+    expect(old.container.querySelector(".message-model")!.textContent).toBe("fable 5.1");
+  });
+});

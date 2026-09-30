@@ -4032,6 +4032,20 @@ span.katex-display {
 .ap-agent-name {
   font-weight: 600;
 }
+.ap-model {
+  field-sizing: content;
+  max-width: 100%;
+  padding: 0 2px;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.ap-model:hover {
+  border-color: var(--border);
+}
 .ap-meta,
 .ap-agent-state,
 .ap-goal {

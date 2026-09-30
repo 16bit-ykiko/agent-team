@@ -9,6 +9,11 @@ const LOCAL_COMMANDS: CommandInfo[] = [
     argumentHint: "[low|medium|high|xhigh|max|ultra]",
   },
   {
+    name: "model",
+    description: "Show or switch the agent's model; the conversation carries over",
+    argumentHint: "[model id]",
+  },
+  {
     name: "fast",
     description: "Toggle fast mode (quicker responses, higher usage)",
     argumentHint: "[on|off]",

@@ -842,3 +842,64 @@ describe("interrupting a workspace", () => {
     });
   });
 });
+
+describe("/model", () => {
+  const reply = (ws: Workspace) => ws.messages.filter((m) => m.kind === "agent").at(-1)!.content;
+
+  it("shows the model and the ones of its backend it can move to", async () => {
+    const { ws } = makeWorkspace("claude-opus-5-5");
+    await ws.sendMessage("/model");
+    expect(reply(ws)).toContain("runs on **Claude Opus 5.5**");
+    expect(reply(ws)).toContain("`claude-fable-5-1`");
+    expect(reply(ws)).not.toContain("gpt-");
+  });
+
+  it("moves the conversation to another model, with effort and fast mode it takes", async () => {
+    const envs: Array<[string, string | undefined]> = [];
+    const { ws, session, agentInfo, emit } = makeWorkspace("claude-opus-5-5");
+    (ws as unknown as { cb: WorkspaceCallbacks }).cb.sessionEnv = (model, account) => {
+      envs.push([model, account]);
+      return { PROVIDER: model };
+    };
+    session.getState().config.effort = "xhigh";
+    session.getState().config.fast = true;
+    await ws.sendMessage("/model claude-fable-5-1[1m]");
+    expect(reply(ws)).toMatch(/moves from Claude Opus 5.5 to \*\*Claude Fable 5.1 \(1M\)\*\*/);
+    expect(ws.agents.get(agentInfo.id)!.info.model).toBe("claude-fable-5-1[1m]");
+    expect(session.getState().config).toMatchObject({
+      model: "claude-fable-5-1[1m]",
+      effort: "xhigh",
+      fast: true,
+    });
+    expect(envs).toEqual([["claude-fable-5-1[1m]", undefined]]);
+    expect(session.providerEnv).toEqual({ PROVIDER: "claude-fable-5-1[1m]" });
+
+    // Replies from here on say which model they ran on.
+    await ws.sendMessage("go on");
+    emit({ kind: "text_delta", content: "ok" });
+    emit({ kind: "result", content: "" });
+    expect(ws.messages.filter((m) => m.kind === "agent").at(-1)!.model).toBe(
+      "claude-fable-5-1[1m]",
+    );
+  });
+
+  it("drops effort and fast mode a model does not take", async () => {
+    const { ws, session } = makeWorkspace("claude-opus-5-5");
+    session.getState().config.effort = "xhigh";
+    session.getState().config.fast = true;
+    await ws.sendMessage("/model deepseek-v4-pro");
+    expect(session.getState().config).toMatchObject({ model: "deepseek-v4-pro" });
+    expect(session.getState().config.effort).toBeUndefined();
+    expect(session.getState().config.fast).toBeUndefined();
+  });
+
+  it("stays within its backend, and warns about a model the list does not know", async () => {
+    const { ws, agentInfo } = makeWorkspace("claude-opus-5-5");
+    await ws.sendMessage("/model gpt-6-astra");
+    expect(reply(ws)).toContain("continues only on a Claude model");
+    expect(ws.agents.get(agentInfo.id)!.info.model).toBe("claude-opus-5-5");
+    await ws.sendMessage("/model claude-opus-6");
+    expect(ws.agents.get(agentInfo.id)!.info.model).toBe("claude-opus-6");
+    expect(reply(ws)).toContain("is not in the model list");
+  });
+});

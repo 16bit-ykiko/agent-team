@@ -900,7 +900,7 @@ export const MessageItem = memo(function MessageItem({
                 <span className="message-author" style={{ color: agent.color }}>
                   {agent.name}
                 </span>
-                <span className="message-model">{shortModel(agent.model)}</span>
+                <span className="message-model">{shortModel(msg.model ?? agent.model)}</span>
               </>
             ) : null}
             <span className="message-time">{time}</span>

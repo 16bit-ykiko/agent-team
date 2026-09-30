@@ -10,7 +10,14 @@ import {
 } from "../session/claude";
 import type { GitInfo, PrInfo } from "../repo/git";
 import { HostSessionHandle, HostRegistry } from "../session/host";
-import { backendForModel, effortLevelsForModel, supportsFastMode } from "../config/presets";
+import {
+  MODEL_OPTIONS,
+  backendForModel,
+  defaultEffortForModel,
+  findModelOption,
+  effortLevelsForModel,
+  supportsFastMode,
+} from "../config/presets";
 
 export type MessageStatus = "streaming" | "done" | "error" | "queued";
 export type MessageKind = "user" | "agent" | "system";
@@ -48,6 +55,8 @@ export interface Message {
   // fast mode, and the context occupancy reported when it finished.
   effort?: string;
   fast?: boolean;
+  // Agent replies: the model the turn ran on (an agent's model can change).
+  model?: string;
   context?: ContextUsage;
   // Thinking tokens and time of the turn (Claude; from the API usage).
   thinking?: ThinkingStats;
@@ -192,6 +201,9 @@ export interface WorkspaceCallbacks {
   // An SDK message the session did not know how to render; logged so a
   // missing rendering is diagnosable instead of silent.
   onUnhandled?: (wsId: string, agentId: string, msg: unknown) => void;
+  // Credentials and provider settings a model runs with for an account (a
+  // DeepSeek model talks to another endpoint than a Claude one).
+  sessionEnv?: (model: string, account?: string) => Record<string, string> | undefined;
 }
 
 // Persisted events from older versions may lack fields the renderer
@@ -354,6 +366,7 @@ export class Workspace {
     const session = this.agents.get(agentId)?.session;
     const config = session?.nextTurnOptions ?? session?.getState().config;
     const effort = config?.effort ?? session?.effectiveEffort ?? undefined;
+    const model = config?.model ?? this.agents.get(agentId)?.info.model;
     return {
       id: genId("msg"),
       kind: "agent",
@@ -365,6 +378,7 @@ export class Workspace {
       turnId: genId("turn"),
       ...(effort && { effort }),
       ...(config?.fast && { fast: true }),
+      ...(model && { model }),
     };
   }
 
@@ -745,6 +759,9 @@ export class Workspace {
     if (text === "/effort" || text.startsWith("/effort ")) {
       return this.handleEffortCommand(text.slice("/effort".length).trim(), agent);
     }
+    if (text === "/model" || text.startsWith("/model ")) {
+      return this.handleModelCommand(text.slice("/model".length).trim(), agent);
+    }
     if (text === "/fast" || text.startsWith("/fast ")) {
       return this.handleFastCommand(text.slice("/fast".length).trim(), agent);
     }
@@ -808,6 +825,54 @@ export class Workspace {
         "treat the objective as your standing task for this session instead.\n\n" +
         `Objective:\n${arg}`,
     };
+  }
+
+  // A session is a transcript, not tied to a model: the next turn resumes it
+  // on the new one. Only within a backend (a Codex thread is not a Claude
+  // session), and only where the session can change it.
+  private handleModelCommand(arg: string, agent: AgentEntry): string {
+    const { name, model: current } = agent.info;
+    const backend = backendForModel(current);
+    const choices = MODEL_OPTIONS.filter((m) => m.backend === backend);
+    const label = (id: string) => MODEL_OPTIONS.find((m) => m.id === id)?.label ?? id;
+    if (!arg) {
+      return [
+        `**${name}** runs on **${label(current)}** (\`${current}\`).`,
+        `Available: ${choices.map((m) => (m.id === current ? `**${m.id}**` : `\`${m.id}\``)).join(" · ")}`,
+        "",
+        "Use `/model <id>` to switch; the conversation carries over.",
+      ].join("\n");
+    }
+    const next = arg;
+    if (next === current) return `**${name}** already runs on **${label(current)}**.`;
+    if (backendForModel(next) !== backend) {
+      return `**${name}** cannot move to \`${next}\`: a ${backend === "codex" ? "Codex thread" : "Claude session"} continues only on a ${backend === "codex" ? "Codex" : "Claude"} model.`;
+    }
+    if (!agent.session.setModel) {
+      return `**${name}** cannot switch models; add an agent on \`${next}\` instead.`;
+    }
+    // The effort carries over where the new model declares it, else it starts
+    // as a fresh agent on that model would; fast mode where it has one.
+    const preset = findModelOption(next);
+    const declared = preset ? (preset.effortLevels ?? []) : effortLevelsForModel(next);
+    const effort = agent.session.getState().config.effort;
+    const keep =
+      effort && declared.includes(effort) ? effort : (defaultEffortForModel(next) ?? undefined);
+    const fast = Boolean(agent.session.getState().config.fast) && supportsFastMode(next);
+    agent.session.setModel(next, keep, fast);
+    agent.session.setProviderEnv?.(this.cb?.sessionEnv?.(next, agent.info.account));
+    agent.info.model = next;
+    this.cb?.onAgentUpdated?.(this.id, this.agentInfo(agent));
+    const known = MODEL_OPTIONS.some((m) => m.id === next);
+    return [
+      `**${name}** moves from ${label(current)} to **${label(next)}**; the conversation carries over. ${this.appliesWhen(agent)}`,
+      ...(known
+        ? []
+        : [
+            "",
+            `\`${next}\` is not in the model list: if the CLI does not know it, the next turn fails.`,
+          ]),
+    ].join("\n");
   }
 
   private handleEffortCommand(arg: string, agent: AgentEntry): string {

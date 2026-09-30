@@ -1168,6 +1168,7 @@ systemctl --user restart agent-team-server
       onUnhandled: (wsId, agentId, msg) => {
         appendLog(this.baseDir, wsId, { timestamp: Date.now(), agentId, unhandled: msg });
       },
+      sessionEnv: (model, account) => this.sessionEnv(model, account),
     };
   }
 

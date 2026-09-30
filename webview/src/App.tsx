@@ -615,8 +615,18 @@ export function App() {
       onAddAgent: (id) => setAddAgentFor(id),
       onClearContext: (id, agentId) => clearContext(id, agentId),
       onRemoveAgent: (id, agentId) => removeAgent(id, agentId),
+      // Through the chat, so the switch shows where it happened.
+      onSetModel: (id, agentId, model) => void sendMessage(id, `/model ${model}`, agentId),
     }),
-    [openWorkspace, interrupt, archiveWorkspace, unarchiveWorkspace, clearContext, removeAgent],
+    [
+      openWorkspace,
+      interrupt,
+      archiveWorkspace,
+      unarchiveWorkspace,
+      clearContext,
+      removeAgent,
+      sendMessage,
+    ],
   );
   const taskActions = useMemo<TasksPanelActions>(
     () => ({
@@ -1577,6 +1587,7 @@ export function App() {
             project={activeProject}
             activeWsId={activeWsId}
             connected={connected}
+            models={models}
             actions={agentActions}
           />
         </SidePanel>

@@ -22,12 +22,13 @@ export interface HostSessionHandle extends EventEmitter {
   readonly backgroundTaskList?: BackgroundTask[];
   // Claude: effort/fast the next turn runs with, and whether a changed one
   // waits for the process to become idle.
-  readonly nextTurnOptions?: { effort?: string; fast?: boolean };
+  readonly nextTurnOptions?: { model?: string; effort?: string; fast?: boolean };
   readonly optionsPending?: boolean;
   send(message: string): Promise<void>;
   abort(): void;
   setEffort?(level: string): void;
   setFastMode?(on: boolean): void;
+  setModel?(model: string, effort: string | undefined, fast: boolean): void;
   setGoal?(goal: string | null): void;
   interrupt?(): Promise<boolean>;
   readonly interruptPending?: boolean;

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { AgentInfo, Project, Workspace } from "../state/useServer";
+import type { AgentInfo, ModelOption, Project, Workspace } from "../state/useServer";
 import { AgentAvatar } from "../workspace/avatar";
 import { agentState, stateLabel } from "../workspace/agents";
 import { formatRelative, formatTokens, shortModel } from "../format";
@@ -14,6 +14,7 @@ export interface AgentsPanelActions {
   onAddAgent: (workspaceId: string) => void;
   onClearContext: (workspaceId: string, agentId: string) => void;
   onRemoveAgent: (workspaceId: string, agentId: string) => void;
+  onSetModel: (workspaceId: string, agentId: string, model: string) => void;
 }
 
 const STATE_LABEL = {
@@ -33,12 +34,14 @@ export const AgentsPanel = memo(function AgentsPanel({
   project,
   activeWsId,
   connected,
+  models,
   actions,
 }: {
   sessions: Workspace[];
   project: Project | undefined;
   activeWsId: string | null;
   connected: boolean;
+  models: ModelOption[];
   actions: AgentsPanelActions;
 }) {
   const live = sessions.filter((w) => w.archivedAt == null);
@@ -52,6 +55,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           project={project}
           active={w.id === activeWsId}
           connected={connected}
+          models={models}
           actions={actions}
         />
       ))}
@@ -65,6 +69,7 @@ export const AgentsPanel = memo(function AgentsPanel({
               project={project}
               active={w.id === activeWsId}
               connected={connected}
+              models={models}
               actions={actions}
             />
           ))}
@@ -79,12 +84,14 @@ function SessionCard({
   project,
   active,
   connected,
+  models,
   actions,
 }: {
   session: Workspace;
   project: Project | undefined;
   active: boolean;
   connected: boolean;
+  models: ModelOption[];
   actions: AgentsPanelActions;
 }) {
   const state = sessionState(w);
@@ -143,8 +150,10 @@ function SessionCard({
             agent={a}
             connected={connected}
             archived={state === "archived"}
+            models={models}
             onClear={() => actions.onClearContext(w.id, a.id)}
             onRemove={() => actions.onRemoveAgent(w.id, a.id)}
+            onModel={(model) => actions.onSetModel(w.id, a.id, model)}
           />
         ))}
         {state !== "archived" && (
@@ -161,14 +170,18 @@ function AgentRow({
   agent: a,
   connected,
   archived,
+  models,
   onClear,
   onRemove,
+  onModel,
 }: {
   agent: AgentInfo;
   connected: boolean;
   archived: boolean;
+  models: ModelOption[];
   onClear: () => void;
   onRemove: () => void;
+  onModel: (model: string) => void;
 }) {
   const state = agentState(a);
   const ctx = a.context;
@@ -183,7 +196,23 @@ function AgentRow({
             {a.name}
           </span>
           <span className="ap-meta">
-            {shortModel(a.model)}
+            {archived || !connected || switchable(a, models).length < 2 ? (
+              shortModel(a.model)
+            ) : (
+              <select
+                className="ap-model"
+                aria-label={`${a.name}'s model`}
+                title="Switch model; the conversation carries over"
+                value={a.model}
+                onChange={(e) => onModel(e.target.value)}
+              >
+                {switchable(a, models).map((id) => (
+                  <option key={id} value={id}>
+                    {shortModel(id)}
+                  </option>
+                ))}
+              </select>
+            )}
             {a.effort ? ` · ${a.effort}` : ""}
             {a.fast ? " · ⚡" : ""}
             {a.account ? ` · @${a.account}` : ""}
@@ -220,6 +249,15 @@ function AgentRow({
       )}
     </div>
   );
+}
+
+// Models an agent can move to mid-session: Claude ones (the session is a
+// transcript any of them resumes); a Codex thread stays on its model. The
+// current one leads even when the list has dropped it.
+function switchable(a: AgentInfo, models: ModelOption[]): string[] {
+  if (a.model.startsWith("gpt-")) return [a.model];
+  const ids = models.filter((m) => m.backend === "claude").map((m) => m.id);
+  return ids.includes(a.model) ? ids : [a.model, ...ids];
 }
 
 // The last two folders of a path: enough to tell worktrees apart.

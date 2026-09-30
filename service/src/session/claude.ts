@@ -252,8 +252,8 @@ export class ClaudeSession extends EventEmitter {
   // mode, credentials); the process is replaced on the next send that finds
   // the session idle.
   private restartPending = false;
-  // Effort and fast mode the live CLI process was launched with.
-  private launched: { effort?: string; fast?: boolean } | null = null;
+  // Model, effort and fast mode the live CLI process was launched with.
+  private launched: { model?: string; effort?: string; fast?: boolean } | null = null;
   // Bumped by abort(): a start still loading the SDK must not spawn.
   private generation = 0;
   private iterating = false;
@@ -432,7 +432,11 @@ export class ClaudeSession extends EventEmitter {
     if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
 
     const options = this.buildOptions(sdk);
-    this.launched = { effort: this.config.effort, fast: this.config.fast };
+    this.launched = {
+      model: this.config.model,
+      effort: this.config.effort,
+      fast: this.config.fast,
+    };
 
     this.queryInstance = query({
       prompt: iterable,
@@ -549,12 +553,12 @@ export class ClaudeSession extends EventEmitter {
     return this.restartPending;
   }
 
-  // Effort and fast mode the next turn will actually run with: the live
-  // process's, unless the next send replaces it first.
-  get nextTurnOptions(): { effort?: string; fast?: boolean } {
+  // Model, effort and fast mode the next turn will actually run with: the
+  // live process's, unless the next send replaces it first.
+  get nextTurnOptions(): { model?: string; effort?: string; fast?: boolean } {
     const replaced = !this.queryInstance || (this.restartPending && this.runState === "idle");
     return replaced || !this.launched
-      ? { effort: this.config.effort, fast: this.config.fast }
+      ? { model: this.config.model, effort: this.config.effort, fast: this.config.fast }
       : this.launched;
   }
 
@@ -1561,6 +1565,16 @@ export class ClaudeSession extends EventEmitter {
   // Same lifecycle as effort: fast mode is an option of the query.
   setFastMode(on: boolean): void {
     this.config.fast = on || undefined;
+    this.restartForOptions();
+  }
+
+  // The conversation is a transcript the CLI resumes by session id, under
+  // whichever model the new process is given; effort and fast mode are
+  // carried over or reset by the caller to what that model takes.
+  setModel(model: string, effort: string | undefined, fast: boolean): void {
+    this.config.model = model;
+    this.config.effort = effort;
+    this.config.fast = fast || undefined;
     this.restartForOptions();
   }
 

@@ -204,6 +204,8 @@ export interface Message {
   from?: MessageOrigin;
   effort?: string;
   fast?: boolean;
+  // The model the turn ran on; an agent's model can change mid-session.
+  model?: string;
   context?: ContextUsage;
   thinking?: ThinkingStats;
   // History pages arrive as summaries; full events load on first expand.

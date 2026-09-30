@@ -1832,3 +1832,31 @@ describe("stopping a turn, not the session", () => {
     expect(opts.perTaskStopAffordance).toBe(true);
   });
 });
+
+describe("switching models", () => {
+  it("resumes the same session on the new model once the process is idle", () => {
+    const session = new ClaudeSession({ cwd: "/tmp", model: "claude-opus-5-5", effort: "xhigh" });
+    const inner = session as unknown as {
+      queryInstance: unknown;
+      processing: boolean;
+      sessionId: string | null;
+      buildOptions(sdk: unknown): Record<string, unknown>;
+    };
+    const close = vi.fn();
+    inner.sessionId = "sess-1";
+    inner.queryInstance = { close, interrupt: () => Promise.resolve() };
+    Object.assign(inner, { launched: { model: "claude-opus-5-5", effort: "xhigh" } });
+    inner.processing = true;
+    (session as unknown as { runState: string }).runState = "working";
+    session.setModel("claude-fable-5-1", "high", false);
+    // A running turn keeps its process; the swap waits.
+    expect(close).not.toHaveBeenCalled();
+    expect(session.optionsPending).toBe(true);
+    expect(session.nextTurnOptions.model).toBe("claude-opus-5-5");
+    inner.processing = false;
+    (session as unknown as { runState: string }).runState = "idle";
+    expect(session.nextTurnOptions).toMatchObject({ model: "claude-fable-5-1", effort: "high" });
+    const opts = inner.buildOptions({ query: () => null });
+    expect(opts).toMatchObject({ model: "claude-fable-5-1", resume: "sess-1", effort: "high" });
+  });
+});

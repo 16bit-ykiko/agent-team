@@ -36,6 +36,15 @@ export class FakeSession extends EventEmitter implements HostSessionHandle {
   setFastMode(on: boolean): void {
     this.config.fast = on || undefined;
   }
+  providerEnv: Record<string, string> | undefined;
+  setModel(model: string, effort: string | undefined, fast: boolean): void {
+    this.config.model = model;
+    this.config.effort = effort;
+    this.config.fast = fast || undefined;
+  }
+  setProviderEnv(env: Record<string, string> | undefined): void {
+    this.providerEnv = env;
+  }
   setGoal(goal: string | null): void {
     this.config.goal = goal ?? undefined;
   }
