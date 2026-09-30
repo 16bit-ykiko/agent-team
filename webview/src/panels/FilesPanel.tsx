@@ -5,6 +5,7 @@ import { highlightTree } from "../chat/highlight";
 import { MdBlock } from "../chat/markdown";
 import { FileOpenContext, parseFileRef, type FileRef } from "../chat/fileRef";
 import { formatSize } from "../format";
+import { Icon } from "./Icon";
 
 interface DirEntry {
   name: string;
@@ -84,6 +85,16 @@ function parentOf(path: string): string {
   return cut <= 0 ? "/" : trimmed.slice(0, cut);
 }
 
+// Within a root, the path from it: after the root picker, or after the
+// root's own name when there is no picker.
+function shownPath(path: string, root: FileRoot | undefined, picker: boolean): string {
+  if (!root) return path;
+  const rest = path.slice(root.path.length).replace(/^\//, "");
+  if (picker) return rest || "/";
+  const name = root.path.split("/").filter(Boolean).pop() ?? root.path;
+  return rest ? `${name}/${rest}` : name;
+}
+
 // A reference found inside a previewed file, relative to that file's folder.
 function resolveFrom(dir: string, ref: string): string {
   if (ref.startsWith("/") || ref.startsWith("~")) return ref;
@@ -153,18 +164,15 @@ function DirView({
 }) {
   return (
     <div className="dir-view">
-      {view.path !== "/" && (
-        <button className="dir-entry" onClick={() => open(parentOf(view.path))}>
-          <span className="dir-entry-icon">↰</span>
-          <span className="dir-entry-name">..</span>
-        </button>
-      )}
       {view.entries.map((e) => (
-        <button key={e.name} className="dir-entry" onClick={() => open(`${view.path}/${e.name}`)}>
-          <span className="dir-entry-icon">{e.dir ? "📁" : "📄"}</span>
+        <button
+          key={e.name}
+          className={`dir-entry${e.dir ? " is-dir" : ""}`}
+          onClick={() => open(`${view.path}/${e.name}`)}
+        >
           <span className="dir-entry-name">
             {e.name}
-            {e.dir && "/"}
+            {e.dir && <span className="dir-slash">/</span>}
           </span>
           {!e.dir && <span className="dir-entry-size">{formatSize(e.size)}</span>}
         </button>
@@ -242,39 +250,35 @@ export function FilesPanel({
 
   return (
     <div className="files-panel">
-      {roots.length > 1 && (
-        <select
-          className="fp-roots"
-          aria-label="Folder"
-          value={root?.path ?? ""}
-          onChange={(e) => open(e.target.value)}
-        >
-          {!root && <option value="">Elsewhere</option>}
-          {roots.map((r) => (
-            <option key={r.path} value={r.path}>
-              {r.label}
-            </option>
-          ))}
-        </select>
-      )}
       <div className="fp-bar">
-        <button
-          className="btn-ghost fp-btn"
-          title="Parent folder"
-          onClick={() => open(parentOf(path))}
-        >
-          ↑
+        <button className="fp-btn fp-up" title="Parent folder" onClick={() => open(parentOf(path))}>
+          <Icon name="up" />
         </button>
+        {roots.length > 1 && (
+          <select
+            className="fp-roots"
+            aria-label="Folder"
+            value={root?.path ?? ""}
+            onChange={(e) => open(e.target.value)}
+          >
+            {!root && <option value="">Elsewhere</option>}
+            {roots.map((r) => (
+              <option key={r.path} value={r.path}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        )}
         <span className="fp-path" title={path}>
-          <bdi>{path}</bdi>
+          <bdi>{shownPath(path, root, roots.length > 1)}</bdi>
         </span>
         {isMarkdown && (
-          <button className="btn-ghost fp-btn" onClick={() => setSource((v) => !v)}>
+          <button className="fp-btn" onClick={() => setSource((v) => !v)}>
             {source ? "Preview" : "Source"}
           </button>
         )}
         <button
-          className="btn-ghost fp-btn"
+          className="fp-btn"
           title="Copy path"
           onClick={() => {
             navigator.clipboard?.writeText(path).then(
@@ -289,7 +293,7 @@ export function FilesPanel({
           {copied ? "Copied" : "Copy"}
         </button>
         {view && view.kind !== "dir" && (
-          <a className="btn-ghost fp-btn" href={raw} target="_blank" rel="noopener noreferrer">
+          <a className="fp-btn" href={raw} target="_blank" rel="noopener noreferrer">
             Raw
           </a>
         )}

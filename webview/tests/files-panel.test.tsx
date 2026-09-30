@@ -115,7 +115,9 @@ describe("FilesPanel", () => {
     const { container, getByText } = open(".");
     await waitFor(() => expect(container.querySelector(".dir-view")).not.toBeNull());
     expect(getByText("2.0 KB")).toBeTruthy();
-    fireEvent.click(getByText("src/"));
+    fireEvent.click(
+      [...container.querySelectorAll(".dir-entry")].find((e) => e.textContent === "src/")!,
+    );
     await waitFor(() => expect(requested.at(-1)).toBe("/w/src"));
   });
 
@@ -221,6 +223,17 @@ describe("FilesPanel", () => {
     fireEvent.click(getByTitle("Copy path"));
     await Promise.resolve();
     expect(getByTitle("Copy path").textContent).toBe("Copy");
+  });
+
+  it("shows paths from the folder's own name, the full path on hover", async () => {
+    views = {
+      "src/a.ts": { kind: "text", path: "/w/src/a.ts", size: 2, content: "x\n", truncated: false },
+    };
+    const { container } = open("src/a.ts", undefined, undefined, [{ label: "w", path: "/w" }]);
+    await waitFor(() => expect(container.querySelector(".code-view")).not.toBeNull());
+    const shown = container.querySelector(".fp-path")!;
+    expect(shown.textContent).toBe("w/src/a.ts");
+    expect(shown.getAttribute("title")).toBe("/w/src/a.ts");
   });
 
   it("offers no folder choice for a single workspace", async () => {

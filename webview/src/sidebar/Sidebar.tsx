@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 import type { Workspace, Project, SystemStatus, SearchHit } from "../state/useServer";
 import { groupWorkspaces, isGroupExpanded, archivedWorkspaces } from "./groups";
 import { isAgentActive } from "../workspace/agents";
+import { Icon } from "../panels/Icon";
 import { formatBytes, formatRelative, formatResetTime } from "../format";
 
 function gitTitle(git: { dirty: number; ahead: number; behind: number }): string {
@@ -267,7 +268,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                         p.onOpenBoard!(g.project!.id);
                       }}
                     >
-                      ▦
+                      <Icon name="board" />
                     </button>
                   )}
                   {!g.project && (

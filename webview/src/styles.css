@@ -1057,6 +1057,9 @@ button {
   border-radius: 4px;
   padding: 1px 5px;
   font-size: 12px;
+  /* A path broken across lines stays two whole boxes. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
 }
 .message-content pre {
   position: relative;
@@ -1299,7 +1302,8 @@ span.katex-display {
   padding: 0 6px;
   font-size: 10px;
 }
-.chip-tool {
+.chip-tool,
+.chip-panel {
   color: var(--accent);
   background: var(--accent-soft);
   border-color: transparent;
@@ -1322,8 +1326,7 @@ span.katex-display {
 .chip-text {
   color: var(--text-secondary);
 }
-.chip-schedule,
-.chip-panel {
+.chip-schedule {
   color: var(--purple);
   background: rgba(198, 120, 221, 0.12);
   border-color: transparent;
@@ -2604,32 +2607,23 @@ span.katex-display {
 
 /* ---- Projects ----------------------------------------------------------- */
 
-.ws-group-project .ws-group-label::before {
-  content: "◆ ";
-  color: var(--purple);
-}
 .task-lead-tag {
   flex-shrink: 0;
-  font-size: 9.5px;
-  line-height: 14px;
-  padding: 0 5px;
-  border-radius: 7px;
-  background: rgba(198, 120, 221, 0.14);
-  color: var(--purple);
+  color: var(--text-muted);
 }
 .avatar-from {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(198, 120, 221, 0.14);
-  color: var(--purple);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
   font-size: 14px;
 }
 .from-author {
   background: none;
   border: none;
   padding: 0;
-  color: var(--purple);
+  color: var(--text-primary);
   font-family: inherit;
   cursor: pointer;
 }
@@ -2667,7 +2661,14 @@ span.katex-display {
 /* ---- Board page ---------------------------------------------------------- */
 
 .ws-group-board {
-  opacity: 0.55;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+}
+.ws-group-board .icon {
+  width: 13px;
+  height: 13px;
 }
 .board-overlay {
   position: fixed;
@@ -2879,8 +2880,8 @@ span.katex-display {
 }
 .bp-status-toggle[aria-pressed="true"] {
   color: var(--text-primary);
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: transparent;
+  background: var(--bg-active);
 }
 .bp-status-toggle:disabled {
   opacity: 0.35;
@@ -2951,11 +2952,9 @@ span.katex-display {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
-.bp-card.prio-high,
 .bp-node.prio-high {
   border-left-color: var(--error);
 }
-.bp-card.prio-normal,
 .bp-node.prio-normal {
   border-left-color: var(--accent);
 }
@@ -2996,7 +2995,7 @@ span.katex-display {
   line-height: 1.45;
 }
 .bp-card-reason {
-  color: var(--warning);
+  color: var(--text-secondary);
   font-size: 11.5px;
 }
 .bp-card-foot {
@@ -3469,13 +3468,24 @@ span.katex-display {
 
 /* ---- Side panels -------------------------------------------------------- */
 
+.icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .side-rail {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 2px;
   width: 44px;
-  padding: calc(10px + env(safe-area-inset-top, 0px)) 5px 10px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 0 10px;
   background: var(--bg-secondary);
   border-left: 1px solid var(--border);
 }
@@ -3484,13 +3494,15 @@ span.katex-display {
 }
 .rail-btn {
   position: relative;
-  width: 34px;
-  height: 34px;
-  font: inherit;
-  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   color: var(--text-muted);
   background: none;
-  border: 1px solid transparent;
+  border: none;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
@@ -3501,18 +3513,18 @@ span.katex-display {
 .rail-btn[aria-pressed="true"] {
   color: var(--text-primary);
   background: var(--bg-active);
-  border-color: var(--accent-soft);
 }
 .rail-badge {
   position: absolute;
-  top: 1px;
+  top: 2px;
   right: 1px;
-  min-width: 14px;
+  min-width: 13px;
   padding: 0 3px;
-  font-size: 9.5px;
-  line-height: 14px;
-  color: #fff;
-  background: var(--accent);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 13px;
+  color: var(--accent);
+  background: var(--accent-soft);
   border-radius: 7px;
 }
 .side-panel {
@@ -3538,7 +3550,7 @@ span.katex-display {
   bottom: 0;
   right: 44px;
   z-index: 40;
-  box-shadow: var(--shadow-lg);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.35);
 }
 .side-panel-resize {
   position: absolute;
@@ -3554,24 +3566,37 @@ span.katex-display {
   background: var(--accent);
   opacity: 0.5;
 }
+/* As tall as the chat header beside it, so their rules meet. */
 .side-panel-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: calc(10px + env(safe-area-inset-top, 0px)) 10px 8px 14px;
+  gap: 2px;
+  box-sizing: border-box;
+  min-height: var(--chat-header-height, 0px);
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 8px 8px 16px;
   border-bottom: 1px solid var(--border);
 }
-.side-panel-title {
+.side-panel-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   flex: 1;
   min-width: 0;
+}
+.side-panel-title,
+.side-panel-sub {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+}
+.side-panel-title {
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
+  color: var(--text-primary);
+}
+.side-panel-sub {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 .side-panel-btn {
   display: inline-flex;
@@ -3587,33 +3612,24 @@ span.katex-display {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.side-panel-btn svg {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
 .side-panel-btn:hover {
   color: var(--text-primary);
   background: var(--bg-hover);
 }
 .side-panel-btn[aria-pressed="true"] {
   color: var(--text-primary);
-  border-color: var(--accent-soft);
+  background: var(--bg-active);
 }
-/* Small bordered actions inside the panels. */
+/* Quiet actions inside the panels; the border shows what is pointed at. */
 .panel-btn {
   flex-shrink: 0;
-  min-height: 26px;
-  padding: 2px 10px;
+  min-height: 24px;
+  padding: 0 8px;
   font: inherit;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: 11px;
+  color: var(--text-muted);
   background: none;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
@@ -3642,11 +3658,12 @@ span.katex-display {
 /* Files panel */
 .file-ref {
   cursor: pointer;
-  text-decoration: underline dotted var(--text-muted);
-  text-underline-offset: 3px;
 }
-.file-ref:hover {
+.file-ref:hover,
+.file-ref:focus-visible {
   color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .files-panel {
   flex: 1;
@@ -3655,20 +3672,28 @@ span.katex-display {
   flex-direction: column;
 }
 .fp-roots {
-  margin: 8px 10px 0;
-  padding: 4px 6px;
+  flex-shrink: 0;
+  /* As wide as the chosen folder, not the longest one listed. */
+  field-sizing: content;
+  max-width: 45%;
+  min-height: 26px;
+  padding: 0 4px;
   font: inherit;
   font-size: 12px;
   color: var(--text-primary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.fp-roots:hover {
+  border-color: var(--border);
 }
 .fp-bar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 2px;
+  padding: 6px 8px 6px 10px;
   border-bottom: 1px solid var(--border);
   min-width: 0;
 }
@@ -3688,11 +3713,25 @@ span.katex-display {
 .fp-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   min-height: 26px;
-  font-size: 12px;
-  padding: 0 9px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
   text-decoration: none;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.fp-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+.fp-up {
+  padding: 0 5px;
 }
 .fp-body {
   flex: 1 1 auto;
@@ -3773,14 +3812,20 @@ span.katex-display {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px;
+  padding: 5px 16px;
   border: none;
   background: none;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+}
+.dir-entry.is-dir {
+  color: var(--text-primary);
+}
+.dir-slash {
+  color: var(--text-muted);
 }
 .dir-entry:hover {
   background: var(--bg-hover);
@@ -3804,10 +3849,6 @@ span.katex-display {
   flex-direction: column;
   gap: 10px;
   font-size: 12px;
-}
-.ap-summary {
-  color: var(--text-muted);
-  font-size: 11px;
 }
 .ap-session {
   padding: 9px 10px;
@@ -3851,7 +3892,7 @@ span.katex-display {
   min-width: 0;
   padding: 0;
   font: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   text-align: left;
   color: var(--text-primary);
@@ -3867,7 +3908,7 @@ span.katex-display {
 }
 .ap-when {
   flex-shrink: 0;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-muted);
 }
 .ap-where {
@@ -3875,13 +3916,13 @@ span.katex-display {
   gap: 8px;
   min-width: 0;
   margin: 3px 0 0 15px;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
 }
 .ap-branch {
-  color: var(--success);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -3894,7 +3935,7 @@ span.katex-display {
 }
 .ap-work {
   margin: 4px 0 0 15px;
-  color: var(--purple);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3936,7 +3977,7 @@ span.katex-display {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text-muted);
 }
 .ap-agent.as-working .ap-agent-state {
@@ -3951,7 +3992,7 @@ span.katex-display {
   align-items: center;
   gap: 6px;
   margin-top: 3px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-muted);
 }
 .ap-context-bar {
@@ -4102,7 +4143,10 @@ span.katex-display {
   .header-rail .rail-btn {
     width: 40px;
     height: 40px;
-    font-size: 18px;
+  }
+  .header-rail .icon {
+    width: 18px;
+    height: 18px;
   }
   /* The app height, as the sidebar: pinned top+bottom it would sit under
      the keyboard. */
@@ -4125,6 +4169,7 @@ span.katex-display {
   }
   /* Touch targets: 40-44px, text a size up. */
   .side-panel-head {
+    min-height: 0;
     padding: calc(6px + env(safe-area-inset-top, 0px)) 6px 6px 16px;
   }
   .side-panel-title {
@@ -4134,7 +4179,7 @@ span.katex-display {
     width: 44px;
     height: 44px;
   }
-  .side-panel-btn svg {
+  .side-panel-btn .icon {
     width: 20px;
     height: 20px;
   }
@@ -4156,7 +4201,16 @@ span.katex-display {
     height: 40px;
     font-size: 18px;
   }
+  .fp-bar {
+    flex-wrap: wrap;
+  }
+  .fp-path {
+    flex-basis: 0;
+  }
   .fp-roots {
+    order: -1;
+    flex: 1 1 100%;
+    max-width: none;
     min-height: 40px;
     font-size: 14px;
   }

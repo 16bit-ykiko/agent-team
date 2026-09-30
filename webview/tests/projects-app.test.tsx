@@ -330,7 +330,8 @@ describe("the files panel in a project", () => {
     fireEvent.click(document.querySelector(".message-content .file-ref")!);
     await act(async () => {});
     const panel = () => document.querySelector('aside[aria-label="Files"]')!;
-    expect(panel().querySelector(".fp-path")!.textContent).toBe("/repo/clice/src/x.cpp");
+    expect(panel().querySelector(".fp-path")!.textContent).toBe("src/x.cpp");
+    expect(panel().querySelector(".fp-path")!.getAttribute("title")).toBe("/repo/clice/src/x.cpp");
     const folders = () =>
       [...panel().querySelectorAll(".fp-roots option")].map((o) => o.textContent);
     expect(folders()).toEqual(["clice", "clice-modules"]);
@@ -344,7 +345,7 @@ describe("the files panel in a project", () => {
     await act(async () => {});
     expect(title()).toContain("modules");
     expect(fetchMock.mock.calls.length).toBe(calls);
-    expect(panel().querySelector(".fp-path")!.textContent).toBe("/repo/clice/src/x.cpp");
+    expect(panel().querySelector(".fp-path")!.getAttribute("title")).toBe("/repo/clice/src/x.cpp");
   });
 });
 

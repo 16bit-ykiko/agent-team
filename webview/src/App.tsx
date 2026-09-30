@@ -14,7 +14,7 @@ import { Rail, type RailItem } from "./panels/Rail";
 import { AgentsPanel, type AgentsPanelActions } from "./panels/AgentsPanel";
 import { TasksPanel, workCount, type TasksPanelActions } from "./panels/TasksPanel";
 import { FilesPanel } from "./panels/FilesPanel";
-import { fileRoots, scopeSessions, sessionState, stateSummary } from "./panels/scope";
+import { fileRoots, scopeSessions, scopeSummary, sessionState, stateSummary } from "./panels/scope";
 import { FileOpenContext, parseFileRef, type FileRef } from "./chat/fileRef";
 import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
 import { isImeKeyEvent } from "./chat/ime";
@@ -262,6 +262,15 @@ export function App() {
     };
   }, []);
   const appRef = useRef<HTMLDivElement>(null);
+  // The side panels' heads are as tall as the chat header (styles.css).
+  const headerRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() =>
+      appRef.current?.style.setProperty("--chat-header-height", `${el.offsetHeight}px`),
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const [activeWsId, setActiveWsId] = useState<string | null>(() => {
     try {
@@ -284,8 +293,12 @@ export function App() {
   // Pinning persists, and so does a width once dragged; code needs more
   // room than the lists, so the Files panel has its own.
   const [openPanel, setOpenPanel] = useState<PanelId | null>(null);
-  const [panelPinned, setPanelPinned] = useState(() => readSetting("panelPinned") === "1");
-  useEffect(() => writeSetting("panelPinned", panelPinned ? "1" : "0"), [panelPinned]);
+  // Pinned unless chosen otherwise where the chat keeps room beside a panel:
+  // floating over it, a panel cuts its lines mid-word.
+  const [panelPinned, setPanelPinned] = useState(() => {
+    const saved = readSetting("panelDock");
+    return saved ? saved === "1" : window.innerWidth >= WIDE_WINDOW;
+  });
   const [panelMax, setPanelMax] = useState(false);
   const [listWidth, setListWidth] = useSavedWidth("listPanelWidth");
   const [filesWidth, setFilesWidth] = useSavedWidth("filesPanelWidth");
@@ -312,7 +325,10 @@ export function App() {
     setFileTarget((t) => ({ wsId, ref, scope, seq: (t?.seq ?? 0) + 1 }));
     setOpenPanel("files");
   }, []);
-  const togglePin = useCallback(() => setPanelPinned((p) => !p), []);
+  const togglePin = useCallback(() => {
+    writeSetting("panelDock", panelPinned ? "0" : "1");
+    setPanelPinned(!panelPinned);
+  }, [panelPinned]);
   // The project whose board page is open, whichever workspace is.
   const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
   const closeBoard = useCallback(() => setBoardProjectId(null), []);
@@ -430,7 +446,7 @@ export function App() {
           {
             id: "board",
             label: `Objectives of ${activeProject.name}`,
-            icon: "▦",
+            icon: "board" as const,
             active: boardProjectId === activeProject.id,
             onClick: () => setBoardProjectId(activeProject.id),
           },
@@ -439,7 +455,7 @@ export function App() {
     {
       id: "agents",
       label: "Agents and sessions",
-      icon: "◉",
+      icon: "agents" as const,
       active: openPanel === "agents",
       badge: scope.filter((w) => sessionState(w) === "working").length,
       onClick: () => togglePanel("agents"),
@@ -447,7 +463,7 @@ export function App() {
     {
       id: "tasks",
       label: "Background tasks",
-      icon: "◷",
+      icon: "tasks" as const,
       active: openPanel === "tasks",
       badge: workCount(scope),
       onClick: () => togglePanel("tasks"),
@@ -455,7 +471,7 @@ export function App() {
     {
       id: "files",
       label: "Files",
-      icon: "▤",
+      icon: "files" as const,
       active: openPanel === "files",
       onClick: () => togglePanel("files"),
     },
@@ -1216,14 +1232,12 @@ export function App() {
       <div className="main-panel">
         {activeWs ? (
           <>
-            <div className="panel-header">
+            <div className="panel-header" ref={headerRef}>
               <div className="panel-header-top">
                 <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>
                   &#9776;
                 </button>
-                <span className="panel-title">
-                  {activeWs.name} — {activeWs.project}
-                </span>
+                <span className="panel-title">{headerTitle(activeWs)}</span>
                 <button
                   className="agents-chip"
                   aria-pressed={openPanel === "agents"}
@@ -1541,7 +1555,8 @@ export function App() {
 
       {activeWs && openPanel === "agents" && (
         <SidePanel
-          title={activeProject ? `${activeProject.name} · agents` : "Agents"}
+          title="Agents"
+          subtitle={scopeSummary(scope, activeProject)}
           pinned={panelPinned}
           maximized={panelMax}
           inset={sidebarWidth}
@@ -1562,7 +1577,8 @@ export function App() {
       )}
       {activeWs && openPanel === "tasks" && (
         <SidePanel
-          title={activeProject ? `${activeProject.name} · background` : "Background tasks"}
+          title="Background tasks"
+          subtitle={`${activeProject?.name ?? activeWs.name} · ${plural(workCount(scope), "task")}`}
           pinned={panelPinned}
           maximized={panelMax}
           inset={sidebarWidth}
@@ -1679,6 +1695,16 @@ export function App() {
 }
 
 // Project leads survive a purge (server: purge_archived).
+// "name — folder", unless the name already starts with the folder's
+// ("clice · lead" of the project clice).
+function headerTitle(ws: Workspace): string {
+  return ws.name.startsWith(ws.project) ? ws.name : `${ws.name} — ${ws.project}`;
+}
+
+function plural(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
 function purgeBody(workspaces: Workspace[], projects: Project[]): string {
   const archived = workspaces.filter((w) => w.archivedAt != null);
   const leads = archived.filter(
@@ -1691,6 +1717,7 @@ function purgeBody(workspaces: Workspace[], projects: Project[]): string {
 
 type PanelId = "agents" | "tasks" | "files";
 const WORKSPACE_ROOT: FileRef = { path: "." };
+const WIDE_WINDOW = 1280;
 // Where side panels become full-screen sheets (styles.css).
 const PHONE = "(max-width: 768px), (max-height: 500px)";
 

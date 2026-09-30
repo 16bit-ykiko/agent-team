@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Icon } from "./Icon";
 
 export const PANEL_MIN_WIDTH = 300;
 
@@ -15,6 +16,7 @@ export function autoPanelWidth(kind: "list" | "wide", viewport: number): number 
 // the automatic width; on phones it is a full-screen sheet.
 export function SidePanel({
   title,
+  subtitle,
   kind = "list",
   pinned,
   maximized,
@@ -28,6 +30,8 @@ export function SidePanel({
   children,
 }: {
   title: string;
+  // What it covers, under the title (the chat header has the same two rows).
+  subtitle?: string;
   kind?: "list" | "wide";
   pinned: boolean;
   maximized: boolean;
@@ -85,14 +89,17 @@ export function SidePanel({
         />
       )}
       <header className="side-panel-head">
-        <span className="side-panel-title">{title}</span>
+        <div className="side-panel-titles">
+          <span className="side-panel-title">{title}</span>
+          {subtitle && <span className="side-panel-sub">{subtitle}</span>}
+        </div>
         <button
           className="side-panel-btn side-panel-max"
           aria-pressed={maximized}
           title={maximized ? "Back beside the chat" : "Maximise over the chat"}
           onClick={onMaximize}
         >
-          <Icon d={maximized ? RESTORE : MAXIMIZE} />
+          <Icon name={maximized ? "restore" : "maximize"} />
         </button>
         {!maximized && (
           <button
@@ -101,7 +108,7 @@ export function SidePanel({
             title={pinned ? "Float over the chat" : "Pin beside the chat"}
             onClick={onPin}
           >
-            <Icon d={PIN} />
+            <Icon name="pin" />
           </button>
         )}
         <button
@@ -109,23 +116,10 @@ export function SidePanel({
           aria-label={`Close ${title}`}
           onClick={onClose}
         >
-          <Icon d={CLOSE} />
+          <Icon name="close" />
         </button>
       </header>
       <div className={`side-panel-body${flush ? " flush" : ""}`}>{children}</div>
     </aside>
-  );
-}
-
-const MAXIMIZE = "M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10";
-const RESTORE = "M6 2.5V6H2.5M10 2.5V6h3.5M10 13.5V10h3.5M6 13.5V10H2.5";
-const PIN = "M2.5 3.5h11v9h-11zM10 3.5v9";
-const CLOSE = "M4 4l8 8M12 4l-8 8";
-
-function Icon({ d }: { d: string }) {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d={d} />
-    </svg>
   );
 }

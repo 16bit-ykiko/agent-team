@@ -1,7 +1,9 @@
+import { Icon, type IconName } from "./Icon";
+
 export interface RailItem {
   id: string;
   label: string;
-  icon: string;
+  icon: IconName;
   active: boolean;
   // A count worth noticing (sessions working, tasks running).
   badge?: number;
@@ -22,9 +24,7 @@ export function Rail({ items, className }: { items: RailItem[]; className: strin
           title={i.label}
           onClick={i.onClick}
         >
-          <span className="rail-icon" aria-hidden="true">
-            {i.icon}
-          </span>
+          <Icon name={i.icon} />
           {!!i.badge && <span className="rail-badge">{i.badge}</span>}
         </button>
       ))}

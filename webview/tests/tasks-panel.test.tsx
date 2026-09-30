@@ -155,8 +155,9 @@ describe("Stop in the app", () => {
     expect(document.querySelector(".side-panel")!.getAttribute("aria-label")).toBe(
       "Background tasks",
     );
+    expect(document.querySelector(".side-panel-sub")!.textContent).toBe("w · 1 task");
     expect(document.querySelector('.side-rail [aria-label="Background tasks"]')!.textContent).toBe(
-      "◷1",
+      "1",
     );
     fireEvent.click(
       within(document.querySelector(".tasks-panel") as HTMLElement).getByText("Stop"),

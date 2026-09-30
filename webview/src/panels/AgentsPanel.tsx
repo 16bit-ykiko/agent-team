@@ -3,7 +3,8 @@ import type { AgentInfo, Project, Workspace } from "../state/useServer";
 import { AgentAvatar } from "../workspace/avatar";
 import { agentState, stateLabel } from "../workspace/agents";
 import { formatRelative, formatTokens, shortModel } from "../format";
-import { sessionState, sessionWork, stateSummary } from "./scope";
+import { sessionState, sessionWork } from "./scope";
+import { Icon } from "./Icon";
 
 export interface AgentsPanelActions {
   onOpen: (workspaceId: string) => void;
@@ -44,12 +45,6 @@ export const AgentsPanel = memo(function AgentsPanel({
   const archived = sessions.filter((w) => w.archivedAt != null);
   return (
     <div className="agents-panel">
-      {project && (
-        <div className="ap-summary">
-          {project.name} · {live.length} session{live.length === 1 ? "" : "s"} ·{" "}
-          {stateSummary(live.map(sessionState))}
-        </div>
-      )}
       {live.map((w) => (
         <SessionCard
           key={w.id}
@@ -97,6 +92,7 @@ function SessionCard({
   // Stop ends a running turn; background work stops in the Tasks panel, and
   // a sleeping session archives like an idle one.
   const busy = state === "working" || state === "waiting";
+  const name = shortName(w, project);
   return (
     <section className={`ap-session ss-${state}${active ? " active" : ""}`} aria-label={w.name}>
       <header className="ap-session-head">
@@ -106,8 +102,10 @@ function SessionCard({
           title="Open this session"
           onClick={() => actions.onOpen(w.id)}
         >
-          {w.projectLink?.role === "lead" && <span className="task-lead-tag">lead</span>}
-          {w.name}
+          {w.projectLink?.role === "lead" && !/\blead\b/i.test(name) && (
+            <span className="task-lead-tag">lead</span>
+          )}
+          {name}
         </button>
         <span className="ap-when">{formatRelative(w.lastMessageAt ?? w.createdAt)}</span>
       </header>
@@ -194,10 +192,12 @@ function AgentRow({
             {a.account ? ` · @${a.account}` : ""}
           </span>
         </div>
-        <div className="ap-agent-state">
-          {archived ? "archived" : stateLabel(a, connected)}
-          {bg.length > 0 && state !== "waiting" && ` · ${bg.length} in background`}
-        </div>
+        {(archived || state !== "idle" || !connected || bg.length > 0) && (
+          <div className="ap-agent-state">
+            {archived ? "archived" : stateLabel(a, connected)}
+            {bg.length > 0 && state !== "waiting" && ` · ${bg.length} in background`}
+          </div>
+        )}
         {a.goal && <div className="ap-goal">🎯 {a.goal}</div>}
         {ctx && pct !== null && (
           <div
@@ -214,15 +214,24 @@ function AgentRow({
       {!archived && (
         <div className="ap-agent-actions">
           <button title="Clear context" aria-label={`Clear ${a.name}'s context`} onClick={onClear}>
-            ↻
+            <Icon name="clear" />
           </button>
           <button title="Remove" aria-label={`Remove ${a.name}`} onClick={onRemove}>
-            ×
+            <Icon name="close" />
           </button>
         </div>
       )}
     </div>
   );
+}
+
+// Within its project a session goes by what follows the project's name
+// ("clice · lead" is the lead).
+function shortName(w: Workspace, project: Project | undefined): string {
+  const prefix = project ? `${project.name} · ` : null;
+  return prefix && w.name.startsWith(prefix) && w.name.length > prefix.length
+    ? w.name.slice(prefix.length)
+    : w.name;
 }
 
 // The last two folders of a path: enough to tell worktrees apart.

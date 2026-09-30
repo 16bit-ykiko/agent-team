@@ -1,7 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, within, act } from "@testing-library/react";
 import { AgentsPanel, type AgentsPanelActions } from "../src/panels/AgentsPanel";
-import { scopeSessions, sessionState, sessionWork, stateSummary } from "../src/panels/scope";
+import {
+  scopeSessions,
+  scopeSummary,
+  sessionState,
+  sessionWork,
+  stateSummary,
+} from "../src/panels/scope";
 import { App } from "../src/App";
 import type { AgentInfo, Objective, Project, Workspace } from "../src/state/useServer";
 import { FakeSocket } from "./fakeSocket";
@@ -128,9 +134,7 @@ describe("AgentsPanel", () => {
 
   it("shows each session with where it works, what it works on and its agents", () => {
     const { container } = panel();
-    expect(container.querySelector(".ap-summary")!.textContent).toBe(
-      "clice · 2 sessions · 1 working",
-    );
+    expect(scopeSummary([lead, w1, w2], project)).toBe("clice · 2 sessions · 1 working");
     const card = within(container.querySelector('[aria-label="modules"]') as HTMLElement);
     expect(card.getByText("feat/modules")).toBeTruthy();
     expect(card.getByText("2 changed")).toBeTruthy();
@@ -246,12 +250,13 @@ describe("the agents panel in the app", () => {
     const chip = document.querySelector(".agents-chip")!;
     expect(chip.textContent).toBe("Arunning tests");
     fireEvent.click(chip);
-    expect(document.querySelector(".side-panel")!.getAttribute("aria-label")).toBe(
-      "clice · agents",
+    expect(document.querySelector(".side-panel")!.getAttribute("aria-label")).toBe("Agents");
+    expect(document.querySelector(".side-panel-sub")!.textContent).toBe(
+      "clice · 2 sessions · 1 working",
     );
     expect(
       document.querySelector('.side-rail [aria-label="Agents and sessions"]')!.textContent,
-    ).toBe("◉1");
+    ).toBe("1");
     fireEvent.click(chip);
     expect(document.querySelector(".side-panel")).toBeNull();
   });
@@ -262,9 +267,25 @@ describe("the agents panel in the app", () => {
     expect(document.querySelector(".side-panel")!.className).toContain("floating");
     fireEvent.click(document.querySelector(".side-panel-pin")!);
     expect(document.querySelector(".side-panel")!.className).toContain("docked");
-    expect(localStorage.getItem("panelPinned")).toBe("1");
+    expect(localStorage.getItem("panelDock")).toBe("1");
     fireEvent.keyDown(document.querySelector(".side-panel-body")!, { key: "Escape" });
     expect(document.querySelector(".side-panel")).toBeNull();
+  });
+
+  it("opens beside the chat on a wide window, where floating would cut its lines", () => {
+    vi.stubGlobal("innerWidth", 1440);
+    boot();
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    expect(document.querySelector(".side-panel")!.className).toContain("docked");
+    expect(localStorage.getItem("panelDock")).toBeNull();
+  });
+
+  it("names project sessions without the project's name, the lead once", () => {
+    boot();
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    const names = [...document.querySelectorAll(".ap-session-name")].map((n) => n.textContent);
+    expect(names).toContain("lead");
+    expect(names.some((n) => n?.includes("clice"))).toBe(false);
   });
 
   it("takes focus when opened, and leaves Escape in a dialog to the dialog", () => {

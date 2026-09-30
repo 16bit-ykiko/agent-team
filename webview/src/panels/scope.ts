@@ -58,6 +58,14 @@ export function stateSummary(states: SessionState[]): string {
   return parts.length ? parts.join(" · ") : "idle";
 }
 
+// Under a panel's title: whose sessions, how many, and what they do.
+export function scopeSummary(sessions: Workspace[], project: Project | undefined): string {
+  const live = sessions.filter((w) => w.archivedAt == null);
+  const whose = project?.name ?? sessions[0]?.name ?? "";
+  const count = project ? ` · ${live.length} session${live.length === 1 ? "" : "s"}` : "";
+  return `${whose}${count} · ${stateSummary(live.map(sessionState))}`;
+}
+
 // The folders the Files panel offers: each live session's working directory
 // (a project's repository and its worktrees), once each.
 export function fileRoots(sessions: Workspace[]): FileRoot[] {
