@@ -60,6 +60,9 @@ export function setupProjects() {
     onStreamEvent: () => {},
     onMessageDone: () => {},
     onAgentIdle: (wsId) => manager.workerIdle(workspaces.get(wsId)!),
+    onAgentState: (wsId, _agentId, state) => {
+      if (state === "idle") manager.workerIdle(workspaces.get(wsId)!);
+    },
   };
   let n = 0;
   const host: ProjectHost = {

@@ -172,6 +172,10 @@ export interface AgentEntry {
   runState?: RunState;
   // Context at the end of the last turn; undefined until looked up.
   lastContext?: ContextUsage | null;
+  // The message whose prompt the agent got last, its latest turn's reply
+  // (a wake-up's included, not a local command's), and whether a turn of it
+  // has been stopped since. In memory only: a restart forgets it.
+  input?: { id: string; from?: MessageOrigin; reply?: string; stopped: boolean };
 }
 
 export interface WorkspaceCallbacks {
@@ -344,6 +348,19 @@ export class Workspace {
     return true;
   }
 
+  // Per agent, what drove its last turns: the input message, the agent's
+  // last reply since, and whether it was stopped.
+  lastTurns(): Array<{ agentId: string; input: Message; reply?: Message; stopped: boolean }> {
+    const out = [];
+    for (const [agentId, a] of this.agents) {
+      const input = a.input && this.messages.find((m) => m.id === a.input!.id);
+      if (!input) continue;
+      const reply = a.input!.reply ? this.messages.find((m) => m.id === a.input!.reply) : undefined;
+      out.push({ agentId, input, reply, stopped: a.input!.stopped });
+    }
+    return out;
+  }
+
   takeChanged(): Set<string> {
     const changed = this.changed;
     this.changed = new Set();
@@ -432,6 +449,7 @@ export class Workspace {
   private ensureAgentMsg(entry: AgentEntry): Message {
     if (!entry.currentMsg) {
       entry.currentMsg = this.makeAgentMsg(entry.info.id);
+      if (entry.input) entry.input.reply = entry.currentMsg.id;
       this.pushMessage(entry.currentMsg);
     }
     return entry.currentMsg;
@@ -584,6 +602,7 @@ export class Workspace {
           // visible event is a failure (CLI crash, network drop, spawn
           // problem) — render a diagnostic instead of a silent empty bubble.
           if (event.interrupted) {
+            if (entry.input) entry.input.stopped = true;
             entry.currentMsg.content = withInterrupted(entry.currentMsg.content);
           } else if (!entry.currentMsg.content.trim() && !(entry.currentMsg.events ?? []).length) {
             entry.currentMsg.content =
@@ -1051,7 +1070,7 @@ export class Workspace {
     this.pushMessage(userMsg);
     if (busy) return;
 
-    await this.dispatchPrompt(agent, prompt);
+    await this.dispatchPrompt(agent, prompt, userMsg);
   }
 
   // Who wrote a message, for quotes and forwards.
@@ -1073,7 +1092,7 @@ export class Workspace {
       agent.session.isRunning ||
       paused ||
       this.messages.some((m) => m.status === "queued" && m.queuedFor === agent.info.id);
-    this.pushMessage({
+    const msg: Message = {
       id: genId("msg"),
       kind: "user",
       agentId: null,
@@ -1082,16 +1101,19 @@ export class Workspace {
       status: queued ? "queued" : "done",
       from,
       ...(queued && { queuedFor: agent.info.id, queuedPrompt: prompt }),
-    });
-    if (!queued) void this.dispatchPrompt(agent, prompt);
+    };
+    this.pushMessage(msg);
+    if (!queued) void this.dispatchPrompt(agent, prompt, msg);
     return queued ? "queued" : "sent";
   }
 
-  private async dispatchPrompt(agent: AgentEntry, prompt: string): Promise<void> {
+  private async dispatchPrompt(agent: AgentEntry, prompt: string, input?: Message): Promise<void> {
     agent.lastPrompt = prompt;
+    if (input) agent.input = { id: input.id, from: input.from, stopped: false };
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
 
     agent.currentMsg = this.makeAgentMsg(agent.info.id);
+    if (agent.input) agent.input.reply = agent.currentMsg.id;
     this.pushMessage(agent.currentMsg);
 
     try {
@@ -1118,7 +1140,7 @@ export class Workspace {
     delete msg.queuedPrompt;
     delete msg.queuedFor;
     this.finished(msg.id, "done", msg.content);
-    void this.dispatchPrompt(entry, prompt);
+    void this.dispatchPrompt(entry, prompt, msg);
   }
 
   // Hold an agent's queue until `until` (rate-limit backoff).
@@ -1183,7 +1205,7 @@ export class Workspace {
     this.pushMessage(userMsg);
     if (busy) return;
 
-    await this.dispatchPrompt(agent, prompt);
+    await this.dispatchPrompt(agent, prompt, userMsg);
   }
 
   cancelSubagent(agentId: string, taskId: string): void {
@@ -1240,6 +1262,7 @@ export class Workspace {
   }
 
   private finalizeAbort(entry: AgentEntry): void {
+    if (entry.input) entry.input.stopped = true;
     if (entry.currentMsg && entry.currentMsg.status === "streaming") {
       entry.currentMsg.content = withInterrupted(entry.currentMsg.content);
       entry.currentMsg.status = "done";

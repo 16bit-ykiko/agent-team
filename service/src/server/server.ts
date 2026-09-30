@@ -1238,6 +1238,8 @@ systemctl --user restart agent-team-server
       },
       onAgentState: (wsId, agentId, state) => {
         this.broadcastUI({ type: "agent_state", workspaceId: wsId, agentId, state });
+        const ws = this.workspaces.get(wsId);
+        if (ws && state === "idle") this.projects.workerIdle(ws);
       },
       onCommandsChanged: (_wsId, commands) => {
         this.commands = mergeLocalCommands(commands);

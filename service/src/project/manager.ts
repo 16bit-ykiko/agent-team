@@ -7,7 +7,6 @@ import type { EntryInfo, EntryKind, SessionRow, SqlValue } from "../workspace/hi
 import type { HistoryService } from "../workspace/history-service";
 import {
   originLabel,
-  type Message,
   type MessageOrigin,
   type ProjectLink,
   type Workspace,
@@ -49,10 +48,10 @@ export const LEAD_MODEL = "claude-opus-5-5";
 // sessions on the user's account: worker tasks go out this far apart.
 export const START_SPACING_MS = 15_000;
 
-// A worker's turn has ended this long ago with nothing after it (a queued
-// message, a rate-limit pause coming in behind the error) before the lead is
-// told it went idle without reporting.
-export const SETTLE_MS = 5_000;
+// A worker has had nothing to run for this long before the lead is told it
+// went idle without reporting: a finished background task starts the turn
+// that reads its output a second or two after the task is gone.
+export const SETTLE_MS = 15_000;
 
 // Two leads can keep answering each other with nobody watching; past this
 // many messages between two projects within the window, message_project is
@@ -95,9 +94,10 @@ export class ProjectManager {
   private peerLog = new Map<string, number[]>();
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private boards = new Map<string, ObjectiveStore>();
-  // Per worker, the lead message its last report (or the lead's own stop, or
-  // the notice that it went idle) answered.
-  private answered = new Map<string, string>();
+  // Lead messages a worker reported on, the lead stopped, or the lead was
+  // told went unreported.
+  private answered = new Set<string>();
+  private settling = new Map<string, ReturnType<typeof setTimeout>>();
   private closed = false;
 
   constructor(
@@ -115,6 +115,7 @@ export class ProjectManager {
     this.closed = true;
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
+    this.settling.clear();
     for (const b of this.boards.values()) b.close();
     this.boards.clear();
   }
@@ -333,10 +334,20 @@ export class ProjectManager {
       : workerToolset(this.api, workspace.id, project);
   }
 
-  // A worker's turn ended (done, failed or stopped).
+  // A worker's turn ended or its agent went idle: the check waits until it
+  // has stayed so for SETTLE_MS.
   workerIdle(w: Workspace): void {
     if (w.projectLink?.role !== "worker") return;
-    this.later(SETTLE_MS, () => this.tellIfSilent(w.id));
+    const pending = this.settling.get(w.id);
+    if (pending) {
+      clearTimeout(pending);
+      this.timers.delete(pending);
+    }
+    const t = this.later(SETTLE_MS, () => {
+      this.settling.delete(w.id);
+      this.tellIfSilent(w.id);
+    });
+    if (t) this.settling.set(w.id, t);
   }
 
   // A worker the lead gave work went quiet without reporting on it: the lead
@@ -350,47 +361,37 @@ export class ProjectManager {
     const project = this.store.get(link.projectId);
     const lead = this.leadOf(link.projectId);
     if (!project || project.archivedAt || !lead || lead.isArchived) return;
-    const messages = w.getMessages();
-    const last = (from: number, ok: (m: Message) => boolean) => {
-      for (let i = messages.length - 1; i >= from; i--) if (ok(messages[i])) return i;
-      return -1;
-    };
-    const input = last(0, (m) => m.kind === "user");
-    const prompt = messages[input];
-    if (prompt?.from?.role !== "lead" || this.answered.get(w.id) === prompt.id) return;
-    this.answered.set(w.id, prompt.id);
-    const reply = messages[last(input + 1, (m) => m.kind === "agent")];
-    const error = reply?.events?.filter((e) => e.kind === "error").pop();
-    const stopped = !!reply?.content.endsWith(INTERRUPTED);
-    const text = (reply?.content.slice(0, stopped ? -INTERRUPTED.length : undefined) ?? "").trim();
-    const how =
-      reply?.status === "error"
-        ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
-        : stopped
-          ? "it was stopped"
+    for (const { input, reply, stopped } of w.lastTurns()) {
+      if (input.from?.role !== "lead" || this.answered.has(input.id)) continue;
+      const error = reply?.events?.filter((e) => e.kind === "error").pop();
+      const content = reply?.content ?? "";
+      const text = (
+        content.endsWith(INTERRUPTED) ? content.slice(0, -INTERRUPTED.length) : content
+      ).trim();
+      const how = stopped
+        ? "the user stopped it"
+        : reply?.status === "error"
+          ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
           : "its turn ended";
-    const body = [
-      `Went idle without reporting (${how}).`,
-      text ? `Its last reply:\n\n${text.length > 1500 ? `…${text.slice(-1500)}` : text}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-    this.deliver(
-      lead,
-      body,
-      { workspaceId: w.id, name: w.name, role: "worker" },
-      `[From the panel, about session "${w.name}" (${w.id})]\n\n${body}`,
-    );
+      const body = [
+        `No report on your last message (${how}).`,
+        text ? `Its last reply:\n\n${text.length > 1500 ? `…${text.slice(-1500)}` : text}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      this.deliver(
+        lead,
+        body,
+        { workspaceId: w.id, name: w.name, role: "worker" },
+        `[From the panel, about session "${w.name}" (${w.id})]\n\n${body}`,
+      );
+      this.answered.add(input.id);
+    }
   }
 
   private markAnswered(w: Workspace): void {
-    const messages = w.getMessages();
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.from?.role === "lead" && m.status !== "queued") {
-        this.answered.set(w.id, m.id);
-        return;
-      }
+    for (const { input } of w.lastTurns()) {
+      if (input.from?.role === "lead") this.answered.add(input.id);
     }
   }
 
@@ -405,12 +406,19 @@ export class ProjectManager {
     }
   }
 
-  private later(ms: number, fn: () => void): void {
+  // A throw in a timer would take the server down.
+  private later(ms: number, fn: () => void): ReturnType<typeof setTimeout> | undefined {
+    if (this.closed) return undefined;
     const t = setTimeout(() => {
       this.timers.delete(t);
-      fn();
+      try {
+        fn();
+      } catch (e) {
+        console.error("[projects]", e);
+      }
     }, ms);
     this.timers.add(t);
+    return t;
   }
 
   private changed(id: string): void {

@@ -20,6 +20,7 @@ vi.mock("../../src/server/quota", () => ({
 }));
 
 import { Server } from "../../src/server/server";
+import { ProjectManager } from "../../src/project/manager";
 import { closeHistory, historyOf, saveIndex, saveWorkspace } from "../../src/workspace/state";
 import { ClaudeSession } from "../../src/session/claude";
 
@@ -312,6 +313,23 @@ describe("server restart with projects", () => {
     expect(saved.archivedAt).toBeNull();
     expect(saved.messages!.map((m) => m.id).slice(0, 2)).toEqual(["h1", "h2"]);
     expect(saved.messages!.some((m) => m.from?.role === "lead")).toBe(true);
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("has the projects check a worker whose turn ended or who went idle", async () => {
+    const { base, web } = seed();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const idle = vi.spyOn(ProjectManager.prototype, "workerIdle");
+    const { send, stop } = await start(base, web);
+    try {
+      send({ type: "abort", workspaceId: "ws-live" });
+      await until(() => idle.mock.calls.length > 0, "the check");
+      expect(idle.mock.calls[0][0].id).toBe("ws-live");
+    } finally {
+      stop();
+      idle.mockRestore();
+      log.mockRestore();
+    }
     fs.rmSync(base, { recursive: true, force: true });
   });
 
