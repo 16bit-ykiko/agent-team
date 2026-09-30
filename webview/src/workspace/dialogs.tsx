@@ -210,7 +210,7 @@ export function AddAgentDialog({
 }
 
 // The server's default for a project's lead (project/manager.ts).
-const DEFAULT_LEAD_MODEL = "claude-opus-5-5[1m]";
+const DEFAULT_LEAD_MODEL = "claude-opus-5-5";
 
 // A workspace is just a name plus a directory. The path field completes
 // directories live against the server (shell-style tab completion). A project

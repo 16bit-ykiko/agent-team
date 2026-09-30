@@ -140,7 +140,7 @@ describe("ProjectManager", () => {
     const { lead, project } = create("clice");
     expect(lead.projectLink).toEqual({ projectId: project.id, role: "lead" });
     expect(lead.name).toBe("clice · lead");
-    expect([...lead.agents.values()][0].info.model).toBe("claude-opus-5-5[1m]");
+    expect([...lead.agents.values()][0].info.model).toBe("claude-opus-5-5");
     const tools = session(lead).panelTools!.tools.map((t) => t.name);
     expect(tools).toEqual(
       expect.arrayContaining(["start_session", "archive_session", "message_project"]),
@@ -402,9 +402,9 @@ describe("project edge cases", () => {
     lead.removeAgent(claudeLead);
     const start = manager.toolsFor(lead)!.tools.find((t) => t.name === "start_session")!;
     expect(await start.handler({ title: "w", cwd: "wt", task: "t" })).toContain(
-      "on claude-opus-5-5[1m]",
+      "on claude-opus-5-5",
     );
-    expect([...workers()[0].agents.values()][0].info.model).toBe("claude-opus-5-5[1m]");
+    expect([...workers()[0].agents.values()][0].info.model).toBe("claude-opus-5-5");
   });
 
   it("refuse board updates for a deleted project instead of recreating its folder", async () => {

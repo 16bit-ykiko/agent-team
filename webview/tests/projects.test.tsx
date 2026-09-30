@@ -262,7 +262,7 @@ describe("CreateWorkspaceDialog as a project", () => {
         onCreate={onCreate}
         onCreateProject={onCreateProject}
         models={[
-          { id: "claude-opus-5-5[1m]", label: "Opus 5.5 1M", backend: "claude" },
+          { id: "claude-opus-5-5", label: "Opus 5.5", backend: "claude" },
           { id: "claude-fable-5-1", label: "Fable 5.1", backend: "claude" },
           { id: "gpt-5", label: "GPT-5", backend: "codex" },
         ]}
@@ -277,7 +277,7 @@ describe("CreateWorkspaceDialog as a project", () => {
     expect(getByText("New Project")).toBeTruthy();
     const select = getByRole("combobox") as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual([
-      "claude-opus-5-5[1m]",
+      "claude-opus-5-5",
       "claude-fable-5-1",
     ]);
     fireEvent.change(select, { target: { value: "claude-fable-5-1" } });

@@ -369,7 +369,7 @@ describe("server websocket", () => {
       cwd: base,
       projectLink: { projectId: project.id, role: "lead" },
     });
-    expect(agent).toMatchObject({ name: "Lead", model: "claude-opus-5-5[1m]" });
+    expect(agent).toMatchObject({ name: "Lead", model: "claude-opus-5-5" });
     expect(project).toMatchObject({ name: "demo", root: base, leadWorkspaceId: created.id });
     expect(
       fs.existsSync(path.join(base, ".agent-team", "projects", String(project.id), "notes")),

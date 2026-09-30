@@ -30,7 +30,7 @@ import {
 } from "./tools";
 
 // A long-lived lead has the whole project in its context.
-export const LEAD_MODEL = "claude-opus-5-5[1m]";
+export const LEAD_MODEL = "claude-opus-5-5";
 
 // A lead asked to start everything at once must not spawn a burst of CLI
 // sessions on the user's account: worker tasks go out this far apart.

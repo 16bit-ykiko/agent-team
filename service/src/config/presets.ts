@@ -44,7 +44,9 @@ const CODEX_CONTEXT_1M = 872_000;
 const CODEX_FAST = "priority";
 
 // The picker's list. Models dropped from it move to LEGACY_MODELS, so agents
-// still on one keep their settings until switched with /model.
+// still on one keep their settings until switched with /model. Opus 5.5 and
+// Fable 5.1 come only with the 1M window: the plain id already has it (the
+// CLI reports 1,000,000), so there is no "[1m]" entry.
 export const MODEL_OPTIONS: ModelOption[] = [
   {
     id: "claude-opus-5-5",
@@ -54,21 +56,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
     effortLevels: EFFORT_FIVE,
   },
   {
-    id: "claude-opus-5-5[1m]",
-    label: "Claude Opus 5.5 (1M)",
-    backend: "claude",
-    effort: "xhigh",
-    effortLevels: EFFORT_FIVE,
-  },
-  {
     id: "claude-fable-5-1",
     label: "Claude Fable 5.1",
-    backend: "claude",
-    effortLevels: EFFORT_FIVE,
-  },
-  {
-    id: "claude-fable-5-1[1m]",
-    label: "Claude Fable 5.1 (1M)",
     backend: "claude",
     effortLevels: EFFORT_FIVE,
   },
@@ -161,6 +150,20 @@ export const MODEL_OPTIONS: ModelOption[] = [
 ];
 
 export const LEGACY_MODELS: ModelOption[] = [
+  // The same models as the plain ids; agents created with the suffix keep it.
+  {
+    id: "claude-opus-5-5[1m]",
+    label: "Claude Opus 5.5",
+    backend: "claude",
+    effort: "xhigh",
+    effortLevels: EFFORT_FIVE,
+  },
+  {
+    id: "claude-fable-5-1[1m]",
+    label: "Claude Fable 5.1",
+    backend: "claude",
+    effortLevels: EFFORT_FIVE,
+  },
   {
     id: "claude-opus-4-6",
     label: "Claude Opus 4.6",

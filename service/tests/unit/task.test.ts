@@ -863,24 +863,22 @@ describe("/model", () => {
     };
     session.getState().config.effort = "xhigh";
     session.getState().config.fast = true;
-    await ws.sendMessage("/model claude-fable-5-1[1m]");
-    expect(reply(ws)).toMatch(/moves from Claude Opus 5.5 to \*\*Claude Fable 5.1 \(1M\)\*\*/);
-    expect(ws.agents.get(agentInfo.id)!.info.model).toBe("claude-fable-5-1[1m]");
+    await ws.sendMessage("/model claude-fable-5-1");
+    expect(reply(ws)).toMatch(/moves from Claude Opus 5.5 to \*\*Claude Fable 5.1\*\*/);
+    expect(ws.agents.get(agentInfo.id)!.info.model).toBe("claude-fable-5-1");
     expect(session.getState().config).toMatchObject({
-      model: "claude-fable-5-1[1m]",
+      model: "claude-fable-5-1",
       effort: "xhigh",
       fast: true,
     });
-    expect(envs).toEqual([["claude-fable-5-1[1m]", undefined]]);
-    expect(session.providerEnv).toEqual({ PROVIDER: "claude-fable-5-1[1m]" });
+    expect(envs).toEqual([["claude-fable-5-1", undefined]]);
+    expect(session.providerEnv).toEqual({ PROVIDER: "claude-fable-5-1" });
 
     // Replies from here on say which model they ran on.
     await ws.sendMessage("go on");
     emit({ kind: "text_delta", content: "ok" });
     emit({ kind: "result", content: "" });
-    expect(ws.messages.filter((m) => m.kind === "agent").at(-1)!.model).toBe(
-      "claude-fable-5-1[1m]",
-    );
+    expect(ws.messages.filter((m) => m.kind === "agent").at(-1)!.model).toBe("claude-fable-5-1");
   });
 
   it("drops effort and fast mode a model does not take", async () => {

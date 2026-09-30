@@ -42,9 +42,8 @@ describe("codex model presets", () => {
     expect(supportsFastMode("unknown-model")).toBe(false);
   });
 
-  it("offers Opus 5.5 in both windows with the five-level effort set", () => {
+  it("knows Opus 5.5 by either id, with the five-level effort set", () => {
     for (const id of ["claude-opus-5-5", "claude-opus-5-5[1m]"]) {
-      expect(MODEL_OPTIONS.some((m) => m.id === id)).toBe(true);
       expect(effortLevelsForModel(id)).toEqual(["low", "medium", "high", "xhigh", "max"]);
       expect(defaultEffortForModel(id)).toBe("xhigh");
       expect(supportsFastMode(id)).toBe(true);
@@ -64,9 +63,7 @@ describe("the model list", () => {
   it("offers only current models, and still knows the ones dropped from it", () => {
     expect(MODEL_OPTIONS.filter((m) => m.backend === "claude").map((m) => m.id)).toEqual([
       "claude-opus-5-5",
-      "claude-opus-5-5[1m]",
       "claude-fable-5-1",
-      "claude-fable-5-1[1m]",
       "deepseek-v4-pro",
       "deepseek-v4-flash",
     ]);
