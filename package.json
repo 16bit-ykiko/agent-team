@@ -21,7 +21,7 @@
     "demo": "tsx scripts/seed-demo.ts",
     "migrate:projects": "tsx scripts/migrate-projects.ts",
     "migrate:history": "tsx scripts/migrate-history.ts",
-    "seti-icons": "tsx scripts/seti-icons.ts",
+    "vscode-icons": "tsx scripts/vscode-icons.ts",
     "smoke:claude": "tsx scripts/smoke-claude.ts",
     "smoke:codex": "tsx scripts/smoke-codex.ts"
   },

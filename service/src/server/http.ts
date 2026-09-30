@@ -135,7 +135,11 @@ export class HttpHandler {
       // Everything under assets/ is content-hashed by Vite (JS, CSS, fonts).
       if (pathname.startsWith("/assets/")) {
         res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-      } else if (pathname.startsWith("/avatars/") || pathname.startsWith("/icons/")) {
+      } else if (
+        pathname.startsWith("/avatars/") ||
+        pathname.startsWith("/icons/") ||
+        pathname.startsWith("/file-icons/")
+      ) {
         // Not content-hashed, so not immutable; a day spares the home-screen
         // app a re-download on every cold start.
         res.setHeader("Cache-Control", "public, max-age=86400");

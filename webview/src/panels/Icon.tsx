@@ -1,4 +1,4 @@
-import seti from "./seti/icons.json";
+import table from "./vscode-icons.json";
 
 // The panels' icons: 16px line drawings in one stroke, so the rail, the
 // panel headers and the row actions read as one family.
@@ -14,7 +14,6 @@ export const ICONS = {
   clear: "M13 8a5 5 0 1 1-1.6-3.7M13 2.8v2.7h-2.7",
   up: "M8 13V3M4 7l4-4 4 4",
   changes: "M8 2.5v6M5 5.5h6M5 12.5h6",
-  chevron: "M6 3.5l4.5 4.5L6 12.5",
 } as const;
 
 export type IconName = keyof typeof ICONS;
@@ -27,40 +26,39 @@ export function Icon({ name }: { name: IconName }) {
   );
 }
 
-interface SetiIcons {
+interface IconTable {
   file: number;
-  // Its character and colour.
-  icons: string[][];
+  folder: number;
+  // The icons' SVG names (public/file-icons/<name>.svg).
+  icons: string[];
   names: Record<string, number>;
   exts: Record<string, number>;
+  folders: Record<string, number>;
 }
-const SETI = seti as SetiIcons;
+const TABLE = table as IconTable;
 
-// The icon VS Code shows for a file with its default (Seti) theme: by the
-// file's name, by its longest extension, by its language (folded into
-// both by scripts/seti-icons.ts), else the default one.
-export function setiIcon(name: string): { char: string; color: string } {
-  const base = (name.split("/").pop() ?? name).toLowerCase();
-  let i: number | undefined = SETI.names[base];
+// The icon vscode-icons gives a file or folder in VS Code: a file by its
+// name, its longest extension, its language (folded into both by
+// scripts/vscode-icons.ts), else the default one; a folder by its name.
+export function fileIconName(name: string, dir = false): string {
+  const base = (name.replace(/\/+$/, "").split("/").pop() ?? name).toLowerCase();
+  if (dir) return TABLE.icons[TABLE.folders[base] ?? TABLE.folder];
+  let i: number | undefined = TABLE.names[base];
   const parts = base.split(".");
-  for (let k = 1; i === undefined && k < parts.length; k++) i = SETI.exts[parts.slice(k).join(".")];
-  const [char, color] = SETI.icons[i ?? SETI.file];
-  return { char, color };
+  for (let k = 1; i === undefined && k < parts.length; k++)
+    i = TABLE.exts[parts.slice(k).join(".")];
+  return TABLE.icons[i ?? TABLE.file];
 }
 
-// A file's icon as in VS Code; a folder's is its chevron, as there.
 export function FileIcon({ name, dir = false }: { name: string; dir?: boolean }) {
-  if (dir) {
-    return (
-      <span className="file-icon fi-dir">
-        <Icon name="chevron" />
-      </span>
-    );
-  }
-  const { char, color } = setiIcon(name);
   return (
-    <span className="file-icon seti" style={{ color }} aria-hidden="true">
-      {char}
-    </span>
+    <img
+      className="file-icon"
+      src={`file-icons/${fileIconName(name, dir)}.svg`}
+      alt=""
+      width={16}
+      height={16}
+      draggable={false}
+    />
   );
 }

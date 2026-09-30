@@ -5,7 +5,7 @@ import { render, fireEvent, waitFor } from "@testing-library/react";
 import css from "../src/styles.css?raw";
 import { FilesPanel } from "../src/panels/FilesPanel";
 import { parseDiff } from "../src/panels/ChangesView";
-import { setiIcon } from "../src/panels/Icon";
+import { fileIconName } from "../src/panels/Icon";
 
 const listing = {
   kind: "dir",
@@ -70,32 +70,36 @@ describe("the Files panel's icons and changes", () => {
   const panel = () =>
     render(<FilesPanel wsId="w1" target={{ path: "." }} roots={[{ label: "w", path: "/w" }]} />);
 
-  it("shows files with VS Code's icons, folders with its chevron", async () => {
+  it("shows files and folders with the icons vscode-icons gives them in VS Code", async () => {
     const { container } = panel();
     await waitFor(() => expect(container.querySelectorAll(".dir-entry")).toHaveLength(4));
-    const icons = [...container.querySelectorAll<HTMLElement>(".dir-entry .file-icon")];
-    expect(icons[0].className).toBe("file-icon fi-dir");
-    expect(icons[0].querySelector("svg.icon")).not.toBeNull();
-    const code = (el: HTMLElement) => [
-      (el.textContent ?? "").codePointAt(0)?.toString(16),
-      el.style.color,
-    ];
-    expect(icons.slice(1).map(code)).toEqual([
-      ["e04d", "rgb(81, 154, 186)"],
-      ["e01a", "rgb(81, 154, 186)"],
-      ["e05f", "rgb(81, 154, 186)"],
+    const icons = [...container.querySelectorAll<HTMLImageElement>(".dir-entry img.file-icon")];
+    expect(icons.map((i) => i.getAttribute("src"))).toEqual([
+      "file-icons/folder_type_src.svg",
+      "file-icons/file_type_markdown.svg",
+      "file-icons/file_type_cpp.svg",
+      "file-icons/file_type_cmake.svg",
     ]);
-    // By name, by the longest extension, by language, else the default.
-    const pick = (n: string) => {
-      const { char, color } = setiIcon(n);
-      return `${char.codePointAt(0)!.toString(16)} ${color}`;
-    };
-    expect(pick("package.json")).toBe("e055 #cbcb41");
-    expect(pick("Makefile")).toBe("e05f #e37933");
-    expect(pick("src/a.test.ts")).toBe("e099 #e37933");
-    expect(pick("b.ts")).toBe("e099 #519aba");
-    expect(pick("x.h")).toBe("e00c #a074c4");
-    expect(pick("notes.unknown")).toBe("e023 #d4d7d6");
+    // A file by name, by its longest extension, by language; a folder by
+    // name; else the defaults.
+    expect(
+      ["package.json", ".gitignore", "src/a.test.ts", "a.tsx", "x.toml", "notes.unknown"].map((n) =>
+        fileIconName(n),
+      ),
+    ).toEqual([
+      "file_type_npm",
+      "file_type_git",
+      "file_type_testts",
+      "file_type_reactts",
+      "file_type_toml",
+      "default_file",
+    ]);
+    expect(["node_modules", ".git/", "Tests", "random"].map((n) => fileIconName(n, true))).toEqual([
+      "folder_type_node",
+      "folder_type_git",
+      "folder_type_test",
+      "default_folder",
+    ]);
   });
 
   it("lists the changes against the base, then a file's diff, and goes back", async () => {

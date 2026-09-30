@@ -1,0 +1,4 @@
+These icons are from vscode-icons (https://github.com/vscode-icons/vscode-icons),
+licensed under Creative Commons Attribution-ShareAlike 4.0
+(https://creativecommons.org/licenses/by-sa/4.0/); branded icons under their
+own copyright. The extension's source code is MIT licensed.
