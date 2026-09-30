@@ -117,21 +117,19 @@ describe("panel widths", () => {
     expect(localStorage.getItem("listPanelWidth")).toBeNull();
   });
 
-  it("leave the chat its room when the window narrows, floating once it is narrow", () => {
+  it("leave the chat its room when the window narrows", () => {
     vi.stubGlobal("innerWidth", 1440);
     boot("lead");
     rail("Files");
-    expect(panel().className).toContain("docked");
+    expect(panel().style.width).toBe("605px");
     resize(960);
-    expect(panel().className).toContain("floating");
     // 960 - 260 (sidebar) - 44 (rail) - 360 (the chat's least), or the panel's least.
     expect(panel().style.width).toBe("300px");
   });
 });
 
 describe("docked or floating", () => {
-  it("keeps a saved choice to float on a wide window, and saves a change", () => {
-    vi.stubGlobal("innerWidth", 1440);
+  it("docks unless floating was chosen, and saves a change", () => {
     localStorage.setItem("panelDock", "0");
     const first = boot("lead");
     rail("Agents and sessions");
@@ -174,5 +172,28 @@ describe("a maximised panel", () => {
       )!,
     );
     expect(panel().className).not.toContain("maximized");
+  });
+});
+
+describe("panel chrome", () => {
+  it("titles every panel over the same second line, and keeps the pin's label", () => {
+    boot("lead");
+    rail("Files");
+    expect(document.querySelector(".side-panel-sub")!.textContent).toBe("clice");
+    const pin = () => document.querySelector(".side-panel-pin")!;
+    const [label, pressed] = [pin().getAttribute("title"), pin().getAttribute("aria-pressed")];
+    fireEvent.click(pin());
+    expect(pin().getAttribute("title")).toBe(label);
+    expect(pin().getAttribute("aria-pressed")).not.toBe(pressed);
+  });
+
+  it("sets the board apart in the rail, and cuts the folder path at its front", () => {
+    boot("lead");
+    expect(document.querySelector(".side-rail .rail-page")!.getAttribute("aria-label")).toBe(
+      "Objectives of clice",
+    );
+    expect(document.querySelector(".ws-info-path")!.textContent).toBe("/repo/clice");
+    rail("Objectives of clice");
+    expect(document.querySelector(".bp-head .bp-close svg")).not.toBeNull();
   });
 });

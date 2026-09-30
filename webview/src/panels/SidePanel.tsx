@@ -6,7 +6,7 @@ export const PANEL_MIN_WIDTH = 300;
 const MIN_CHAT_WIDTH = 360;
 const RAIL_WIDTH = 44;
 
-export function useViewportWidth(): number {
+function useViewportWidth(): number {
   const [width, setWidth] = useState(window.innerWidth);
   useEffect(() => {
     const onResize = () => setWidth(window.innerWidth);
@@ -116,7 +116,7 @@ export function SidePanel({
           <button
             className="side-panel-btn side-panel-pin"
             aria-pressed={pinned}
-            title={pinned ? "Float over the chat" : "Pin beside the chat"}
+            title="Pin beside the chat"
             onClick={onPin}
           >
             <Icon name="pin" />

@@ -108,6 +108,21 @@ function SessionCard({
           {name}
         </button>
         <span className="ap-when">{formatRelative(w.lastMessageAt ?? w.createdAt)}</span>
+        {state === "archived" ? (
+          <button className="panel-btn" onClick={() => actions.onRestore(w.id)}>
+            Restore
+          </button>
+        ) : state === "working" ? (
+          <button className="panel-btn danger" onClick={() => actions.onStop(w.id)}>
+            Stop
+          </button>
+        ) : (
+          !busy && (
+            <button className="panel-btn" onClick={() => actions.onArchive(w.id)}>
+              Archive
+            </button>
+          )
+        )}
       </header>
       <div className="ap-where" title={w.cwd}>
         {w.git?.branch && <span className="ap-branch">{w.git.branch}</span>}
@@ -132,30 +147,12 @@ function SessionCard({
             onRemove={() => actions.onRemoveAgent(w.id, a.id)}
           />
         ))}
-      </div>
-      <footer className="ap-actions">
-        {state === "archived" ? (
-          <button className="panel-btn" onClick={() => actions.onRestore(w.id)}>
-            Restore
+        {state !== "archived" && (
+          <button className="panel-btn ap-add" onClick={() => actions.onAddAgent(w.id)}>
+            + Agent
           </button>
-        ) : (
-          <>
-            <button className="panel-btn" onClick={() => actions.onAddAgent(w.id)}>
-              + Agent
-            </button>
-            {state === "working" && (
-              <button className="panel-btn danger" onClick={() => actions.onStop(w.id)}>
-                Stop
-              </button>
-            )}
-            {!busy && (
-              <button className="panel-btn" onClick={() => actions.onArchive(w.id)}>
-                Archive
-              </button>
-            )}
-          </>
         )}
-      </footer>
+      </div>
     </section>
   );
 }

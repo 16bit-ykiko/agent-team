@@ -195,16 +195,19 @@ describe("a session's actions by its state", () => {
         }}
       />,
     );
-    const names = [...container.querySelectorAll(".ap-actions button")].map((b) => b.textContent);
+    // The session's own action sits in its header; adding an agent, under its agents.
+    const names = [...container.querySelectorAll(".ap-session-head .panel-btn, .ap-add")].map(
+      (b) => b.textContent,
+    );
     unmount();
     return names;
   };
 
   it("stops only a running turn, and archives a sleeping session like an idle one", () => {
-    expect(buttons("working")).toEqual(["+ Agent", "Stop"]);
+    expect(buttons("working")).toEqual(["Stop", "+ Agent"]);
     expect(buttons("waiting")).toEqual(["+ Agent"]);
-    expect(buttons("sleeping")).toEqual(["+ Agent", "Archive"]);
-    expect(buttons("idle")).toEqual(["+ Agent", "Archive"]);
+    expect(buttons("sleeping")).toEqual(["Archive", "+ Agent"]);
+    expect(buttons("idle")).toEqual(["Archive", "+ Agent"]);
   });
 });
 
@@ -264,7 +267,10 @@ describe("the agents panel in the app", () => {
   it("pins beside the chat and remembers it", () => {
     boot();
     fireEvent.click(document.querySelector('.side-rail [aria-label="Agents and sessions"]')!);
+    expect(document.querySelector(".side-panel")!.className).toContain("docked");
+    fireEvent.click(document.querySelector(".side-panel-pin")!);
     expect(document.querySelector(".side-panel")!.className).toContain("floating");
+    expect(localStorage.getItem("panelDock")).toBe("0");
     fireEvent.click(document.querySelector(".side-panel-pin")!);
     expect(document.querySelector(".side-panel")!.className).toContain("docked");
     expect(localStorage.getItem("panelDock")).toBe("1");
@@ -272,8 +278,7 @@ describe("the agents panel in the app", () => {
     expect(document.querySelector(".side-panel")).toBeNull();
   });
 
-  it("opens beside the chat on a wide window, where floating would cut its lines", () => {
-    vi.stubGlobal("innerWidth", 1440);
+  it("opens beside the chat, where floating would cut its lines", () => {
     boot();
     fireEvent.click(document.querySelector(".agents-chip")!);
     expect(document.querySelector(".side-panel")!.className).toContain("docked");

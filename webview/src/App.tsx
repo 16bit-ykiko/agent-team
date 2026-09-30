@@ -9,7 +9,7 @@ import {
 } from "./state/useServer";
 import { groupWorkspaces } from "./sidebar/groups";
 import { agentQueues, agentState, isAgentActive, pillLabel } from "./workspace/agents";
-import { SidePanel, useViewportWidth } from "./panels/SidePanel";
+import { SidePanel } from "./panels/SidePanel";
 import { Rail, type RailItem } from "./panels/Rail";
 import { AgentsPanel, type AgentsPanelActions } from "./panels/AgentsPanel";
 import { TasksPanel, workCount, type TasksPanelActions } from "./panels/TasksPanel";
@@ -293,14 +293,9 @@ export function App() {
   // Pinning persists, and so does a width once dragged; code needs more
   // room than the lists, so the Files panel has its own.
   const [openPanel, setOpenPanel] = useState<PanelId | null>(null);
-  // Pinned unless chosen otherwise where the chat keeps room beside a panel:
-  // floating over it, a panel cuts its lines mid-word.
-  const [dockChoice, setDockChoice] = useState(() => {
-    const saved = readSetting("panelDock");
-    return saved ? saved === "1" : null;
-  });
-  const viewport = useViewportWidth();
-  const panelPinned = dockChoice ?? viewport >= WIDE_WINDOW;
+  // Pinned unless chosen otherwise: floating over the chat, a panel cuts its
+  // lines mid-word and covers Send (its width always leaves the chat room).
+  const [panelPinned, setPanelPinned] = useState(() => readSetting("panelDock") !== "0");
   // Maximised for the workspace it was maximised in: opening another one
   // shows its chat.
   const [maxFor, setMaxFor] = useState<string | null>(null);
@@ -335,7 +330,7 @@ export function App() {
   }, []);
   const togglePin = useCallback(() => {
     writeSetting("panelDock", panelPinned ? "0" : "1");
-    setDockChoice(!panelPinned);
+    setPanelPinned(!panelPinned);
   }, [panelPinned]);
   // The project whose board page is open, whichever workspace is.
   const [boardProjectId, setBoardProjectId] = useState<string | null>(null);
@@ -455,6 +450,7 @@ export function App() {
             id: "board",
             label: `Objectives of ${activeProject.name}`,
             icon: "board" as const,
+            page: true,
             active: boardProjectId === activeProject.id,
             onClick: () => setBoardProjectId(activeProject.id),
           },
@@ -1266,7 +1262,9 @@ export function App() {
               <div className="workspace-info-bar">
                 <span className="ws-info-item" title={activeWs.cwd}>
                   <span className="ws-info-icon">&#128193;</span>
-                  {activeWs.cwd}
+                  <span className="ws-info-path">
+                    <bdi>{activeWs.cwd}</bdi>
+                  </span>
                 </span>
                 <GitBar git={activeWs.git ?? null} pr={activeWs.pr ?? null} />
                 <span className="ws-info-spacer" />
@@ -1602,6 +1600,7 @@ export function App() {
       {files && openPanel === "files" && (
         <SidePanel
           title="Files"
+          subtitle={activeProject?.name ?? activeWs?.name}
           kind="wide"
           pinned={panelPinned}
           maximized={panelMax}
@@ -1727,7 +1726,6 @@ function purgeBody(workspaces: Workspace[], projects: Project[]): string {
 
 type PanelId = "agents" | "tasks" | "files";
 const WORKSPACE_ROOT: FileRef = { path: "." };
-const WIDE_WINDOW = 1280;
 // Where side panels become full-screen sheets (styles.css).
 const PHONE = "(max-width: 768px), (max-height: 500px)";
 

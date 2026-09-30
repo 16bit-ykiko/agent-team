@@ -367,7 +367,8 @@ button {
   cursor: pointer;
   opacity: 0;
 }
-.ws-group-header:hover .ws-group-add {
+.ws-group-header:hover .ws-group-add,
+.ws-group-add:focus-visible {
   opacity: 1;
 }
 .ws-group-add:hover {
@@ -528,7 +529,8 @@ button {
   opacity: 0;
   flex-shrink: 0;
 }
-.task-item:hover .task-delete {
+.task-item:hover .task-delete,
+.task-delete:focus-visible {
   opacity: 1;
 }
 .task-delete:hover {
@@ -558,7 +560,8 @@ button {
   cursor: pointer;
   opacity: 0;
 }
-.ws-archived-header:hover .ws-archived-purge {
+.ws-archived-header:hover .ws-archived-purge,
+.ws-archived-purge:focus-visible {
   opacity: 1;
 }
 .ws-archived-purge:hover {
@@ -703,6 +706,7 @@ button {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
@@ -716,8 +720,17 @@ button {
   font-size: 12px;
 }
 .ws-info-branch {
+  flex-shrink: 0;
   color: var(--success);
   gap: 6px;
+}
+/* Cut at the front: the folder's own name is the part worth reading. */
+.ws-info-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
 }
 .ws-branch-name {
   min-width: 0;
@@ -1207,7 +1220,8 @@ span.katex-display {
   transition: opacity 0.15s;
   z-index: 1;
 }
-.message:hover .btn-quote {
+.message:hover .btn-quote,
+.btn-quote:focus-visible {
   opacity: 1;
 }
 .btn-quote:hover {
@@ -1833,6 +1847,9 @@ span.katex-display {
 }
 .input-row .chat-input::placeholder {
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .input-row button {
   background: var(--accent);
@@ -2364,7 +2381,7 @@ span.katex-display {
   display: none;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 768px), (max-height: 500px) {
   .subagent-counts,
   .step-tools,
   .task-time {
@@ -2787,7 +2804,6 @@ span.katex-display {
   color: var(--error);
   border-color: var(--error);
 }
-.bp-close,
 .bp-back {
   flex-shrink: 0;
   width: 26px;
@@ -2800,7 +2816,6 @@ span.katex-display {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.bp-close:hover,
 .bp-back:hover {
   color: var(--text-primary);
   background: var(--bg-hover);
@@ -3062,14 +3077,17 @@ span.katex-display {
   color: var(--success);
   background: rgba(152, 195, 121, 0.12);
 }
+/* Priority is words, not a colour: red belongs to "blocked". */
+.bp-prio {
+  background: none;
+}
 .bp-prio.prio-high {
-  color: var(--error);
-  background: rgba(224, 108, 117, 0.12);
+  color: var(--text-primary);
+  font-weight: 600;
 }
 .bp-prio.prio-normal,
 .bp-prio.prio-low {
   color: var(--text-muted);
-  background: var(--bg-tertiary);
 }
 .bp-decide {
   color: var(--warning);
@@ -3521,6 +3539,18 @@ span.katex-display {
   color: var(--text-primary);
   background: var(--bg-hover);
 }
+/* The board opens a page, the rest panels: a line between them. */
+.side-rail .rail-page {
+  margin-bottom: 9px;
+}
+.side-rail .rail-page::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -6px;
+  border-bottom: 1px solid var(--border);
+}
 .rail-btn[aria-pressed="true"] {
   color: var(--text-primary);
   background: var(--bg-active);
@@ -3629,7 +3659,6 @@ span.katex-display {
 }
 .side-panel-btn[aria-pressed="true"] {
   color: var(--text-primary);
-  background: var(--bg-active);
 }
 /* Quiet actions inside the panels; the border shows what is pointed at. */
 .panel-btn {
@@ -3638,7 +3667,7 @@ span.katex-display {
   padding: 0 8px;
   font: inherit;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   background: none;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
@@ -3730,7 +3759,7 @@ span.katex-display {
   padding: 0 8px;
   font: inherit;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-decoration: none;
   background: none;
   border: 1px solid transparent;
@@ -3892,9 +3921,6 @@ span.katex-display {
 .ap-dot.ss-sleeping {
   background: var(--purple);
 }
-.ap-dot.ss-idle {
-  background: var(--success);
-}
 .ap-session-name {
   display: flex;
   align-items: center;
@@ -3933,6 +3959,8 @@ span.katex-display {
   overflow: hidden;
 }
 .ap-branch {
+  flex-shrink: 0;
+  max-width: 55%;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4030,6 +4058,12 @@ span.katex-display {
 .ap-agent:focus-within .ap-agent-actions {
   opacity: 1;
 }
+/* Touch has no hover (tablets included). */
+@media (hover: none) {
+  .ap-agent-actions {
+    opacity: 1;
+  }
+}
 .ap-agent-actions button {
   width: 26px;
   height: 26px;
@@ -4044,14 +4078,9 @@ span.katex-display {
   color: var(--text-primary);
   background: var(--bg-hover);
 }
-.ap-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  margin-top: 6px;
-}
-.ap-stop:hover {
-  color: var(--error);
+.ap-add {
+  align-self: flex-start;
+  margin-left: 22px;
 }
 .ap-archived > summary {
   cursor: pointer;
@@ -4066,7 +4095,7 @@ span.katex-display {
 
 /* Tasks panel */
 .tp-empty {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   line-height: 1.6;
   font-size: 12px;
 }
@@ -4203,9 +4232,20 @@ span.katex-display {
     padding: 0 14px;
     font-size: 14px;
   }
-  /* Touch has no hover: the per-agent actions are always there. */
-  .ap-agent-actions {
-    opacity: 1;
+  .ap-session-name {
+    padding: 8px 0;
+  }
+  .ap-archived > summary {
+    padding: 10px 0;
+  }
+  .bp-close {
+    width: 44px;
+    height: 44px;
+  }
+  .bp-status-toggle,
+  .bp-area,
+  .bp-views button {
+    min-height: 40px;
   }
   .ap-agent-actions button {
     width: 40px;

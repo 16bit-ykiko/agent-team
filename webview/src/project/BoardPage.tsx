@@ -4,6 +4,7 @@ import type { Objective, ObjectiveStatus, Project, TaskState } from "../state/us
 import { MdBlock } from "../chat/markdown";
 import { isImeKeyEvent } from "../chat/ime";
 import { formatRelative } from "../format";
+import { Icon } from "../panels/Icon";
 import {
   areaCounts,
   compareObjectives,
@@ -178,8 +179,8 @@ export const BoardPage = memo(function BoardPage({
               Dependencies
             </button>
           </div>
-          <button className="bp-close" aria-label="Close" onClick={onClose}>
-            ×
+          <button className="side-panel-btn bp-close" aria-label="Close" onClick={onClose}>
+            <Icon name="close" />
           </button>
         </header>
 
@@ -609,8 +610,12 @@ function ObjectiveDetail({
             Ask the lead
           </button>
         )}
-        <button className="bp-close bp-detail-close" aria-label="Close details" onClick={onClose}>
-          ×
+        <button
+          className="side-panel-btn bp-close bp-detail-close"
+          aria-label="Close details"
+          onClick={onClose}
+        >
+          <Icon name="close" />
         </button>
       </div>
       <h2 className="bp-detail-title">{o.title}</h2>
