@@ -2769,11 +2769,23 @@ span.katex-display {
   color: var(--text-primary);
   background: var(--bg-active);
 }
+/* Out of the way, at the foot of the filters: not beside Close. */
 .bp-delete {
   flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: auto;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
 }
 .bp-delete:hover {
   color: var(--error);
+  border-color: var(--error);
 }
 .bp-close,
 .bp-back {
@@ -2941,7 +2953,6 @@ span.katex-display {
   color: var(--text-primary);
   background: var(--bg-secondary);
   border: 1px solid var(--border-strong);
-  border-left: 3px solid var(--border-strong);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }

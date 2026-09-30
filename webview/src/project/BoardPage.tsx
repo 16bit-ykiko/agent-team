@@ -178,9 +178,6 @@ export const BoardPage = memo(function BoardPage({
               Dependencies
             </button>
           </div>
-          <button className="btn-inline bp-delete" onClick={onDelete}>
-            Delete project
-          </button>
           <button className="bp-close" aria-label="Close" onClick={onClose}>
             ×
           </button>
@@ -230,6 +227,9 @@ export const BoardPage = memo(function BoardPage({
                 Archive <span className="bp-count">{archivedCount}</span>
               </button>
             </div>
+            <button className="bp-delete" onClick={onDelete}>
+              Delete project
+            </button>
           </nav>
 
           <main className="bp-main" ref={mainRef}>

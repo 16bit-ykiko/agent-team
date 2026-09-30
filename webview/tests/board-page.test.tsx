@@ -259,6 +259,9 @@ describe("BoardPage header", () => {
 
   it("asks to delete the project and closes on the backdrop", () => {
     const { getByText, container, onDelete, onClose } = page();
+    // At the foot of the filters, away from Close.
+    expect(getByText("Delete project").parentElement!.className).toBe("bp-nav");
+    expect(container.querySelector(".bp-head")!.textContent).not.toContain("Delete");
     fireEvent.click(getByText("Delete project"));
     expect(onDelete).toHaveBeenCalled();
     fireEvent.click(container.querySelector(".board-page")!);
