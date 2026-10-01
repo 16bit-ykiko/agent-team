@@ -20,6 +20,9 @@ export interface PanelTool {
   description: string;
   shape: z.ZodRawShape;
   handler: (args: Record<string, unknown>) => Promise<string>;
+  // Refused to the session's subagents, which inherit its tools, with this
+  // as the reason: the call speaks for the session itself.
+  subagentRefusal?: string;
 }
 
 export interface PanelToolset {
@@ -528,6 +531,9 @@ export function leadToolset(
   };
 }
 
+const REPORT_REFUSAL =
+  "Only the session's own agent reports to the project's lead. Put this in your final reply instead: it goes to the agent that started you.";
+
 export function workerToolset(api: PanelApi, workspaceId: string, project: Project): PanelToolset {
   return {
     instructions: [
@@ -542,6 +548,7 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
         description: "Tell the project's lead about a milestone. Keep it short.",
         shape: { text: z.string() },
         handler: (a) => run(() => api.workerReport(workspaceId, String(a.text), false)),
+        subagentRefusal: REPORT_REFUSAL,
       },
       {
         name: "finish_task",
@@ -553,6 +560,7 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
         },
         handler: (a) =>
           run(() => api.workerReport(workspaceId, String(a.summary), true, a.blocked === true)),
+        subagentRefusal: REPORT_REFUSAL,
       },
       {
         name: "current_task",

@@ -10,6 +10,7 @@ import type {
   SDKResultMessage,
   Options,
   EffortLevel,
+  HookCallback,
   PermissionMode,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -1739,6 +1740,33 @@ export class ClaudeSession extends EventEmitter {
         }),
       };
     }
+    const refused = new Map<string, string>();
+    for (const t of this.panelTools?.tools ?? []) {
+      if (t.subagentRefusal) refused.set(`mcp__panel__${t.name}`, t.subagentRefusal);
+    }
+    if (refused.size > 0) {
+      // Workers run with permissions bypassed, so canUseTool is never asked;
+      // hooks still run. agent_id is set only inside a subagent.
+      const refuse: HookCallback = (input) => {
+        const reason =
+          input.hook_event_name === "PreToolUse" && input.agent_id
+            ? refused.get(input.tool_name)
+            : undefined;
+        return Promise.resolve(
+          reason
+            ? {
+                hookSpecificOutput: {
+                  hookEventName: "PreToolUse" as const,
+                  permissionDecision: "deny" as const,
+                  permissionDecisionReason: reason,
+                },
+              }
+            : {},
+        );
+      };
+      opts.hooks = { PreToolUse: [{ matcher: [...refused.keys()].join("|"), hooks: [refuse] }] };
+    }
+
     return opts;
   }
 }

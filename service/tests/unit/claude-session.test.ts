@@ -1,8 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { HookInput, Options, Query, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeSession, StreamEvent } from "../../src/session/claude";
 import { HostRegistry, LocalHost } from "../../src/session/host";
 import { Workspace } from "../../src/workspace/workspace";
+import {
+  leadToolset,
+  workerToolset,
+  type PanelApi,
+  type PanelToolset,
+} from "../../src/project/tools";
 
 // A real query spawns the Claude CLI on the user's account: every test runs
 // against a stub that throws unless the test installs a fake SDK, and the
@@ -2000,5 +2006,48 @@ describe("switching models", () => {
     expect(session.nextTurnOptions).toMatchObject({ model: "claude-fable-5-1", effort: "high" });
     const opts = inner.buildOptions({ query: () => null });
     expect(opts).toMatchObject({ model: "claude-fable-5-1", resume: "sess-1", effort: "high" });
+  });
+});
+
+describe("panel tools a subagent may not call", () => {
+  const project = { id: "p1", name: "x", root: "/r", leadWorkspaceId: null, createdAt: 0 };
+  const api = new Proxy({} as PanelApi, { get: () => () => "ok" });
+  const options = (tools: PanelToolset) => {
+    const session = new ClaudeSession({ cwd: "/tmp", permissionMode: "bypassPermissions" });
+    session.setPanelTools(tools);
+    const inner = session as unknown as { buildOptions(sdk: unknown): Options };
+    return inner.buildOptions({ query: () => null });
+  };
+  const preToolUse = (tool_name: string, agent_id?: string): HookInput => ({
+    hook_event_name: "PreToolUse",
+    tool_name,
+    tool_input: {},
+    tool_use_id: "toolu_1",
+    session_id: "s",
+    transcript_path: "/t",
+    cwd: "/tmp",
+    ...(agent_id && { agent_id, agent_type: "general-purpose" }),
+  });
+
+  it("refuses a worker's reports to its subagents and lets the worker itself through", async () => {
+    const [matcher] = options(workerToolset(api, "ws-1", project)).hooks!.PreToolUse!;
+    expect(matcher.matcher).toBe("mcp__panel__report_progress|mcp__panel__finish_task");
+    const hook = (input: HookInput) =>
+      matcher.hooks[0](input, "toolu_1", { signal: new AbortController().signal });
+    for (const tool of ["mcp__panel__finish_task", "mcp__panel__report_progress"]) {
+      expect(await hook(preToolUse(tool, "a1"))).toEqual({
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason: expect.stringContaining("final reply") as string,
+        },
+      });
+      expect(await hook(preToolUse(tool))).toEqual({});
+    }
+    expect(await hook(preToolUse("mcp__panel__current_task", "a1"))).toEqual({});
+  });
+
+  it("adds no hook for a lead, whose tools any of its agents may call", () => {
+    expect(options(leadToolset(api, project, "/n", ["m"])).hooks).toBeUndefined();
   });
 });
