@@ -181,6 +181,12 @@ describe("panel tool arguments", () => {
     expect(t.archive_objective).toBeUndefined();
   });
 
+  it("tell the lead and its workers to write to the user in Chinese", () => {
+    const lead = leadToolset(api, project, "/notes", ["claude-opus-5-5"]).instructions;
+    const worker = workerToolset(api, "ws-w", project).instructions;
+    for (const text of [lead, worker]) expect(text).toContain("Write to the user in 简体中文");
+  });
+
   it("turn a thrown error into a rejection", async () => {
     const failing: PanelApi = {
       ...api,

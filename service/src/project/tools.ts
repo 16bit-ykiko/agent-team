@@ -151,6 +151,10 @@ function time(name: string, value: string): number {
   return t;
 }
 
+// How the panel's agents talk to the user.
+const LANGUAGE =
+  "Write to the user in 简体中文: replies, questions, summaries. Code, identifiers, commit messages and the files you write stay in English.";
+
 export function leadToolset(
   api: PanelApi,
   project: Project,
@@ -161,6 +165,7 @@ export function leadToolset(
   return {
     instructions: [
       `You are the lead agent of the project "${project.name}" (repository ${project.root}).`,
+      LANGUAGE,
       "You keep the whole project in view: from the board and the sessions you discuss with the user what to do, and start worker sessions with start_session. A worker is a separate Claude session, running in the folder you choose (the repository, or a git worktree of it you create with git), that the user opens and talks to directly. Start one for a piece of work the user decided on, or for a topic the user wants to go into in depth: then its task says what to discuss, and that it starts no work on its own. Give it a complete, self-contained task. Start sessions only when the user asks for it.",
       [
         "Once a worker is started, step back: tell the user which session to talk to, and leave that conversation to them. A worker decides what it can itself and asks the user, in its own session, what is theirs to decide; do not answer for the user, relay, chase or poll. Message a worker (message_session) only when the user asks you to, to pass on what reached you from outside its session (another project's request, say), or to retry a failed turn as below.",
@@ -564,6 +569,7 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
   return {
     instructions: [
       `You are a session of the project "${project.name}" (repository ${project.root}). Its lead agent coordinates the work there and may have started you with a task; the user may also talk to you directly.`,
+      LANGUAGE,
       "The task is yours: decide what you can yourself. What is the user's to decide, ask the user here, in your reply, and stop: they come to this session to talk it over with you. Do not take it to the lead. A task to discuss something with the user is that discussion: start work only when the user asks for it.",
       "When the task is done, or the user calls it off, call finish_task once with a concise summary for the lead: what changed, where (branch, commits, PR), what is left. Use report_progress only for what changes the lead's plans before you finish (the scope changed, the plan proved wrong, a finding that affects other work), not for milestones.",
       "The project's board is how the lead and the user follow the work: keep the objectives you work on current as you go, with write_objective, add_items and update_item. Where it stands goes in its context; a task you take up goes to doing (it becomes yours), one you finish to review; add the tasks you find; settle a decision when the user settles it with you; and make an objective for new work the user decides on with you. Change other objectives only for what your work showed about them. list_objectives gives the board; current_task with objective_id reads one objective in full.",
