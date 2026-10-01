@@ -291,7 +291,7 @@ async function start(base: string, web: string) {
     ws.close();
     server.close();
   };
-  return { server, frames, send, stop };
+  return { server, port, frames, send, stop };
 }
 
 // A workspace as saved: what it is, and its history.
@@ -365,6 +365,76 @@ describe("server restart with projects", () => {
     expect(saved.archivedAt).toBeNull();
     expect(saved.messages!.map((m) => m.id).slice(0, 2)).toEqual(["h1", "h2"]);
     expect(saved.messages!.some((m) => m.from?.role === "lead")).toBe(true);
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("shows a worker waiting for the user to a client that connects, and once restored", async () => {
+    const { base, web } = seed();
+    const waiting = (agentId: string): Message[] => [
+      {
+        id: `${agentId}-t`,
+        kind: "user",
+        agentId: null,
+        content: "do it",
+        timestamp: 1000,
+        status: "done",
+        from: { workspaceId: "ws-lead", name: "lead", role: "lead" },
+      },
+      {
+        id: `${agentId}-r`,
+        kind: "agent",
+        agentId,
+        content: "Which branch?",
+        timestamp: 1001,
+        status: "done",
+      },
+    ];
+    historyOf(base).save("ws-live", waiting("a-live"), "all");
+    historyOf(base).save("ws-w", waiting("a-w"), "all");
+    closeHistory(base);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { frames, send, stop, port } = await start(base, web);
+    try {
+      const infos = frames.find((f) => f.type === "init")!.workspaces as Array<{
+        id: string;
+        awaitsUser?: boolean;
+      }>;
+      expect(infos.find((w) => w.id === "ws-live")!.awaitsUser).toBe(true);
+      expect(infos.find((w) => w.id === "ws-w")!.awaitsUser).toBeUndefined();
+      expect(infos.find((w) => w.id === "ws-lead")!.awaitsUser).toBeUndefined();
+
+      // The user writes to it: what a client that connects now gets, the
+      // first is told too.
+      send({ type: "send_message", workspaceId: "ws-live", content: "main" });
+      await until(() => launches.length === 1, "the turn");
+      const other = new WebSocket(`ws://127.0.0.1:${port}/`);
+      const got: Array<Record<string, unknown>> = [];
+      other.on("message", (raw: Buffer) => got.push(JSON.parse(raw.toString()) as never));
+      await until(() => got.some((f) => f.type === "init"), "the second client's list");
+      other.close();
+      const live = (got.find((f) => f.type === "init")!.workspaces as typeof infos).find(
+        (w) => w.id === "ws-live",
+      )!;
+      expect(live.awaitsUser).toBeUndefined();
+      const told = frames
+        .filter((f) => f.type === "workspace_updated")
+        .map((f) => f.workspace as { id: string; awaitsUser?: boolean })
+        .filter((w) => w.id === "ws-live");
+      expect(told.length).toBeGreaterThan(0);
+      expect(told[told.length - 1].awaitsUser).toBeUndefined();
+
+      send({ type: "unarchive_workspace", workspaceId: "ws-w" });
+      const updated = () =>
+        frames
+          .filter((f) => f.type === "workspace_updated")
+          .map((f) => f.workspace as { id: string; awaitsUser?: boolean })
+          .filter((w) => w.id === "ws-w");
+      await until(() => updated().length > 0, "the restored worker's update");
+      expect(updated()[0].awaitsUser).toBe(true);
+    } finally {
+      stop();
+      log.mockRestore();
+    }
     fs.rmSync(base, { recursive: true, force: true });
   });
 

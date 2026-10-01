@@ -123,7 +123,26 @@ describe("project groups", () => {
     expect(props.onSelect).not.toHaveBeenCalled();
   });
 
-  it("cut a long session name, not the time after it, and keep it whole in its title", () => {
+  it("mark a worker waiting for the user's reply, until it runs again or is open", () => {
+    const waiting = { ...worker, awaitsUser: true };
+    const working = {
+      ...waiting,
+      agents: [{ id: "a", name: "A", model: "m", avatar: "", color: "#fff", isDefault: true }].map(
+        (a) => ({ ...a, busy: true, state: "working" as const }),
+      ),
+    };
+    const tag = (w: Workspace, activeWsId = "lead") =>
+      render(
+        <Sidebar {...sidebarProps()} workspaces={[lead, w]} activeWsId={activeWsId} />,
+      ).container.querySelector(".task-item .awaits-tag");
+    expect(tag(waiting)?.textContent).toBe("your turn");
+    expect(tag(waiting)?.getAttribute("title")).toBe("Waiting for your reply");
+    expect(tag(worker)).toBeNull();
+    expect(tag(working)).toBeNull();
+    expect(tag(waiting, "w1")).toBeNull();
+  });
+
+  it("cut a long session name, not the time or the marks after it, and keep it whole in its title", () => {
     const sheet = document.createElement("style");
     sheet.textContent = css;
     document.head.appendChild(sheet);
@@ -131,11 +150,14 @@ describe("project groups", () => {
       const long =
         "fix the wake-up time the CLI rounds up to the minute so the panel shows it early";
       const { container } = render(
-        <Sidebar {...sidebarProps()} workspaces={[lead, { ...worker, name: long }]} />,
+        <Sidebar
+          {...sidebarProps()}
+          workspaces={[lead, { ...worker, name: long, awaitsUser: true }]}
+        />,
       );
       const row = container.querySelector(".task-name-text")!;
       // A flex row cuts no text of its own: the name is a box that can.
-      expect([...row.childNodes].map((n) => n.nodeName)).toEqual(["SPAN"]);
+      expect([...row.childNodes].map((n) => n.nodeName)).toEqual(["SPAN", "SPAN"]);
       const name = row.querySelector(".clip")!;
       expect(name.textContent).toBe(long);
       expect(name.getAttribute("title")).toBe(long);
@@ -146,6 +168,7 @@ describe("project groups", () => {
         "nowrap",
         "0px",
       ]);
+      expect(getComputedStyle(row.querySelector(".awaits-tag")!).flexShrink).toBe("0");
       // The time and × take no room until the row is hovered; the × stays
       // in the keyboard's reach.
       expect(getComputedStyle(container.querySelector(".task-item .task-time")!).display).toBe(

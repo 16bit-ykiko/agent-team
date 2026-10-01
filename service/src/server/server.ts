@@ -5,7 +5,12 @@ import * as path from "path";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import { WebSocketServer, WebSocket } from "ws";
-import { Workspace, WorkspaceCallbacks, type ProjectLink } from "../workspace/workspace";
+import {
+  Workspace,
+  WorkspaceCallbacks,
+  type ProjectLink,
+  type WorkspaceInfo,
+} from "../workspace/workspace";
 import {
   saveWorkspace,
   deleteWorkspaceState,
@@ -226,12 +231,13 @@ export class Server {
       this.uiClients.delete(ws);
     });
 
+    this.projects.showAllAwaiting();
     this.sendJson(ws, {
       type: "init",
       // Identifies the served bundle; a client that reconnects and sees a
       // different id reloads itself (home-screen apps never reload on their own).
       buildId: this.http.buildId(),
-      workspaces: [...this.workspaces.values()].map((w) => w.getInfo(false)),
+      workspaces: [...this.workspaces.values()].map((w) => this.listInfo(w)),
       config: {
         accounts: Object.keys(this.config.accounts),
         defaultAccount: this.defaultAccount,
@@ -1027,6 +1033,12 @@ systemctl --user restart agent-team-server
     return sidebarHits(this.history, query, sessions, 50);
   }
 
+  // A workspace as the list shows it: no history.
+  private listInfo(w: Workspace): WorkspaceInfo {
+    const info = w.getInfo(false);
+    return this.projects.awaitsUser(w) ? { ...info, awaitsUser: true } : info;
+  }
+
   private projectHost(): ProjectHost {
     return {
       workspaces: () => this.workspaces.values(),
@@ -1045,7 +1057,7 @@ systemctl --user restart agent-team-server
       persistWorkspace: (w) => this.persistWorkspace(w.id),
       saveWorkspaceNow: (w) => this.persistWorkspaceNow(w.id),
       workspaceChanged: (w) =>
-        this.broadcastUI({ type: "workspace_updated", workspace: w.getInfo(false) }),
+        this.broadcastUI({ type: "workspace_updated", workspace: this.listInfo(w) }),
       broadcast: (msg) => this.broadcastUI(msg),
     };
   }
@@ -1106,6 +1118,7 @@ systemctl --user restart agent-team-server
     } catch (e) {
       console.error(`[projects] ${ws.id} stays outside a project`, e);
     }
+    this.projects.showAwaiting(ws);
     return true;
   }
 

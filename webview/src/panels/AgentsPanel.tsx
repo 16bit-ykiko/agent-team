@@ -115,6 +115,11 @@ function SessionCard({
           <span className="clip" title={w.name}>
             {name}
           </span>
+          {w.awaitsUser && state === "idle" && (
+            <span className="awaits-tag" title="Waiting for your reply">
+              your turn
+            </span>
+          )}
         </button>
         <span className="ap-when">{formatRelative(w.lastMessageAt ?? w.createdAt)}</span>
         {state === "archived" ? (

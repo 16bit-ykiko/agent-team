@@ -2798,6 +2798,17 @@ button.action-target:hover {
   flex-shrink: 0;
   color: var(--text-muted);
 }
+/* A worker waiting for the user's reply. */
+.awaits-tag {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: var(--fs-tag);
+  font-weight: 400;
+  line-height: 15px;
+  border-radius: 8px;
+  color: var(--warning);
+  background: rgba(229, 192, 123, 0.14);
+}
 .avatar-from {
   display: flex;
   align-items: center;

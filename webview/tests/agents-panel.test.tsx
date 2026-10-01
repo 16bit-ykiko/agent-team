@@ -169,6 +169,30 @@ describe("AgentsPanel", () => {
     expect(leadCard.queryByText("Archive")).toBeNull();
   });
 
+  it("marks an idle worker waiting for the user's reply beside its name, whole in the title", () => {
+    const long = "fix the wake-up time the CLI rounds up to the minute so the panel shows it early";
+    const quiet = ws("w3", {
+      name: long,
+      projectLink: { projectId: "p1", role: "worker" },
+      awaitsUser: true,
+    });
+    const { container } = render(
+      <AgentsPanel
+        sessions={[lead, { ...w1, awaitsUser: true }, quiet]}
+        project={project}
+        activeWsId="w1"
+        connected
+        models={[]}
+        actions={actions()}
+      />,
+    );
+    const name = container.querySelector(`[aria-label="${long}"] .ap-session-name`)!;
+    expect(name.querySelector(".clip")!.getAttribute("title")).toBe(long);
+    expect(name.querySelector(".awaits-tag")!.textContent).toBe("your turn");
+    // A working session is not waiting, whatever the last word was.
+    expect(container.querySelector('[aria-label="modules"] .awaits-tag')).toBeNull();
+  });
+
   it("keeps archived sessions folded away, restorable", () => {
     const { container, a } = panel();
     const archived = container.querySelector(".ap-archived")!;

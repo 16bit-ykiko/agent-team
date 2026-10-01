@@ -97,6 +97,7 @@ export class ProjectManager {
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private boards = new Map<string, ObjectiveStore>();
   private settling = new Map<string, ReturnType<typeof setTimeout>>();
+  private awaiting = new Set<string>();
   private closed = false;
 
   constructor(
@@ -195,6 +196,9 @@ export class ProjectManager {
     project.archivedAt = archived ? Date.now() : null;
     this.store.save(project);
     this.changed(id);
+    for (const w of this.host.workspaces()) {
+      if (w.projectLink?.projectId === id) this.showAwaiting(w);
+    }
   }
 
   // A workspace from before projects (restored from the archive) joins the
@@ -336,7 +340,37 @@ export class ProjectManager {
   // A worker's turn ended or its agent went idle: the check waits until it
   // has stayed so for SETTLE_MS.
   workerIdle(w: Workspace): void {
-    if (w.projectLink?.role === "worker") this.settleAfter(w, SETTLE_MS);
+    if (w.projectLink?.role !== "worker") return;
+    this.showAwaiting(w);
+    this.settleAfter(w, SETTLE_MS);
+  }
+
+  // Whether the clients are to show the worker as waiting for the user,
+  // noted as what they were all last sent: only for what goes to all of
+  // them (see showAllAwaiting for one that connects).
+  awaitsUser(w: Workspace): boolean {
+    const awaits = this.waits(w);
+    if (awaits) this.awaiting.add(w.id);
+    else this.awaiting.delete(w.id);
+    return awaits;
+  }
+
+  // Tells the clients when it changed.
+  showAwaiting(w: Workspace): void {
+    if (this.waits(w) !== this.awaiting.has(w.id)) this.host.workspaceChanged(w);
+  }
+
+  // Before a client that connects gets the list: the others are told first
+  // what changed unseen (a stop, an archive), so all hold the same.
+  showAllAwaiting(): void {
+    for (const w of this.host.workspaces()) {
+      if (w.projectLink?.role === "worker") this.showAwaiting(w);
+    }
+  }
+
+  private waits(w: Workspace): boolean {
+    const link = w.projectLink;
+    return !!link && !this.store.get(link.projectId)?.archivedAt && awaitsUser(w);
   }
 
   // After a restart: workers that still owe their lead a word (a turn the
@@ -383,6 +417,7 @@ export class ProjectManager {
     const t = this.later(ms, () => {
       this.settling.delete(w.id);
       this.tellIfSilent(w.id);
+      this.showAwaiting(w);
     });
     if (t) this.settling.set(w.id, t);
   }
@@ -1298,6 +1333,24 @@ export class ProjectManager {
 
 // How the workspace marks a turn cut off (a stop, a restart).
 const INTERRUPTED = "*\\[interrupted\\]*";
+
+// A worker the lead started that stopped on the user: its last turn, on the
+// task or on what the user wrote since, ended without calling finish_task.
+// Not what it answered the lead later, nor a turn that failed or was cut off.
+export function awaitsUser(w: Workspace): boolean {
+  const link = w.projectLink;
+  if (link?.role !== "worker" || w.isArchived || !w.messagesLoaded || !w.isQuiet) return false;
+  const messages = w.getMessages();
+  const task = taskOf(messages);
+  if (!task) return false;
+  return w.lastTurns().some(({ input, replies, stopped }) => {
+    const from = asked(messages, input);
+    if (from.from && from.id !== task.id) return false;
+    const last = replies[replies.length - 1];
+    if (stopped || last?.status !== "done" || last.content.endsWith(INTERRUPTED)) return false;
+    return !replies.some((m) => m.events?.some((e) => e.toolName === "mcp__panel__finish_task"));
+  });
+}
 
 // The task a worker was started with: its first message, from the lead (a
 // session the user started has none).

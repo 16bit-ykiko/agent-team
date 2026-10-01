@@ -280,6 +280,8 @@ export interface Workspace {
   lastMessageAt?: number;
   archivedAt?: number | null;
   projectLink?: ProjectLink;
+  // A worker stopped on the user's reply (its task asked them something).
+  awaitsUser?: boolean;
   hasMore?: boolean;
   messagesLoaded?: boolean;
   // An older page has been requested and not yet arrived.

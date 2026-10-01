@@ -344,6 +344,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
               const activeAgents = ws.agents.filter(isAgentActive);
               const running = activeAgents.length > 0;
               const unread = ws.messages.length - (p.seenCounts[ws.id] ?? 0);
+              const awaits = ws.awaitsUser && !running && ws.id !== p.activeWsId;
               return (
                 <div
                   key={ws.id}
@@ -362,6 +363,11 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                         <span className="clip" title={ws.name}>
                           {ws.name}
                         </span>
+                        {awaits && (
+                          <span className="awaits-tag" title="Waiting for your reply">
+                            your turn
+                          </span>
+                        )}
                         {unread > 0 && ws.id !== p.activeWsId && (
                           <span className="unread-badge">{unread}</span>
                         )}

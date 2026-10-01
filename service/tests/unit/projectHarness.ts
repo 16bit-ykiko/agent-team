@@ -99,7 +99,13 @@ export function setupProjects() {
     history,
     persistWorkspace: () => {},
     saveWorkspaceNow: (w) => void saved.push(w.id),
-    workspaceChanged: (w) => void frames.push({ type: "workspace_updated", id: w.id }),
+    // As the server sends it, with whether the worker waits for the user.
+    workspaceChanged: (w) =>
+      void frames.push({
+        type: "workspace_updated",
+        id: w.id,
+        ...(manager.awaitsUser(w) && { awaitsUser: true }),
+      }),
     broadcast: (m) => void frames.push(m as Record<string, unknown>),
   };
   const manager = new ProjectManager(base, host);

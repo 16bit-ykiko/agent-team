@@ -145,6 +145,9 @@ export interface WorkspaceInfo {
   // archived by hand). Archived workspaces keep their history on disk only.
   archivedAt: number | null;
   projectLink?: ProjectLink;
+  // A worker stopped on the user (project/manager.ts awaitsUser); the server
+  // adds it to the list it sends.
+  awaitsUser?: boolean;
 }
 
 export interface WorkspaceState {
@@ -395,6 +398,37 @@ export class Workspace {
         answered: !!d.answered,
         since: a.input !== d,
       });
+    }
+    return out;
+  }
+
+  // Per agent, the last message it got, the replies of the turns it drove
+  // and what cut the latest short. A restart keeps that record only for a
+  // message from another session; for the user's the messages stand in
+  // (where a command the panel answered itself reads as a turn).
+  lastTurns(): Array<{
+    agentId: string;
+    input: Message;
+    replies: Message[];
+    stopped?: "user" | "restart";
+  }> {
+    const out = [];
+    for (const [agentId, a] of this.agents) {
+      const t = a.input;
+      if (t) {
+        const input = this.messages.find((m) => m.id === t.id);
+        if (!input) continue;
+        const replies = this.messages.filter((m) => t.replies.includes(m.id));
+        out.push({ agentId, input, replies, stopped: t.stopped });
+        continue;
+      }
+      let i = this.messages.length - 1;
+      while (i >= 0 && (this.messages[i].kind !== "user" || this.messages[i].status === "queued")) {
+        i--;
+      }
+      if (i < 0) continue;
+      const replies = this.messages.slice(i + 1).filter((m) => m.agentId === agentId);
+      out.push({ agentId, input: this.messages[i], replies });
     }
     return out;
   }

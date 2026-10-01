@@ -4,7 +4,7 @@ import * as path from "path";
 import { z } from "zod";
 import { ProjectStore } from "../../src/project/store";
 import { leadToolset, workerToolset, type PanelApi } from "../../src/project/tools";
-import { SETTLE_MS, START_SPACING_MS } from "../../src/project/manager";
+import { SETTLE_MS, START_SPACING_MS, awaitsUser } from "../../src/project/manager";
 import { Workspace } from "../../src/workspace/workspace";
 import { historyOf, saveIndex, saveWorkspace, loadAll } from "../../src/workspace/state";
 import { summarizeMessages } from "../../src/workspace/summary";
@@ -1263,6 +1263,7 @@ describe("a worker that goes idle without reporting", () => {
       say("Halfway through");
       w.abortAll("restart");
       let back = restart(w);
+      expect(awaitsUser(back)).toBe(false);
       manager.recheckWorkers();
       await settle();
       expect(told()).toEqual([]);
@@ -1275,11 +1276,13 @@ describe("a worker that goes idle without reporting", () => {
       endTurn(back);
       await settle();
       expect(told()).toEqual([]);
+      expect(awaitsUser(back)).toBe(true);
       // Nothing is cut off any more: a later restart carries nothing on.
       back = restart(back);
       manager.recheckWorkers();
       await settle();
       expect(session(back).sent).toEqual([]);
+      expect(awaitsUser(back)).toBe(true);
 
       // The lead's later question, cut off by a crash mid-turn, goes on too,
       // and its answer reaches the lead as the answer to the question.
@@ -1378,7 +1381,7 @@ describe("a worker that goes idle without reporting", () => {
     }
   });
 
-  it("carries on a task whose background work a crash cut off", async () => {
+  it("carries on a task whose background work a crash cut off, and shows no wait till then", async () => {
     vi.useFakeTimers();
     try {
       const { w, say, told, settle, endTurn, state, restart, manager, session } = await started();
@@ -1386,6 +1389,7 @@ describe("a worker that goes idle without reporting", () => {
       state("waiting");
       endTurn(w);
       const back = restart(w);
+      expect(awaitsUser(back)).toBe(false);
       manager.recheckWorkers();
       await settle();
       expect(told()).toEqual([]);
@@ -1415,6 +1419,7 @@ describe("a worker that goes idle without reporting", () => {
           .filter((m) => m.from?.workspaceId === own.id)
           .map((m) => m.content),
       ).toEqual([note("its turn ended", "which branch?", "main")]);
+      expect(awaitsUser(own)).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -1436,6 +1441,137 @@ describe("a worker that goes idle without reporting", () => {
     }
   });
 
+  it("shows it waiting for the user when its task or the user's turn ends on them", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, settle, endTurn, restart, frames } = await started();
+      const shown = () =>
+        frames
+          .filter((f) => f.type === "workspace_updated" && f.id === w.id)
+          .map((f) => f.awaitsUser === true);
+      say("Which branch should this go on?");
+      endTurn(w);
+      // At once, and once.
+      expect(shown()).toEqual([true]);
+      await settle();
+      expect(shown()).toEqual([true]);
+      expect(awaitsUser(restart(w))).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    vi.useFakeTimers();
+    try {
+      const { w, say, settle, endTurn, session, call, askNext, frames, manager, project } =
+        await started();
+      const shown = () =>
+        frames
+          .filter((f) => f.type === "workspace_updated" && f.id === w.id)
+          .map((f) => f.awaitsUser === true);
+      say("Which branch?");
+      endTurn(w);
+      // The user answers, and it reports the task finished. A client that
+      // connects meanwhile leaves the others holding what it gets.
+      await w.sendMessage("main");
+      expect(awaitsUser(w)).toBe(false);
+      manager.showAllAwaiting();
+      expect(shown()).toEqual([true, false]);
+      session(w).emit("event", {
+        kind: "tool_use",
+        toolName: "mcp__panel__finish_task",
+        toolUseId: "t1",
+        content: "**finish_task**",
+      });
+      await call(w, "finish_task", { summary: "merged" });
+      // A command the panel answers itself is no turn, during one or after.
+      await w.sendMessage("/usage");
+      endTurn(w);
+      await settle();
+      await w.sendMessage("/usage");
+      manager.showAllAwaiting();
+      expect(awaitsUser(w)).toBe(false);
+      expect(shown()).toEqual([true, false]);
+
+      // A question of the user's after that is answered to them; not inside
+      // an archived project.
+      await w.sendMessage("which commit?");
+      say("abc123");
+      endTurn(w);
+      await settle();
+      expect(shown()).toEqual([true, false, true]);
+      manager.setArchived(project.id, true);
+      manager.setArchived(project.id, false);
+      expect(shown()).toEqual([true, false, true, false, true]);
+
+      // What it answers the lead later is the lead's.
+      await w.sendMessage("thanks");
+      await askNext("is it pushed?");
+      say("yes");
+      endTurn(w);
+      await settle();
+      expect(shown()).toEqual([true, false, true, false, true, false]);
+
+      // A failed turn, or one the user stopped, asks nothing.
+      await w.sendMessage("push the tag");
+      session(w).isRunning = false;
+      session(w).emit("event", { kind: "error", content: "API Error: 529 overloaded" });
+      await settle();
+      expect(awaitsUser(w)).toBe(false);
+      await w.sendMessage("try again");
+      say("Pushing");
+      session(w).isRunning = false;
+      w.abortAll();
+      await settle();
+      expect(awaitsUser(w)).toBe(false);
+      expect(shown()).toEqual([true, false, true, false, true, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows it waiting only once nothing more is to run, through wake-ups and notices", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, settle, endTurn, state, call, session, frames } = await started();
+      const shown = () =>
+        frames
+          .filter((f) => f.type === "workspace_updated" && f.id === w.id)
+          .map((f) => f.awaitsUser === true);
+      // A background task still runs, then a pause holds it: not yet.
+      say("Which branch? The build runs meanwhile.");
+      state("waiting");
+      endTurn(w);
+      expect(awaitsUser(w)).toBe(false);
+      const [agentId] = w.agents.keys();
+      w.pauseAgent(agentId, Date.now() + 1000);
+      state("idle");
+      expect(shown()).toEqual([]);
+      await settle();
+      expect(shown()).toEqual([true]);
+      // A notice of the panel's after it changes nothing.
+      w.postSystemMessage("Context compacted.");
+      expect(awaitsUser(w)).toBe(true);
+      // Reported finished, a wake-up's turn after it asks nothing.
+      await w.sendMessage("main");
+      session(w).emit("event", {
+        kind: "tool_use",
+        toolName: "mcp__panel__finish_task",
+        toolUseId: "t1",
+        content: "**finish_task**",
+      });
+      await call(w, "finish_task", { summary: "merged" });
+      endTurn(w);
+      session(w).isRunning = true;
+      say("late output");
+      endTurn(w);
+      await settle();
+      expect(awaitsUser(w)).toBe(false);
+      expect(shown()).toEqual([true, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("leaves to the user across a restart what they took over", async () => {
     vi.useFakeTimers();
     try {
@@ -1450,6 +1586,32 @@ describe("a worker that goes idle without reporting", () => {
       await settle();
       expect(told()).toEqual([]);
       expect(back.lastDelivered()[0]).toMatchObject({ since: true, answered: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never shows the lead, a session the user started or an archived one waiting", async () => {
+    vi.useFakeTimers();
+    try {
+      const { lead, w, say, endTurn, call, host, session, project } = await started();
+      say("Which branch?");
+      endTurn(w);
+      expect(awaitsUser(w)).toBe(true);
+      await call(lead, "archive_session", { session_id: w.id });
+      expect(awaitsUser(w)).toBe(false);
+
+      const own = host.createWorkspace("mine", w.cwd, { projectId: project.id, role: "worker" });
+      host.addAgent(own, "A", "claude-opus-5-5", "a", "c");
+      await own.sendMessage("what does this do?");
+      session(own).emit("event", { kind: "text_delta", content: "It parses." });
+      endTurn(own);
+      expect(awaitsUser(own)).toBe(false);
+
+      await lead.sendMessage("hi");
+      session(lead).emit("event", { kind: "text_delta", content: "Hello." });
+      endTurn(lead);
+      expect(awaitsUser(lead)).toBe(false);
     } finally {
       vi.useRealTimers();
     }
