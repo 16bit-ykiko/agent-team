@@ -121,7 +121,6 @@ function SessionCard({
             </span>
           )}
         </button>
-        <span className="ap-when">{formatRelative(w.lastMessageAt ?? w.createdAt)}</span>
         {state === "archived" ? (
           <button className="panel-btn" onClick={() => actions.onRestore(w.id)}>
             Restore
@@ -138,6 +137,8 @@ function SessionCard({
             </button>
           )
         )}
+        {/* Last, so every card's time lines up at its edge, button or none. */}
+        <span className="ap-when">{formatRelative(w.lastMessageAt ?? w.createdAt)}</span>
       </header>
       <div className="ap-where" title={w.cwd}>
         {w.git?.branch && <span className="ap-branch">{w.git.branch}</span>}

@@ -121,6 +121,17 @@ describe("the lists' type", () => {
     expect(rule(".tp-desc", PHONE).body).toMatch(/flex-basis:\s*100%/);
   });
 
+  it("lets the dependency graph fill what the board's banners leave, and lines + Agent up on phones", () => {
+    const rule = (sel: string, media: string | null = null) =>
+      all.find((r) => r.selectors.includes(sel) && r.media === media)!;
+    expect(rule(".bp-graph").body).not.toMatch(/min-height:\s*100%/);
+    expect(rule(".bp-graph").body).toMatch(/flex:\s*1 0 auto/);
+    expect(rule(".bp-main:has(> .bp-graph)").body).toMatch(/flex-direction:\s*column/);
+    expect(rule(".bp-main > .bp-broken").body).toMatch(/position:\s*sticky/);
+    // 22px less the phone button's 6px more padding.
+    expect(rule(".ap-add", PHONE).body).toMatch(/margin-left:\s*16px/);
+  });
+
   it("fits a dialog in a narrow phone", () => {
     const dialog = all.find((r) => r.selectors.includes(".dialog") && !r.media)!;
     expect(dialog.body).toMatch(/min-width:\s*min\(360px, calc\(100vw - 24px\)\)/);

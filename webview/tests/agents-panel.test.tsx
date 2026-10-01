@@ -193,6 +193,13 @@ describe("AgentsPanel", () => {
     expect(container.querySelector('[aria-label="modules"] .awaits-tag')).toBeNull();
   });
 
+  it("ends every card's head with its time, so times line up with or without a button", () => {
+    const { container } = panel();
+    const heads = [...container.querySelectorAll(".ap-session-head")];
+    expect(heads.length).toBeGreaterThan(2);
+    for (const h of heads) expect(h.lastElementChild!.className).toBe("ap-when");
+  });
+
   it("keeps archived sessions folded away, restorable", () => {
     const { container, a } = panel();
     const archived = container.querySelector(".ap-archived")!;

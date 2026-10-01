@@ -3219,6 +3219,16 @@ button.action-target:hover {
   overflow: auto;
   padding: 12px 16px 24px;
 }
+/* The graph fills what the banners above it leave, and they stay in view
+   when it scrolls sideways. */
+.bp-main:has(> .bp-graph) {
+  display: flex;
+  flex-direction: column;
+}
+.bp-main > .bp-broken {
+  position: sticky;
+  left: 0;
+}
 .bp-empty {
   margin: 40px auto;
   max-width: 420px;
@@ -3413,7 +3423,7 @@ button.action-target:hover {
   position: relative;
   display: flex;
   gap: 56px;
-  min-height: 100%;
+  flex: 1 0 auto;
   width: max-content;
   min-width: 100%;
 }
@@ -4694,6 +4704,10 @@ button.action-target:hover {
     min-height: 40px;
     padding: 0 14px;
     font-size: var(--fs-name);
+  }
+  /* Its label under the agents' names: the wider padding, taken back. */
+  .ap-add {
+    margin-left: 16px;
   }
   .ap-session-name {
     padding: 8px 0;
