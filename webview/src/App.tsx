@@ -868,6 +868,23 @@ export function App() {
     onMessagesScroll();
   }, [onMessagesScroll]);
 
+  // The composer growing (a long draft, the command list) takes the
+  // transcript's room from below: a reader at the end stays there. Keyed on
+  // the open workspace's id, not the one asked for: the transcript exists
+  // once the workspace does.
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let height = el.clientHeight;
+    const ro = new ResizeObserver(() => {
+      const shrank = el.clientHeight < height;
+      height = el.clientHeight;
+      if (shrank && stuckToBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [activeWs?.id]);
+
   // Follow the conversation while the reader is at the bottom: a new
   // message scrolls into view, a streaming one keeps the end pinned. Only
   // while something streams (or just finished): a reply growing because the
@@ -1538,9 +1555,13 @@ export function App() {
                     }}
                     disabled={!hasAgents}
                     placeholder={
-                      activeWs.agents.length > 1
-                        ? "Type / for commands, @ to mention an agent..."
-                        : "Type / for commands, or send a message..."
+                      window.matchMedia?.(PHONE).matches
+                        ? activeWs.agents.length > 1
+                          ? "Message, or @ an agent"
+                          : "Message, or / for commands"
+                        : activeWs.agents.length > 1
+                          ? "Type / for commands, @ to mention an agent..."
+                          : "Type / for commands, or send a message..."
                     }
                     rows={1}
                   />

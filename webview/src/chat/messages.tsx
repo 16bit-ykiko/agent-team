@@ -321,6 +321,12 @@ const KIND_LABEL: Record<string, string> = {
   error: "Error",
 };
 
+// A tool body under its row: the row already shows the first line.
+function afterFirstLine(content: string): string {
+  const nl = content.indexOf("\n");
+  return nl < 0 ? content : content.slice(nl + 1);
+}
+
 function resultLabel(len: number): string {
   return len > 1000 ? `${Math.round(len / 1000)}k chars` : `${len} chars`;
 }
@@ -424,7 +430,7 @@ export const EventItem = memo(function EventItem({
         <>
           {!bodyMissing && !toolBodyMissing && (!isToolUse || showBodyByDefault || bodyOpen) && (
             <div className="event-content">
-              <MdBlock>{ev.content}</MdBlock>
+              <MdBlock>{summary ? afterFirstLine(ev.content) : ev.content}</MdBlock>
             </div>
           )}
           {hasResult && resultOpen && ev.toolResult != null && (
@@ -990,7 +996,7 @@ export const MessageItem = memo(function MessageItem({
   });
 
   const quoteButton =
-    !isUser && onQuote ? (
+    !isUser && onQuote && segments.length > 0 ? (
       <button className="btn-quote" title="Quote this message" onClick={() => onQuote(msg)}>
         ↩
       </button>
@@ -1061,6 +1067,7 @@ export const MessageItem = memo(function MessageItem({
               <span className="message-time">{time}</span>
               {streaming && <span className="streaming-dot" />}
               {activity && <span className="activity-label">{activity}</span>}
+              {!streaming && quoteButton}
             </div>
           )}
           {compact && (
@@ -1068,6 +1075,7 @@ export const MessageItem = memo(function MessageItem({
               <span className="message-time">{time}</span>
               {streaming && <span className="streaming-dot" />}
               {activity && <span className="activity-label">{activity}</span>}
+              {!streaming && quoteButton}
             </div>
           )}
           {!isUser && <MessageStatus msg={msg} />}
@@ -1118,7 +1126,6 @@ export const MessageItem = memo(function MessageItem({
               )
             : segments.length > 0 && (
                 <div className="message-content" onCopy={copySelectionAsMarkdown}>
-                  {!streaming && quoteButton}
                   {segments.map((seg, si) => (
                     <div key={si}>
                       {seg.text &&

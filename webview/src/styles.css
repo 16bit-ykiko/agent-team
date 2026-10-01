@@ -1230,8 +1230,13 @@ pre:hover .copy-btn {
 /* No hover on touch screens: keep the button faintly visible so a tap has a
    target and "Copied" has somewhere to show. */
 @media (hover: none) {
+  /* A line of its own above the code, whose first line it would cover. */
   pre .copy-btn {
     opacity: 0.6;
+    float: none;
+    display: block;
+    width: fit-content;
+    margin: -2px -4px 4px auto;
   }
 }
 pre .copy-btn:hover {
@@ -1247,6 +1252,14 @@ pre .copy-btn:hover {
 .message-content ol {
   padding-left: 22px;
   margin: 4px 0;
+}
+/* A task list's checkboxes stand for its bullets. */
+.message-content .contains-task-list {
+  list-style: none;
+  padding-left: 4px;
+}
+.message-content .task-list-item input {
+  margin-right: 6px;
 }
 .message-content li {
   margin: 2px 0;
@@ -1323,11 +1336,14 @@ span.katex-display {
   border-radius: var(--radius);
 }
 
+/* In the message's header row, at its end: over the text it would hide its
+   first line, and on touch take taps meant for it. */
 .btn-quote {
-  position: absolute;
-  top: 0;
-  right: 0;
+  flex-shrink: 0;
+  align-self: center;
+  margin-left: auto;
   font-size: 12px;
+  line-height: 14px;
   padding: 1px 6px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
@@ -1336,11 +1352,15 @@ span.katex-display {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.15s;
-  z-index: 1;
 }
 .message:hover .btn-quote,
 .btn-quote:focus-visible {
   opacity: 1;
+}
+@media (hover: none) {
+  .btn-quote {
+    opacity: 0.6;
+  }
 }
 .btn-quote:hover {
   color: var(--accent);
@@ -1410,7 +1430,8 @@ span.katex-display {
   min-width: 0;
 }
 .event-chip {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 3em;
   display: inline-block;
   /* MCP tool names can be very long; the row must not scroll off-screen. */
   max-width: 220px;
@@ -1623,6 +1644,9 @@ span.katex-display {
   background: rgba(224, 108, 117, 0.2);
   color: var(--error);
 }
+.banner-error .banner-label {
+  color: var(--error);
+}
 .banner-info {
   opacity: 0.75;
 }
@@ -1825,7 +1849,9 @@ button.action-target:hover {
   font-weight: 600;
   color: var(--purple);
   white-space: nowrap;
-  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .subagent-desc {
   color: var(--text-secondary);
@@ -1873,6 +1899,14 @@ button.action-target:hover {
   border-left: 2px solid var(--success);
   background: rgba(152, 195, 121, 0.06);
   border-radius: 2px;
+}
+.subagent-failed .subagent-summary {
+  border-left-color: var(--error);
+  background: rgba(224, 108, 117, 0.06);
+}
+.subagent-stopped .subagent-summary {
+  border-left-color: var(--text-muted);
+  background: transparent;
 }
 .subagent-summary p {
   margin: 2px 0;
@@ -2178,6 +2212,7 @@ button.action-target:hover {
 }
 .msg-images {
   display: flex;
+  align-items: flex-start;
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 6px;
@@ -2354,7 +2389,9 @@ button.action-target:hover {
   color: var(--warning);
   cursor: pointer;
   font-size: 10px;
-  padding: 0;
+  /* A bigger target than the glyph, in the badge's room. */
+  padding: 6px;
+  margin: -6px -6px -6px -2px;
 }
 .queued-cancel:hover {
   color: var(--error);
@@ -2876,6 +2913,11 @@ button.action-target:hover {
   font-size: 14px;
 }
 .from-author {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
   background: none;
   border: none;
   padding: 0;

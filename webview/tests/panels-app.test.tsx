@@ -210,3 +210,52 @@ describe("panel chrome", () => {
     expect(document.querySelector(".bp-head .bp-close svg")).not.toBeNull();
   });
 });
+
+describe("the composer on a phone", () => {
+  it("has a placeholder that fits, and keeps a reader at the end as it grows", () => {
+    vi.stubGlobal("matchMedia", (media: string) => ({
+      matches: true,
+      media,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+    }));
+    const observers = new Map<Element, () => void>();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private cb: () => void) {}
+        observe(el: Element) {
+          observers.set(el, this.cb);
+        }
+        disconnect() {}
+      },
+    );
+    boot("lead");
+    expect(document.querySelector("textarea")!.placeholder).toBe("Message, or / for commands");
+
+    const el = document.querySelector(".messages") as HTMLElement;
+    const resized = () => observers.get(el)!();
+    let height = 600;
+    let top = 1400;
+    Object.defineProperty(el, "clientHeight", { get: () => height, configurable: true });
+    Object.defineProperty(el, "scrollHeight", { get: () => 2000, configurable: true });
+    Object.defineProperty(el, "scrollTop", {
+      get: () => top,
+      set: (v: number) => (top = v),
+      configurable: true,
+    });
+    resized();
+    // A long draft takes 100px from below: the end stays in view.
+    height = 500;
+    resized();
+    expect(top).toBe(2000);
+    // Read back up, the reader stays where they are.
+    top = 200;
+    fireEvent.scroll(el);
+    height = 400;
+    resized();
+    expect(top).toBe(200);
+  });
+});
