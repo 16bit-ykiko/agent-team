@@ -1085,7 +1085,8 @@ export class ProjectManager {
     return out.join("\n");
   }
 
-  private writeObjective(projectId: string, patch: ObjectivePatch): string {
+  // A worker's new objective names its session, as start_session's would.
+  private writeObjective(projectId: string, patch: ObjectivePatch, sessionId?: string): string {
     checkId(patch.id);
     const board = this.board(projectId);
     const current = board.get(patch.id);
@@ -1108,7 +1109,7 @@ export class ProjectManager {
         dependsOn: [],
         tasks: [],
         decisions: [],
-        sessions: [],
+        sessions: sessionId ? [sessionId] : [],
         updatedAt: 0,
       }),
       ...defined,
@@ -1137,7 +1138,14 @@ export class ProjectManager {
     return `${current ? "Updated" : "Created"} ${next.id} [${next.status}, ${next.priority}].${deps}${warn}`;
   }
 
-  private updateItem(projectId: string, oid: string, itemId: string, patch: ItemPatch): string {
+  // A worker that takes up a task nobody carries out is its session.
+  private updateItem(
+    projectId: string,
+    oid: string,
+    itemId: string,
+    patch: ItemPatch,
+    sessionId?: string,
+  ): string {
     const o = this.objective(projectId, oid);
     if (o.tasks.some((t) => t.id === itemId)) {
       if (patch.outcome !== undefined)
@@ -1150,6 +1158,7 @@ export class ProjectManager {
                 ...t,
                 ...(patch.text && { text: patch.text }),
                 ...(patch.state && { state: patch.state }),
+                ...(sessionId && patch.state === "doing" && !t.session && { session: sessionId }),
               }
             : t,
         ),
@@ -1277,9 +1286,9 @@ export class ProjectManager {
       return this.readObjective(pid, id);
     },
     currentTask: (wid, oid) => this.currentTask(wid, oid),
-    writeObjective: (pid, patch) => {
+    writeObjective: (pid, patch, sid) => {
       this.require(pid);
-      return this.writeObjective(pid, patch);
+      return this.writeObjective(pid, patch, sid);
     },
     addItems: (pid, oid, tasks, decisions) => {
       this.require(pid);
@@ -1308,9 +1317,9 @@ export class ProjectManager {
       const ids = [...added.tasks, ...added.decisions].map((x) => x.id);
       return ids.length ? `Added ${ids.join(", ")} to ${o.id}.` : "Nothing to add.";
     },
-    updateItem: (pid, oid, itemId, patch) => {
+    updateItem: (pid, oid, itemId, patch, sid) => {
       this.require(pid);
-      return this.updateItem(pid, oid, itemId, patch);
+      return this.updateItem(pid, oid, itemId, patch, sid);
     },
     deleteObjective: (pid, id) => {
       this.require(pid);

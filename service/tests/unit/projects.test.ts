@@ -137,9 +137,11 @@ describe("panel tool arguments", () => {
           reason: "after the index",
           dependsOn: ["index/format"],
         },
+        // The lead speaks for no worker session.
+        undefined,
       ],
       ["addItems", "p1", "core/modules", [], ["which std?"]],
-      ["updateItem", "p1", "core/modules", "d1", { outcome: "C++20" }],
+      ["updateItem", "p1", "core/modules", "d1", { outcome: "C++20" }, undefined],
       ["messageProject", "p1", "p2", "hi"],
     ]);
   });
@@ -154,6 +156,29 @@ describe("panel tool arguments", () => {
       ["workerReport", "ws-w", "merged", true],
     ]);
     expect(Object.keys(t.finish_task.shape)).toEqual(["summary"]);
+  });
+
+  it("give a worker the board to keep, as its own session, but not to delete or archive", async () => {
+    const t = byName(workerToolset(api, "ws-w", project));
+    expect(Object.keys(t)).toEqual([
+      "report_progress",
+      "finish_task",
+      "current_task",
+      "list_objectives",
+      "write_objective",
+      "add_items",
+      "update_item",
+    ]);
+    await t.write_objective.handler({ id: "core/modules", context: "lexer done" });
+    await t.update_item.handler({ objective_id: "core/modules", item_id: "t1", state: "doing" });
+    await t.add_items.handler({ objective_id: "core/modules", tasks: ["docs"] });
+    expect(calls).toEqual([
+      ["writeObjective", "p1", { id: "core/modules", context: "lexer done" }, "ws-w"],
+      ["updateItem", "p1", "core/modules", "t1", { state: "doing" }, "ws-w"],
+      ["addItems", "p1", "core/modules", ["docs"], []],
+    ]);
+    expect(t.delete_objective).toBeUndefined();
+    expect(t.archive_objective).toBeUndefined();
   });
 
   it("turn a thrown error into a rejection", async () => {
@@ -294,6 +319,33 @@ describe("ProjectManager", () => {
       from: { workspaceId: worker.id, name: "modules" },
     });
     expect(objectives()[0].tasks[0].state).toBe("review");
+  });
+
+  it("lets a worker keep the board: its new objective and the task it takes up name it", async () => {
+    const { create, call, workers, objectives } = setup();
+    const { lead } = create("clice");
+    await withTask(call, lead);
+    await call(lead, "start_session", { title: "w", cwd: "wt", task: "t" });
+    const w = workers()[0];
+    await call(w, "update_item", { objective_id: "core/modules", item_id: "t1", state: "doing" });
+    expect(objectives()[0].tasks[0]).toMatchObject({ state: "doing", session: w.id });
+    await call(w, "write_objective", { id: "core/modules", context: "half the lexer" });
+    expect(objectives()[0].context).toBe("half the lexer");
+    // Not added to an objective it only wrote to.
+    expect(objectives()[0].sessions).toEqual([]);
+    await call(w, "write_objective", { id: "core/docs", title: "Docs", goal: "Write them" });
+    expect(objectives().find((o) => o.id === "core/docs")!.sessions).toEqual([w.id]);
+    expect(await call(w, "current_task")).toContain("core/docs");
+    // The lead's own taking up names nobody.
+    await call(lead, "add_items", { objective_id: "core/modules", tasks: ["bench"] });
+    await call(lead, "update_item", {
+      objective_id: "core/modules",
+      item_id: "t2",
+      state: "doing",
+    });
+    const modules = objectives().find((o) => o.id === "core/modules")!;
+    expect(modules.tasks[1]).toMatchObject({ text: "bench", state: "doing" });
+    expect(modules.tasks[1].session).toBeUndefined();
   });
 
   it("lets leads message each other without waiting", async () => {

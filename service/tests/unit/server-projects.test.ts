@@ -344,6 +344,10 @@ describe("server restart with projects", () => {
         "report_progress",
         "finish_task",
         "current_task",
+        "list_objectives",
+        "write_objective",
+        "add_items",
+        "update_item",
       ]);
       await until(
         () => frames.some((f) => f.type === "new_message" && f.workspaceId === "ws-w"),

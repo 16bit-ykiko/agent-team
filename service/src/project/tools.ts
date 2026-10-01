@@ -123,9 +123,16 @@ export interface PanelApi {
     filter: { area?: string; status?: string; archived?: boolean },
   ): string;
   readObjective(projectId: string, id: string): string;
-  writeObjective(projectId: string, patch: ObjectivePatch): string;
+  // sessionId: the worker session that made the call, if one did.
+  writeObjective(projectId: string, patch: ObjectivePatch, sessionId?: string): string;
   addItems(projectId: string, objectiveId: string, tasks: string[], decisions: string[]): string;
-  updateItem(projectId: string, objectiveId: string, itemId: string, patch: ItemPatch): string;
+  updateItem(
+    projectId: string,
+    objectiveId: string,
+    itemId: string,
+    patch: ItemPatch,
+    sessionId?: string,
+  ): string;
   deleteObjective(projectId: string, id: string): string;
   archiveObjective(projectId: string, id: string): string;
   restoreObjective(projectId: string, id: string): string;
@@ -154,16 +161,16 @@ export function leadToolset(
   return {
     instructions: [
       `You are the lead agent of the project "${project.name}" (repository ${project.root}).`,
-      "You keep the whole project in view: you discuss with the user what to do, keep the board, and start worker sessions with start_session. A worker is a separate Claude session, running in the folder you choose (the repository, or a git worktree of it you create with git), that the user opens and talks to directly. Start one for a piece of work the user decided on, or for a topic the user wants to go into in depth: then its task says what to discuss, and that it starts no work on its own. Give it a complete, self-contained task. Start sessions only when the user asks for it.",
+      "You keep the whole project in view: from the board and the sessions you discuss with the user what to do, and start worker sessions with start_session. A worker is a separate Claude session, running in the folder you choose (the repository, or a git worktree of it you create with git), that the user opens and talks to directly. Start one for a piece of work the user decided on, or for a topic the user wants to go into in depth: then its task says what to discuss, and that it starts no work on its own. Give it a complete, self-contained task. Start sessions only when the user asks for it.",
       [
         "Once a worker is started, step back: tell the user which session to talk to, and leave that conversation to them. A worker decides what it can itself and asks the user, in its own session, what is theirs to decide; do not answer for the user, relay, chase or poll. Message a worker (message_session) only when the user asks you to, to pass on what reached you from outside its session (another project's request, say), or to retry a failed turn as below.",
-        "Worker sessions report back; their messages reach you prefixed [From session …]: finished (its tasks on the board move to review) or, rarely, progress that changes the plan. Take a finished report as you would a subagent's result: when it shows the work is done, mark the tasks done (dropped, with the reason, when the user called the work off) and tell the user in a sentence; read the session (read_session) or the changes only when something in it is unclear or risky. When something looks missing or wrong, tell the user what: they take it up with the worker. Put a progress report on the board, and bring it to the user only when it changes the plan.",
+        "Worker sessions report back; their messages reach you prefixed [From session …]: finished (its tasks on the board move to review) or, rarely, progress that changes the plan. Take a finished report as you would a subagent's result: when it shows the work is done, mark the tasks done (dropped, with the reason, when the user called the work off) and tell the user in a sentence; read the session (read_session) or the changes only when something in it is unclear or risky. When something looks missing or wrong, tell the user what: they take it up with the worker. Bring a progress report to the user only when it changes the plan.",
         "The panel tells you, prefixed [From the panel, about session …], when a worker's turn on what you sent failed, and when it answered your later message without calling finish_task, with its last reply. Act on it when there is something to do; a question in it for the user is theirs to answer in that session: tell them in a sentence that the worker waits for them. Do not message the worker only to ask for a report. Retry a failed turn once at most; if it fails again, tell the user. A turn a server restart cut off, the panel has the worker carry on; cut off again, you are told: tell it to carry on. A worker the user has written to since, or stopped, is theirs: you are not told of it.",
         "When a worker's worktree is about to be removed, archive its session with archive_session.",
       ].join(" "),
       [
         "The objectives are the project's board and memory, one per piece of work, with an id area/name (for example index/name-ranges). Each says what it is for (goal), where things stand (context), what must come first (depends_on: other objective ids), its tasks and the decisions still to settle.",
-        "Record what the user decides as you talk, including in passing: status later for what is put off, dropped with the reason for what will not be done (so it is not reopened), priority high/normal/low, and the reason for either. Tasks move todo → doing → review → done (or dropped); settle a decision by giving its outcome.",
+        "Workers keep the objectives they work on current themselves: where it stands, their tasks as they move, the decisions settled with them, new work decided with them. Read the board for where things stand rather than asking them, and do not mirror their progress onto it. You record what the user decides with you, including in passing: new objectives, status later for what is put off, dropped with the reason for what will not be done (so it is not reopened), priority high/normal/low, and the reason for either. Tasks move todo → doing → review → done (or dropped); settle a decision by giving its outcome.",
         "Change them only through write_objective, add_items and update_item; list_objectives gives the board, read_objective one objective in full. When an objective is done or dropped for good, archive_objective files it away. The user sees the board as a dependency view: keep depends_on accurate.",
       ].join(" "),
       `Longer-lived notes (decisions, background, plans) go in markdown files under ${notesDir}; read and write them with your file tools. Subagents can maintain them too.`,
@@ -401,99 +408,7 @@ export function leadToolset(
         shape: { session_id: z.string() },
         handler: (a) => run(() => api.archiveSession(id, String(a.session_id))),
       },
-      {
-        name: "list_objectives",
-        description:
-          "The objectives by area: status, priority, task progress, open decisions and what blocks each. Filter by area or status; archived lists the archive instead.",
-        shape: {
-          area: z.string().optional(),
-          status: z.enum(OBJECTIVE_STATUSES).optional(),
-          archived: z.boolean().optional(),
-        },
-        handler: (a) =>
-          run(() =>
-            api.listObjectives(id, {
-              ...(typeof a.area === "string" && { area: a.area }),
-              ...(typeof a.status === "string" && { status: a.status }),
-              ...(a.archived === true && { archived: true }),
-            }),
-          ),
-      },
-      {
-        name: "read_objective",
-        description:
-          "One objective in full: goal, context, tasks, decisions, notes, what it depends on and what depends on it.",
-        shape: { id: z.string() },
-        handler: (a) => run(() => api.readObjective(id, String(a.id))),
-      },
-      {
-        name: "write_objective",
-        description:
-          "Create an objective (title and goal required) or change one. Only the fields given change: depends_on replaces the whole list, an empty string clears reason, context or notes, and a new status or priority given without a reason clears the old reason.",
-        shape: {
-          id: z.string().describe("area/name, lowercase letters, digits and -"),
-          title: z.string().optional(),
-          goal: z.string().optional().describe("What it is for, in a sentence or two"),
-          status: z.enum(OBJECTIVE_STATUSES).optional(),
-          priority: z.enum(PRIORITIES).optional(),
-          reason: z.string().optional().describe("Why it is put off, dropped or prioritised so"),
-          context: z.string().optional().describe("Where things stand (markdown)"),
-          depends_on: z.array(z.string()).optional().describe("Objective ids that must come first"),
-          notes: z.string().optional().describe("Background, history, links (markdown)"),
-        },
-        handler: (a) =>
-          run(() =>
-            api.writeObjective(id, {
-              id: String(a.id),
-              ...(typeof a.title === "string" && { title: a.title }),
-              ...(typeof a.goal === "string" && { goal: a.goal }),
-              ...(typeof a.status === "string" && { status: a.status as ObjectiveStatus }),
-              ...(typeof a.priority === "string" && { priority: a.priority as Priority }),
-              ...(typeof a.reason === "string" && { reason: a.reason }),
-              ...(typeof a.context === "string" && { context: a.context }),
-              ...(Array.isArray(a.depends_on) && { dependsOn: a.depends_on.map(String) }),
-              ...(typeof a.notes === "string" && { notes: a.notes }),
-            }),
-          ),
-      },
-      {
-        name: "add_items",
-        description: "Add tasks and decisions to settle to an objective. Returns their ids.",
-        shape: {
-          objective_id: z.string(),
-          tasks: z.array(z.string()).optional(),
-          decisions: z.array(z.string()).optional().describe("Questions to settle"),
-        },
-        handler: (a) =>
-          run(() =>
-            api.addItems(
-              id,
-              String(a.objective_id),
-              Array.isArray(a.tasks) ? a.tasks.map(String) : [],
-              Array.isArray(a.decisions) ? a.decisions.map(String) : [],
-            ),
-          ),
-      },
-      {
-        name: "update_item",
-        description:
-          "Change a task (text, state) or a decision (text = the question, outcome settles it; an empty outcome reopens it).",
-        shape: {
-          objective_id: z.string(),
-          item_id: z.string().describe("t1, t2… for tasks, d1, d2… for decisions"),
-          text: z.string().optional(),
-          state: z.enum(TASK_STATES).optional(),
-          outcome: z.string().optional(),
-        },
-        handler: (a) =>
-          run(() =>
-            api.updateItem(id, String(a.objective_id), String(a.item_id), {
-              ...(typeof a.text === "string" && { text: a.text }),
-              ...(typeof a.state === "string" && { state: a.state as TaskState }),
-              ...(typeof a.outcome === "string" && { outcome: a.outcome }),
-            }),
-          ),
-      },
+      ...boardTools(api, id),
       {
         name: "delete_objective",
         description:
@@ -532,6 +447,116 @@ export function leadToolset(
   };
 }
 
+// The board's tools, the lead's and its workers' alike. A worker passes its
+// session: an objective it creates names it, a task it takes up is its.
+function boardTools(api: PanelApi, id: string, sessionId?: string): PanelTool[] {
+  return [
+    {
+      name: "list_objectives",
+      description:
+        "The objectives by area: status, priority, task progress, open decisions and what blocks each. Filter by area or status; archived lists the archive instead.",
+      shape: {
+        area: z.string().optional(),
+        status: z.enum(OBJECTIVE_STATUSES).optional(),
+        archived: z.boolean().optional(),
+      },
+      handler: (a) =>
+        run(() =>
+          api.listObjectives(id, {
+            ...(typeof a.area === "string" && { area: a.area }),
+            ...(typeof a.status === "string" && { status: a.status }),
+            ...(a.archived === true && { archived: true }),
+          }),
+        ),
+    },
+    {
+      name: "read_objective",
+      description:
+        "One objective in full: goal, context, tasks, decisions, notes, what it depends on and what depends on it.",
+      shape: { id: z.string() },
+      handler: (a) => run(() => api.readObjective(id, String(a.id))),
+    },
+    {
+      name: "write_objective",
+      description:
+        "Create an objective (title and goal required) or change one. Only the fields given change: depends_on replaces the whole list, an empty string clears reason, context or notes, and a new status or priority given without a reason clears the old reason.",
+      shape: {
+        id: z.string().describe("area/name, lowercase letters, digits and -"),
+        title: z.string().optional(),
+        goal: z.string().optional().describe("What it is for, in a sentence or two"),
+        status: z.enum(OBJECTIVE_STATUSES).optional(),
+        priority: z.enum(PRIORITIES).optional(),
+        reason: z.string().optional().describe("Why it is put off, dropped or prioritised so"),
+        context: z.string().optional().describe("Where things stand (markdown)"),
+        depends_on: z.array(z.string()).optional().describe("Objective ids that must come first"),
+        notes: z.string().optional().describe("Background, history, links (markdown)"),
+      },
+      handler: (a) =>
+        run(() =>
+          api.writeObjective(
+            id,
+            {
+              id: String(a.id),
+              ...(typeof a.title === "string" && { title: a.title }),
+              ...(typeof a.goal === "string" && { goal: a.goal }),
+              ...(typeof a.status === "string" && { status: a.status as ObjectiveStatus }),
+              ...(typeof a.priority === "string" && { priority: a.priority as Priority }),
+              ...(typeof a.reason === "string" && { reason: a.reason }),
+              ...(typeof a.context === "string" && { context: a.context }),
+              ...(Array.isArray(a.depends_on) && { dependsOn: a.depends_on.map(String) }),
+              ...(typeof a.notes === "string" && { notes: a.notes }),
+            },
+            sessionId,
+          ),
+        ),
+    },
+    {
+      name: "add_items",
+      description: "Add tasks and decisions to settle to an objective. Returns their ids.",
+      shape: {
+        objective_id: z.string(),
+        tasks: z.array(z.string()).optional(),
+        decisions: z.array(z.string()).optional().describe("Questions to settle"),
+      },
+      handler: (a) =>
+        run(() =>
+          api.addItems(
+            id,
+            String(a.objective_id),
+            Array.isArray(a.tasks) ? a.tasks.map(String) : [],
+            Array.isArray(a.decisions) ? a.decisions.map(String) : [],
+          ),
+        ),
+    },
+    {
+      name: "update_item",
+      description:
+        "Change a task (text, state) or a decision (text = the question, outcome settles it; an empty outcome reopens it).",
+      shape: {
+        objective_id: z.string(),
+        item_id: z.string().describe("t1, t2… for tasks, d1, d2… for decisions"),
+        text: z.string().optional(),
+        state: z.enum(TASK_STATES).optional(),
+        outcome: z.string().optional(),
+      },
+      handler: (a) =>
+        run(() =>
+          api.updateItem(
+            id,
+            String(a.objective_id),
+            String(a.item_id),
+            {
+              ...(typeof a.text === "string" && { text: a.text }),
+              ...(typeof a.state === "string" && { state: a.state as TaskState }),
+              ...(typeof a.outcome === "string" && { outcome: a.outcome }),
+            },
+            sessionId,
+          ),
+        ),
+    },
+  ];
+}
+
 const REPORT_REFUSAL =
   "Only the session's own agent reports to the project's lead. Put this in your final reply instead: it goes to the agent that started you.";
 
@@ -541,6 +566,7 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
       `You are a session of the project "${project.name}" (repository ${project.root}). Its lead agent coordinates the work there and may have started you with a task; the user may also talk to you directly.`,
       "The task is yours: decide what you can yourself. What is the user's to decide, ask the user here, in your reply, and stop: they come to this session to talk it over with you. Do not take it to the lead. A task to discuss something with the user is that discussion: start work only when the user asks for it.",
       "When the task is done, or the user calls it off, call finish_task once with a concise summary for the lead: what changed, where (branch, commits, PR), what is left. Use report_progress only for what changes the lead's plans before you finish (the scope changed, the plan proved wrong, a finding that affects other work), not for milestones.",
+      "The project's board is how the lead and the user follow the work: keep the objectives you work on current as you go, with write_objective, add_items and update_item. Where it stands goes in its context; a task you take up goes to doing (it becomes yours), one you finish to review; add the tasks you find; settle a decision when the user settles it with you; and make an objective for new work the user decides on with you. Change other objectives only for what your work showed about them. list_objectives gives the board; current_task with objective_id reads one objective in full.",
       "The lead's messages reach you prefixed [From the project lead], the panel's [From the panel]; the rest is the user's. When the lead asks you something after the task, just answer: your reply reaches it once you stop, or at once with report_progress while background work or a scheduled wake-up keeps you going. When the user changes the lead's task, say so in your finish_task summary. Work the lead sends after you finished ends with finish_task too; what the user asks after that needs one only if what you reported no longer holds.",
       "current_task shows what you are working on as it stands: the task the lead gave you, its later messages to you, and your objectives on the project's board (tasks, decisions, what they depend on). A long task or a compacted context loses these; call it whenever you are not sure what exactly the task is or what was decided.",
     ].join("\n\n"),
@@ -576,6 +602,7 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
             ),
           ),
       },
+      ...boardTools(api, project.id, workspaceId).filter((t) => t.name !== "read_objective"),
     ],
   };
 }
