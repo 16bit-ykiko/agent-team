@@ -334,12 +334,14 @@ describe("Sidebar archived section", () => {
     expect(container.querySelector(".ws-archived")).toBeNull();
   });
 
-  it("shows agent activity next to busy agents", () => {
+  it("marks a busy session by its dot alone, without a line of what its agents are doing", () => {
     const busy = ws("live", {
       agents: [{ ...agent, busy: true, activity: "Bash · 12s" }],
     });
     const { container } = render(<Sidebar {...base({ workspaces: [busy] })} />);
-    expect(container.querySelector(".task-active-agent")!.textContent).toBe("Alice · Bash · 12s");
+    expect(container.querySelector(".task-item .task-status")!.className).toContain("running");
+    expect(container.querySelector(".task-item")!.textContent).not.toContain("Bash");
+    expect(container.querySelector(".task-item")!.textContent).not.toContain("Alice");
   });
 });
 

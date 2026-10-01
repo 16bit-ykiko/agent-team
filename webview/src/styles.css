@@ -568,23 +568,6 @@ button {
   line-height: 16px;
   text-align: center;
 }
-.task-active-agents {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 3px;
-}
-.task-active-agent {
-  font-size: var(--fs-tag);
-  padding: 1px 6px;
-  border-radius: 8px;
-  color: #fff;
-  animation: pulse 2s infinite;
-  white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .task-delete {
   background: none;
   border: none;

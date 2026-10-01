@@ -344,8 +344,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
         {expanded && hasContent && (
           <div className="ws-group-items">
             {items.map((ws) => {
-              const activeAgents = ws.agents.filter(isAgentActive);
-              const running = activeAgents.length > 0;
+              const running = ws.agents.some(isAgentActive);
               const unread = ws.messages.length - (p.seenCounts[ws.id] ?? 0);
               const awaits = ws.awaitsUser && !running && ws.id !== p.activeWsId;
               return (
@@ -376,21 +375,6 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                         )}
                       </span>
                     </div>
-                    {activeAgents.length > 0 && (
-                      <div className="task-active-agents">
-                        {activeAgents.map((a) => (
-                          <span
-                            key={a.id}
-                            className="task-active-agent"
-                            style={{ background: a.color }}
-                            title={a.activity ?? undefined}
-                          >
-                            {a.name}
-                            {a.activity ? ` · ${a.activity}` : ""}
-                          </span>
-                        ))}
-                      </div>
-                    )}
                   </div>
                   <span className="task-hover">
                     <span className="task-time">
