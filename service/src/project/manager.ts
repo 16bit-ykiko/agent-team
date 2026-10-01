@@ -7,6 +7,7 @@ import type { EntryInfo, EntryKind, SessionRow, SqlValue } from "../workspace/hi
 import type { HistoryService } from "../workspace/history-service";
 import {
   originLabel,
+  type Message,
   type MessageOrigin,
   type ProjectLink,
   type Workspace,
@@ -347,7 +348,10 @@ export class ProjectManager {
       const link = w.projectLink;
       if (link?.role !== "worker" || w.isArchived) continue;
       const lead = this.leadOf(link.projectId);
-      const owed = w.lastDelivered().some((d) => fromLead(d.input, lead) && !d.answered);
+      const messages = w.getMessages();
+      const owed = w
+        .lastDelivered()
+        .some((d) => fromLead(asked(messages, d.input), lead) && !d.answered);
       if (!owed) continue;
       this.settleAfter(w, delay);
       delay += START_SPACING_MS;
@@ -383,10 +387,12 @@ export class ProjectManager {
     if (t) this.settling.set(w.id, t);
   }
 
-  // A worker the lead gave work went quiet without reporting on it: the lead
-  // hears it once, with how the turn ended and the last reply (the answer to
-  // a question it asked, often). The user's own turns with the worker after
-  // it are theirs; the notice only says there were some.
+  // A worker the lead sent something went quiet without reporting on it. A
+  // turn a restart cut off, the panel tells it to carry on. The lead hears
+  // it once, with how the turn ended and the last reply, when it failed or
+  // when it answered a later message of the lead's. A task that ended in a
+  // question waits for the user, as do the turns the user took over or
+  // stopped.
   private tellIfSilent(workspaceId: string): void {
     const w = this.host.workspace(workspaceId);
     const link = w?.projectLink;
@@ -394,9 +400,22 @@ export class ProjectManager {
     const project = this.store.get(link.projectId);
     const lead = this.leadOf(link.projectId);
     if (!project || project.archivedAt || !lead || lead.isArchived) return;
-    for (const { input, replies, stopped, answered, since } of w.lastDelivered()) {
+    const messages = w.getMessages();
+    const task = taskOf(messages);
+    for (const { input: got, replies, stopped, answered, since } of w.lastDelivered()) {
+      const input = asked(messages, got);
       if (!fromLead(input, lead) || answered) continue;
       const last = replies[replies.length - 1];
+      const failed = last?.status === "error";
+      if (since || stopped === "user" || (input.id === task?.id && !stopped && !failed)) {
+        w.markAnswered(got.id);
+        this.host.persistWorkspace(w);
+        continue;
+      }
+      if (stopped === "restart") {
+        this.carryOn(w, got);
+        continue;
+      }
       const error = last?.events?.filter((e) => e.kind === "error").pop();
       const text = replies
         .map((m) =>
@@ -407,18 +426,12 @@ export class ProjectManager {
         )
         .filter(Boolean)
         .pop();
-      const how =
-        stopped === "restart"
-          ? "a server restart cut it off"
-          : stopped === "user"
-            ? "the user stopped it"
-            : last?.status === "error"
-              ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
-              : "its turn ended";
+      const how = failed
+        ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
+        : "its turn ended";
       const body = [
         `No report on your message "${oneLine(input.content, 80)}" (${how}).`,
         text ? `Its last reply:\n\n${text.length > 1500 ? `…${text.slice(-1500)}` : text}` : "",
-        since ? "The user has written to it since; that conversation is theirs." : "",
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -428,22 +441,39 @@ export class ProjectManager {
         { workspaceId: w.id, name: w.name, role: "panel" },
         `[From the panel, about session "${w.name}" (${w.id}). Act on it if there is something to do; no reply to the session is needed.]\n\n${body}`,
       );
-      w.markAnswered(input.id);
+      w.markAnswered(got.id);
       this.host.persistWorkspace(w);
     }
   }
 
+  // A turn on what the lead sent that a server restart cut off goes on
+  // without the lead; what comes of it counts as the answer to that.
+  private carryOn(w: Workspace, cut: { id: string }): void {
+    w.markAnswered(cut.id);
+    this.spaceStart(w);
+    const text = "A server restart cut your turn off. Carry on where you left off.";
+    this.deliver(
+      w,
+      text,
+      { workspaceId: w.id, name: w.name, role: "panel" },
+      `[From the panel] ${text}`,
+    );
+  }
+
   private markAnswered(w: Workspace): void {
     for (const { input } of w.lastDelivered()) {
-      if (input.from?.role === "lead") w.markAnswered(input.id);
+      if (input.from?.role === "lead" || input.from?.role === "panel") w.markAnswered(input.id);
     }
     this.host.persistWorkspace(w);
   }
 
   // What the lead said that has not run yet (a task still waiting for its
-  // start slot, follow-ups queued behind a turn).
+  // start slot, follow-ups queued behind a turn), and the panel's word to
+  // carry on.
   private dropQueuedFromLead(w: Workspace): void {
-    const queued = w.messages.filter((m) => m.status === "queued" && m.from?.role === "lead");
+    const queued = w.messages.filter(
+      (m) => m.status === "queued" && (m.from?.role === "lead" || m.from?.role === "panel"),
+    );
     for (const m of queued) {
       if (w.cancelQueued(m.id)) {
         this.host.broadcast({ type: "message_removed", workspaceId: w.id, messageId: m.id });
@@ -1119,21 +1149,21 @@ export class ProjectManager {
   }
 
   // A worker's report to its lead. Finishing moves the tasks it was doing to
-  // review; a blocked worker leaves them in progress for the lead to sort out.
-  private workerReport(workspaceId: string, text: string, final: boolean, blocked = false): string {
+  // review.
+  private workerReport(workspaceId: string, text: string, final: boolean): string {
     const w = this.host.workspace(workspaceId);
     const projectId = w?.projectLink?.role === "worker" ? w.projectLink.projectId : undefined;
     const lead = projectId ? this.leadOf(projectId) : undefined;
     if (!w || !projectId || !lead) throw new Error("This session has no project lead");
     if (final) this.markAnswered(w);
-    const body = `${!final ? "Progress" : blocked ? "Blocked" : "Finished"}:\n\n${text}`;
+    const body = `${final ? "Finished" : "Progress"}:\n\n${text}`;
     this.deliver(
       lead,
       body,
       { workspaceId: w.id, name: w.name, role: "worker" },
       `[From session "${w.name}" (${w.id})]\n\n${body}`,
     );
-    if (final && !blocked) {
+    if (final) {
       const doing = (t: { session?: string; state: string }) =>
         t.session === w.id && t.state === "doing";
       this.rewrite(
@@ -1243,7 +1273,7 @@ export class ProjectManager {
       return this.listProjects(pid);
     },
     messageProject: (pid, target, text) => this.messageProject(pid, target, text),
-    workerReport: (wsId, text, final, blocked) => this.workerReport(wsId, text, final, blocked),
+    workerReport: (wsId, text, final) => this.workerReport(wsId, text, final),
     archiveObjective: (pid, id) => {
       this.require(pid);
       const o = this.objective(pid, id);
@@ -1268,6 +1298,24 @@ export class ProjectManager {
 
 // How the workspace marks a turn cut off (a stop, a restart).
 const INTERRUPTED = "*\\[interrupted\\]*";
+
+// The task a worker was started with: its first message, from the lead (a
+// session the user started has none).
+function taskOf(messages: Message[]): Message | undefined {
+  const first = messages.find((m) => m.kind !== "system");
+  return first?.from?.role === "lead" ? first : undefined;
+}
+
+// What a message to a worker answers to: the panel's word to carry on stands
+// for the message whose turn it carries on.
+function asked(messages: Message[], input: Message): Message {
+  let i = messages.indexOf(input);
+  while (i > 0 && messages[i].from?.role === "panel") {
+    i--;
+    while (i > 0 && messages[i].kind !== "user") i--;
+  }
+  return i >= 0 && messages[i].kind === "user" ? messages[i] : input;
+}
 
 // A message the project's current lead sent (not one from before the project
 // was deleted and the worker adopted again).

@@ -131,7 +131,7 @@ export interface PanelApi {
   restoreObjective(projectId: string, id: string): string;
   listProjects(projectId: string): string;
   messageProject(projectId: string, targetId: string, text: string): string;
-  workerReport(workspaceId: string, text: string, final: boolean, blocked?: boolean): string;
+  workerReport(workspaceId: string, text: string, final: boolean): string;
   currentTask(workspaceId: string, objectiveId?: string): string;
 }
 
@@ -154,11 +154,12 @@ export function leadToolset(
   return {
     instructions: [
       `You are the lead agent of the project "${project.name}" (repository ${project.root}).`,
-      "You discuss ideas with the user and keep the whole project in view. When the user decides to start a piece of work, hand it to a worker session with start_session: a separate Claude session, running in the folder you choose (the repository, or a git worktree of it you create with git), that the user can also open and talk to. Give it a complete, self-contained task. Start work only when the user asks for it.",
+      "You keep the whole project in view: you discuss with the user what to do, keep the board, and start worker sessions with start_session. A worker is a separate Claude session, running in the folder you choose (the repository, or a git worktree of it you create with git), that the user opens and talks to directly. Start one for a piece of work the user decided on, or for a topic the user wants to go into in depth: then its task says what to discuss, and that it starts no work on its own. Give it a complete, self-contained task. Start sessions only when the user asks for it.",
       [
-        "Worker sessions report back; their messages reach you prefixed [From session …]: progress, finished (its tasks on the board move to review) or blocked on a decision. Take a finished report as you would a subagent's result: when it shows the work is done, mark the tasks done (dropped, with the reason, when the user called the work off) and tell the user in a sentence; read the session (read_session) or the changes only when something in it is unclear or risky. Send work back only for a concrete gap, saying exactly what is missing, not for polish. What is the user's to decide goes to the user: when a worker is blocked, answer what the user has already decided and ask the user the rest.",
-        "When a worker goes idle after your message without calling finish_task, you are told so, prefixed [From the panel, about session …], with how its turn ended and its last reply: often just its answer to you. Take that reply as its report: act on it when there is something to do, or ask the user what is theirs to decide, as for a blocked worker; it needs no answer otherwise, and do not message the worker only to ask for a report. Retry a failed turn once at most; if it fails again, tell the user. A turn a server restart cut off is no failure: tell the worker to carry on, unless the user has written to it since. A stop by the user is their call: do not restart that work unasked.",
-        "The user can open any worker and talk to it directly; leave those conversations to them. Steer workers with message_session. When a worker's worktree is about to be removed, archive its session with archive_session.",
+        "Once a worker is started, step back: tell the user which session to talk to, and leave that conversation to them. A worker decides what it can itself and asks the user, in its own session, what is theirs to decide; do not answer for the user, relay, chase or poll. Message a worker (message_session) only when the user asks you to, to pass on what reached you from outside its session (another project's request, say), or to retry a failed turn as below.",
+        "Worker sessions report back; their messages reach you prefixed [From session …]: finished (its tasks on the board move to review) or, rarely, progress that changes the plan. Take a finished report as you would a subagent's result: when it shows the work is done, mark the tasks done (dropped, with the reason, when the user called the work off) and tell the user in a sentence; read the session (read_session) or the changes only when something in it is unclear or risky. When something looks missing or wrong, tell the user what: they take it up with the worker. Put a progress report on the board, and bring it to the user only when it changes the plan.",
+        "The panel tells you, prefixed [From the panel, about session …], when a worker's turn on what you sent failed, and when it answered your later message without calling finish_task, with its last reply. Act on it when there is something to do; a question in it for the user is theirs to answer in that session: tell them in a sentence that the worker waits for them. Do not message the worker only to ask for a report. Retry a failed turn once at most; if it fails again, tell the user. A turn a server restart cut off, the panel has the worker carry on. A worker the user has written to since, or stopped, is theirs: you are not told of it.",
+        "When a worker's worktree is about to be removed, archive its session with archive_session.",
       ].join(" "),
       [
         "The objectives are the project's board and memory, one per piece of work, with an id area/name (for example index/name-ranges). Each says what it is for (goal), where things stand (context), what must come first (depends_on: other objective ids), its tasks and the decisions still to settle.",
@@ -382,7 +383,7 @@ export function leadToolset(
       {
         name: "message_session",
         description:
-          "Send a message to a worker session (queued if it is busy). It shows as coming from you. Its answer comes back as its report or, when it just replies, as a notice from the panel with that reply.",
+          "Send a message to a worker session (queued if it is busy), in the cases your instructions name. It shows as coming from you. Its answer comes back as its report or, when it just replies, as a notice from the panel with that reply.",
         shape: { session_id: z.string(), message: z.string() },
         handler: (a) => run(() => api.messageSession(id, String(a.session_id), String(a.message))),
       },
@@ -538,14 +539,16 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
   return {
     instructions: [
       `You are a session of the project "${project.name}" (repository ${project.root}). Its lead agent coordinates the work there and may have started you with a task; the user may also talk to you directly.`,
-      "When you finish a task the lead gave you, call finish_task with a concise summary for the lead: what changed, where (branch, commits, PR), what is left. If you are blocked and need a decision, call it with blocked set and say what you need. Use report_progress only for milestones the lead should know about before you finish.",
-      "The lead's messages reach you prefixed [From the project lead]; the rest is the user's. When the lead only asks you something, just answer: your reply reaches it once you stop, or at once with report_progress while background work or a scheduled wake-up keeps you going. When the user changes the lead's task, say so in your finish_task summary; when they call it off, call finish_task right away to say so. Work the lead sends after you finished ends with finish_task too; what the user asks after that needs one only if what you reported no longer holds.",
+      "The task is yours: decide what you can yourself. What is the user's to decide, ask the user here, in your reply, and stop: they come to this session to talk it over with you. Do not take it to the lead. A task to discuss something with the user is that discussion: start work only when the user asks for it.",
+      "When the task is done, or the user calls it off, call finish_task once with a concise summary for the lead: what changed, where (branch, commits, PR), what is left. Use report_progress only for what changes the lead's plans before you finish (the scope changed, the plan proved wrong, a finding that affects other work), not for milestones.",
+      "The lead's messages reach you prefixed [From the project lead], the panel's [From the panel]; the rest is the user's. When the lead asks you something after the task, just answer: your reply reaches it once you stop, or at once with report_progress while background work or a scheduled wake-up keeps you going. When the user changes the lead's task, say so in your finish_task summary. Work the lead sends after you finished ends with finish_task too; what the user asks after that needs one only if what you reported no longer holds.",
       "current_task shows what you are working on as it stands: the task the lead gave you, its later messages to you, and your objectives on the project's board (tasks, decisions, what they depend on). A long task or a compacted context loses these; call it whenever you are not sure what exactly the task is or what was decided.",
     ].join("\n\n"),
     tools: [
       {
         name: "report_progress",
-        description: "Tell the project's lead about a milestone. Keep it short.",
+        description:
+          "Tell the project's lead what changes its plans: the scope changed, the plan proved wrong, a finding that affects other work. Not for milestones. Keep it short.",
         shape: { text: z.string() },
         handler: (a) => run(() => api.workerReport(workspaceId, String(a.text), false)),
         subagentRefusal: REPORT_REFUSAL,
@@ -553,13 +556,9 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
       {
         name: "finish_task",
         description:
-          "Report the task as done, or as blocked on a decision, to the project's lead, with a concise summary.",
-        shape: {
-          summary: z.string(),
-          blocked: z.boolean().optional().describe("You stopped because you need a decision"),
-        },
-        handler: (a) =>
-          run(() => api.workerReport(workspaceId, String(a.summary), true, a.blocked === true)),
+          "Report the task as done, or as called off by the user, to the project's lead, with a concise summary. Once per task.",
+        shape: { summary: z.string() },
+        handler: (a) => run(() => api.workerReport(workspaceId, String(a.summary), true)),
         subagentRefusal: REPORT_REFUSAL,
       },
       {
