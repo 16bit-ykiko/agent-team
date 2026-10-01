@@ -416,12 +416,14 @@ describe("server restart with projects", () => {
         (w) => w.id === "ws-live",
       )!;
       expect(live.awaitsUser).toBeUndefined();
-      const told = frames
-        .filter((f) => f.type === "workspace_updated")
-        .map((f) => f.workspace as { id: string; awaitsUser?: boolean })
-        .filter((w) => w.id === "ws-live");
-      expect(told.length).toBeGreaterThan(0);
-      expect(told[told.length - 1].awaitsUser).toBeUndefined();
+      const told = () => {
+        const updates = frames
+          .filter((f) => f.type === "workspace_updated")
+          .map((f) => f.workspace as { id: string; awaitsUser?: boolean })
+          .filter((w) => w.id === "ws-live");
+        return updates.length > 0 && updates[updates.length - 1].awaitsUser === undefined;
+      };
+      await until(told, "the first client told it no longer waits");
 
       send({ type: "unarchive_workspace", workspaceId: "ws-w" });
       const updated = () =>

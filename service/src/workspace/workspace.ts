@@ -404,8 +404,9 @@ export class Workspace {
 
   // Per agent, the last message it got, the replies of the turns it drove
   // and what cut the latest short. A restart keeps that record only for a
-  // message from another session; for the user's the messages stand in
-  // (where a command the panel answered itself reads as a turn).
+  // message from another session; for the user's the messages stand in: the
+  // last one not a slash command (the panel may have answered it itself)
+  // and the replies up to the next.
   lastTurns(): Array<{
     agentId: string;
     input: Message;
@@ -422,12 +423,14 @@ export class Workspace {
         out.push({ agentId, input, replies, stopped: t.stopped });
         continue;
       }
+      const typed = (m: Message) =>
+        m.kind === "user" && m.status !== "queued" && !m.content.trimStart().startsWith("/");
       let i = this.messages.length - 1;
-      while (i >= 0 && (this.messages[i].kind !== "user" || this.messages[i].status === "queued")) {
-        i--;
-      }
+      while (i >= 0 && !typed(this.messages[i])) i--;
       if (i < 0) continue;
-      const replies = this.messages.slice(i + 1).filter((m) => m.agentId === agentId);
+      let next = i + 1;
+      while (next < this.messages.length && this.messages[next].kind !== "user") next++;
+      const replies = this.messages.slice(i + 1, next).filter((m) => m.agentId === agentId);
       out.push({ agentId, input: this.messages[i], replies });
     }
     return out;

@@ -97,6 +97,7 @@ export class ProjectManager {
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private boards = new Map<string, ObjectiveStore>();
   private settling = new Map<string, ReturnType<typeof setTimeout>>();
+  private carrying = new Set<string>();
   private awaiting = new Set<string>();
   private closed = false;
 
@@ -447,7 +448,8 @@ export class ProjectManager {
         this.host.persistWorkspace(w);
         continue;
       }
-      if (stopped === "restart") {
+      // Carried on once already: someone has to look at what keeps cutting it.
+      if (stopped === "restart" && got.from?.role !== "panel") {
         this.carryOn(w, got);
         continue;
       }
@@ -461,9 +463,12 @@ export class ProjectManager {
         )
         .filter(Boolean)
         .pop();
-      const how = failed
-        ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
-        : "its turn ended";
+      const how =
+        stopped === "restart"
+          ? "a server restart cut it off again after it carried on"
+          : failed
+            ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
+            : "its turn ended";
       const body = [
         `No report on your message "${oneLine(input.content, 80)}" (${how}).`,
         text ? `Its last reply:\n\n${text.length > 1500 ? `…${text.slice(-1500)}` : text}` : "",
@@ -482,10 +487,25 @@ export class ProjectManager {
   }
 
   // A turn on what the lead sent that a server restart cut off goes on
-  // without the lead; what comes of it counts as the answer to that.
+  // without the lead, in a start slot of its own; what comes of it counts as
+  // the answer to that. Not if the user wrote to the worker meanwhile.
   private carryOn(w: Workspace, cut: { id: string }): void {
+    if (this.carrying.has(w.id)) return;
+    const delay = this.takeStartSlot();
+    if (delay === 0) return this.carryOnNow(w, cut);
+    this.carrying.add(w.id);
+    const t = this.later(delay, () => {
+      this.carrying.delete(w.id);
+      this.carryOnNow(w, cut);
+    });
+    if (!t) this.carrying.delete(w.id);
+  }
+
+  private carryOnNow(w: Workspace, cut: { id: string }): void {
+    if (this.host.workspace(w.id) !== w || w.isArchived || !w.isQuiet) return;
+    const d = w.lastDelivered().find((x) => x.input.id === cut.id);
+    if (!d || d.since || d.answered) return;
     w.markAnswered(cut.id);
-    this.spaceStart(w);
     const text = "A server restart cut your turn off. Carry on where you left off.";
     this.deliver(
       w,
@@ -1359,15 +1379,34 @@ function taskOf(messages: Message[]): Message | undefined {
   return first?.from?.role === "lead" ? first : undefined;
 }
 
-// What a message to a worker answers to: the panel's word to carry on stands
-// for the message whose turn it carries on.
+// What a message to a worker answers to. The panel's word to carry on stands
+// for the message whose turn it carries on (the last one from another
+// session: what the user typed meanwhile was a command the panel answered,
+// or for another agent); the lead's word right after a turn that failed or
+// was cut off (a retry), for the message that turn was on.
 function asked(messages: Message[], input: Message): Message {
+  let m = input;
   let i = messages.indexOf(input);
-  while (i > 0 && messages[i].from?.role === "panel") {
-    i--;
-    while (i > 0 && messages[i].kind !== "user") i--;
+  while (i > 0) {
+    let j = i - 1;
+    if (m.from?.role === "panel") {
+      while (j >= 0 && !(messages[j].kind === "user" && messages[j].from)) j--;
+    } else if (m.from?.role === "lead") {
+      while (j >= 0 && messages[j].kind !== "user") j--;
+      const last = messages
+        .slice(j + 1, i)
+        .filter((x) => x.kind === "agent")
+        .pop();
+      const cut = last?.status === "error" || !!last?.content.endsWith(INTERRUPTED);
+      if (!cut || !messages[j]?.from) break;
+    } else {
+      break;
+    }
+    if (j < 0) break;
+    m = messages[j];
+    i = j;
   }
-  return i >= 0 && messages[i].kind === "user" ? messages[i] : input;
+  return m;
 }
 
 // A message the project's current lead sent (not one from before the project

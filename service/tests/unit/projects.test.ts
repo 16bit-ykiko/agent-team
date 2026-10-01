@@ -1301,6 +1301,75 @@ describe("a worker that goes idle without reporting", () => {
     }
   });
 
+  it("carries on the lead's message past a command the user had the panel answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, told, settle, restart, manager, askNext, session, endTurn } = await started();
+      await askNext("which commit?");
+      say("Looking");
+      await w.sendMessage("/usage");
+      const back = restart(w);
+      manager.recheckWorkers();
+      await settle();
+      expect(session(back).sent).toEqual([CARRY_ON]);
+      say("abc123", back);
+      endTurn(back);
+      await settle();
+      expect(told()).toEqual([note("its turn ended", "which commit?", "abc123")]);
+      expect(awaitsUser(back)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("carries on once: cut off again, the lead is told", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, told, settle, restart, manager, session } = await started();
+      say("Halfway through");
+      w.abortAll("restart");
+      let back = restart(w);
+      manager.recheckWorkers();
+      await settle();
+      expect(session(back).sent).toEqual([CARRY_ON]);
+      say("Three quarters", back);
+      back.abortAll("restart");
+      back = restart(back);
+      manager.recheckWorkers();
+      await settle();
+      expect(session(back).sent).toEqual([]);
+      expect(told()).toEqual([
+        note("a server restart cut it off again after it carried on", "do it", "Three quarters"),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a carry-on waiting for its start slot when the user writes first", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, told, restart, manager, session, endTurn } = await started();
+      say("Halfway through");
+      w.abortAll("restart");
+      const back = restart(w);
+      manager.recheckWorkers();
+      await vi.advanceTimersByTimeAsync(SETTLE_MS - 1000);
+      // Other starts hold the next slots.
+      manager.takeStartSlot(1000);
+      manager.takeStartSlot(1000);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(session(back).sent).toEqual([]);
+      await back.sendMessage("forget that, do this instead");
+      endTurn(back);
+      await vi.advanceTimersByTimeAsync(3 * START_SPACING_MS);
+      expect(session(back).sent).toEqual(["forget that, do this instead"]);
+      expect(told()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("leaves a turn a restart cut off to the user who wrote to it since", async () => {
     vi.useFakeTimers();
     try {
@@ -1567,6 +1636,49 @@ describe("a worker that goes idle without reporting", () => {
       await settle();
       expect(awaitsUser(w)).toBe(false);
       expect(shown()).toEqual([true, false]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows a task the lead retried after it failed waiting for the user", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, told, settle, session, endTurn, ask } = await started();
+      say("Working on it");
+      session(w).isRunning = false;
+      session(w).emit("event", { kind: "error", content: "API Error: 529 overloaded" });
+      await settle();
+      expect(told()).toHaveLength(1);
+      await ask("try again");
+      say("Which branch should this go on?");
+      endTurn(w);
+      await settle();
+      expect(told()).toHaveLength(1);
+      expect(awaitsUser(w)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads no command the panel answered as the user's turn after a restart", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, settle, session, call, endTurn, restart } = await started();
+      say("Which branch?");
+      endTurn(w);
+      await w.sendMessage("main");
+      session(w).emit("event", {
+        kind: "tool_use",
+        toolName: "mcp__panel__finish_task",
+        toolUseId: "t1",
+        content: "**finish_task**",
+      });
+      await call(w, "finish_task", { summary: "merged" });
+      endTurn(w);
+      await w.sendMessage("/usage");
+      await settle();
+      expect(awaitsUser(restart(w))).toBe(false);
     } finally {
       vi.useRealTimers();
     }
