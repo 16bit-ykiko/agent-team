@@ -196,6 +196,8 @@ export interface TurnInput {
   replies: string[];
   stopped?: "user" | "restart";
   answered?: boolean;
+  // Background work or a wake-up was still to come: a crash cuts it off.
+  waiting?: boolean;
 }
 
 export interface WorkspaceCallbacks {
@@ -400,8 +402,7 @@ export class Workspace {
   // Archived: no retry is left to run, and nobody waits on a word from it.
   settleForArchive(): void {
     for (const a of this.agents.values()) {
-      a.pausedUntil = undefined;
-      a.retryPending = false;
+      this.dropRetry(a);
       if (a.delivered) a.delivered.answered = true;
     }
   }
@@ -500,6 +501,8 @@ export class Workspace {
 
   private ensureAgentMsg(entry: AgentEntry): Message {
     if (!entry.currentMsg) {
+      // A turn the CLI started itself: no prompt of ours to retry.
+      entry.lastPrompt = undefined;
       entry.currentMsg = this.makeAgentMsg(entry.info.id);
       entry.input?.replies.push(entry.currentMsg.id);
       this.pushMessage(entry.currentMsg);
@@ -778,7 +781,11 @@ export class Workspace {
     session.on("runState", (state: RunState) => {
       const entry = this.agents.get(agentId);
       if (entry) entry.runState = state;
-      if (state === "working" && entry?.input) delete entry.input.stopped;
+      if (entry?.input) {
+        if (state === "working") delete entry.input.stopped;
+        if (state === "waiting" || state === "sleeping") entry.input.waiting = true;
+        else delete entry.input.waiting;
+      }
       this.cb?.onAgentState?.(this.id, agentId, state);
       // The pending wake-up (and its time) comes and goes with the state.
       if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
@@ -806,14 +813,20 @@ export class Workspace {
     this.releaseSession(agentId, entry);
     this.finalizeAbort(entry, false);
     this.agents.delete(agentId);
-    const dropped = this.messages
-      .filter((m) => m.status === "queued" && m.queuedFor === agentId)
-      .map((m) => m.id);
-    this.messages = this.messages.filter((m) => !dropped.includes(m.id));
 
     if (entry.info.isDefault && this.agents.size > 0) {
       const first = this.agents.values().next().value!;
       first.info.isDefault = true;
+    }
+    // What another session sent waits for the agent that takes over; the
+    // sender was told it was queued and expects an answer.
+    const heir = this.resolveAgent();
+    const queued = this.messages.filter((m) => m.status === "queued" && m.queuedFor === agentId);
+    for (const m of queued) if (heir && m.from) m.queuedFor = heir.info.id;
+    const dropped = queued.filter((m) => m.queuedFor === agentId).map((m) => m.id);
+    this.messages = this.messages.filter((m) => !dropped.includes(m.id));
+    if (heir && dropped.length < queued.length) {
+      setTimeout(() => this.dequeueNext(heir.info.id), 0);
     }
 
     this.pushSystemMessage(`${entry.info.avatar} **${entry.info.name}** left the team`);
@@ -1107,8 +1120,10 @@ export class Workspace {
     }
 
     // A busy agent queues the message instead of rejecting it; the queue
-    // drains in order whenever the agent becomes idle.
-    const busy = agent.session.isRunning;
+    // drains in order whenever the agent becomes idle. A pending rate-limit
+    // retry goes first: the user writing is the cue to try now.
+    const retried = agent.retryPending && this.retryLast(agent.info.id);
+    const busy = retried || agent.session.isRunning;
     const userMsg: Message = {
       id: genId("msg"),
       kind: "user",
@@ -1140,7 +1155,7 @@ export class Workspace {
   deliver(text: string, from: MessageOrigin, prompt: string): "sent" | "queued" {
     const agent = this.resolveAgent();
     if (!agent) throw new Error(`"${this.name}" has no agent to take the message`);
-    const paused = !!agent.pausedUntil && Date.now() < agent.pausedUntil;
+    const paused = this.held(agent);
     const queued =
       agent.session.isRunning ||
       paused ||
@@ -1188,7 +1203,7 @@ export class Workspace {
   dequeueNext(agentId: string): void {
     const entry = this.agents.get(agentId);
     if (this.disposed || !entry || entry.session.isRunning) return;
-    if (entry.pausedUntil && Date.now() < entry.pausedUntil) return;
+    if (this.held(entry)) return;
     const msg = this.messages.find((m) => m.status === "queued" && m.queuedFor === agentId);
     if (!msg) return;
     const prompt = msg.queuedPrompt ?? msg.content;
@@ -1200,7 +1215,7 @@ export class Workspace {
   }
 
   // Hold an agent's queue until `until`; with `retry`, a rate-limit backoff
-  // that retryLast ends.
+  // that only retryLast ends.
   pauseAgent(agentId: string, until: number, retry = false): void {
     const entry = this.agents.get(agentId);
     if (!entry) return;
@@ -1208,11 +1223,31 @@ export class Workspace {
     entry.retryPending = retry;
   }
 
-  // Re-dispatch the last prompt (rate-limit recovery). Always lifts the
-  // pause — even when there is nothing to retry, the queue must resume.
+  // A spacing pause is over: lift it and move the queue. Its timer can fire
+  // a millisecond before Date.now() reaches the end of the pause.
+  endPause(agentId: string): void {
+    const entry = this.agents.get(agentId);
+    if (!entry || entry.retryPending) return;
+    entry.pausedUntil = undefined;
+    this.dequeueNext(agentId);
+  }
+
+  private held(entry: AgentEntry): boolean {
+    return !!entry.retryPending || (!!entry.pausedUntil && Date.now() < entry.pausedUntil);
+  }
+
+  private dropRetry(entry: AgentEntry): void {
+    if (!entry.retryPending) return;
+    entry.retryPending = false;
+    entry.pausedUntil = undefined;
+  }
+
+  // Re-dispatch the last prompt (rate-limit recovery), if a retry is still
+  // pending: a stop or an archive drops it. Lifts the pause, so the queue
+  // moves on even when there is nothing to retry.
   retryLast(agentId: string): boolean {
     const entry = this.agents.get(agentId);
-    if (!entry) return false;
+    if (!entry?.retryPending) return false;
     entry.pausedUntil = undefined;
     entry.retryPending = false;
     if (entry.session.isRunning || !entry.lastPrompt) return false;
@@ -1251,7 +1286,8 @@ export class Workspace {
     };
 
     const prompt = `[Forwarded message from ${author.name}]:\n\n${original.content}`;
-    const busy = agent.session.isRunning;
+    const retried = agent.retryPending && this.retryLast(agent.info.id);
+    const busy = retried || agent.session.isRunning;
     const userMsg: Message = {
       id: genId("msg"),
       kind: "user",
@@ -1331,6 +1367,7 @@ export class Workspace {
 
   private finalizeAbort(entry: AgentEntry, busy: boolean, by: "user" | "restart" = "user"): void {
     if (busy && entry.input) entry.input.stopped = by;
+    if (by === "user") this.dropRetry(entry);
     if (entry.currentMsg && entry.currentMsg.status === "streaming") {
       entry.currentMsg.content = withInterrupted(entry.currentMsg.content);
       entry.currentMsg.status = "done";
@@ -1346,6 +1383,7 @@ export class Workspace {
     if (!entry) return false;
     if (entry.session.isRunning) return false;
     if (this.hasWork(entry) && entry.input) entry.input.stopped = "user";
+    this.dropRetry(entry);
     entry.session.abort();
     entry.session.sessionId = null;
     entry.lastContext = null;
@@ -1516,8 +1554,10 @@ export class Workspace {
         retryPending: agentState.pausedUntil !== undefined,
       });
       if (agentState.delivered) {
-        const { since, ...delivered } = agentState.delivered;
-        if (cut.has(delivered.replies[delivered.replies.length - 1])) delivered.stopped = "restart";
+        const { since, waiting, ...delivered } = agentState.delivered;
+        if (waiting || cut.has(delivered.replies[delivered.replies.length - 1])) {
+          delivered.stopped = "restart";
+        }
         const entry = ws.agents.get(agentState.id)!;
         entry.delivered = delivered;
         if (!since) entry.input = delivered;

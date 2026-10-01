@@ -341,14 +341,24 @@ export class ProjectManager {
   // restart cut off, a notice that was still waiting) are checked again,
   // spaced out like starts so the leads do not all wake at once.
   recheckWorkers(): void {
-    let delay = SETTLE_MS;
     for (const w of this.host.workspaces()) {
-      if (w.projectLink?.role !== "worker" || w.isArchived) continue;
-      const owed = w.lastDelivered().some((d) => d.input.from?.role === "lead" && !d.answered);
-      if (!owed) continue;
-      this.settleAfter(w, delay);
-      delay += START_SPACING_MS;
+      const link = w.projectLink;
+      if (link?.role !== "worker" || w.isArchived) continue;
+      const lead = this.leadOf(link.projectId);
+      const owed = w.lastDelivered().some((d) => fromLead(d.input, lead) && !d.answered);
+      if (owed) this.settleAfter(w, this.takeStartSlot(SETTLE_MS));
     }
+  }
+
+  // The next free start slot, START_SPACING_MS after the last one handed
+  // out and `earliest` ms from now at the soonest: worker tasks, the lead's
+  // messages that wake a worker, and a restart's queued messages and
+  // notices all take one. Returns its delay.
+  takeStartSlot(earliest = 0): number {
+    const now = Date.now();
+    const delay = Math.max(earliest, this.nextStartAt - now);
+    this.nextStartAt = now + delay + START_SPACING_MS;
+    return delay;
   }
 
   private settleAfter(w: Workspace, ms: number): void {
@@ -376,7 +386,7 @@ export class ProjectManager {
     const lead = this.leadOf(link.projectId);
     if (!project || project.archivedAt || !lead || lead.isArchived) return;
     for (const { input, replies, stopped, answered, since } of w.lastDelivered()) {
-      if (input.from?.role !== "lead" || answered) continue;
+      if (!fromLead(input, lead) || answered) continue;
       const last = replies[replies.length - 1];
       const error = last?.events?.filter((e) => e.kind === "error").pop();
       const text = replies
@@ -602,13 +612,12 @@ export class ProjectManager {
       (agent.pausedUntil !== undefined && now < agent.pausedUntil) ||
       w.messages.some((m) => m.status === "queued" && m.queuedFor === agent.info.id);
     if (waits) return 0;
-    const delay = Math.max(0, this.nextStartAt - now);
-    this.nextStartAt = now + delay + START_SPACING_MS;
+    const delay = this.takeStartSlot();
     if (delay > 0) {
       const agentId = agent.info.id;
       w.pauseAgent(agentId, now + delay);
       this.later(delay, () => {
-        if (this.host.workspace(w.id) === w) w.dequeueNext(agentId);
+        if (this.host.workspace(w.id) === w) w.endPause(agentId);
       });
     }
     return delay;
@@ -1250,6 +1259,12 @@ export class ProjectManager {
 
 // How the workspace marks a turn cut off (a stop, a restart).
 const INTERRUPTED = "*\\[interrupted\\]*";
+
+// A message the project's current lead sent (not one from before the project
+// was deleted and the worker adopted again).
+function fromLead(m: { from?: MessageOrigin }, lead: Workspace | undefined): boolean {
+  return m.from?.role === "lead" && !!lead && m.from.workspaceId === lead.id;
+}
 
 function claudeModels(): string[] {
   return MODEL_OPTIONS.filter((m) => m.backend === "claude").map((m) => m.id);

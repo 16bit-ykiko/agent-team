@@ -413,7 +413,7 @@ describe("project messages that must not be lost or looped", () => {
     await ws.sendMessage("P1");
     s.isRunning = false;
     s.emit("event", { kind: "error", content: "Usage limit reached (five-hour)." });
-    ws.pauseAgent(agent.id, Date.now() + 3600_000);
+    ws.pauseAgent(agent.id, Date.now() + 3600_000, true);
 
     expect(ws.deliver("report", { workspaceId: "w2", name: "w2", role: "worker" }, "REPORT")).toBe(
       "queued",
@@ -616,6 +616,77 @@ describe("message_session and read_session", () => {
   });
 });
 
+describe("rate-limit retries", () => {
+  // A worker whose lead task just hit a rate limit, its retry pending.
+  const limited = async () => {
+    const h = setup();
+    const { lead } = h.create("a");
+    await h.call(lead, "start_session", { title: "w", cwd: "wt", task: "build it" });
+    const w = h.workers()[0];
+    const [agentId] = w.agents.keys();
+    const s = h.session(w);
+    w.pauseAgent(agentId, Date.now() + 3600_000, true);
+    s.isRunning = false;
+    s.emit("event", { kind: "error", content: "Usage limit reached" });
+    return { ...h, lead, w, agentId, s };
+  };
+
+  it("are dropped by a stop, the lead's or the user's, a cleared context and an archive", async () => {
+    for (const stop of ["lead", "user", "clear", "archive"] as const) {
+      const { lead, w, agentId, s, call } = await limited();
+      if (stop === "lead") await call(lead, "stop_session", { session_id: w.id });
+      if (stop === "user") w.abortAll();
+      if (stop === "clear") w.clearContext(agentId);
+      if (stop === "archive") await call(lead, "archive_session", { session_id: w.id });
+      expect(w.retryLast(agentId), stop).toBe(false);
+      expect(w.getState().agents[0].pausedUntil, stop).toBeUndefined();
+      expect(s.sent, stop).toHaveLength(1);
+    }
+  });
+
+  it("never re-send a prompt already answered when a turn the CLI started hits the limit", async () => {
+    const { w, s, call, endTurn } = await limited();
+    const [agentId] = w.agents.keys();
+    expect(w.retryLast(agentId)).toBe(true);
+    await call(w, "finish_task", { summary: "built" });
+    endTurn(w);
+    // A wake-up after a background task, then the limit.
+    s.emit("event", { kind: "text_delta", content: "checking the build" });
+    w.pauseAgent(agentId, Date.now() + 3600_000, true);
+    s.emit("event", { kind: "error", content: "Usage limit reached" });
+    expect(w.retryLast(agentId)).toBe(false);
+    expect(s.sent).toHaveLength(2);
+  });
+
+  it("go ahead of what comes in meanwhile: the lead's message waits, the user's is the cue to retry now", async () => {
+    vi.useFakeTimers();
+    try {
+      const { lead, w, agentId, s, call, endTurn } = await limited();
+      // Past the reset, the retry not yet fired (a restart's ladder).
+      w.pauseAgent(agentId, Date.now() - 1, true);
+      await call(lead, "message_session", { session_id: w.id, message: "also Y" });
+      expect(s.sent).toHaveLength(1);
+      expect(w.retryLast(agentId)).toBe(true);
+      endTurn(w);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(s.sent.slice(1)).toEqual([
+        "[From the project lead]\n\nbuild it",
+        "[From the project lead]\n\nalso Y",
+      ]);
+
+      w.pauseAgent(agentId, Date.now() + 3600_000, true);
+      s.isRunning = false;
+      await w.sendMessage("U");
+      expect(s.sent.slice(3)).toEqual(["[From the project lead]\n\nalso Y"]);
+      endTurn(w);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(s.sent.slice(4)).toEqual(["U"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("worker tasks held back for spacing", () => {
   const twoStarts = async () => {
     const env = setup();
@@ -685,6 +756,28 @@ describe("worker tasks held back for spacing", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("go out even when their timer fires a millisecond early", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w1, session } = await twoStarts();
+      vi.setSystemTime(Date.now() - 1);
+      await vi.advanceTimersByTimeAsync(START_SPACING_MS);
+      expect(session(w1).sent).toEqual(["[From the project lead]\n\nsecond"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("pass a queued lead message on to the agent that takes over from a removed one", async () => {
+    const { w1 } = await twoStarts();
+    const [first] = w1.agents.keys();
+    const b = w1.addAgent("B", "claude-opus-5-5", "b", "c", { backend: "claude" });
+    expect(w1.removeAgent(first)).toEqual([]);
+    await new Promise((r) => setTimeout(r, 5));
+    const heir = w1.agents.get(b.id)!.session as FakeSession;
+    expect(heir.sent).toEqual(["[From the project lead]\n\nsecond"]);
   });
 
   it("stay ahead of a follow-up sent in the meantime", async () => {
@@ -1147,6 +1240,40 @@ describe("a worker that goes idle without reporting", () => {
       await settle();
       expect(told()).toEqual([]);
       expect(w.getState().agents[0].delivered?.answered).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tells a crash that cut off a worker's background work as a restart", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, told, settle, endTurn, state, restart, manager } = await started();
+      say("Started the build in the background.");
+      state("waiting");
+      endTurn(w);
+      restart(w);
+      manager.recheckWorkers();
+      await settle();
+      expect(told()).toEqual([
+        note("a server restart cut it off", "do it", "Started the build in the background."),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tells a fresh lead nothing of what the lead of a deleted project said", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, endTurn, settle, manager, project, workspaces } = await started();
+      manager.delete(project.id);
+      endTurn(w);
+      manager.adopt(w);
+      manager.recheckWorkers();
+      await settle();
+      const fresh = workspaces.get(manager.get(w.projectLink!.projectId)!.leadWorkspaceId!)!;
+      expect(fresh.getMessages().filter((m) => m.from)).toEqual([]);
     } finally {
       vi.useRealTimers();
     }

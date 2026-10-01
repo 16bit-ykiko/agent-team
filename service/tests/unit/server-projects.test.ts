@@ -136,7 +136,9 @@ const HISTORY: Message[] = [
 
 // A project "demo" with its lead, one archived worker with history, one live
 // worker, and a workspace still linked to a project that no longer exists.
-function seed(opts: { leadArchived?: boolean; livePaused?: boolean } = {}) {
+// livePaused: ms from now (past or future) to the reset two workers' pending
+// rate-limit retries wait for.
+function seed(opts: { leadArchived?: boolean; livePaused?: number } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-server-projects-"));
   const root = path.join(base, "repo");
   const web = path.join(base, "web");
@@ -200,7 +202,10 @@ function seed(opts: { leadArchived?: boolean; livePaused?: boolean } = {}) {
       agents: [
         {
           ...agent("a-live", "Live", root),
-          ...(opts.livePaused && { pausedUntil: Date.now() - 1000, lastPrompt: "carry on" }),
+          ...(opts.livePaused !== undefined && {
+            pausedUntil: Date.now() + opts.livePaused,
+            lastPrompt: "carry on",
+          }),
         },
       ],
       createdAt: now,
@@ -213,7 +218,15 @@ function seed(opts: { leadArchived?: boolean; livePaused?: boolean } = {}) {
       project: "repo",
       hostId: "local",
       cwd: root,
-      agents: [agent("a-o", "O", root)],
+      agents: [
+        {
+          ...agent("a-o", "O", root),
+          ...(opts.livePaused !== undefined && {
+            pausedUntil: Date.now() + opts.livePaused,
+            lastPrompt: "carry on",
+          }),
+        },
+      ],
       createdAt: now,
       messages: [],
       projectLink: { projectId: "proj-gone", role: "worker" },
@@ -358,13 +371,36 @@ describe("server restart with projects", () => {
     fs.rmSync(base, { recursive: true, force: true });
   });
 
-  it("retries a turn a rate limit paused before the restart", async () => {
-    const { base, web, root } = seed({ livePaused: true });
+  it("retries the turns a rate limit paused before the restart, one at a time", async () => {
+    // Both wait for the same reset, still to come.
+    const { base, web, root } = seed({ livePaused: 7000 });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { stop } = await start(base, web);
     try {
-      await until(() => launches.length === 1, "the retry");
+      for (let i = 0; i < 1000 && launches.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
       expect(launches[0].cwd).toBe(root);
+      // The other one waits for its own slot.
+      await new Promise((r) => setTimeout(r, 2500));
+      expect(launches).toHaveLength(1);
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    expect(readState(base, "ws-live").agents[0].pausedUntil).toBeUndefined();
+    fs.rmSync(base, { recursive: true, force: true });
+  }, 20_000);
+
+  it("runs no retry for a worker archived while it waited for it", async () => {
+    const { base, web } = seed({ livePaused: -1000 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, stop } = await start(base, web);
+    try {
+      send({ type: "archive_workspace", workspaceId: "ws-live" });
+      send({ type: "archive_workspace", workspaceId: "ws-orphan" });
+      await new Promise((r) => setTimeout(r, 2000));
+      expect(launches).toEqual([]);
     } finally {
       stop();
       log.mockRestore();

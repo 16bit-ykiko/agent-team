@@ -287,7 +287,11 @@ describe("rate-limit retry mechanics", () => {
     expect(session.sent).toEqual(["do the thing"]);
 
     session.isRunning = false;
-    expect(ws.retryLast(session ? ws.getState().agents[0].id : "")).toBe(true);
+    const agentId = ws.getState().agents[0].id;
+    // Only a rate limit's pause ends in a retry.
+    expect(ws.retryLast(agentId)).toBe(false);
+    ws.pauseAgent(agentId, Date.now(), true);
+    expect(ws.retryLast(agentId)).toBe(true);
     await tick();
     expect(session.sent).toEqual(["do the thing", "do the thing"]);
   });
@@ -302,7 +306,8 @@ describe("rate-limit retry mechanics", () => {
     emit({ kind: "error", content: "Usage limit reached" });
     session.isRunning = false;
 
-    // The server's handleRateLimit would abort then retry.
+    // The server's handleRateLimit would mark the retry, abort, then retry.
+    ws.pauseAgent(agentId, Date.now() + 1000, true);
     session.abort();
     expect(ws.retryLast(agentId)).toBe(true);
     await tick();
@@ -315,7 +320,7 @@ describe("rate-limit retry mechanics", () => {
     session.isRunning = true;
     await ws.sendMessage("queued work");
 
-    ws.pauseAgent(agentId, Date.now() + 60_000);
+    ws.pauseAgent(agentId, Date.now() + 60_000, true);
     session.isRunning = false;
     emit({ kind: "result", content: "" });
     await tick();
