@@ -4001,9 +4001,10 @@ button.action-target:hover {
 }
 /* Quiet actions inside the panels; the border shows what is pointed at. */
 .panel-btn {
+  --panel-btn-pad: 8px;
   flex-shrink: 0;
   min-height: 24px;
-  padding: 0 8px;
+  padding: 0 var(--panel-btn-pad);
   font: inherit;
   font-size: var(--fs-meta);
   color: var(--text-secondary);
@@ -4012,13 +4013,16 @@ button.action-target:hover {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.panel-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--text-muted);
-}
-.panel-btn.danger:hover {
-  color: var(--error);
-  border-color: var(--error);
+/* Hover only where there is a pointer: a tap on a phone leaves it stuck. */
+@media (hover: hover) {
+  .panel-btn:hover {
+    color: var(--text-primary);
+    border-color: var(--text-muted);
+  }
+  .panel-btn.danger:hover {
+    color: var(--error);
+    border-color: var(--error);
+  }
 }
 .side-panel-body {
   flex: 1;
@@ -4458,6 +4462,22 @@ button.action-target:hover {
   gap: 6px;
   margin: 8px 0 0 15px;
 }
+/* Adding an agent under the names, the session's own action at the edge.
+   An action at a card's edge sets its label, not its border, on the edge
+   the times and the agents' buttons keep. */
+.ap-session-foot {
+  display: flex;
+  align-items: center;
+  margin: 4px 0 0 15px;
+}
+.ap-act,
+.tp-stop-all,
+.tp-stop {
+  margin-right: calc(-1px - var(--panel-btn-pad));
+}
+.ap-act {
+  margin-left: auto;
+}
 .ap-none {
   color: var(--text-muted);
 }
@@ -4540,6 +4560,7 @@ button.action-target:hover {
 .ap-agent-actions {
   display: flex;
   gap: 2px;
+  margin-right: -5px;
   opacity: 0;
 }
 .ap-agent:hover .ap-agent-actions,
@@ -4562,9 +4583,11 @@ button.action-target:hover {
   border-radius: 4px;
   cursor: pointer;
 }
-.ap-agent-actions button:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
+@media (hover: hover) {
+  .ap-agent-actions button:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
 }
 .ap-add {
   align-self: flex-start;
@@ -4625,8 +4648,12 @@ button.action-target:hover {
   min-width: 0;
   padding: 3px 0 3px 24px;
 }
+/* One width for every kind and every action: the descriptions start, and
+   the times end, in one column. */
 .tp-type {
   flex-shrink: 0;
+  min-width: calc(7ch + 12px);
+  text-align: center;
   padding: 0 6px;
   font-size: var(--fs-tag);
   line-height: 15px;
@@ -4657,6 +4684,8 @@ button.action-target:hover {
 }
 .tp-stop {
   flex-shrink: 0;
+  min-width: calc(6ch + 2 * var(--panel-btn-pad) + 2px);
+  text-align: right;
 }
 
 @media (max-width: 768px), (max-height: 500px) {
@@ -4709,13 +4738,21 @@ button.action-target:hover {
     height: 20px;
   }
   .panel-btn {
+    --panel-btn-pad: 11px;
     min-height: 40px;
-    padding: 0 14px;
-    font-size: var(--fs-name);
+    font-size: var(--fs-text);
+  }
+  /* Room for an edge button's padding, and for the agents' wider buttons. */
+  .ap-session,
+  .tp-session {
+    padding: 10px 12px;
+  }
+  .ap-agent-actions {
+    margin-right: -12px;
   }
   /* Its label under the agents' names: the wider padding, taken back. */
   .ap-add {
-    margin-left: 16px;
+    margin-left: 19px;
   }
   .ap-session-name {
     padding: 8px 0;
@@ -4776,19 +4813,33 @@ button.action-target:hover {
   .side-panel-body.flush {
     padding-bottom: env(safe-area-inset-bottom, 0px);
   }
-  /* A background task's description takes a line of its own. */
-  .tp-agent {
-    margin-left: 0;
-  }
+  /* A background task's description wraps beside its kind, its time under
+     it, its button at the edge across both. */
   .tp-task {
-    flex-wrap: wrap;
-    padding-left: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "type desc stop"
+      ". when stop";
+    align-items: baseline;
+    gap: 2px 10px;
+    padding: 4px 0;
   }
   .tp-type {
-    margin-right: auto;
+    grid-area: type;
   }
   .tp-desc {
-    order: 5;
-    flex-basis: 100%;
+    grid-area: desc;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+  .tp-when {
+    grid-area: when;
+  }
+  .tp-stop {
+    grid-area: stop;
+    align-self: center;
   }
 }

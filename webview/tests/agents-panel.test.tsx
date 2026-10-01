@@ -230,8 +230,9 @@ describe("a session's actions by its state", () => {
         }}
       />,
     );
-    // The session's own action sits in its header; adding an agent, under its agents.
-    const names = [...container.querySelectorAll(".ap-session-head .panel-btn, .ap-add")].map(
+    // Under the agents: adding one first, the session's own action at the edge.
+    expect(container.querySelector(".ap-session-head .panel-btn")).toBeNull();
+    const names = [...container.querySelectorAll(".ap-session-foot .panel-btn")].map(
       (b) => b.textContent,
     );
     unmount();
@@ -239,10 +240,10 @@ describe("a session's actions by its state", () => {
   };
 
   it("stops only a running turn, and archives a sleeping session like an idle one", () => {
-    expect(buttons("working")).toEqual(["Stop", "+ Agent"]);
+    expect(buttons("working")).toEqual(["+ Agent", "Stop"]);
     expect(buttons("waiting")).toEqual(["+ Agent"]);
-    expect(buttons("sleeping")).toEqual(["Archive", "+ Agent"]);
-    expect(buttons("idle")).toEqual(["Archive", "+ Agent"]);
+    expect(buttons("sleeping")).toEqual(["+ Agent", "Archive"]);
+    expect(buttons("idle")).toEqual(["+ Agent", "Archive"]);
   });
 });
 

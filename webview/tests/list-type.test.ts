@@ -118,7 +118,8 @@ describe("the lists' type", () => {
     expect(rule(".code-gutter").body).toMatch(/position:\s*sticky/);
     expect(rule(".ap-agent-name").body).toMatch(/text-overflow:\s*ellipsis/);
     expect(rule(".side-panel-body", PHONE).body).toMatch(/safe-area-inset-bottom/);
-    expect(rule(".tp-desc", PHONE).body).toMatch(/flex-basis:\s*100%/);
+    expect(rule(".tp-task", PHONE).body).toMatch(/"type desc stop"\s*"\. when stop"/);
+    expect(rule(".tp-desc", PHONE).body).toMatch(/white-space:\s*normal/);
   });
 
   it("lets the dependency graph fill what the board's banners leave, and lines + Agent up on phones", () => {
@@ -128,8 +129,8 @@ describe("the lists' type", () => {
     expect(rule(".bp-graph").body).toMatch(/flex:\s*1 0 auto/);
     expect(rule(".bp-main:has(> .bp-graph)").body).toMatch(/flex-direction:\s*column/);
     expect(rule(".bp-main > .bp-broken").body).toMatch(/position:\s*sticky/);
-    // 22px less the phone button's 6px more padding.
-    expect(rule(".ap-add", PHONE).body).toMatch(/margin-left:\s*16px/);
+    // 22px less the phone button's 3px more padding.
+    expect(rule(".ap-add", PHONE).body).toMatch(/margin-left:\s*19px/);
   });
 
   it("keeps Archive project in a short desktop window, and the quota bars in one column", () => {
@@ -139,6 +140,42 @@ describe("the lists' type", () => {
     expect(sideways.media).toContain("(hover: none)");
     const grid = all.find((r) => r.selectors.includes(".system-status-grid") && !r.media)!;
     expect(grid.body).toMatch(/grid-template-columns:\s*fit-content\(45%\)/);
+  });
+
+  it("ends a card's time, its edge buttons' labels and its agents' icons on one edge", () => {
+    const rule = (sel: string, media: string | null = null) =>
+      all.find((r) => r.selectors.includes(sel) && r.media === media)!;
+    const pad = (media: string | null) =>
+      Number(/--panel-btn-pad:\s*(\d+)px/.exec(rule(".panel-btn", media).body)![1]);
+    const edge = rule(".ap-act");
+    expect(edge.selectors).toEqual([".ap-act", ".tp-stop-all", ".tp-stop"]);
+    expect(edge.body).toMatch(/margin-right:\s*calc\(-1px - var\(--panel-btn-pad\)\)/);
+    // The padding an edge button takes back fits in the card's own.
+    const cardPad = (media: string | null) =>
+      Number(/padding:\s*\d+px (\d+)px/.exec(rule(".ap-session", media).body)![1]);
+    expect(pad(null) + 1).toBeLessThanOrEqual(cardPad(null));
+    expect(pad(PHONE) + 1).toBeLessThanOrEqual(cardPad(PHONE));
+    expect(rule(".tp-session", PHONE)).toBe(rule(".ap-session", PHONE));
+    // An icon button is wider than its 16px icon: the difference, taken back.
+    const iconPad = (media: string | null, button: string) =>
+      (Number(new RegExp(`width:\\s*(\\d+)px`).exec(button)![1]) - 16) / 2 ===
+      -Number(/margin-right:\s*(-?\d+)px/.exec(rule(".ap-agent-actions", media).body)![1]);
+    expect(iconPad(null, rule(".ap-agent-actions button").body)).toBe(true);
+    expect(iconPad(PHONE, rule(".ap-agent-actions button", PHONE).body)).toBe(true);
+    // Stop and Cancel one width, so the times beside them end in a column.
+    const own = (sel: string) =>
+      all
+        .filter((r) => r.selectors.includes(sel) && !r.media)
+        .map((r) => r.body)
+        .join("");
+    expect(own(".tp-stop")).toMatch(/min-width:\s*calc\(6ch/);
+    expect(rule(".tp-type").body).toMatch(/min-width:\s*calc\(7ch/);
+  });
+
+  it("shows a panel button's hover border only where there is a pointer", () => {
+    const hovers = all.filter((r) => r.selectors.some((s) => /^\.panel-btn.*:hover$/.test(s)));
+    expect(hovers.length).toBeGreaterThan(0);
+    for (const r of hovers) expect(r.media).toBe("@media (hover: hover)");
   });
 
   it("fits a dialog in a narrow phone", () => {

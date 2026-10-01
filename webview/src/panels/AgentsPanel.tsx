@@ -121,23 +121,6 @@ function SessionCard({
             </span>
           )}
         </button>
-        {state === "archived" ? (
-          <button className="panel-btn" onClick={() => actions.onRestore(w.id)}>
-            Restore
-          </button>
-        ) : state === "working" ? (
-          <button className="panel-btn danger" onClick={() => actions.onStop(w.id)}>
-            Stop
-          </button>
-        ) : (
-          !busy &&
-          w.projectLink?.role !== "lead" && (
-            <button className="panel-btn" onClick={() => actions.onArchive(w.id)}>
-              Archive
-            </button>
-          )
-        )}
-        {/* Last, so every card's time lines up at its edge, button or none. */}
         <span className="ap-when">{formatRelative(w.lastMessageAt ?? w.createdAt)}</span>
       </header>
       <div className="ap-where" title={w.cwd}>
@@ -165,12 +148,30 @@ function SessionCard({
             onModel={(model) => actions.onSetModel(w.id, a.id, model)}
           />
         ))}
+      </div>
+      <footer className="ap-session-foot">
         {state !== "archived" && (
           <button className="panel-btn ap-add" onClick={() => actions.onAddAgent(w.id)}>
             + Agent
           </button>
         )}
-      </div>
+        {state === "archived" ? (
+          <button className="panel-btn ap-act" onClick={() => actions.onRestore(w.id)}>
+            Restore
+          </button>
+        ) : state === "working" ? (
+          <button className="panel-btn danger ap-act" onClick={() => actions.onStop(w.id)}>
+            Stop
+          </button>
+        ) : (
+          !busy &&
+          w.projectLink?.role !== "lead" && (
+            <button className="panel-btn ap-act" onClick={() => actions.onArchive(w.id)}>
+              Archive
+            </button>
+          )
+        )}
+      </footer>
     </section>
   );
 }
