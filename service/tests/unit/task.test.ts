@@ -9,10 +9,17 @@ function makeWorkspace(model = "claude-fable-5") {
   const registry = new HostRegistry();
   registry.register(host);
   const done: Array<{ msgId: string; status: string }> = [];
+  // What clients are told, in order.
+  const log: string[] = [];
   const cb: WorkspaceCallbacks = {
-    onNewMessage: () => {},
-    onStreamEvent: () => {},
-    onMessageDone: (_wsId, msgId, status) => done.push({ msgId, status }),
+    onNewMessage: (_wsId, msg) => log.push(`new ${msg.id} ${msg.status}`),
+    onStreamEvent: (_wsId, msg, event) => log.push(`event ${msg.id} ${event.kind}`),
+    onMessageDone: (_wsId, msgId, status) => {
+      done.push({ msgId, status });
+      log.push(`done ${msgId} ${status}`);
+    },
+    onAgentBusy: () => log.push("busy"),
+    onAgentIdle: () => log.push("idle"),
   };
   const ws = new Workspace("ws-1", "test", "proj", "local", "/tmp", registry, cb);
   const agentInfo = ws.addAgent("A", model, "🤖", "#888", {
@@ -21,7 +28,7 @@ function makeWorkspace(model = "claude-fable-5") {
   const session = host.lastSession!;
   const emit = (e: Partial<StreamEvent>) => session.emit("event", e);
   const agentMsgs = () => ws.messages.filter((m): m is Message => m.kind === "agent");
-  return { ws, emit, done, agentMsgs, agentInfo, session, host };
+  return { ws, emit, done, log, agentMsgs, agentInfo, session, host };
 }
 
 const subagentStart = (taskId: string): Partial<StreamEvent> => ({
@@ -676,6 +683,148 @@ describe("events between turns and late results", () => {
       subagent: { taskId: "gone", description: "", status: "stopped" },
     });
     expect(ws.messages.some((m) => m.kind === "agent")).toBe(false);
+  });
+
+  it("gives a card that starts while nothing runs a finished reply its updates still reach", () => {
+    const { ws, emit, session, agentMsgs, log } = makeWorkspace();
+    session.isRunning = false;
+    log.length = 0;
+    emit(subagentStart("bg-1"));
+    expect(agentMsgs()).toHaveLength(1);
+    const reply = agentMsgs()[0];
+    expect(reply.status).toBe("done");
+    expect(log).toEqual([
+      `new ${reply.id} streaming`,
+      `event ${reply.id} subagent_start`,
+      `done ${reply.id} done`,
+    ]);
+    expect(ws.isIdle).toBe(true);
+    emit({
+      kind: "subagent_done",
+      content: "",
+      subagent: { taskId: "bg-1", description: "", status: "completed", summary: "ok" },
+    });
+    expect(agentMsgs()).toHaveLength(1);
+    expect(reply.events![0].subagent).toMatchObject({ status: "completed", summary: "ok" });
+  });
+
+  it("does not count a card that starts while nothing runs as a reply to the last message", () => {
+    const { ws, emit, session, agentMsgs } = makeWorkspace();
+    ws.deliver("do it", { workspaceId: "ws-lead", name: "lead", role: "lead" }, "do it");
+    emit({ kind: "text_delta", content: "ok" });
+    emit({ kind: "result", content: "" });
+    session.isRunning = false;
+    emit(subagentStart("bg-1"));
+    expect(agentMsgs()).toHaveLength(2);
+    expect(ws.lastDelivered()[0].replies.map((m) => m.content)).toEqual(["ok"]);
+  });
+
+  it("drops a tool result whose call is in no loaded message while nothing runs", () => {
+    const { ws, emit, session } = makeWorkspace();
+    session.isRunning = false;
+    emit({ kind: "tool_result", content: "late", toolUseId: "unknown" });
+    expect(ws.messages.some((m) => m.kind === "agent")).toBe(false);
+  });
+
+  it("finishes a reply still streaming before a new prompt takes its place", async () => {
+    const { ws, emit, session, agentMsgs, done, log } = makeWorkspace();
+    session.isRunning = false;
+    emit({ kind: "text_delta", content: "stray" });
+    const stray = agentMsgs()[0];
+    expect(stray.status).toBe("streaming");
+    await ws.sendMessage("next");
+    expect(stray.status).toBe("done");
+    expect(done).toContainEqual({ msgId: stray.id, status: "done" });
+    const next = agentMsgs()[1];
+    expect(log.indexOf(`done ${stray.id} done`)).toBeLessThan(
+      log.indexOf(`new ${next.id} streaming`),
+    );
+    expect(agentMsgs().filter((m) => m.status === "streaming")).toHaveLength(1);
+  });
+
+  it("a stop finishes every reply of the agent still streaming, so it can be archived", async () => {
+    const { ws, session, agentInfo, done } = makeWorkspace();
+    ws.setMessages([
+      {
+        id: "stale",
+        kind: "agent",
+        agentId: agentInfo.id,
+        content: "card only",
+        timestamp: 1,
+        status: "streaming",
+        events: [],
+      },
+    ]);
+    await ws.sendMessage("go");
+    ws.abortAgent(agentInfo.id);
+    session.isRunning = false;
+    expect(ws.messages.find((m) => m.id === "stale")).toMatchObject({
+      status: "done",
+      content: "card only",
+    });
+    expect(done).toContainEqual({ msgId: "stale", status: "done" });
+    expect(ws.messages.some((m) => m.status === "streaming")).toBe(false);
+    expect(ws.isIdle).toBe(true);
+  });
+
+  it("the Stop button finishes a reply left streaming even with no turn to interrupt", async () => {
+    const { ws, session, agentInfo } = makeWorkspace();
+    const interrupt = vi.fn(() => Promise.resolve(true));
+    Object.assign(session, { interrupt, interruptPending: false });
+    ws.setMessages([
+      {
+        id: "stale",
+        kind: "agent",
+        agentId: agentInfo.id,
+        content: "card only",
+        timestamp: 1,
+        status: "streaming",
+        events: [],
+      },
+    ]);
+    await ws.interruptAgent(agentInfo.id);
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(ws.messages[0].status).toBe("done");
+    expect(ws.isIdle).toBe(true);
+
+    await ws.sendMessage("go");
+    const live = ws.messages.find((m) => m.kind === "agent" && m.id !== "stale")!;
+    await ws.interruptAgent(agentInfo.id);
+    expect(interrupt).toHaveBeenCalled();
+    // The running turn ends with its result, not here.
+    expect(live.status).toBe("streaming");
+  });
+
+  it("a Stop that finishes a stray reply tells clients the agent is idle", async () => {
+    const { ws, emit, session, agentInfo, agentMsgs, log } = makeWorkspace();
+    Object.assign(session, { interrupt: () => Promise.resolve(true), interruptPending: false });
+    session.isRunning = false;
+    emit({ kind: "tool_use", content: "**Read** `/a`", toolUseId: "t1" });
+    expect(log.at(-1)).toBe(`event ${agentMsgs()[0].id} tool_use`);
+    log.length = 0;
+    await ws.interruptAgent(agentInfo.id);
+    expect(log).toEqual([`done ${agentMsgs()[0].id} done`, "idle"]);
+  });
+
+  it("finishes every reply left streaming when the context is cleared", () => {
+    const { ws, emit, session, agentInfo, agentMsgs, done } = makeWorkspace();
+    ws.setMessages([
+      {
+        id: "stale",
+        kind: "agent",
+        agentId: agentInfo.id,
+        content: "",
+        timestamp: 1,
+        status: "streaming",
+        events: [],
+      },
+    ]);
+    session.isRunning = false;
+    emit({ kind: "text_delta", content: "stray" });
+    expect(ws.clearContext(agentInfo.id)).toBe(true);
+    expect(agentMsgs().map((m) => m.status)).toEqual(["done", "done"]);
+    expect(done).toContainEqual({ msgId: agentMsgs()[1].id, status: "done" });
+    expect(ws.isIdle).toBe(true);
   });
 
   it("attaches a late tool result to the call that made it", async () => {

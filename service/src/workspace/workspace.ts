@@ -499,6 +499,23 @@ export class Workspace {
     };
   }
 
+  // A reply no result will finish: done as it stands, and clients told.
+  private settle(msg: Message): void {
+    if (msg.status !== "streaming") return;
+    msg.status = "done";
+    this.finished(msg.id, "done", msg.content, msg.events);
+  }
+
+  // Every reply of the agent left streaming that no running turn will finish.
+  private settleStale(entry: AgentEntry): void {
+    const live = entry.session.isRunning ? entry.currentMsg : null;
+    for (const m of this.messages) if (m.agentId === entry.info.id && m !== live) this.settle(m);
+    if (entry.currentMsg && !live) {
+      entry.currentMsg = null;
+      this.cb?.onAgentIdle?.(this.id, entry.info.id);
+    }
+  }
+
   private ensureAgentMsg(entry: AgentEntry): Message {
     if (!entry.currentMsg) {
       // A turn the CLI started itself: no prompt of ours to retry, unless
@@ -618,6 +635,7 @@ export class Workspace {
             this.finished(owner.id, owner.status, owner.content, owner.events);
             return;
           }
+          return;
         }
         if (event.kind === "notice" || event.kind === "compact" || event.kind === "retry") {
           this.pushSystemMessage(event.content);
@@ -625,6 +643,17 @@ export class Workspace {
         }
         // A card update whose card is in no loaded message (see above).
         if (event.kind === "subagent_progress" || event.kind === "subagent_done") return;
+        // A task no turn of ours started: its card gets a reply of its own,
+        // finished at once; its updates find it like any finished card's.
+        if (event.kind === "subagent_start") {
+          const msg = this.makeAgentMsg(agentId);
+          this.pushMessage(msg);
+          event.contentOffset = 0;
+          msg.events!.push(event);
+          this.streamed(msg, event);
+          this.settle(msg);
+          return;
+        }
       }
 
       if (
@@ -1188,6 +1217,7 @@ export class Workspace {
     }
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
 
+    if (agent.currentMsg) this.settle(agent.currentMsg);
     agent.currentMsg = this.makeAgentMsg(agent.info.id);
     agent.input?.replies.push(agent.currentMsg.id);
     this.pushMessage(agent.currentMsg);
@@ -1352,6 +1382,7 @@ export class Workspace {
       this.abortAgent(agentId);
       return;
     }
+    this.settleStale(entry);
     if (session.isRunning && !(await session.interrupt())) this.abortAgent(agentId);
   }
 
@@ -1379,6 +1410,7 @@ export class Workspace {
       this.finished(entry.currentMsg.id, "done", entry.currentMsg.content, entry.currentMsg.events);
     }
     entry.currentMsg = null;
+    this.settleStale(entry);
     this.cb?.onAgentIdle?.(this.id, entry.info.id);
     setTimeout(() => this.dequeueNext(entry.info.id), 0);
   }
@@ -1400,7 +1432,7 @@ export class Workspace {
       turns: 0,
       duration_ms: 0,
     };
-    entry.currentMsg = null;
+    this.settleStale(entry);
     this.pushSystemMessage(`${entry.info.avatar} **${entry.info.name}** context cleared`);
     return true;
   }
