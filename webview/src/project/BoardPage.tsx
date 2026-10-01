@@ -580,7 +580,7 @@ function ObjectiveDetail({
     if (!target) {
       return (
         <span key={id} className="bp-ref missing" title="Not an objective">
-          {id}
+          <span className="clip">{id}</span>
         </span>
       );
     }
@@ -592,7 +592,7 @@ function ObjectiveDetail({
         onClick={() => onSelect(id)}
         title={`${STATUS_LABEL[target.status]}${note}: ${target.goal}`}
       >
-        {target.title}
+        <span className="clip">{target.title}</span>
       </button>
     );
   };
@@ -600,8 +600,14 @@ function ObjectiveDetail({
     const s = sessions.get(id);
     if (!s) return null;
     return (
-      <button key={id} className={`bp-session ss-${s.state}`} onClick={() => onOpenSession(id)}>
-        <span className="bp-session-dot" /> {s.name}
+      <button
+        key={id}
+        className={`bp-session ss-${s.state}`}
+        title={s.name}
+        onClick={() => onOpenSession(id)}
+      >
+        <span className="bp-session-dot" />
+        <span className="clip">{s.name}</span>
       </button>
     );
   };

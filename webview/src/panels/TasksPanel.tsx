@@ -51,7 +51,7 @@ export const TasksPanel = memo(function TasksPanel({
               title="Open this session"
               onClick={() => actions.onOpen(w.id)}
             >
-              {sessionName(w, project)}
+              <span className="clip">{sessionName(w, project)}</span>
             </button>
             <button
               className="panel-btn danger tp-stop-all"

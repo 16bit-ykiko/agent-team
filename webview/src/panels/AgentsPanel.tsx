@@ -112,7 +112,9 @@ function SessionCard({
           {w.projectLink?.role === "lead" && !/\blead\b/i.test(name) && (
             <span className="task-lead-tag">lead</span>
           )}
-          {name}
+          <span className="clip" title={w.name}>
+            {name}
+          </span>
         </button>
         <span className="ap-when">{formatRelative(w.lastMessageAt ?? w.createdAt)}</span>
         {state === "archived" ? (

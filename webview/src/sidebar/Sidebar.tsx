@@ -197,7 +197,9 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
       <div className="task-status idle" />
       <div className="task-info">
         <div className="task-name">
-          <span className="task-name-text">{ws.name}</span>
+          <span className="task-name-text">
+            <span className="clip">{ws.name}</span>
+          </span>
           <span className="task-time">{formatRelative(ws.lastMessageAt ?? ws.createdAt, now)}</span>
         </div>
         {folder && <div className="task-meta">{folder}</div>}
@@ -357,7 +359,9 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                         {ws.projectLink?.role === "lead" && (
                           <span className="task-lead-tag">lead</span>
                         )}
-                        {ws.name}
+                        <span className="clip" title={ws.name}>
+                          {ws.name}
+                        </span>
                         {unread > 0 && ws.id !== p.activeWsId && (
                           <span className="unread-badge">{unread}</span>
                         )}

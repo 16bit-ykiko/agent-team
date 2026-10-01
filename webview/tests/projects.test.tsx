@@ -123,6 +123,42 @@ describe("project groups", () => {
     expect(props.onSelect).not.toHaveBeenCalled();
   });
 
+  it("cut a long session name, not the time after it, and keep it whole in its title", () => {
+    const sheet = document.createElement("style");
+    sheet.textContent = css;
+    document.head.appendChild(sheet);
+    try {
+      const long =
+        "fix the wake-up time the CLI rounds up to the minute so the panel shows it early";
+      const { container } = render(
+        <Sidebar {...sidebarProps()} workspaces={[lead, { ...worker, name: long }]} />,
+      );
+      const row = container.querySelector(".task-name-text")!;
+      // A flex row cuts no text of its own: the name is a box that can.
+      expect([...row.childNodes].map((n) => n.nodeName)).toEqual(["SPAN"]);
+      const name = row.querySelector(".clip")!;
+      expect(name.textContent).toBe(long);
+      expect(name.getAttribute("title")).toBe(long);
+      const style = getComputedStyle(name);
+      expect([style.overflow, style.textOverflow, style.whiteSpace, style.minWidth]).toEqual([
+        "hidden",
+        "ellipsis",
+        "nowrap",
+        "0px",
+      ]);
+      // The time and × take no room until the row is hovered; the × stays
+      // in the keyboard's reach.
+      expect(getComputedStyle(container.querySelector(".task-item .task-time")!).display).toBe(
+        "none",
+      );
+      const del = getComputedStyle(container.querySelector(".task-item .task-delete")!);
+      expect(del.display).not.toBe("none");
+      expect([del.width, del.marginLeft]).toEqual(["0px", "-8px"]);
+    } finally {
+      sheet.remove();
+    }
+  });
+
   it("show the lead's unread count on the project's row", () => {
     const props = {
       ...sidebarProps(),
@@ -401,7 +437,7 @@ describe("archives in the sidebar", () => {
         />,
       );
       const toggle = container.querySelector(".ws-archive-toggle")!;
-      expect(getComputedStyle(toggle).fontSize).toBe("11px");
+      expect(getComputedStyle(toggle).fontSize).toBe("var(--fs-meta)");
       expect(getComputedStyle(toggle).display).toBe("flex");
       fireEvent.click(container.querySelector(".ws-shelf .ws-archived-header")!);
       const restore = getByTitle("Bring clice2 back among the projects");

@@ -1275,7 +1275,9 @@ export function App() {
                   <button className="mobile-menu-btn" onClick={() => setSidebarOpen(true)}>
                     &#9776;
                   </button>
-                  <span className="panel-title">{headerTitle(activeWs)}</span>
+                  <span className="panel-title" title={headerTitle(activeWs)}>
+                    {headerTitle(activeWs)}
+                  </span>
                   <button
                     className="agents-chip"
                     aria-pressed={openPanel === "agents"}
