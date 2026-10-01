@@ -3823,15 +3823,18 @@ button.action-target:hover {
 }
 .rail-badge {
   position: absolute;
-  top: 2px;
-  right: 1px;
+  top: 1px;
+  right: 2px;
   min-width: 13px;
   padding: 0 3px;
   font-size: 9px;
   font-weight: 600;
   line-height: 13px;
   color: var(--accent);
-  background: var(--accent-soft);
+  /* Solid, ringed in the rail's colour: the icon it sits on does not show
+     through. */
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-secondary));
+  box-shadow: 0 0 0 2px var(--bg-secondary);
   border-radius: 7px;
 }
 .side-panel {
@@ -3978,10 +3981,12 @@ button.action-target:hover {
   flex-direction: column;
 }
 .fp-roots {
-  flex-shrink: 0;
-  /* As wide as the chosen folder, not the longest one listed. */
+  flex: 0 1 auto;
+  min-width: 0;
+  /* As wide as the chosen folder, not the longest one listed; a long one
+     gives way to the path beside it. */
   field-sizing: content;
-  max-width: 45%;
+  text-overflow: ellipsis;
   min-height: 26px;
   padding: 0 4px;
   font: inherit;
@@ -4070,6 +4075,11 @@ button.action-target:hover {
   line-height: 18px;
 }
 .code-gutter {
+  /* The numbers stay put over sideways scrolling, as the diff's do. */
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-tertiary);
   flex-shrink: 0;
   padding: 0 10px 0 12px;
   text-align: right;
@@ -4091,6 +4101,7 @@ button.action-target:hover {
 }
 .code-mark {
   position: absolute;
+  z-index: 2;
   left: 0;
   right: 0;
   margin-top: 8px;
@@ -4257,6 +4268,10 @@ button.action-target:hover {
 .diff-del .diff-gutter {
   background: color-mix(in srgb, var(--error) 12%, var(--bg-tertiary));
 }
+.diff-hunk .diff-gutter,
+.diff-note .diff-gutter {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-tertiary));
+}
 .diff-del {
   background: rgba(224, 108, 117, 0.12);
 }
@@ -4392,6 +4407,10 @@ button.action-target:hover {
   min-width: 0;
 }
 .ap-agent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
 }
 .ap-model {
@@ -4672,5 +4691,30 @@ button.action-target:hover {
   }
   .dir-entry {
     padding: 11px 16px;
+  }
+  .ap-model {
+    min-height: 32px;
+  }
+  /* Clear of the home indicator. */
+  .side-panel-body {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+  .side-panel-body.flush {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  /* A background task's description takes a line of its own. */
+  .tp-agent {
+    margin-left: 0;
+  }
+  .tp-task {
+    flex-wrap: wrap;
+    padding-left: 0;
+  }
+  .tp-type {
+    margin-right: auto;
+  }
+  .tp-desc {
+    order: 5;
+    flex-basis: 100%;
   }
 }

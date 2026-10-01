@@ -68,13 +68,15 @@ export function SidePanel({
     Math.min(viewport * 0.7, viewport - inset - RAIL_WIDTH - MIN_CHAT_WIDTH),
   );
   const shown = Math.round(Math.min(width ?? autoPanelWidth(kind, viewport), maxWidth));
+  // Pinned beside a chat that would keep less than its room, it floats over it.
+  const docked = pinned && viewport - inset - RAIL_WIDTH - MIN_CHAT_WIDTH >= PANEL_MIN_WIDTH;
   // Focus moves in, so Escape closes the panel just opened.
   useEffect(() => self.current?.focus({ preventScroll: true }), []);
   return (
     <aside
       ref={self}
       tabIndex={-1}
-      className={`side-panel ${pinned ? "docked" : "floating"}${maximized ? " maximized" : ""}`}
+      className={`side-panel ${docked ? "docked" : "floating"}${maximized ? " maximized" : ""}`}
       style={maximized ? { left: inset } : { width: shown }}
       aria-label={title}
       onKeyDown={(e) => {

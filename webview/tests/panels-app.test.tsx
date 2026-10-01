@@ -143,6 +143,19 @@ describe("docked or floating", () => {
     expect(panel().className).toContain("floating");
     expect(localStorage.getItem("panelDock")).toBe("0");
   });
+
+  it("floats a pinned panel over a chat too narrow to keep its room, and docks it again", () => {
+    vi.stubGlobal("innerWidth", 1440);
+    boot("lead");
+    rail("Files");
+    expect(panel().className).toContain("docked");
+    // 800 - 260 (sidebar) - 44 (rail) leaves less than 300 + 360.
+    resize(800);
+    expect(panel().className).toContain("floating");
+    expect(document.querySelector(".side-panel-pin")!.getAttribute("aria-pressed")).toBe("true");
+    resize(1440);
+    expect(panel().className).toContain("docked");
+  });
 });
 
 describe("a maximised panel", () => {

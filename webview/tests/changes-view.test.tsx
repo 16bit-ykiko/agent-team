@@ -156,6 +156,25 @@ describe("the Files panel's icons and changes", () => {
     await waitFor(() => expect(container.querySelector(".dir-view:not(.changes)")).not.toBeNull());
   });
 
+  it("counts only what there is: no −0 in the head when nothing was removed", async () => {
+    changes.files = changes.files.filter((f) => f.removed === 0);
+    try {
+      const { container, getByTitle } = panel();
+      await waitFor(() => expect(container.querySelector(".dir-view")).not.toBeNull());
+      fireEvent.click(getByTitle("Changes against the base branch"));
+      await waitFor(() => expect(container.querySelector(".changes")).not.toBeNull());
+      expect(container.querySelector(".changes-head")!.textContent).toBe(
+        "against origin/main · 1 file · +2 ",
+      );
+    } finally {
+      changes.files = [
+        { path: "src/lexer.cpp", status: "modified", added: 3, removed: 1 },
+        { path: "docs/new.md", status: "untracked", added: 2, removed: 0 },
+        { path: "old.png", status: "deleted", added: null, removed: null },
+      ];
+    }
+  });
+
   it("never wraps a line of code or of a diff: it scrolls sideways", async () => {
     const sheet = document.createElement("style");
     sheet.textContent = css;

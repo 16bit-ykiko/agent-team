@@ -112,6 +112,15 @@ describe("the lists' type", () => {
     expect(hidden.body).toMatch(/display:\s*none/);
   });
 
+  it("keeps a file's line numbers in view, long agent names cut, and a phone panel's end in reach", () => {
+    const rule = (sel: string, media: string | null = null) =>
+      all.find((r) => r.selectors.includes(sel) && r.media === media)!;
+    expect(rule(".code-gutter").body).toMatch(/position:\s*sticky/);
+    expect(rule(".ap-agent-name").body).toMatch(/text-overflow:\s*ellipsis/);
+    expect(rule(".side-panel-body", PHONE).body).toMatch(/safe-area-inset-bottom/);
+    expect(rule(".tp-desc", PHONE).body).toMatch(/flex-basis:\s*100%/);
+  });
+
   it("fits a dialog in a narrow phone", () => {
     const dialog = all.find((r) => r.selectors.includes(".dialog") && !r.media)!;
     expect(dialog.body).toMatch(/min-width:\s*min\(360px, calc\(100vw - 24px\)\)/);

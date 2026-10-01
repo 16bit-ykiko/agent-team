@@ -96,8 +96,8 @@ export function ChangesList({
         {n > 0 && (
           <>
             {" · "}
-            <span className="diff-plus">+{added}</span>{" "}
-            <span className="diff-minus">−{removed}</span>
+            {added > 0 && <span className="diff-plus">+{added}</span>}{" "}
+            {removed > 0 && <span className="diff-minus">−{removed}</span>}
           </>
         )}
       </div>
