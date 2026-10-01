@@ -136,7 +136,7 @@ const HISTORY: Message[] = [
 
 // A project "demo" with its lead, one archived worker with history, one live
 // worker, and a workspace still linked to a project that no longer exists.
-function seed(opts: { leadArchived?: boolean } = {}) {
+function seed(opts: { leadArchived?: boolean; livePaused?: boolean } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-server-projects-"));
   const root = path.join(base, "repo");
   const web = path.join(base, "web");
@@ -197,7 +197,12 @@ function seed(opts: { leadArchived?: boolean } = {}) {
       project: "repo",
       hostId: "local",
       cwd: root,
-      agents: [agent("a-live", "Live", root)],
+      agents: [
+        {
+          ...agent("a-live", "Live", root),
+          ...(opts.livePaused && { pausedUntil: Date.now() - 1000, lastPrompt: "carry on" }),
+        },
+      ],
       createdAt: now,
       messages: [],
       projectLink: { projectId: "proj-1", role: "worker" },
@@ -330,6 +335,41 @@ describe("server restart with projects", () => {
       idle.mockRestore();
       log.mockRestore();
     }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("saves a worker's turn a shutdown cut off as cut by the restart, and what drove it", async () => {
+    const { base, web } = seed();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, stop } = await start(base, web);
+    try {
+      send({ type: "send_message", workspaceId: "ws-lead", content: "hello" });
+      await until(() => launches.length === 1, "lead query");
+      const tools = Object.fromEntries(launches[0].panel!.tools.map((t) => [t.name, t]));
+      await tools.message_session.handler({ session_id: "ws-live", message: "build it" });
+      await until(() => launches.length === 2, "worker query");
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    const saved = readState(base, "ws-live");
+    const asked = saved.messages!.find((m) => m.content === "build it")!;
+    expect(saved.agents[0].delivered).toMatchObject({ id: asked.id, stopped: "restart" });
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("retries a turn a rate limit paused before the restart", async () => {
+    const { base, web, root } = seed({ livePaused: true });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { stop } = await start(base, web);
+    try {
+      await until(() => launches.length === 1, "the retry");
+      expect(launches[0].cwd).toBe(root);
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    expect(readState(base, "ws-live").agents[0].pausedUntil).toBeUndefined();
     fs.rmSync(base, { recursive: true, force: true });
   });
 

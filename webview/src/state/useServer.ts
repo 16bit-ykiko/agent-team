@@ -133,7 +133,7 @@ export interface ProjectLink {
 export interface MessageOrigin {
   workspaceId: string;
   name: string;
-  role: "lead" | "worker" | "peer";
+  role: "lead" | "worker" | "peer" | "panel";
   projectId?: string;
 }
 

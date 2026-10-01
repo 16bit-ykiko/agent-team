@@ -126,10 +126,18 @@ export function setupProjects() {
     session(w).isRunning = false;
     session(w).emit("event", { kind: "result", content: "" });
   };
+  // A workspace as a restart brings it back from its saved state.
+  const restart = (w: Workspace) => {
+    const back = Workspace.fromState(w.getState(), registry, cb);
+    w.dispose();
+    workspaces.set(w.id, back);
+    return back;
+  };
   return {
     base,
     root,
     registry,
+    restart,
     host,
     store,
     saveAll,

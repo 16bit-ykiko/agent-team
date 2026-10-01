@@ -94,9 +94,6 @@ export class ProjectManager {
   private peerLog = new Map<string, number[]>();
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private boards = new Map<string, ObjectiveStore>();
-  // Lead messages a worker reported on, the lead stopped, or the lead was
-  // told went unreported.
-  private answered = new Set<string>();
   private settling = new Map<string, ReturnType<typeof setTimeout>>();
   private closed = false;
 
@@ -337,13 +334,30 @@ export class ProjectManager {
   // A worker's turn ended or its agent went idle: the check waits until it
   // has stayed so for SETTLE_MS.
   workerIdle(w: Workspace): void {
-    if (w.projectLink?.role !== "worker") return;
+    if (w.projectLink?.role === "worker") this.settleAfter(w, SETTLE_MS);
+  }
+
+  // After a restart: workers that still owe their lead a word (a turn the
+  // restart cut off, a notice that was still waiting) are checked again,
+  // spaced out like starts so the leads do not all wake at once.
+  recheckWorkers(): void {
+    let delay = SETTLE_MS;
+    for (const w of this.host.workspaces()) {
+      if (w.projectLink?.role !== "worker" || w.isArchived) continue;
+      const owed = w.lastDelivered().some((d) => d.input.from?.role === "lead" && !d.answered);
+      if (!owed) continue;
+      this.settleAfter(w, delay);
+      delay += START_SPACING_MS;
+    }
+  }
+
+  private settleAfter(w: Workspace, ms: number): void {
     const pending = this.settling.get(w.id);
     if (pending) {
       clearTimeout(pending);
       this.timers.delete(pending);
     }
-    const t = this.later(SETTLE_MS, () => {
+    const t = this.later(ms, () => {
       this.settling.delete(w.id);
       this.tellIfSilent(w.id);
     });
@@ -361,8 +375,8 @@ export class ProjectManager {
     const project = this.store.get(link.projectId);
     const lead = this.leadOf(link.projectId);
     if (!project || project.archivedAt || !lead || lead.isArchived) return;
-    for (const { input, replies, stopped, since } of w.lastDelivered()) {
-      if (input.from?.role !== "lead" || this.answered.has(input.id)) continue;
+    for (const { input, replies, stopped, answered, since } of w.lastDelivered()) {
+      if (input.from?.role !== "lead" || answered) continue;
       const last = replies[replies.length - 1];
       const error = last?.events?.filter((e) => e.kind === "error").pop();
       const text = replies
@@ -374,11 +388,14 @@ export class ProjectManager {
         )
         .filter(Boolean)
         .pop();
-      const how = stopped
-        ? "the user stopped it"
-        : last?.status === "error"
-          ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
-          : "its turn ended";
+      const how =
+        stopped === "restart"
+          ? "a server restart cut it off"
+          : stopped === "user"
+            ? "the user stopped it"
+            : last?.status === "error"
+              ? `its turn failed: ${oneLine(error?.content ?? "", 500)}`
+              : "its turn ended";
       const body = [
         `No report on your message "${oneLine(input.content, 80)}" (${how}).`,
         text ? `Its last reply:\n\n${text.length > 1500 ? `…${text.slice(-1500)}` : text}` : "",
@@ -389,17 +406,19 @@ export class ProjectManager {
       this.deliver(
         lead,
         body,
-        { workspaceId: w.id, name: w.name, role: "worker" },
+        { workspaceId: w.id, name: w.name, role: "panel" },
         `[From the panel, about session "${w.name}" (${w.id}). Act on it if there is something to do; no reply to the session is needed.]\n\n${body}`,
       );
-      this.answered.add(input.id);
+      w.markAnswered(input.id);
+      this.host.persistWorkspace(w);
     }
   }
 
   private markAnswered(w: Workspace): void {
     for (const { input } of w.lastDelivered()) {
-      if (input.from?.role === "lead") this.answered.add(input.id);
+      if (input.from?.role === "lead") w.markAnswered(input.id);
     }
+    this.host.persistWorkspace(w);
   }
 
   // What the lead said that has not run yet (a task still waiting for its

@@ -974,16 +974,26 @@ systemctl --user restart agent-team-server
       const tools = this.projects.toolsFor(workspace);
       if (tools) for (const a of workspace.agents.values()) a.session.setPanelTools?.(tools);
     }
-    // Messages still queued when the server went down; spaced out so a
-    // restart does not start many CLI sessions at once.
+    // Messages still queued when the server went down, and retries of turns
+    // a rate limit paused; spaced out so a restart does not start many CLI
+    // sessions at once.
     let delay = 1000;
     for (const workspace of this.workspaces.values()) {
       if (workspace.isArchived) continue;
-      for (const agentId of workspace.agents.keys()) {
-        if (!workspace.messages.some((m) => m.status === "queued" && m.queuedFor === agentId)) {
+      for (const [agentId, entry] of workspace.agents) {
+        if (entry.pausedUntil) {
+          this.scheduleRetry(
+            workspace.id,
+            agentId,
+            Math.max(entry.pausedUntil - Date.now(), delay),
+          );
+        } else if (
+          workspace.messages.some((m) => m.status === "queued" && m.queuedFor === agentId)
+        ) {
+          setTimeout(() => workspace.dequeueNext(agentId), delay);
+        } else {
           continue;
         }
-        setTimeout(() => workspace.dequeueNext(agentId), delay);
         delay += 5000;
       }
     }
@@ -993,6 +1003,7 @@ systemctl --user restart agent-team-server
     } catch (e) {
       console.error("[projects] workspaces from before projects stay on their own", e);
     }
+    this.projects.recheckWorkers();
     const archived = [...this.workspaces.values()].filter((w) => w.isArchived).length;
     console.log(`Restored ${this.workspaces.size} workspace(s), ${archived} archived`);
   }
@@ -1128,6 +1139,20 @@ systemctl --user restart agent-team-server
   //    account to another credential and retry immediately — agents pinned to
   //    an explicit account are left alone (switching under them would be
   //    surprising), they just get the error message.
+  // The pause is saved with the agent, so a restart schedules the retry again.
+  private scheduleRetry(wsId: string, agentId: string, delay: number): void {
+    const key = `${wsId}:${agentId}`;
+    clearTimeout(this.retryTimers.get(key));
+    this.retryTimers.set(
+      key,
+      setTimeout(() => {
+        this.retryTimers.delete(key);
+        const w = this.workspaces.get(wsId);
+        if (w && !w.retryLast(agentId)) w.dequeueNext(agentId);
+      }, delay),
+    );
+  }
+
   private handleRateLimit(
     wsId: string,
     agentId: string,
@@ -1146,16 +1171,8 @@ systemctl --user restart agent-team-server
       ws.pauseAgent(agentId, Date.now() + delay);
       const at = new Date(Date.now() + delay).toLocaleTimeString();
       ws.postSystemMessage(`⏳ **${agentName}** hit the 5-hour limit — auto-retrying at ${at}.`);
-      const key = `${wsId}:${agentId}`;
-      clearTimeout(this.retryTimers.get(key));
-      this.retryTimers.set(
-        key,
-        setTimeout(() => {
-          this.retryTimers.delete(key);
-          const w = this.workspaces.get(wsId);
-          if (w && !w.retryLast(agentId)) w.dequeueNext(agentId);
-        }, delay),
-      );
+      this.persistWorkspace(wsId);
+      this.scheduleRetry(wsId, agentId, delay);
       return;
     }
 
@@ -1273,7 +1290,7 @@ systemctl --user restart agent-team-server
     // Turns cut short are saved as such.
     for (const ws of this.workspaces.values()) {
       try {
-        ws.abortAll();
+        ws.abortAll("restart");
       } catch (e) {
         console.error(`[close] ${ws.id}:`, e);
       }

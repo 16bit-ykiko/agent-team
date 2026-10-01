@@ -194,6 +194,20 @@ describe("messages from the project", () => {
     );
     expect(getByText("modules").className).toContain("from-author");
   });
+
+  it("name the panel's word about a worker apart from the worker, and open the worker", () => {
+    const onOpen = vi.fn();
+    const { getByText, container } = render(
+      <MessageItem
+        msg={msg({ workspaceId: "w1", name: "modules", role: "panel" })}
+        agents={[]}
+        onOpenWorkspace={onOpen}
+      />,
+    );
+    expect(container.querySelector(".avatar-from")!.textContent).toBe("▣");
+    fireEvent.click(getByText("Panel · modules"));
+    expect(onOpen).toHaveBeenCalledWith("w1");
+  });
 });
 
 describe("panel tools in the steps", () => {

@@ -95,6 +95,11 @@ export interface AgentRuntimeInfo extends AgentInfo {
 
 export interface AgentState extends AgentInfo {
   session: SessionState;
+  // AgentEntry.delivered, and whether the agent got another message since.
+  delivered?: TurnInput & { since?: boolean };
+  // A rate-limit pause, with the prompt its retry sends.
+  pausedUntil?: number;
+  lastPrompt?: string;
 }
 
 // A workspace in a project: its lead agent's, or a worker session the lead
@@ -107,11 +112,12 @@ export interface ProjectLink {
 }
 
 // Who sent a message the user did not type: the project's lead, one of its
-// worker sessions, or another project's lead.
+// worker sessions, another project's lead, or the panel about a worker (its
+// workspace and name).
 export interface MessageOrigin {
   workspaceId: string;
   name: string;
-  role: "lead" | "worker" | "peer";
+  role: "lead" | "worker" | "peer" | "panel";
   // The sender's project, for a peer.
   projectId?: string;
 }
@@ -119,6 +125,7 @@ export interface MessageOrigin {
 // How the panel names a message's sender (the client's label matches).
 export function originLabel(from: MessageOrigin): string {
   if (from.role === "lead") return "Lead";
+  if (from.role === "panel") return `Panel · ${from.name}`;
   return from.role === "peer" ? `${from.name} · lead` : from.name;
 }
 
@@ -173,19 +180,19 @@ export interface AgentEntry {
   // Context at the end of the last turn; undefined until looked up.
   lastContext?: ContextUsage | null;
   // The message the agent got last, and the last one from another session
-  // (the same record while nothing came after it). In memory only: a
-  // restart forgets them.
+  // (the same record while nothing came after it).
   input?: TurnInput;
   delivered?: TurnInput;
 }
 
 // A message an agent got and the turns it drove: their replies (a wake-up's
-// included, not a local command's) and whether the latest was stopped.
-interface TurnInput {
+// included, not a local command's), what cut the latest short, and whether
+// its sender has heard what came of it.
+export interface TurnInput {
   id: string;
-  from?: MessageOrigin;
   replies: string[];
-  stopped: boolean;
+  stopped?: "user" | "restart";
+  answered?: boolean;
 }
 
 export interface WorkspaceCallbacks {
@@ -365,7 +372,8 @@ export class Workspace {
     agentId: string;
     input: Message;
     replies: Message[];
-    stopped: boolean;
+    stopped?: "user" | "restart";
+    answered: boolean;
     since: boolean;
   }> {
     const out = [];
@@ -374,9 +382,23 @@ export class Workspace {
       const input = d && this.messages.find((m) => m.id === d.id);
       if (!input) continue;
       const replies = this.messages.filter((m) => d.replies.includes(m.id));
-      out.push({ agentId, input, replies, stopped: d.stopped, since: a.input !== d });
+      out.push({
+        agentId,
+        input,
+        replies,
+        stopped: d.stopped,
+        answered: !!d.answered,
+        since: a.input !== d,
+      });
     }
     return out;
+  }
+
+  // Its sender has heard what came of a delivered message.
+  markAnswered(messageId: string): void {
+    for (const a of this.agents.values()) {
+      if (a.delivered?.id === messageId) a.delivered.answered = true;
+    }
   }
 
   takeChanged(): Set<string> {
@@ -620,7 +642,7 @@ export class Workspace {
           // visible event is a failure (CLI crash, network drop, spawn
           // problem) — render a diagnostic instead of a silent empty bubble.
           if (event.interrupted) {
-            if (entry.input) entry.input.stopped = true;
+            if (entry.input) entry.input.stopped = "user";
             entry.currentMsg.content = withInterrupted(entry.currentMsg.content);
           } else if (!entry.currentMsg.content.trim() && !(entry.currentMsg.events ?? []).length) {
             entry.currentMsg.content =
@@ -744,7 +766,7 @@ export class Workspace {
     session.on("runState", (state: RunState) => {
       const entry = this.agents.get(agentId);
       if (entry) entry.runState = state;
-      if (state === "working" && entry?.input) entry.input.stopped = false;
+      if (state === "working" && entry?.input) delete entry.input.stopped;
       this.cb?.onAgentState?.(this.id, agentId, state);
       // The pending wake-up (and its time) comes and goes with the state.
       if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
@@ -1129,7 +1151,7 @@ export class Workspace {
   private async dispatchPrompt(agent: AgentEntry, prompt: string, input?: Message): Promise<void> {
     agent.lastPrompt = prompt;
     if (input) {
-      agent.input = { id: input.id, from: input.from, replies: [], stopped: false };
+      agent.input = { id: input.id, replies: [] };
       if (input.from) agent.delivered = agent.input;
     }
     this.cb?.onAgentBusy?.(this.id, agent.info.id);
@@ -1247,11 +1269,11 @@ export class Workspace {
     this.finalizeAbort(entry, busy);
   }
 
-  abortAll(): void {
+  abortAll(by: "user" | "restart" = "user"): void {
     for (const entry of this.agents.values()) {
       const busy = this.hasWork(entry);
       entry.session.abort();
-      this.finalizeAbort(entry, busy);
+      this.finalizeAbort(entry, busy, by);
     }
   }
 
@@ -1286,13 +1308,13 @@ export class Workspace {
     if (!entry?.session.cancelWake) return "No wake-up to cancel";
     const refused = entry.session.cancelWake();
     if (refused) return refused;
-    if (entry.input) entry.input.stopped = true;
+    if (entry.input) entry.input.stopped = "user";
     this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
     return null;
   }
 
-  private finalizeAbort(entry: AgentEntry, busy: boolean): void {
-    if (busy && entry.input) entry.input.stopped = true;
+  private finalizeAbort(entry: AgentEntry, busy: boolean, by: "user" | "restart" = "user"): void {
+    if (busy && entry.input) entry.input.stopped = by;
     if (entry.currentMsg && entry.currentMsg.status === "streaming") {
       entry.currentMsg.content = withInterrupted(entry.currentMsg.content);
       entry.currentMsg.status = "done";
@@ -1307,7 +1329,7 @@ export class Workspace {
     const entry = this.agents.get(agentId);
     if (!entry) return false;
     if (entry.session.isRunning) return false;
-    if (this.hasWork(entry) && entry.input) entry.input.stopped = true;
+    if (this.hasWork(entry) && entry.input) entry.input.stopped = "user";
     entry.session.abort();
     entry.session.sessionId = null;
     entry.lastContext = null;
@@ -1393,6 +1415,10 @@ export class Workspace {
         return {
           ...a.info,
           session: { ...session, config: { ...session.config, providerEnv: undefined } },
+          ...(a.delivered && {
+            delivered: { ...a.delivered, ...(a.input !== a.delivered && { since: true }) },
+          }),
+          ...(a.pausedUntil && { pausedUntil: a.pausedUntil, lastPrompt: a.lastPrompt }),
         };
       }),
       ...(this.messagesLoaded && { messages: this.messages }),
@@ -1424,6 +1450,7 @@ export class Workspace {
     // No messages: the history could not be read, and a save must not
     // write an empty one over it.
     ws.messagesLoaded = state.messages !== undefined;
+    const cut = new Set<string>();
     ws.messages = (state.messages ?? []).map((m) => {
       const msg = {
         ...m,
@@ -1434,6 +1461,7 @@ export class Workspace {
       if (m.status === "streaming") {
         msg.content = m.content ? `${m.content}\n\n*\\[interrupted\\]*` : "*\\[interrupted\\]*";
         ws.changed.add(m.id);
+        cut.add(m.id);
       }
       if (msg.events) normalizeEvents(msg.events);
       return msg;
@@ -1467,7 +1495,16 @@ export class Workspace {
         session,
         handler,
         currentMsg: null,
+        pausedUntil: agentState.pausedUntil,
+        lastPrompt: agentState.lastPrompt,
       });
+      if (agentState.delivered) {
+        const { since, ...delivered } = agentState.delivered;
+        if (cut.has(delivered.replies[delivered.replies.length - 1])) delivered.stopped = "restart";
+        const entry = ws.agents.get(agentState.id)!;
+        entry.delivered = delivered;
+        if (!since) entry.input = delivered;
+      }
     }
 
     return ws;

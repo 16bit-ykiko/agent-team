@@ -40,8 +40,16 @@ function renderMentionContent(content: string, agents: AgentInfo[]) {
 
 // The sender of a message another session delivered (the server names it
 // the same way in quotes and forwards).
+const ORIGIN_GLYPH: Record<MessageOrigin["role"], string> = {
+  lead: "◆",
+  peer: "◆",
+  worker: "◇",
+  panel: "▣",
+};
+
 export function originLabel(from: MessageOrigin): string {
   if (from.role === "lead") return "Lead";
+  if (from.role === "panel") return `Panel · ${from.name}`;
   return from.role === "peer" ? `${from.name} · lead` : from.name;
 }
 
@@ -996,7 +1004,7 @@ export const MessageItem = memo(function MessageItem({
       >
         <div className="message-gutter">
           {compact ? null : from ? (
-            <div className="avatar-user avatar-from">{from.role === "worker" ? "◇" : "◆"}</div>
+            <div className="avatar-user avatar-from">{ORIGIN_GLYPH[from.role]}</div>
           ) : isUser ? (
             <div className="avatar-user">
               <img

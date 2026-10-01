@@ -702,11 +702,12 @@ describe("a worker that goes idle without reporting", () => {
     const { lead, project } = h.create("a");
     await h.call(lead, "start_session", { title: "w", cwd: "wt", task: "do it" });
     const w = h.workers()[0];
-    const say = (text: string) => h.session(w).emit("event", { kind: "text_delta", content: text });
+    const say = (text: string, to = w) =>
+      h.session(to).emit("event", { kind: "text_delta", content: text });
     const told = () =>
       lead
         .getMessages()
-        .filter((m) => m.from?.role === "worker")
+        .filter((m) => m.from?.workspaceId === w.id)
         .map((m) => m.content);
     const settle = () => vi.advanceTimersByTimeAsync(SETTLE_MS);
     const ask = (message: string) => h.call(lead, "message_session", { session_id: w.id, message });
@@ -1001,15 +1002,73 @@ describe("a worker that goes idle without reporting", () => {
     }
   });
 
-  it("knows nothing of what drove a turn before a restart", async () => {
+  it("comes from the panel, about the worker", async () => {
     vi.useFakeTimers();
     try {
-      const { w, told, settle, endTurn } = await started();
+      const { lead, w, endTurn, settle } = await started();
       endTurn(w);
-      for (const a of w.agents.values()) a.input = a.delivered = undefined;
-      w.abortAll();
       await settle();
-      expect(told()).toEqual([]);
+      expect(lead.getMessages().find((m) => m.from?.workspaceId === w.id)!.from).toEqual({
+        workspaceId: w.id,
+        name: "w",
+        role: "panel",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("tells of a turn a restart cut off, a shutdown or a crash, once", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, told, settle, restart, manager, ask } = await started();
+      say("Halfway through");
+      w.abortAll("restart");
+      let back = restart(w);
+      manager.recheckWorkers();
+      await settle();
+      expect(told()).toEqual([note("a server restart cut it off", "do it", "Halfway through")]);
+      // Told already: a later restart, or a stop of the idle worker, says nothing more.
+      back = restart(back);
+      manager.recheckWorkers();
+      back.abortAll();
+      await settle();
+      expect(told()).toHaveLength(1);
+
+      await ask("go on");
+      say("Almost there", back);
+      // A crash: the turn is still streaming in what was last saved.
+      back = restart(back);
+      manager.recheckWorkers();
+      await settle();
+      expect(told()[1]).toBe(note("a server restart cut it off", "go on", "Almost there"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps across a restart what it owes and what it already reported", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, call, say, told, settle, endTurn, restart, manager, ask } = await started();
+      say("Done.");
+      await call(w, "finish_task", { summary: "merged" });
+      endTurn(w);
+      let back = restart(w);
+      manager.recheckWorkers();
+      await settle();
+      expect(told()).toEqual(["Finished:\n\nmerged"]);
+
+      // A notice still waiting at the restart, the user's turn after it kept.
+      await ask("which commit?");
+      say("abc123", back);
+      endTurn(back);
+      await back.sendMessage("thanks");
+      endTurn(back);
+      back = restart(back);
+      manager.recheckWorkers();
+      await settle();
+      expect(told()[1]).toBe(note("its turn ended", "which commit?", "abc123", true));
     } finally {
       vi.useRealTimers();
     }
