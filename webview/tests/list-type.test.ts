@@ -132,6 +132,15 @@ describe("the lists' type", () => {
     expect(rule(".ap-add", PHONE).body).toMatch(/margin-left:\s*16px/);
   });
 
+  it("keeps Archive project in a short desktop window, and the quota bars in one column", () => {
+    const sideways = all.find(
+      (r) => r.selectors.includes(".bp-archive") && r.media?.includes("max-height: 500px"),
+    )!;
+    expect(sideways.media).toContain("(hover: none)");
+    const grid = all.find((r) => r.selectors.includes(".system-status-grid") && !r.media)!;
+    expect(grid.body).toMatch(/grid-template-columns:\s*fit-content\(45%\)/);
+  });
+
   it("fits a dialog in a narrow phone", () => {
     const dialog = all.find((r) => r.selectors.includes(".dialog") && !r.media)!;
     expect(dialog.body).toMatch(/min-width:\s*min\(360px, calc\(100vw - 24px\)\)/);

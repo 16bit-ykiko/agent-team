@@ -877,9 +877,14 @@ export function App() {
     if (!el || typeof ResizeObserver === "undefined") return;
     let height = el.clientHeight;
     const ro = new ResizeObserver(() => {
+      // At the end in the old box (content that grew meanwhile, a box the
+      // reader opened, says not); a pixel short is settleScroller's nudge.
+      const wasAtEnd = el.scrollHeight - el.scrollTop - height <= 8;
       const shrank = el.clientHeight < height;
       height = el.clientHeight;
-      if (shrank && stuckToBottomRef.current) el.scrollTop = el.scrollHeight;
+      if (shrank && wasAtEnd && el.scrollHeight - el.scrollTop - el.clientHeight > 1) {
+        el.scrollTop = el.scrollHeight;
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();

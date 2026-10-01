@@ -144,17 +144,23 @@ describe("docked or floating", () => {
     expect(localStorage.getItem("panelDock")).toBe("0");
   });
 
-  it("floats a pinned panel over a chat too narrow to keep its room, and docks it again", () => {
+  it("floats a pinned panel over a chat too narrow to use, and docks it again", () => {
     vi.stubGlobal("innerWidth", 1440);
     boot("lead");
     rail("Files");
     expect(panel().className).toContain("docked");
-    // 800 - 260 (sidebar) - 44 (rail) leaves less than 300 + 360.
+    // 900 - 260 (sidebar) - 44 (rail) - 300 (the panel) leaves the chat 296px:
+    // narrow, but Send is in view.
+    resize(900);
+    expect(panel().className).toContain("docked");
+    // 800 leaves it 196px: the panel floats, and cannot be pinned there.
     resize(800);
     expect(panel().className).toContain("floating");
-    expect(document.querySelector(".side-panel-pin")!.getAttribute("aria-pressed")).toBe("true");
+    const pin = document.querySelector(".side-panel-pin") as HTMLButtonElement;
+    expect([pin.disabled, pin.getAttribute("aria-pressed")]).toEqual([true, "false"]);
     resize(1440);
     expect(panel().className).toContain("docked");
+    expect(localStorage.getItem("panelDock")).toBeNull();
   });
 });
 
@@ -251,11 +257,51 @@ describe("the composer on a phone", () => {
     height = 500;
     resized();
     expect(top).toBe(2000);
+    // A pixel short is the keyboard's settle nudge: left alone.
+    top = 1499;
+    height = 501;
+    resized();
+    height = 500;
+    resized();
+    expect(top).toBe(1499);
     // Read back up, the reader stays where they are.
     top = 200;
     fireEvent.scroll(el);
     height = 400;
     resized();
     expect(top).toBe(200);
+  });
+
+  it("leaves the reader where they are when a box they opened at the end grew first", () => {
+    const observers = new Map<Element, () => void>();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private cb: () => void) {}
+        observe(el: Element) {
+          observers.set(el, this.cb);
+        }
+        disconnect() {}
+      },
+    );
+    boot("lead");
+    const el = document.querySelector(".messages") as HTMLElement;
+    let height = 600;
+    let scrollHeight = 2000;
+    let top = 1400;
+    Object.defineProperty(el, "clientHeight", { get: () => height, configurable: true });
+    Object.defineProperty(el, "scrollHeight", { get: () => scrollHeight, configurable: true });
+    Object.defineProperty(el, "scrollTop", {
+      get: () => top,
+      set: (v: number) => (top = v),
+      configurable: true,
+    });
+    observers.get(el)!();
+    // The last box opens: the transcript grows below, no scroll happens.
+    scrollHeight = 2600;
+    // A long draft then takes room: the reader stays on the box.
+    height = 480;
+    observers.get(el)!();
+    expect(top).toBe(1400);
   });
 });

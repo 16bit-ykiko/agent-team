@@ -180,6 +180,10 @@ describe("project groups", () => {
         "none",
       ]);
       expect(getComputedStyle(hover.querySelector(".task-delete")!).display).not.toBe("none");
+      // An archived row's overlay brings its own time over the inline one.
+      expect(css).toMatch(
+        /\.task-item-archived:hover \.task-name \.task-time \{\s*visibility: hidden;/,
+      );
     } finally {
       sheet.remove();
     }

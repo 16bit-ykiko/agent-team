@@ -204,7 +204,10 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
         </div>
         {folder && <div className="task-meta">{folder}</div>}
       </div>
-      <span className="task-hover">{deleteButton(ws)}</span>
+      <span className="task-hover">
+        <span className="task-time">{formatRelative(ws.lastMessageAt ?? ws.createdAt, now)}</span>
+        {deleteButton(ws)}
+      </span>
     </div>
   );
 

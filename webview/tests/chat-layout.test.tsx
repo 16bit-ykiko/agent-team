@@ -121,6 +121,10 @@ describe("the transcript's rules", () => {
 
   it("let a long tool name or subagent type give way to the buttons beside it", () => {
     expect(rule(".event-chip").body).toMatch(/flex-shrink:\s*1/);
+    // The summary goes first: a short chip (Read, Edit) keeps its name.
+    expect(rule(".event-summary").body).toMatch(/flex-shrink:\s*100/);
+    // On touch there is no tooltip to read a cut summary by.
+    expect(rule(".event-summary", "@media (hover: none)").body).toMatch(/white-space:\s*normal/);
     expect(rule(".subagent-label").body).toMatch(/text-overflow:\s*ellipsis/);
     expect(rule(".subagent-label").body).not.toMatch(/flex-shrink:\s*0/);
   });

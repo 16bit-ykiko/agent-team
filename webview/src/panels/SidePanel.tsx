@@ -5,6 +5,8 @@ export const PANEL_MIN_WIDTH = 300;
 // The chat beside (or under) a panel keeps at least this much.
 const MIN_CHAT_WIDTH = 360;
 const RAIL_WIDTH = 44;
+// Less than this beside a pinned panel, and the composer's Send is covered.
+const MIN_DOCKED_CHAT = 280;
 
 function useViewportWidth(): number {
   const [width, setWidth] = useState(window.innerWidth);
@@ -68,8 +70,9 @@ export function SidePanel({
     Math.min(viewport * 0.7, viewport - inset - RAIL_WIDTH - MIN_CHAT_WIDTH),
   );
   const shown = Math.round(Math.min(width ?? autoPanelWidth(kind, viewport), maxWidth));
-  // Pinned beside a chat that would keep less than its room, it floats over it.
-  const docked = pinned && viewport - inset - RAIL_WIDTH - MIN_CHAT_WIDTH >= PANEL_MIN_WIDTH;
+  // Pinned beside a chat that would be left too narrow to use, it floats.
+  const canDock = viewport - inset - RAIL_WIDTH - PANEL_MIN_WIDTH >= MIN_DOCKED_CHAT;
+  const docked = pinned && canDock;
   // Focus moves in, so Escape closes the panel just opened.
   useEffect(() => self.current?.focus({ preventScroll: true }), []);
   return (
@@ -117,8 +120,9 @@ export function SidePanel({
         {!maximized && (
           <button
             className="side-panel-btn side-panel-pin"
-            aria-pressed={pinned}
-            title="Pin beside the chat"
+            aria-pressed={docked}
+            disabled={!canDock}
+            title={canDock ? "Pin beside the chat" : "Too narrow to pin beside the chat"}
             onClick={onPin}
           >
             <Icon name="pin" />

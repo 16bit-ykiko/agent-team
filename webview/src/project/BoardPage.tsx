@@ -572,6 +572,12 @@ function ObjectiveDetail({
   onOpenSession: (workspaceId: string) => void;
   onAskLead: ((objectiveId: string) => void) | null;
 }) {
+  const self = useRef<HTMLElement>(null);
+  // Opened from one of its own links, the details replace the button that
+  // had focus: the keyboard goes on from the new details, not the page.
+  useEffect(() => {
+    if (document.activeElement === document.body) self.current?.focus({ preventScroll: true });
+  }, []);
   const byId = new Map(all.map((x) => [x.id, x]));
   const { done, total } = progress(o);
   const open = o.decisions.filter((d) => !d.outcome);
@@ -614,7 +620,7 @@ function ObjectiveDetail({
   };
 
   return (
-    <aside className="bp-detail" aria-label={o.title}>
+    <aside ref={self} tabIndex={-1} className="bp-detail" aria-label={o.title}>
       <div className="bp-detail-head">
         <button className="bp-back" aria-label="Back" onClick={onClose}>
           ‹

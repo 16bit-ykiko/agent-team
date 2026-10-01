@@ -537,6 +537,10 @@ button {
   opacity: 1;
   pointer-events: auto;
 }
+/* An archived row shows its time; hovered, the overlay's takes its place. */
+.task-item-archived:hover .task-name .task-time {
+  visibility: hidden;
+}
 @media (hover: none) {
   .task-item.active .task-hover {
     opacity: 1;
@@ -1361,6 +1365,11 @@ span.katex-display {
   .btn-quote {
     opacity: 0.6;
   }
+  /* No tooltip to read a cut summary by: it wraps. */
+  .event-summary {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 .btn-quote:hover {
   color: var(--accent);
@@ -1485,6 +1494,8 @@ span.katex-display {
   border-color: transparent;
 }
 .event-summary {
+  /* Gives way before the chip: a long MCP name shrinks only once it is gone. */
+  flex-shrink: 100;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2500,9 +2511,13 @@ button.action-target:hover {
   padding: 8px 14px 10px;
 }
 .system-status-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
+  /* One column for the labels, as wide as the widest: the bars line up. */
+  display: grid;
+  grid-template-columns: fit-content(45%) minmax(0, 1fr);
+  gap: 5px 8px;
+}
+.system-status-grid .status-item {
+  display: contents;
 }
 .status-item {
   display: flex;
@@ -2515,8 +2530,6 @@ button.action-target:hover {
   color: var(--text-muted);
   text-transform: uppercase;
   min-width: 52px;
-  max-width: 45%;
-  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3811,8 +3824,9 @@ button.action-target:hover {
   }
 }
 
-/* A phone on its side: the header and filters keep to two short rows. */
-@media (max-height: 500px) and (min-width: 600px) {
+/* A phone on its side: the header and filters keep to two short rows. A
+   short desktop window keeps Archive project, the only place it is. */
+@media (max-height: 500px) and (min-width: 600px) and (hover: none) {
   .bp-search {
     order: 0;
     flex: 1;

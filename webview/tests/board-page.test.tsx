@@ -206,10 +206,17 @@ describe("BoardPage", () => {
     expect(container.querySelector(".bp-detail .message-content.bp-md strong")!.textContent).toBe(
       "index",
     );
-    fireEvent.click(within(first as HTMLElement).getByText("Rename across the project"));
+    // A click focuses the link, as a browser does.
+    const link = within(first as HTMLElement)
+      .getByText("Rename across the project")
+      .closest("button")!;
+    link.focus();
+    fireEvent.click(link);
     const next = container.querySelector(".bp-detail")!;
     expect(next).not.toBe(first);
     expect(next.scrollTop).toBe(0);
+    // The link that had focus went with the old details: the new ones take it.
+    expect(document.activeElement).toBe(next);
   });
 
   it("draws the dependency graph in columns with an edge per prerequisite", () => {
