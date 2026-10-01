@@ -645,6 +645,48 @@ describe("worker tasks held back for spacing", () => {
     }
   });
 
+  it("leave nothing to retry once sent, so a restart sends nothing again", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w1, session, endTurn, registry } = await twoStarts();
+      await vi.advanceTimersByTimeAsync(START_SPACING_MS);
+      endTurn(w1);
+      const saved = w1.getState().agents[0];
+      expect([saved.pausedUntil, saved.lastPrompt]).toEqual([undefined, undefined]);
+      const restored = Workspace.fromState(w1.getState(), registry);
+      expect([...restored.agents.values()][0].retryPending).toBe(false);
+      expect(session(w1).sent).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("space the lead's messages that wake idle workers", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w1, lead, call, session, endTurn, workers } = await twoStarts();
+      await vi.advanceTimersByTimeAsync(START_SPACING_MS);
+      const w0 = workers().find((w) => w.name === "w0")!;
+      endTurn(w0);
+      endTurn(w1);
+      await vi.advanceTimersByTimeAsync(START_SPACING_MS);
+      expect(await call(lead, "message_session", { session_id: w0.id, message: "go on" })).toBe(
+        'Sent to "w0".',
+      );
+      expect(await call(lead, "message_session", { session_id: w1.id, message: "go on" })).toBe(
+        'Sent to "w1"; it goes out in 15 s: starts are spaced out.',
+      );
+      expect(session(w1).sent).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(START_SPACING_MS);
+      expect(session(w1).sent).toEqual([
+        "[From the project lead]\n\nsecond",
+        "[From the project lead]\n\ngo on",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stay ahead of a follow-up sent in the meantime", async () => {
     vi.useFakeTimers();
     try {
@@ -1069,6 +1111,42 @@ describe("a worker that goes idle without reporting", () => {
       manager.recheckWorkers();
       await settle();
       expect(told()[1]).toBe(note("its turn ended", "which commit?", "abc123", true));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits for a rate-limit retry still to run, however late it is", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, say, told, settle, session, endTurn } = await started();
+      const [agentId] = w.agents.keys();
+      say("Working");
+      w.pauseAgent(agentId, Date.now() + 1000, true);
+      session(w).isRunning = false;
+      session(w).emit("event", { kind: "error", content: "rate limited" });
+      await settle();
+      expect(told()).toEqual([]);
+      w.retryLast(agentId);
+      say("Done now");
+      endTurn(w);
+      await settle();
+      expect(told()).toEqual([note("its turn ended", "do it", "Done now")]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("owes nothing once archived", async () => {
+    vi.useFakeTimers();
+    try {
+      const { lead, w, told, settle, endTurn, call, manager } = await started();
+      endTurn(w);
+      await call(lead, "archive_session", { session_id: w.id });
+      manager.recheckWorkers();
+      await settle();
+      expect(told()).toEqual([]);
+      expect(w.getState().agents[0].delivered?.answered).toBe(true);
     } finally {
       vi.useRealTimers();
     }

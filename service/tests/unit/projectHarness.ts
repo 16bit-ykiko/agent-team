@@ -84,6 +84,7 @@ export function setupProjects() {
     },
     archiveWorkspace: (w) => {
       if (!w.isIdle) return false;
+      w.settleForArchive();
       w.archivedAt = Date.now();
       return true;
     },

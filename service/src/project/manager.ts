@@ -580,24 +580,38 @@ export class ProjectManager {
         ),
       });
     }
-    // A task held back for spacing waits as a queued message (saved, shown,
-    // ahead of any follow-up) behind a pause on the worker's agent; after a
-    // restart the server's spaced dequeue sends it.
-    const now = Date.now();
-    const delay = Math.max(0, this.nextStartAt - now);
-    this.nextStartAt = now + delay + START_SPACING_MS;
-    if (delay > 0) {
-      const agentId = [...w.agents.keys()][0];
-      w.pauseAgent(agentId, now + delay);
-      this.later(delay, () => {
-        if (this.host.workspace(w.id) === w) w.dequeueNext(agentId);
-      });
-    }
+    const delay = this.spaceStart(w);
     this.deliver(w, a.task, ...this.fromLead(projectId, a.task));
     const started = `Started session ${w.id} ("${a.title}") in ${cwd} on ${model}.`;
     return delay === 0
       ? started
       : `${started} Its task goes out in ${Math.ceil(delay / 1000)} s: starts are spaced out.`;
+  }
+
+  // A lead's message that starts a worker's turn goes out spaced from the
+  // others: it waits as a queued message (saved, shown, ahead of any
+  // follow-up) behind a pause on the worker's agent; after a restart the
+  // server's spaced dequeue sends it. Returns the wait.
+  private spaceStart(w: Workspace): number {
+    const agent = w.resolveAgent();
+    const now = Date.now();
+    const waits =
+      !agent ||
+      agent.session.isRunning ||
+      agent.retryPending ||
+      (agent.pausedUntil !== undefined && now < agent.pausedUntil) ||
+      w.messages.some((m) => m.status === "queued" && m.queuedFor === agent.info.id);
+    if (waits) return 0;
+    const delay = Math.max(0, this.nextStartAt - now);
+    this.nextStartAt = now + delay + START_SPACING_MS;
+    if (delay > 0) {
+      const agentId = agent.info.id;
+      w.pauseAgent(agentId, now + delay);
+      this.later(delay, () => {
+        if (this.host.workspace(w.id) === w) w.dequeueNext(agentId);
+      });
+    }
+    return delay;
   }
 
   // A project's own sessions (its lead's too), and the history: archived
@@ -1128,7 +1142,11 @@ export class ProjectManager {
     queryHistory: (pid, query) => this.queryHistory(pid, query),
     messageSession: (pid, sid, text) => {
       const w = this.session(pid, sid);
+      const delay = this.spaceStart(w);
       const outcome = this.deliver(w, text, ...this.fromLead(pid, text));
+      if (delay > 0) {
+        return `Sent to "${w.name}"; it goes out in ${Math.ceil(delay / 1000)} s: starts are spaced out.`;
+      }
       return `Sent to "${w.name}"${outcome === "queued" ? " (queued: it is busy)" : ""}.`;
     },
     stopSession: (pid, sid) => {

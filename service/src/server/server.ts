@@ -981,11 +981,11 @@ systemctl --user restart agent-team-server
     for (const workspace of this.workspaces.values()) {
       if (workspace.isArchived) continue;
       for (const [agentId, entry] of workspace.agents) {
-        if (entry.pausedUntil) {
+        if (entry.retryPending) {
           this.scheduleRetry(
             workspace.id,
             agentId,
-            Math.max(entry.pausedUntil - Date.now(), delay),
+            Math.max((entry.pausedUntil ?? 0) - Date.now(), delay),
           );
         } else if (
           workspace.messages.some((m) => m.status === "queued" && m.queuedFor === agentId)
@@ -1097,6 +1097,7 @@ systemctl --user restart agent-team-server
       return;
     }
     ws.abortAll();
+    ws.settleForArchive();
     ws.archivedAt = Date.now();
     this.unload(ws);
     this.broadcastUI({ type: "workspace_archived", workspaceId, archivedAt: ws.archivedAt });
@@ -1168,7 +1169,7 @@ systemctl --user restart agent-team-server
       // Retry one minute after the reset; never sooner than 1 min or later
       // than 6 h from now (clock skew / bogus resets).
       const delay = Math.min(Math.max(resetMs - Date.now() + 60_000, 60_000), 6 * 3600_000);
-      ws.pauseAgent(agentId, Date.now() + delay);
+      ws.pauseAgent(agentId, Date.now() + delay, true);
       const at = new Date(Date.now() + delay).toLocaleTimeString();
       ws.postSystemMessage(`⏳ **${agentName}** hit the 5-hour limit — auto-retrying at ${at}.`);
       this.persistWorkspace(wsId);

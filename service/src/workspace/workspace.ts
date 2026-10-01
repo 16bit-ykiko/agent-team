@@ -97,7 +97,7 @@ export interface AgentState extends AgentInfo {
   session: SessionState;
   // AgentEntry.delivered, and whether the agent got another message since.
   delivered?: TurnInput & { since?: boolean };
-  // A rate-limit pause, with the prompt its retry sends.
+  // A rate-limit pause still to be retried, with the prompt the retry sends.
   pausedUntil?: number;
   lastPrompt?: string;
 }
@@ -174,6 +174,9 @@ export interface AgentEntry {
   lastPrompt?: string;
   // While set (epoch ms), the queue holds and dequeueNext is a no-op.
   pausedUntil?: number;
+  // The pause ends in a retry of lastPrompt (a rate limit), not just in the
+  // queue moving on (spaced starts).
+  retryPending?: boolean;
   // Transient "doing X right now" label from the session (see setActivity).
   activity?: string | null;
   runState?: RunState;
@@ -360,7 +363,7 @@ export class Workspace {
     const now = Date.now();
     for (const a of this.agents.values()) {
       if (this.agentState(a) !== "idle") return false;
-      if (a.pausedUntil && now < a.pausedUntil) return false;
+      if (a.retryPending || (a.pausedUntil && now < a.pausedUntil)) return false;
     }
     return true;
   }
@@ -392,6 +395,15 @@ export class Workspace {
       });
     }
     return out;
+  }
+
+  // Archived: no retry is left to run, and nobody waits on a word from it.
+  settleForArchive(): void {
+    for (const a of this.agents.values()) {
+      a.pausedUntil = undefined;
+      a.retryPending = false;
+      if (a.delivered) a.delivered.answered = true;
+    }
   }
 
   // Its sender has heard what came of a delivered message.
@@ -1187,10 +1199,13 @@ export class Workspace {
     void this.dispatchPrompt(entry, prompt, msg);
   }
 
-  // Hold an agent's queue until `until` (rate-limit backoff).
-  pauseAgent(agentId: string, until: number): void {
+  // Hold an agent's queue until `until`; with `retry`, a rate-limit backoff
+  // that retryLast ends.
+  pauseAgent(agentId: string, until: number, retry = false): void {
     const entry = this.agents.get(agentId);
-    if (entry) entry.pausedUntil = until;
+    if (!entry) return;
+    entry.pausedUntil = until;
+    entry.retryPending = retry;
   }
 
   // Re-dispatch the last prompt (rate-limit recovery). Always lifts the
@@ -1199,6 +1214,7 @@ export class Workspace {
     const entry = this.agents.get(agentId);
     if (!entry) return false;
     entry.pausedUntil = undefined;
+    entry.retryPending = false;
     if (entry.session.isRunning || !entry.lastPrompt) return false;
     void this.dispatchPrompt(entry, entry.lastPrompt);
     return true;
@@ -1418,7 +1434,7 @@ export class Workspace {
           ...(a.delivered && {
             delivered: { ...a.delivered, ...(a.input !== a.delivered && { since: true }) },
           }),
-          ...(a.pausedUntil && { pausedUntil: a.pausedUntil, lastPrompt: a.lastPrompt }),
+          ...(a.retryPending && { pausedUntil: a.pausedUntil, lastPrompt: a.lastPrompt }),
         };
       }),
       ...(this.messagesLoaded && { messages: this.messages }),
@@ -1497,6 +1513,7 @@ export class Workspace {
         currentMsg: null,
         pausedUntil: agentState.pausedUntil,
         lastPrompt: agentState.lastPrompt,
+        retryPending: agentState.pausedUntil !== undefined,
       });
       if (agentState.delivered) {
         const { since, ...delivered } = agentState.delivered;
