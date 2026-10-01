@@ -277,6 +277,11 @@ export class ClaudeSession extends EventEmitter {
   private nestedToolUseToParent = new Map<string, string>(); // inner toolUseId → parentTaskId
   private nestedTaskToParent = new Map<string, string>(); // nested taskId → parentTaskId
   private taskToToolUse = new Map<string, string>(); // taskId → toolUseId (reverse lookup)
+  // The Agent call that first started an agent task. A run resumed by
+  // SendMessage announces itself with the SendMessage call's id, but its own
+  // frames still carry this one as parent_tool_use_id (snap fixture
+  // claude/resumed-agent-bg). Kept past the task's end, for that resume.
+  private agentSpawnToolUse = new Map<string, string>();
   private agentTaskIds = new Set<string>();
   // Subagent output can arrive before its task_started (the CLI forwards
   // assistant blocks with parent_tool_use_id as soon as the Task tool runs).
@@ -610,6 +615,8 @@ export class ClaudeSession extends EventEmitter {
       this.subagentToolMap.delete(toolUseId);
       this.nestedToolUseToParent.delete(toolUseId);
     }
+    const spawn = this.agentSpawnToolUse.get(taskId);
+    if (spawn && this.subagentToolMap.get(spawn) === taskId) this.subagentToolMap.delete(spawn);
   }
 
   // A tool call is answered: forget what was kept to render it, unless a
@@ -627,6 +634,7 @@ export class ClaudeSession extends EventEmitter {
     this.nestedToolUseToParent.clear();
     this.nestedTaskToParent.clear();
     this.taskToToolUse.clear();
+    this.agentSpawnToolUse.clear();
     this.agentTaskIds.clear();
     this.taskInfo.clear();
     this.toolCommands.clear();
@@ -955,11 +963,18 @@ export class ClaudeSession extends EventEmitter {
           if (toolUseId) {
             this.subagentToolMap.set(toolUseId, taskId);
             this.taskToToolUse.set(taskId, toolUseId);
+            if (!this.agentSpawnToolUse.has(taskId)) this.agentSpawnToolUse.set(taskId, toolUseId);
           }
+          const spawn = this.agentSpawnToolUse.get(taskId);
+          if (spawn && spawn !== toolUseId) this.subagentToolMap.set(spawn, taskId);
           this.agentTaskIds.add(taskId);
           if (parentTaskId) this.nestedTaskToParent.set(taskId, parentTaskId);
-          const parked = toolUseId ? this.pendingNested.get(toolUseId) : undefined;
-          if (toolUseId) this.pendingNested.delete(toolUseId);
+          const parked: StreamEvent[] = [];
+          for (const id of new Set([spawn, toolUseId])) {
+            if (!id) continue;
+            parked.push(...(this.pendingNested.get(id) ?? []));
+            this.pendingNested.delete(id);
+          }
           const startEvent = {
             kind: "subagent_start",
             content: (sys.description as string) ?? "",
@@ -979,7 +994,12 @@ export class ClaudeSession extends EventEmitter {
           } else {
             this.emit("event", startEvent);
           }
-          for (const inner of parked ?? []) this.emitInner(toolUseId!, taskId, inner);
+          for (const inner of parked) {
+            if (inner.kind === "tool_use" && inner.toolUseId) {
+              this.nestedToolUseToParent.set(inner.toolUseId, taskId);
+            }
+            this.emitNestedEvent(taskId, inner);
+          }
         } else if (sys.subtype === "task_progress") {
           const taskId = sys.task_id as string;
           if (!this.agentTaskIds.has(taskId)) break;
@@ -1719,7 +1739,6 @@ export class ClaudeSession extends EventEmitter {
         }),
       };
     }
-
     return opts;
   }
 }

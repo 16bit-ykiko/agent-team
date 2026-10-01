@@ -355,6 +355,19 @@ export function clientView(events: StreamEvent[]): Message[] {
   let cur: ClientMessage | null = null;
   for (const e of events) {
     if (e.kind === "text") continue;
+    // A card update goes to the newest message holding the card, as the
+    // workspace routes it; a resumed agent has a card in an older one too.
+    const taskId = e.subagent?.taskId;
+    const holds = (m: ClientMessage) =>
+      m.events!.some((x) => x.kind === "subagent_start" && x.subagent?.taskId === taskId);
+    const owner =
+      taskId && (e.kind === "subagent_progress" || e.kind === "subagent_done")
+        ? [...msgs].reverse().find(holds)
+        : undefined;
+    if (owner && owner !== cur) {
+      msgs[msgs.indexOf(owner)] = applyEventsToMessage(owner, [e]);
+      continue;
+    }
     if (!cur) {
       cur = {
         id: `m${msgs.length}`,
@@ -375,15 +388,9 @@ export function clientView(events: StreamEvent[]): Message[] {
       cur = null;
       continue;
     }
-    const taskId = e.subagent?.taskId;
-    const owner: ClientMessage | undefined =
-      taskId && !cur.events!.some((x) => x.subagent?.taskId === taskId)
-        ? msgs.find((m) => m.events!.some((x) => x.subagent?.taskId === taskId))
-        : undefined;
-    const target: ClientMessage = owner ?? cur;
-    const next = applyEventsToMessage(target, [e]);
-    msgs[msgs.indexOf(target)] = next;
-    if (target === cur) cur = next;
+    const next = applyEventsToMessage(cur, [e]);
+    msgs[msgs.indexOf(cur)] = next;
+    cur = next;
   }
   return msgs as unknown as Message[];
 }

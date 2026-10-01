@@ -714,6 +714,26 @@ describe("subagent output arriving before task_started", () => {
     expect(events.every((e) => e.subagent?.taskId === "task-1")).toBe(true);
   });
 
+  it("nests the background shell of a parked tool call in its card", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(frame.toolUse("toolu_bash", "Bash", { command: "sleep 5" }, "toolu_1"));
+    dispatch(taskStarted({ task_type: "local_agent", subagent_type: "Explore" }));
+    dispatch(
+      taskStarted({
+        task_id: "bsh",
+        tool_use_id: "toolu_bash",
+        task_type: "local_bash",
+        is_backgrounded: true,
+      }),
+    );
+    const shell = events.at(-1)!;
+    expect(shell).toMatchObject({ kind: "subagent_progress", subagent: { taskId: "task-1" } });
+    expect(shell.subagent!._innerEvent).toMatchObject({
+      kind: "subagent_start",
+      subagent: { taskId: "bsh" },
+    });
+  });
+
   it("drops parked output when the turn ends without a matching task", () => {
     const { events, dispatch } = makeSession();
     dispatch({
@@ -725,6 +745,109 @@ describe("subagent output arriving before task_started", () => {
     dispatch({ type: "result", subtype: "success", result: "", session_id: "sess-1" });
     dispatch(taskStarted({ task_type: "local_agent", tool_use_id: "toolu_orphan" }));
     expect(events.map((e) => e.kind)).toEqual(["result", "subagent_start"]);
+  });
+});
+
+// A finished agent sent a message is announced again with the SendMessage
+// call's id; its own frames keep the Agent call's (fixture
+// claude/resumed-agent-bg).
+describe("agents resumed by SendMessage", () => {
+  const agent = (over: Record<string, unknown>) =>
+    taskStarted({
+      task_type: "local_agent",
+      subagent_type: "general-purpose",
+      task_id: "T",
+      ...over,
+    });
+  const text = (t: string, parent: string) => ({
+    type: "assistant",
+    session_id: "sess-1",
+    parent_tool_use_id: parent,
+    message: { content: [{ type: "text", text: t }] },
+  });
+  const inner = (e?: StreamEvent) => e?.subagent?._innerEvent;
+
+  it("replays frames parked under the Agent call's id once the resumed run is announced", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(agent({ tool_use_id: "toolu_A" }));
+    dispatch(taskNotification({ task_id: "T", tool_use_id: "toolu_A" }));
+    events.length = 0;
+    dispatch(text("resumed early", "toolu_A"));
+    expect(events).toHaveLength(0);
+    dispatch(agent({ tool_use_id: "toolu_S" }));
+    expect(events.map((e) => e.kind)).toEqual(["subagent_start", "subagent_progress"]);
+    expect(events[0].toolUseId).toBe("toolu_S");
+    expect(inner(events[1])).toMatchObject({ kind: "text", content: "resumed early" });
+  });
+
+  it("nests the shell of a tool call that came before the resumed run was announced", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(agent({ tool_use_id: "toolu_A" }));
+    dispatch(taskNotification({ task_id: "T", tool_use_id: "toolu_A" }));
+    events.length = 0;
+    dispatch(frame.toolUse("toolu_bash", "Bash", { command: "sleep 5" }, "toolu_A"));
+    dispatch(agent({ tool_use_id: "toolu_S" }));
+    dispatch(
+      taskStarted({
+        task_id: "bsh",
+        tool_use_id: "toolu_bash",
+        task_type: "local_bash",
+        is_backgrounded: true,
+      }),
+    );
+    const shell = events.at(-1)!;
+    expect(shell).toMatchObject({ kind: "subagent_progress", subagent: { taskId: "T" } });
+    expect(inner(shell)?.subagent?.taskId).toBe("bsh");
+  });
+
+  it("routes an agent resumed twice and forgets both of its ids at each end", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(agent({ tool_use_id: "toolu_A" }));
+    dispatch(taskNotification({ task_id: "T", tool_use_id: "toolu_A" }));
+    for (const send of ["toolu_S1", "toolu_S2"]) {
+      events.length = 0;
+      dispatch(agent({ tool_use_id: send }));
+      dispatch(text(`run ${send}`, "toolu_A"));
+      dispatch(taskNotification({ task_id: "T", tool_use_id: send }));
+      expect(events.map((e) => e.kind)).toEqual([
+        "subagent_start",
+        "subagent_progress",
+        "subagent_done",
+      ]);
+      expect(inner(events[1])?.content).toBe(`run ${send}`);
+    }
+    events.length = 0;
+    dispatch(text("after the end", "toolu_A"));
+    expect(events).toHaveLength(0);
+  });
+
+  it("wraps a depth-2 agent resumed by its parent under both cards", () => {
+    const { events, dispatch } = makeSession();
+    dispatch(agent({ task_id: "P", tool_use_id: "toolu_P" }));
+    dispatch(frame.toolUse("toolu_C", "Agent", { prompt: "child" }, "toolu_P"));
+    dispatch(agent({ task_id: "C", tool_use_id: "toolu_C" }));
+    dispatch(taskNotification({ task_id: "C", tool_use_id: "toolu_C" }));
+    dispatch(frame.toolUse("toolu_S", "SendMessage", { to: "C" }, "toolu_P"));
+    events.length = 0;
+    dispatch(agent({ task_id: "C", tool_use_id: "toolu_S" }));
+    dispatch(frame.toolUse("toolu_bash", "Bash", { command: "sleep 5" }, "toolu_C"));
+    dispatch(
+      taskStarted({
+        task_id: "bsh",
+        tool_use_id: "toolu_bash",
+        task_type: "local_bash",
+        is_backgrounded: true,
+      }),
+    );
+    expect(events.every((e) => e.kind === "subagent_progress" && e.subagent?.taskId === "P")).toBe(
+      true,
+    );
+    expect(events.map((e) => inner(e)?.subagent?.taskId)).toEqual(["C", "C", "C"]);
+    expect(inner(inner(events[1]))?.kind).toBe("tool_use");
+    expect(inner(inner(events[2]))).toMatchObject({
+      kind: "subagent_start",
+      subagent: { taskId: "bsh" },
+    });
   });
 });
 
