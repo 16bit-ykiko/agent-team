@@ -8,12 +8,15 @@ import * as http from "http";
 import * as net from "net";
 import * as os from "os";
 import * as path from "path";
+import { pathToFileURL } from "url";
 import WebSocket from "ws";
 import type { Message, WorkspaceState } from "../../src/workspace/workspace";
 import { closeHistory, saveIndex, saveWorkspace } from "../../src/workspace/state";
 
 const ROOT = path.resolve(__dirname, "../../..");
-const TSX = path.join(ROOT, "node_modules/.bin/tsx");
+// node with tsx's loader (its "." export), not the tsx CLI: a SIGKILL to the
+// CLI leaves the node it starts running, one leaked server per test run.
+const TSX_LOADER = pathToFileURL(path.join(ROOT, "node_modules/tsx/dist/loader.mjs")).href;
 
 let base: string;
 let child: ChildProcess;
@@ -153,7 +156,14 @@ type = "local"
     AGENT_TEAM_BASE_DIR: base,
     AGENT_TEAM_WEB_DIR: web,
   };
-  child = spawn(TSX, [path.join(ROOT, "service/src/index.ts")], { env, cwd: base });
+  child = spawn(
+    process.execPath,
+    ["--import", TSX_LOADER, path.join(ROOT, "service/src/index.ts")],
+    {
+      env,
+      cwd: base,
+    },
+  );
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("server did not start")), 20000);
     child.stdout!.on("data", (d: Buffer) => {
