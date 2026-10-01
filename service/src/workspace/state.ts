@@ -118,9 +118,6 @@ export function saveIndex(baseDir: string, workspaceIds: string[]): void {
 }
 
 export function loadAll(baseDir: string): WorkspaceState[] {
-  const oldState = migrateIfNeeded(baseDir);
-  if (oldState) return oldState;
-
   const index = readJson<StateIndex>(indexPath(baseDir));
   if (!index) return [];
 
@@ -129,12 +126,10 @@ export function loadAll(baseDir: string): WorkspaceState[] {
     const file = metaPath(baseDir, id);
     const ws = readJson<WorkspaceState>(file);
     if (!ws) continue;
-    // Saved before history.db (scripts/migrate-history.ts moves it there):
-    // loaded as it is, the first save would drop the history.
+    // Saved before history.db: loaded as it is, the first save would drop
+    // the history.
     if (ws.messages) {
-      throw new Error(
-        `${file} still holds its messages: with the server stopped, run \`npm run migrate:history -- --finish\``,
-      );
+      throw new Error(`${file} still holds its messages, from before history.db`);
     }
     if (stripProviderEnv(ws)) writeJson(file, ws);
     else if ((fs.statSync(file).mode & 0o077) !== 0) fs.chmodSync(file, 0o600);
@@ -162,30 +157,6 @@ function stripProviderEnv(ws: WorkspaceState): number {
     }
   }
   return removed;
-}
-
-function migrateIfNeeded(baseDir: string): WorkspaceState[] | null {
-  const oldFile = path.join(dataRoot(baseDir), CACHE_DIR, "state.json");
-  if (!fs.existsSync(oldFile)) return null;
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(oldFile, "utf-8")) as { workspaces?: unknown } | null;
-    if (!raw || !Array.isArray(raw.workspaces)) return null;
-
-    const workspaces = raw.workspaces as WorkspaceState[];
-    const ids: string[] = [];
-
-    for (const ws of workspaces) {
-      saveWorkspace(baseDir, ws);
-      ids.push(ws.id);
-    }
-    saveIndex(baseDir, ids);
-    fs.unlinkSync(oldFile);
-    console.log(`Migrated ${workspaces.length} workspace(s) from state.json to per-file storage`);
-    return workspaces;
-  } catch {
-    return null;
-  }
 }
 
 // Thinking fragments are live-view only: the finished block is logged, and

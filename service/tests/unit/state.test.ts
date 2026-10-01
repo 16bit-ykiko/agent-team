@@ -81,7 +81,7 @@ describe("loading", () => {
     const text = JSON.stringify(wsWithRaw());
     fs.writeFileSync(file, text);
     saveIndex(base, ["ws-1"]);
-    expect(() => loadAll(base)).toThrow("npm run migrate:history -- --finish");
+    expect(() => loadAll(base)).toThrow("still holds its messages, from before history.db");
     expect(fs.readFileSync(file, "utf-8")).toBe(text);
   });
 
