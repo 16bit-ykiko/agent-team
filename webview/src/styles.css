@@ -1217,13 +1217,24 @@ pre:hover .copy-btn {
 /* No hover on touch screens: keep the button faintly visible so a tap has a
    target and "Copied" has somewhere to show. */
 @media (hover: none) {
-  /* A line of its own above the code, whose first line it would cover. */
+  /* A line of its own above the code: a line that scrolls sideways runs
+     under a float instead of past it. */
   pre .copy-btn {
     opacity: 0.6;
     float: none;
     display: block;
     width: fit-content;
     margin: -2px -4px 4px auto;
+  }
+  /* Code that wraps flows around it, with no empty line above. */
+  .event-content pre .copy-btn,
+  .subagent-prompt pre .copy-btn,
+  .subagent-summary pre .copy-btn,
+  .banner-text pre .copy-btn {
+    float: right;
+    display: inline-block;
+    position: static;
+    margin: -3px -5px 0 8px;
   }
 }
 pre .copy-btn:hover {

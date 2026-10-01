@@ -135,6 +135,25 @@ describe("the transcript's rules", () => {
     expect(copy.body).toMatch(/display:\s*block/);
   });
 
+  it("on touch, float Copy beside code that wraps, instead of an empty line above it", () => {
+    for (const sel of [
+      ".event-content pre .copy-btn",
+      ".subagent-prompt pre .copy-btn",
+      ".subagent-summary pre .copy-btn",
+      ".banner-text pre .copy-btn",
+    ]) {
+      const copy = rule(sel, "@media (hover: none)");
+      expect(copy.body).toMatch(/float:\s*right/);
+      // Sticky, it would ride over the lines scrolled under it.
+      expect(copy.body).toMatch(/position:\s*static/);
+    }
+    for (const sel of [".event-content pre", ".subagent-prompt pre", ".banner-text pre"]) {
+      expect(
+        all.some((r) => r.selectors.includes(sel) && /white-space:\s*pre-wrap/.test(r.body)),
+      ).toBe(true);
+    }
+  });
+
   it("keep images their own shape, and a queued message's ✕ a target bigger than its glyph", () => {
     expect(rule(".msg-images").body).toMatch(/align-items:\s*flex-start/);
     expect(rule(".queued-cancel").body).toMatch(/padding:\s*6px/);
