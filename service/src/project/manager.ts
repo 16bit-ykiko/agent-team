@@ -620,16 +620,21 @@ export class ProjectManager {
       "",
       "## Worktrees",
     ];
+    const sessions = this.workers(projectId);
     for (const wt of await gitWorktrees(project.root)) {
       const git = await gitStatus(wt);
+      // Which live sessions work there: a worktree no one uses can be reused.
+      const users = this.members(projectId).filter((w) => !w.isArchived && w.cwd === wt);
+      const use = users.length
+        ? `in use by ${users.map((w) => `${w.id} (${sessionState(w)})`).join(", ")}`
+        : "free";
       out.push(
         git
-          ? `- ${wt} — ${git.branch ?? "detached"}, ${git.dirty} uncommitted, ahead ${git.ahead}, behind ${git.behind}`
-          : `- ${wt}`,
+          ? `- ${wt} — ${git.branch ?? "detached"}, ${git.dirty} uncommitted, ahead ${git.ahead}, behind ${git.behind}; ${use}`
+          : `- ${wt}; ${use}`,
       );
     }
     out.push("", "## Sessions");
-    const sessions = this.workers(projectId);
     if (sessions.length === 0) out.push("(none)");
     for (const w of sessions) {
       const last = w.messagesLoaded

@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import { z } from "zod";
@@ -181,10 +182,11 @@ describe("panel tool arguments", () => {
     expect(t.archive_objective).toBeUndefined();
   });
 
-  it("tell the lead and its workers to write to the user in Chinese", () => {
+  it("tell the lead and its workers to write to the user in Chinese, and the lead to reuse worktrees", () => {
     const lead = leadToolset(api, project, "/notes", ["claude-opus-5-5"]).instructions;
     const worker = workerToolset(api, "ws-w", project).instructions;
     for (const text of [lead, worker]) expect(text).toContain("Write to the user in 简体中文");
+    expect(lead).toContain("reuse rather than make one per session");
   });
 
   it("turn a thrown error into a rejection", async () => {
@@ -352,6 +354,24 @@ describe("ProjectManager", () => {
     const modules = objectives().find((o) => o.id === "core/modules")!;
     expect(modules.tasks[1]).toMatchObject({ text: "bench", state: "doing" });
     expect(modules.tasks[1].session).toBeUndefined();
+  });
+
+  it("shows which worktrees a session works in and which are free to reuse", async () => {
+    const { create, call, workers, root } = setup();
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", root, ...args], { stdio: "ignore" });
+    git("init", "-q", "-b", "main");
+    git("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "init");
+    const [used, free] = ["wt-1", "wt-2"].map((n) => path.join(path.dirname(root), n));
+    git("worktree", "add", "-q", used, "-b", "one");
+    git("worktree", "add", "-q", free, "-b", "two");
+    const { lead } = create("clice");
+    await call(lead, "start_session", { title: "w", cwd: used, task: "t" });
+    const status = await call(lead, "project_status");
+    const line = (dir: string) => status.split("\n").find((l) => l.startsWith(`- ${dir} `))!;
+    expect(line(used)).toMatch(new RegExp(`; in use by ${workers()[0].id} \\(`));
+    expect(line(free)).toMatch(/; free$/);
+    expect(line(root)).toContain(`in use by ${lead.id}`);
   });
 
   it("lets leads message each other without waiting", async () => {
