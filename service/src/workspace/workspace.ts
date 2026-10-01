@@ -501,8 +501,9 @@ export class Workspace {
 
   private ensureAgentMsg(entry: AgentEntry): Message {
     if (!entry.currentMsg) {
-      // A turn the CLI started itself: no prompt of ours to retry.
-      entry.lastPrompt = undefined;
+      // A turn the CLI started itself: no prompt of ours to retry, unless
+      // one is still waiting for its retry.
+      if (!entry.retryPending) entry.lastPrompt = undefined;
       entry.currentMsg = this.makeAgentMsg(entry.info.id);
       entry.input?.replies.push(entry.currentMsg.id);
       this.pushMessage(entry.currentMsg);
@@ -822,7 +823,11 @@ export class Workspace {
     // sender was told it was queued and expects an answer.
     const heir = this.resolveAgent();
     const queued = this.messages.filter((m) => m.status === "queued" && m.queuedFor === agentId);
-    for (const m of queued) if (heir && m.from) m.queuedFor = heir.info.id;
+    for (const m of queued) {
+      if (!heir || !m.from) continue;
+      m.queuedFor = heir.info.id;
+      this.changed.add(m.id);
+    }
     const dropped = queued.filter((m) => m.queuedFor === agentId).map((m) => m.id);
     this.messages = this.messages.filter((m) => !dropped.includes(m.id));
     if (heir && dropped.length < queued.length) {
@@ -1122,7 +1127,7 @@ export class Workspace {
     // A busy agent queues the message instead of rejecting it; the queue
     // drains in order whenever the agent becomes idle. A pending rate-limit
     // retry goes first: the user writing is the cue to try now.
-    const retried = agent.retryPending && this.retryLast(agent.info.id);
+    const retried = agent.retryPending && !agent.session.isRunning && this.retryLast(agent.info.id);
     const busy = retried || agent.session.isRunning;
     const userMsg: Message = {
       id: genId("msg"),
@@ -1286,7 +1291,7 @@ export class Workspace {
     };
 
     const prompt = `[Forwarded message from ${author.name}]:\n\n${original.content}`;
-    const retried = agent.retryPending && this.retryLast(agent.info.id);
+    const retried = agent.retryPending && !agent.session.isRunning && this.retryLast(agent.info.id);
     const busy = retried || agent.session.isRunning;
     const userMsg: Message = {
       id: genId("msg"),

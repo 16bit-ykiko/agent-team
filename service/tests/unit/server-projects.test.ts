@@ -1,6 +1,7 @@
 // The real Server in-process over a seeded data dir. The Claude SDK is a fake
-// that records the options each query starts with and never yields, so no CLI
-// is spawned; the quota probe is stubbed so no API request is made.
+// that records the options each query starts with and the prompts sent to it,
+// and yields only the frames a test emits, so no CLI is spawned; the quota
+// probe is stubbed so no API request is made.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as net from "net";
@@ -33,6 +34,8 @@ interface Launch {
   model?: string;
   effort?: string;
   panel?: { instructions: string; tools: FakeTool[] };
+  prompts: string[];
+  emit: (frame: unknown) => void;
 }
 
 let launches: Launch[] = [];
@@ -46,19 +49,42 @@ beforeEach(() => {
   for (const k of ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"]) delete process.env[k];
   launches = [];
   ClaudeSession.sdk = {
-    query: ({ options }: { options: Record<string, unknown> }) => {
+    query: ({
+      prompt,
+      options,
+    }: {
+      prompt: AsyncIterable<{ message: { content: string } }>;
+      options: Record<string, unknown>;
+    }) => {
       const servers = options.mcpServers as Record<string, Launch["panel"]> | undefined;
-      launches.push({
+      const frames: unknown[] = [];
+      let wake = () => {};
+      let closed = false;
+      const launch: Launch = {
         cwd: options.cwd as string | undefined,
         model: options.model as string | undefined,
         effort: options.effort as string | undefined,
         panel: servers?.panel,
-      });
-      let finish: (r: IteratorResult<unknown>) => void = () => {};
-      const pending = new Promise<IteratorResult<unknown>>((r) => (finish = r));
+        prompts: [],
+        emit: (frame) => {
+          frames.push(frame);
+          wake();
+        },
+      };
+      launches.push(launch);
+      void (async () => {
+        for await (const m of prompt) launch.prompts.push(m.message.content);
+      })();
+      const next = async (): Promise<IteratorResult<unknown>> => {
+        while (!frames.length && !closed) await new Promise<void>((r) => (wake = r));
+        return closed ? { value: undefined, done: true } : { value: frames.shift(), done: false };
+      };
       return {
-        [Symbol.asyncIterator]: () => ({ next: () => pending }),
-        close: () => finish({ value: undefined, done: true }),
+        [Symbol.asyncIterator]: () => ({ next }),
+        close: () => {
+          closed = true;
+          wake();
+        },
         supportedCommands: () => Promise.resolve([]),
         stopTask: () => Promise.resolve(),
         getContextUsage: () => Promise.resolve(null),
@@ -136,9 +162,18 @@ const HISTORY: Message[] = [
 
 // A project "demo" with its lead, one archived worker with history, one live
 // worker, and a workspace still linked to a project that no longer exists.
-// livePaused: ms from now (past or future) to the reset two workers' pending
-// rate-limit retries wait for.
-function seed(opts: { leadArchived?: boolean; livePaused?: number } = {}) {
+// livePaused, orphanPaused: ms from now (past or future) to the reset the
+// live worker's and the orphan's pending rate-limit retries wait for (the
+// orphan's is the live one's unless given); liveQueued: a message still queued
+// for the live worker.
+function seed(
+  opts: {
+    leadArchived?: boolean;
+    livePaused?: number;
+    orphanPaused?: number;
+    liveQueued?: boolean;
+  } = {},
+) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-server-projects-"));
   const root = path.join(base, "repo");
   const web = path.join(base, "web");
@@ -166,6 +201,8 @@ function seed(opts: { leadArchived?: boolean; livePaused?: number } = {}) {
   );
 
   const now = Date.now();
+  const paused = (ms?: number) =>
+    ms !== undefined && { pausedUntil: now + ms, lastPrompt: "carry on" };
   const cache = path.join(base, ".agent-team", "cache");
   fs.mkdirSync(path.join(cache, "workspaces"), { recursive: true });
   const states: WorkspaceState[] = [
@@ -199,17 +236,22 @@ function seed(opts: { leadArchived?: boolean; livePaused?: number } = {}) {
       project: "repo",
       hostId: "local",
       cwd: root,
-      agents: [
-        {
-          ...agent("a-live", "Live", root),
-          ...(opts.livePaused !== undefined && {
-            pausedUntil: Date.now() + opts.livePaused,
-            lastPrompt: "carry on",
-          }),
-        },
-      ],
+      agents: [{ ...agent("a-live", "Live", root), ...paused(opts.livePaused) }],
       createdAt: now,
-      messages: [],
+      messages: opts.liveQueued
+        ? [
+            {
+              id: "q1",
+              kind: "user",
+              agentId: null,
+              content: "go on",
+              timestamp: now,
+              status: "queued",
+              queuedFor: "a-live",
+              queuedPrompt: "go on",
+            },
+          ]
+        : [],
       projectLink: { projectId: "proj-1", role: "worker" },
     },
     {
@@ -218,15 +260,7 @@ function seed(opts: { leadArchived?: boolean; livePaused?: number } = {}) {
       project: "repo",
       hostId: "local",
       cwd: root,
-      agents: [
-        {
-          ...agent("a-o", "O", root),
-          ...(opts.livePaused !== undefined && {
-            pausedUntil: Date.now() + opts.livePaused,
-            lastPrompt: "carry on",
-          }),
-        },
-      ],
+      agents: [{ ...agent("a-o", "O", root), ...paused(opts.orphanPaused ?? opts.livePaused) }],
       createdAt: now,
       messages: [],
       projectLink: { projectId: "proj-gone", role: "worker" },
@@ -392,6 +426,34 @@ describe("server restart with projects", () => {
     fs.rmSync(base, { recursive: true, force: true });
   }, 20_000);
 
+  it("retries a turn whose limit has reset without waiting behind another's retry hours away", async () => {
+    const { base, web } = seed({ livePaused: 3600_000, orphanPaused: -1000 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { stop } = await start(base, web);
+    try {
+      await until(() => launches.length === 1, "the due retry");
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("starts a queued message and a due retry one slot apart", async () => {
+    const { base, web } = seed({ liveQueued: true, orphanPaused: -1000 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { stop } = await start(base, web);
+    try {
+      await until(() => launches.length === 1, "the first start");
+      await new Promise((r) => setTimeout(r, 2500));
+      expect(launches).toHaveLength(1);
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
   it("runs no retry for a worker archived while it waited for it", async () => {
     const { base, web } = seed({ livePaused: -1000 });
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -505,6 +567,81 @@ describe("server restart with projects", () => {
       again.stop();
       log.mockRestore();
     }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+});
+
+describe("rate limits on the server", () => {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const limit = (rateLimitType: string) => ({
+    type: "rate_limit_event",
+    rate_limit_info: { status: "rejected", rateLimitType },
+    session_id: "s",
+  });
+  const result = (text: string) => ({
+    type: "result",
+    subtype: "success",
+    result: text,
+    session_id: "s",
+  });
+
+  it("lets the retry the user's message started run through a weekly-limit failover", async () => {
+    const { base, web } = seed();
+    fs.writeFileSync(path.join(base, "config.toml"), '[accounts.other]\noauth_token = "t"\n');
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, stop } = await start(base, web);
+    try {
+      send({ type: "send_message", workspaceId: "ws-live", content: "P" });
+      await until(() => launches[0]?.prompts.length === 1, "the turn");
+      launches[0].emit(limit("seven_day"));
+      launches[0].emit({ ...result("limit"), is_error: true });
+      await wait(100);
+      send({ type: "send_message", workspaceId: "ws-live", content: "U" });
+      await wait(1500);
+      expect(launches.map((l) => l.prompts)).toEqual([["P"], ["P"]]);
+      launches[1].emit(result("done"));
+      await until(() => launches[1].prompts.length === 2, "the user's message");
+      expect(launches[1].prompts).toEqual(["P", "U"]);
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("retries nothing after a limit on a turn the CLI started itself", async () => {
+    const { base, web } = seed();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { frames, send, stop } = await start(base, web);
+    try {
+      send({ type: "send_message", workspaceId: "ws-live", content: "P" });
+      await until(() => launches[0]?.prompts.length === 1, "the turn");
+      const q = launches[0];
+      q.emit(result("done"));
+      q.emit(limit("five_hour"));
+      q.emit({
+        type: "assistant",
+        message: { content: [{ type: "text", text: "limit" }] },
+        parent_tool_use_id: null,
+        session_id: "s",
+      });
+      q.emit({ ...result("limit"), is_error: true });
+      await until(
+        () =>
+          frames.some(
+            (f) =>
+              f.type === "new_message" &&
+              (f.message as Message).content.includes("hit the 5-hour limit"),
+          ),
+        "the pause",
+      );
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    const saved = readState(base, "ws-live").agents[0];
+    expect(saved.pausedUntil).toBeDefined();
+    expect(saved.lastPrompt).toBeUndefined();
     fs.rmSync(base, { recursive: true, force: true });
   });
 });

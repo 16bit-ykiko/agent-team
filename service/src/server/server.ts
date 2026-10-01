@@ -29,7 +29,7 @@ import { completeDirs, resolveWorkspacePath } from "../repo/dirs";
 import { GitScanner } from "../repo/scanner";
 import { HistoryService, sidebarHits, type SearchHit } from "../workspace/history-service";
 import { summarizeMessages } from "../workspace/summary";
-import { ProjectManager, START_SPACING_MS, type ProjectHost } from "../project/manager";
+import { ProjectManager, type ProjectHost } from "../project/manager";
 import { Auth } from "./auth";
 import { mergeLocalCommands } from "./commands";
 import { HttpHandler } from "./http";
@@ -68,7 +68,6 @@ export class Server {
   private quotaTimer: ReturnType<typeof setInterval> | null = null;
   private defaultAccount: string | null = null;
   private retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private nextRetryAt = 0;
   private lastAccountSwitchAt = 0;
   private archiveTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -979,7 +978,7 @@ systemctl --user restart agent-team-server
     // a rate limit paused; spaced out so a restart does not start many CLI
     // sessions at once.
     for (const workspace of this.workspaces.values()) {
-      if (workspace.isArchived || !workspace.messagesLoaded) continue;
+      if (workspace.isArchived) continue;
       for (const [agentId, entry] of workspace.agents) {
         if (entry.retryPending) {
           this.scheduleRetry(workspace.id, agentId, (entry.pausedUntil ?? 0) - Date.now());
@@ -1133,24 +1132,29 @@ systemctl --user restart agent-team-server
   //    account to another credential and retry immediately — agents pinned to
   //    an explicit account are left alone (switching under them would be
   //    surprising), they just get the error message.
-  // Agents limited in the same window share its reset: their retries go
-  // out spaced like starts. The pause is saved with the agent, so a restart
-  // schedules the retry again.
+  // Agents limited in the same window share its reset: their retries take
+  // start slots like any start. The pause is saved with the agent, so a
+  // restart schedules the retry again.
   private scheduleRetry(wsId: string, agentId: string, delay: number): void {
     const key = `${wsId}:${agentId}`;
     clearTimeout(this.retryTimers.get(key));
-    const now = Date.now();
-    const at = Math.max(now + delay, now + 1000, this.nextRetryAt);
-    this.nextRetryAt = at + START_SPACING_MS;
     this.retryTimers.set(
       key,
-      setTimeout(() => {
-        this.retryTimers.delete(key);
-        const w = this.workspaces.get(wsId);
-        if (!w || !w.agents.has(agentId) || w.isArchived || !w.messagesLoaded) return;
-        if (!w.retryLast(agentId)) w.dequeueNext(agentId);
-        this.projects.workerIdle(w);
-      }, at - now),
+      setTimeout(
+        () => {
+          this.retryTimers.delete(key);
+          const w = this.workspaces.get(wsId);
+          if (!w || !w.agents.has(agentId) || w.isArchived) return;
+          // A turn whose output could not be saved does not run; try later.
+          if (!this.ensureLoaded(w)) {
+            this.scheduleRetry(wsId, agentId, 60_000);
+            return;
+          }
+          if (!w.retryLast(agentId)) w.dequeueNext(agentId);
+          this.projects.workerIdle(w);
+        },
+        this.projects.takeStartSlot(Math.max(delay, 1000)),
+      ),
     );
   }
 
@@ -1163,6 +1167,8 @@ systemctl --user restart agent-team-server
     const entry = ws?.agents.get(agentId);
     if (!ws || !entry) return;
     const agentName = entry.info.name;
+    // A limit on a turn the CLI started itself: no prompt of ours to retry.
+    if (!entry.currentMsg && !entry.retryPending) entry.lastPrompt = undefined;
 
     if (!info.rateLimitType || info.rateLimitType === "five_hour") {
       const resetMs = info.resetsAt ? info.resetsAt * 1000 : Date.now() + 30 * 60_000;
@@ -1206,9 +1212,11 @@ systemctl --user restart agent-team-server
       if (!w) return;
       // The old query was started with the previous account's credentials
       // (setProviderEnv couldn't abort it because the turn was still
-      // processing). Kill it so the retry starts a fresh query.
+      // processing). Kill it so the retry starts a fresh query; unless the
+      // retry already went (the user wrote meanwhile) or was dropped.
       const e = w.agents.get(agentId);
-      if (e) e.session.abort();
+      if (!e?.retryPending) return;
+      e.session.abort();
       if (!w.retryLast(agentId)) w.dequeueNext(agentId);
     }, 1000);
   }

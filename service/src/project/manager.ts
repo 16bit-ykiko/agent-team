@@ -90,7 +90,8 @@ export type ProjectInfo = Project & { objectives: Array<Objective | BrokenObject
 // send path, shown with its sender (Message.from).
 export class ProjectManager {
   private store: ProjectStore;
-  private nextStartAt = 0;
+  // Times handed out by takeStartSlot that are not long past.
+  private slots: number[] = [];
   private peerLog = new Map<string, number[]>();
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private boards = new Map<string, ObjectiveStore>();
@@ -341,24 +342,32 @@ export class ProjectManager {
   // restart cut off, a notice that was still waiting) are checked again,
   // spaced out like starts so the leads do not all wake at once.
   recheckWorkers(): void {
+    let delay = SETTLE_MS;
     for (const w of this.host.workspaces()) {
       const link = w.projectLink;
       if (link?.role !== "worker" || w.isArchived) continue;
       const lead = this.leadOf(link.projectId);
       const owed = w.lastDelivered().some((d) => fromLead(d.input, lead) && !d.answered);
-      if (owed) this.settleAfter(w, this.takeStartSlot(SETTLE_MS));
+      if (!owed) continue;
+      this.settleAfter(w, delay);
+      delay += START_SPACING_MS;
     }
   }
 
-  // The next free start slot, START_SPACING_MS after the last one handed
-  // out and `earliest` ms from now at the soonest: worker tasks, the lead's
-  // messages that wake a worker, and a restart's queued messages and
-  // notices all take one. Returns its delay.
+  // The first time `earliest` ms from now or later that is START_SPACING_MS
+  // clear of every other start: worker tasks, the lead's messages that wake
+  // a worker, rate-limit retries and a restart's queued messages each take
+  // one, so no two sessions start together. Returns its delay.
   takeStartSlot(earliest = 0): number {
     const now = Date.now();
-    const delay = Math.max(earliest, this.nextStartAt - now);
-    this.nextStartAt = now + delay + START_SPACING_MS;
-    return delay;
+    this.slots = this.slots.filter((t) => t > now - START_SPACING_MS).sort((a, b) => a - b);
+    let at = now + earliest;
+    for (const t of this.slots) {
+      if (at <= t - START_SPACING_MS) break;
+      if (at < t + START_SPACING_MS) at = t + START_SPACING_MS;
+    }
+    this.slots.push(at);
+    return at - now;
   }
 
   private settleAfter(w: Workspace, ms: number): void {

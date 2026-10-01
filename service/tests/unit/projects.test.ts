@@ -6,7 +6,7 @@ import { ProjectStore } from "../../src/project/store";
 import { leadToolset, workerToolset, type PanelApi } from "../../src/project/tools";
 import { SETTLE_MS, START_SPACING_MS } from "../../src/project/manager";
 import { Workspace } from "../../src/workspace/workspace";
-import { saveIndex, saveWorkspace, loadAll } from "../../src/workspace/state";
+import { historyOf, saveIndex, saveWorkspace, loadAll } from "../../src/workspace/state";
 import { summarizeMessages } from "../../src/workspace/summary";
 import { FakeHost, FakeSession } from "./fakes";
 import { HostRegistry } from "../../src/session/host";
@@ -685,6 +685,40 @@ describe("rate-limit retries", () => {
       vi.useRealTimers();
     }
   });
+
+  it("keep their prompt through a turn the CLI starts itself while they wait", async () => {
+    const { w, agentId, s, endTurn } = await limited();
+    s.isRunning = true;
+    s.emit("event", {
+      kind: "notice",
+      level: "wakeup",
+      content: "A background task reported back — resumed to handle its result.",
+    });
+    endTurn(w);
+    expect(w.retryLast(agentId)).toBe(true);
+    expect(s.sent).toEqual([
+      "[From the project lead]\n\nbuild it",
+      "[From the project lead]\n\nbuild it",
+    ]);
+  });
+
+  it("are not used up by the user writing while a turn still runs", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, agentId, s, endTurn } = await limited();
+      s.isRunning = true;
+      await w.sendMessage("U");
+      endTurn(w);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(s.sent).toHaveLength(1);
+      expect(w.retryLast(agentId)).toBe(true);
+      endTurn(w);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(s.sent.slice(1)).toEqual(["[From the project lead]\n\nbuild it", "U"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("worker tasks held back for spacing", () => {
@@ -778,6 +812,45 @@ describe("worker tasks held back for spacing", () => {
     await new Promise((r) => setTimeout(r, 5));
     const heir = w1.agents.get(b.id)!.session as FakeSession;
     expect(heir.sent).toEqual(["[From the project lead]\n\nsecond"]);
+  });
+
+  it("keep a lead message passed on to the agent that takes over through a crash", async () => {
+    const { w1, base, registry } = await twoStarts();
+    const [first] = w1.agents.keys();
+    const b = w1.addAgent("B", "claude-opus-5-5", "b", "c", { backend: "claude" });
+    (w1.agents.get(b.id)!.session as FakeSession).isRunning = true;
+    // As the server saves: the messages it was told changed, and new ones.
+    const save = () => historyOf(base).save(w1.id, w1.getMessages(), w1.takeChanged());
+    save();
+    expect(w1.removeAgent(first)).toEqual([]);
+    save();
+    const back = Workspace.fromState(
+      { ...w1.getState(), messages: historyOf(base).load(w1.id) },
+      registry,
+    );
+    expect(back.messages.find((m) => m.status === "queued")).toMatchObject({
+      content: "second",
+      queuedFor: b.id,
+    });
+  });
+
+  it("are not held back by a restart's checks on the workers that owe their lead a word", async () => {
+    vi.useFakeTimers();
+    try {
+      const { create, call, manager, workers } = setup();
+      const { lead } = create("a");
+      for (let i = 0; i < 8; i++) {
+        await call(lead, "start_session", { title: `w${i}`, cwd: "wt", task: `t${i}` });
+      }
+      await vi.advanceTimersByTimeAsync(3600_000);
+      expect(workers().every((w) => !w.lastDelivered()[0].answered)).toBe(true);
+      manager.recheckWorkers();
+      expect(await call(lead, "start_session", { title: "x", cwd: "wt", task: "x" })).not.toContain(
+        "goes out in",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stay ahead of a follow-up sent in the meantime", async () => {
