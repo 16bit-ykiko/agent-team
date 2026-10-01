@@ -31,5 +31,8 @@ export default defineConfig({
   build: {
     outDir,
     emptyOutDir: true,
+    // Inlined, the font's small slices would load with the stylesheet
+    // whether a page shows their characters or not.
+    assetsInlineLimit: (file) => (file.endsWith(".woff2") ? false : undefined),
   },
 });

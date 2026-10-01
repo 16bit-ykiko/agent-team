@@ -2,6 +2,7 @@
 // cut short in them shows an ellipsis.
 import { describe, it, expect } from "vitest";
 import css from "../src/styles.css?raw";
+import main from "../src/main.tsx?raw";
 
 interface Rule {
   selectors: string[];
@@ -197,18 +198,33 @@ describe("the lists' type", () => {
   });
 });
 
-describe("Chinese beside monospaced Latin", () => {
-  it("takes it from the system's sans a size down, in every weight", () => {
-    const faces = all.filter((r) => r.selectors[0] === "@font-face");
-    expect(faces.length).toBe(2);
-    for (const f of faces) {
-      expect(f.body).toContain('font-family: "CJK Fallback"');
-      expect(f.body).toMatch(/size-adjust:\s*90%/);
-      expect(f.body).toMatch(/unicode-range:[^;]*U\+4E00-9FFF/);
-      expect(f.body).toMatch(/local\("PingFangSC-/);
+describe("the bundled font", () => {
+  const sheets = import.meta.glob<string>("../src/fonts/sarasa-mono-sc/*/result.css", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  });
+  const slices = new Set(Object.keys(import.meta.glob("../src/fonts/sarasa-mono-sc/*/*.woff2")));
+
+  it("is loaded in both weights, sliced by character, and first in the stack", () => {
+    for (const [dir, weight] of [
+      ["regular", 400],
+      ["semibold", 600],
+    ] as const) {
+      const sheet = `fonts/sarasa-mono-sc/${dir}/result.css`;
+      expect(main).toContain(`import "./${sheet}";`);
+      const faces = sheets[`../src/${sheet}`].match(/@font-face\{[^}]*\}/g)!;
+      expect(faces.length).toBeGreaterThan(50);
+      for (const f of faces) {
+        expect(f).toContain('font-family:"Sarasa Mono SC"');
+        expect(f).toContain(`font-weight:${weight}`);
+        const slice = /url\("\.\/([0-9a-f]+\.woff2)"\)/.exec(f)![1];
+        expect(slices.has(`../src/fonts/sarasa-mono-sc/${dir}/${slice}`)).toBe(true);
+      }
     }
-    expect(faces.map((f) => /font-weight:\s*(\d+)/.exec(f.body)![1])).toEqual(["100", "600"]);
+    // Before the theme, whose rules would otherwise come first.
+    expect(main.indexOf("result.css")).toBeLessThan(main.indexOf('"./styles.css"'));
     const root = all.find((r) => r.selectors[0] === ":root" && !r.media)!;
-    expect(root.body).toMatch(/--font-mono:[^;]*Menlo, "CJK Fallback", monospace;/);
+    expect(root.body).toMatch(/--font-mono:\s*"Sarasa Mono SC",/);
   });
 });

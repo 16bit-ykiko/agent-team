@@ -12,3 +12,4 @@ uv.lock
 **/*.snap.md
 webview/src/panels/vscode-icons.json
 webview/public/file-icons/
+webview/src/fonts/
