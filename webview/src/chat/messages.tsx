@@ -670,7 +670,8 @@ function StepBox({
     <div className={`step-group${open ? " open" : ""}`}>
       <div className="step-header" onClick={toggle}>
         <span className="events-toggle">{open ? "▾" : "▸"}</span>
-        {live && <LiveChip secs={secs} />}
+        {/* Open, the thinking block's own row shows the time. */}
+        {live && !open && <LiveChip secs={secs} />}
         {events.length > 0 && <span className="step-summary">{stepSummary(events)}</span>}
         {!open && tools.length > 0 && (
           <span className="step-tools">

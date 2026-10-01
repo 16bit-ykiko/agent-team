@@ -773,10 +773,13 @@ describe("live thinking", () => {
     const { container, rerender } = render(<MessageItem msg={view("")} agents={[agent]} />);
     const panel = () => container.querySelector(".live-thinking");
     const boxes = () => container.querySelectorAll(".step-group");
-    // It joins the box of the events before it, which opens for it.
+    // It joins the box of the events before it, which opens for it; the
+    // time shows once, on the block's own row.
     expect(boxes()).toHaveLength(1);
     expect(panel()!.closest(".step-group")!.className).toContain("open");
-    expect(boxes()[0].querySelector(".step-header")!.textContent).toContain("Thinking · 0s");
+    expect(boxes()[0].querySelector(".step-header")!.textContent).not.toContain("Thinking");
+    expect(panel()!.textContent).toContain("Thinking · 0s");
+    expect(boxes()[0].textContent.match(/Thinking · /g)).toHaveLength(1);
     expect(panel()!.querySelector(".event-content")).toBeNull();
     act(() => {
       vi.advanceTimersByTime(3_000);

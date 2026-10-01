@@ -136,6 +136,12 @@ describe("the transcript's rules", () => {
     expect(rule(".queued-cancel").body).toMatch(/padding:\s*6px/);
   });
 
+  it("give a command's description a line of its own on phones", () => {
+    const phone = "@media (max-width: 768px), (max-height: 500px)";
+    expect(rule(".command-item", phone).body).toMatch(/flex-wrap:\s*wrap/);
+    expect(rule(".command-desc", phone).body).toMatch(/flex-basis:\s*100%/);
+  });
+
   it("colour a failed subagent's summary and an error's label as errors", () => {
     expect(rule(".subagent-failed .subagent-summary").body).toMatch(/var\(--error\)/);
     expect(rule(".banner-error .banner-label").body).toMatch(/var\(--error\)/);
