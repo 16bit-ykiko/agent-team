@@ -298,6 +298,8 @@ function matchingLines(text: string, q: SearchQuery, re: RegExp | null) {
   return { lines, moreLines: matches.length - shown.length };
 }
 
+const MANY_SESSIONS = 20;
+
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 // The conditions of a query on `entries e`, all but the kinds when asked.
@@ -339,7 +341,12 @@ function conditions(q: SearchQuery, withKinds = true) {
     params.push(q.call);
   }
   if (q.sessions) {
-    where.push("e.session in (select value from json_each(?))");
+    // Over many sessions their index would fetch every entry of them all to
+    // sort it (1.6 s for a one-letter word over the whole history): walking
+    // entries_ts newest first stops at the limit instead. Over a few, the
+    // index is the short way.
+    const many = q.sessions.length > MANY_SESSIONS;
+    where.push(`${many ? "+" : ""}e.session in (select value from json_each(?))`);
     params.push(JSON.stringify(q.sessions));
   }
   if (q.message) {

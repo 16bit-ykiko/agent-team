@@ -40,6 +40,21 @@ const msg = (id: string, content: string, timestamp: number): Message => ({
   status: "done",
 });
 
+describe("a short word over many sessions", () => {
+  it("finds the newest of the sessions asked for, as over a few", async () => {
+    const { history, save } = setup();
+    const sessions = Array.from({ length: 30 }, (_, i) => ({ id: `s${i}`, name: `s${i}` }));
+    for (const [i, s] of sessions.entries()) {
+      save(s.id, [msg(`${s.id}-a`, "ok", i * 10), msg(`${s.id}-b`, "not this", i * 10 + 1)]);
+    }
+    save("other", [msg("other-a", "ok", 1000)]);
+    const found = async (among: typeof sessions) =>
+      (await history.searchNamed({ terms: ["ok"], limit: 5 }, among)).hits.map((h) => h.message);
+    expect(await found(sessions)).toEqual(["s29-a", "s28-a", "s27-a", "s26-a", "s25-a"]);
+    expect(await found(sessions.slice(0, 3))).toEqual(["s2-a", "s1-a", "s0-a"]);
+  });
+});
+
 describe("searching sessions apart, a word being a session's name", () => {
   const sessions = [
     { id: "s1", name: "clice" },
