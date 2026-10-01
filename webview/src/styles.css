@@ -4,6 +4,34 @@
    which is where this UI usually lives).
    ========================================================================== */
 
+/* Chinese falls back to the system's sans, whose ideographs fill the em
+   square: a size above the monospaced Latin beside them. The same fonts,
+   scaled down to sit with it. */
+@font-face {
+  font-family: "CJK Fallback";
+  font-weight: 100 500;
+  size-adjust: 90%;
+  src:
+    local("PingFangSC-Regular"), local("PingFang SC Regular"), local("HiraginoSansGB-W3"),
+    local("MicrosoftYaHei"), local("Microsoft YaHei"), local("NotoSansCJKsc-Regular"),
+    local("Noto Sans CJK SC"), local("NotoSansSC-Regular"), local("SourceHanSansSC-Regular");
+  unicode-range:
+    U+2E80-2FDF, U+3000-312F, U+31C0-32FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+}
+@font-face {
+  font-family: "CJK Fallback";
+  font-weight: 600 900;
+  size-adjust: 90%;
+  src:
+    local("PingFangSC-Semibold"), local("PingFang SC Semibold"), local("HiraginoSansGB-W6"),
+    local("MicrosoftYaHei-Bold"), local("Microsoft YaHei Bold"), local("NotoSansCJKsc-Bold"),
+    local("Noto Sans CJK SC Bold"), local("NotoSansSC-Bold"), local("SourceHanSansSC-Bold");
+  unicode-range:
+    U+2E80-2FDF, U+3000-312F, U+31C0-32FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF, U+FE30-FE4F,
+    U+FF00-FFEF, U+20000-2FA1F;
+}
+
 :root {
   --bg-primary: #282c34;
   --bg-secondary: #21252b;
@@ -25,7 +53,7 @@
   --purple: #c678dd;
   --radius: 8px;
   --radius-sm: 5px;
-  --font-mono: "Cascadia Code", Consolas, "JetBrains Mono", Menlo, monospace;
+  --font-mono: "Cascadia Code", Consolas, "JetBrains Mono", Menlo, "CJK Fallback", monospace;
   --font-ui: var(--font-mono);
   --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.45);
   /* The lists' type: the sidebar, the side panels and the board. Names,

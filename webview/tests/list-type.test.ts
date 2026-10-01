@@ -196,3 +196,19 @@ describe("the lists' type", () => {
     expect(chip.body).toMatch(/flex-shrink:\s*0/);
   });
 });
+
+describe("Chinese beside monospaced Latin", () => {
+  it("takes it from the system's sans a size down, in every weight", () => {
+    const faces = all.filter((r) => r.selectors[0] === "@font-face");
+    expect(faces.length).toBe(2);
+    for (const f of faces) {
+      expect(f.body).toContain('font-family: "CJK Fallback"');
+      expect(f.body).toMatch(/size-adjust:\s*90%/);
+      expect(f.body).toMatch(/unicode-range:[^;]*U\+4E00-9FFF/);
+      expect(f.body).toMatch(/local\("PingFangSC-/);
+    }
+    expect(faces.map((f) => /font-weight:\s*(\d+)/.exec(f.body)![1])).toEqual(["100", "600"]);
+    const root = all.find((r) => r.selectors[0] === ":root" && !r.media)!;
+    expect(root.body).toMatch(/--font-mono:[^;]*Menlo, "CJK Fallback", monospace;/);
+  });
+});
