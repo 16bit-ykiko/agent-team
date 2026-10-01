@@ -282,6 +282,7 @@ export const BoardPage = memo(function BoardPage({
 
           {current && (
             <ObjectiveDetail
+              key={current.id}
               objective={current}
               all={objectives}
               rel={rel.get(current.id)!}
@@ -660,7 +661,9 @@ function ObjectiveDetail({
 
       {o.context && (
         <DetailSection title="Where it stands">
-          <MdBlock>{o.context}</MdBlock>
+          <div className="message-content bp-md">
+            <MdBlock>{o.context}</MdBlock>
+          </div>
         </DetailSection>
       )}
 
@@ -711,7 +714,9 @@ function ObjectiveDetail({
       )}
       {o.notes && (
         <DetailSection title="Notes">
-          <MdBlock>{o.notes}</MdBlock>
+          <div className="message-content bp-md">
+            <MdBlock>{o.notes}</MdBlock>
+          </div>
         </DetailSection>
       )}
     </aside>

@@ -2950,6 +2950,8 @@ button.action-target:hover {
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   font-size: var(--fs-text);
+  /* Paths, URLs and identifiers break rather than run out of their box. */
+  overflow-wrap: anywhere;
 }
 .bp-head {
   display: flex;
@@ -3370,7 +3372,8 @@ button.action-target:hover {
   pointer-events: none;
   overflow: visible;
 }
-/* The lit chain is drawn over the nodes it passes. */
+/* The lit chain is drawn over the other edges (under the nodes, whose text
+   it would strike through). */
 .bp-edges.over {
   z-index: 2;
 }
@@ -3393,7 +3396,6 @@ button.action-target:hover {
 }
 .bp-column {
   position: relative;
-  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3423,6 +3425,11 @@ button.action-target:hover {
 .bp-node.selected,
 .bp-node.lit {
   border-color: var(--accent);
+}
+/* Over the lit chain's edges, which pass the nodes between. */
+.bp-node {
+  position: relative;
+  z-index: 3;
 }
 .bp-node.up {
   border-color: var(--warning);
@@ -3550,6 +3557,7 @@ button.action-target:hover {
   gap: 5px;
   max-width: 100%;
   padding: 2px 8px;
+  line-height: 16px;
   font: inherit;
   font-size: var(--fs-meta);
   color: var(--text-secondary);
@@ -3639,6 +3647,10 @@ button.action-target:hover {
 .bp-decisions.open li {
   border-left-color: var(--warning);
 }
+/* Markdown in the details, styled like the chat's, in the board's size. */
+.bp-md {
+  font-size: var(--fs-text);
+}
 .bp-question {
   display: block;
   color: var(--text-secondary);
@@ -3684,7 +3696,7 @@ button.action-target:hover {
   }
   .bp-summary,
   .bp-delete,
-  .bp-detail-close {
+  .bp-detail-head .bp-detail-close {
     display: none;
   }
   .bp-head .bp-close {
@@ -3734,6 +3746,18 @@ button.action-target:hover {
   }
   .bp-back {
     display: block;
+  }
+}
+
+/* A phone on its side: the header and filters keep to two short rows. */
+@media (max-height: 500px) and (min-width: 600px) {
+  .bp-search {
+    order: 0;
+    flex: 1;
+    width: auto;
+  }
+  .bp-archive {
+    display: none;
   }
 }
 
@@ -4606,9 +4630,15 @@ button.action-target:hover {
   .ap-archived > summary {
     padding: 10px 0;
   }
-  .bp-close {
+  .bp-close,
+  .bp-back {
     width: 44px;
     height: 44px;
+  }
+  .bp-ref,
+  .bp-session,
+  .bp-ask {
+    min-height: 32px;
   }
   .bp-status-toggle,
   .bp-area,

@@ -198,6 +198,20 @@ describe("BoardPage", () => {
     expect(onAskLead).toHaveBeenCalledWith("foundation/identity");
   });
 
+  it("opens each objective at its top, its markdown styled like the chat's", () => {
+    const { getByText, container } = page();
+    fireEvent.click(getByText("Declaration identity"));
+    const first = container.querySelector(".bp-detail")!;
+    first.scrollTop = 180;
+    expect(container.querySelector(".bp-detail .message-content.bp-md strong")!.textContent).toBe(
+      "index",
+    );
+    fireEvent.click(within(first as HTMLElement).getByText("Rename across the project"));
+    const next = container.querySelector(".bp-detail")!;
+    expect(next).not.toBe(first);
+    expect(next.scrollTop).toBe(0);
+  });
+
   it("draws the dependency graph in columns with an edge per prerequisite", () => {
     const { getByRole, container } = page();
     fireEvent.click(getByRole("button", { name: "Dependencies" }));

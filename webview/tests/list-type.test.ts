@@ -100,6 +100,18 @@ describe("the lists' type", () => {
     }
   });
 
+  it("breaks a board's long paths and URLs, and keeps one close button on a phone's details", () => {
+    const board = all.find((r) => r.selectors.includes(".board-page") && !r.media)!;
+    expect(board.body).toMatch(/overflow-wrap:\s*anywhere/);
+    // .side-panel-btn sets the button's display later in the sheet: only a
+    // more specific rule hides it.
+    const hidden = all.find(
+      (r) => r.media === PHONE && r.selectors.some((s) => s.endsWith(".bp-detail-close")),
+    )!;
+    expect(hidden.selectors).toContain(".bp-detail-head .bp-detail-close");
+    expect(hidden.body).toMatch(/display:\s*none/);
+  });
+
   it("fits a dialog in a narrow phone", () => {
     const dialog = all.find((r) => r.selectors.includes(".dialog") && !r.media)!;
     expect(dialog.body).toMatch(/min-width:\s*min\(360px, calc\(100vw - 24px\)\)/);
