@@ -283,6 +283,11 @@ export function CreateWorkspaceDialog({
     }
   };
 
+  // Escape folds the suggestions first, then closes.
+  useDialogKeys(nameRef, () =>
+    suggestOpen && suggestions.length > 0 ? setSuggestOpen(false) : onClose(),
+  );
+
   const canSubmit = dirPath.trim().length > 0;
   const defaultName = dirPath.split("/").filter(Boolean).pop() ?? "";
 

@@ -204,7 +204,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
         </div>
         {folder && <div className="task-meta">{folder}</div>}
       </div>
-      {deleteButton(ws)}
+      <span className="task-hover">{deleteButton(ws)}</span>
     </div>
   );
 
@@ -372,9 +372,6 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                           <span className="unread-badge">{unread}</span>
                         )}
                       </span>
-                      <span className="task-time">
-                        {formatRelative(ws.lastMessageAt ?? ws.createdAt, now)}
-                      </span>
                     </div>
                     {activeAgents.length > 0 && (
                       <div className="task-active-agents">
@@ -392,7 +389,12 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                       </div>
                     )}
                   </div>
-                  {deleteButton(ws)}
+                  <span className="task-hover">
+                    <span className="task-time">
+                      {formatRelative(ws.lastMessageAt ?? ws.createdAt, now)}
+                    </span>
+                    {deleteButton(ws)}
+                  </span>
                 </div>
               );
             })}

@@ -249,7 +249,7 @@ button {
 
 .disconnected {
   color: var(--error);
-  font-size: 10px;
+  font-size: var(--fs-tag);
   text-transform: none;
   margin-left: 4px;
 }
@@ -266,8 +266,8 @@ button {
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-primary);
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 6px 26px 6px 10px;
+  font-size: var(--fs-text);
   outline: none;
   font-family: inherit;
 }
@@ -311,14 +311,19 @@ button {
   color: var(--accent);
   font-weight: 600;
   margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .search-result-snippet {
   font-size: var(--fs-text);
   color: var(--text-primary);
   line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .search-result-time {
   font-size: var(--fs-tag);
@@ -437,6 +442,8 @@ button {
 }
 
 .task-item {
+  position: relative;
+  --row-bg: var(--bg-secondary);
   padding: 5px 8px 5px 10px;
   margin: 1px 0 1px 4px;
   cursor: pointer;
@@ -447,9 +454,11 @@ button {
   min-width: 0;
 }
 .task-item:hover {
+  --row-bg: color-mix(in srgb, #fff 4%, var(--bg-secondary));
   background: var(--bg-hover);
 }
 .task-item.active {
+  --row-bg: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
   background: var(--bg-active);
 }
 .task-item.active .task-name {
@@ -504,16 +513,35 @@ button {
   gap: 6px;
   min-width: 0;
 }
-/* Shown on hover only, and taking no room before: the name has the row. */
 .task-time {
-  display: none;
   flex-shrink: 0;
   font-size: var(--fs-meta);
   color: var(--text-muted);
 }
-.task-item:hover .task-time,
-.task-item-archived .task-time {
-  display: inline;
+/* A session row's time and ×: over the end of its name while the row is
+   hovered (or open, on touch), so nothing moves and the name has the row. */
+.task-hover {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 18px;
+  background: linear-gradient(to right, transparent, var(--row-bg) 16px);
+  opacity: 0;
+  pointer-events: none;
+}
+.task-item:hover .task-hover,
+.task-hover:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .task-item.active .task-hover {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 .task-meta {
   font-size: var(--fs-meta);
@@ -565,19 +593,7 @@ button {
   opacity: 0;
   flex-shrink: 0;
 }
-/* A session's row gives it no room until hovered; the keyboard still
-   reaches it. */
-.task-item .task-delete {
-  width: 0;
-  padding: 0;
-  margin-left: -8px;
-  overflow: hidden;
-}
-.task-item:hover .task-delete,
-.task-item .task-delete:focus-visible {
-  width: auto;
-  padding: 2px 4px;
-  margin: -2px 0;
+.task-hover .task-delete {
   opacity: 1;
 }
 .task-delete:hover {
@@ -660,9 +676,17 @@ button {
   color: var(--accent);
   border-color: var(--accent);
 }
+/* Touch has no hover: the group's actions show, the open project's × too;
+   a hidden one takes no tap. */
 @media (hover: none) {
-  .ws-group-restore {
+  .ws-group-restore,
+  .ws-group-add,
+  .ws-archived-purge,
+  .ws-group-header.active .task-delete {
     opacity: 1;
+  }
+  .ws-group-header:not(.active) .task-delete {
+    visibility: hidden;
   }
 }
 .task-item-archived:hover,
@@ -2353,8 +2377,8 @@ button.action-target:hover {
   border: 1px solid var(--border-strong);
   border-radius: 12px;
   padding: 22px;
-  min-width: 360px;
-  max-width: 520px;
+  min-width: min(360px, calc(100vw - 24px));
+  max-width: min(520px, calc(100vw - 24px));
   box-shadow: var(--shadow-lg);
   /* The path autocomplete grows the dialog; scroll instead of overflowing
      the viewport on small screens. */
@@ -2449,16 +2473,19 @@ button.action-target:hover {
   gap: 8px;
 }
 .status-label {
-  font-size: 10px;
+  font-size: var(--fs-tag);
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  width: 52px;
+  min-width: 52px;
+  max-width: 45%;
   flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .status-value {
-  font-size: 11px;
+  font-size: var(--fs-meta);
   color: var(--text-secondary);
   display: flex;
   align-items: center;
@@ -2482,7 +2509,7 @@ button.action-target:hover {
   transition: width 0.5s ease;
 }
 .status-pct {
-  font-size: 10px;
+  font-size: var(--fs-tag);
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -2554,12 +2581,40 @@ button.action-target:hover {
 @media (max-width: 768px), (max-height: 500px) {
   .subagent-counts,
   .step-tools,
-  .task-item .task-time,
-  .task-item:hover .task-time {
+  .task-item .task-time {
     display: none;
   }
   .mobile-menu-btn {
     display: inline-block;
+  }
+  /* Touch targets in the sidebar and the header: 32-40px. */
+  .mobile-menu-btn {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    text-align: left;
+  }
+  .sidebar-header button {
+    width: 36px;
+    height: 36px;
+  }
+  .ws-group-add {
+    width: 32px;
+    height: 32px;
+  }
+  .ws-group-toggle {
+    width: 28px;
+    height: 28px;
+    margin-left: -9px;
+  }
+  .ws-project-btn {
+    min-height: 32px;
+  }
+  .search-clear {
+    top: 0;
+    right: 12px;
+    height: 30px;
+    padding: 0 10px;
   }
   /* Fixed overlays are laid out against the (possibly short) layout viewport,
      so they take the app height explicitly instead of pinning top+bottom. */
@@ -2613,7 +2668,7 @@ button.action-target:hover {
     flex: 1 1 auto;
   }
   .panel-title {
-    font-size: 12px;
+    font-size: var(--fs-text);
   }
   .workspace-info-bar {
     gap: 10px;
@@ -2623,8 +2678,11 @@ button.action-target:hover {
   .ws-info-item:first-child {
     display: none;
   }
+  /* The branch gives way to the rail and Lead beside it. */
   .ws-info-branch {
-    max-width: 60%;
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: none;
   }
   .ws-archive-btn {
     display: none;

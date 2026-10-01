@@ -79,19 +79,30 @@ describe("the lists' type", () => {
     expect(flexCut).toEqual([]);
   });
 
-  it("brings a session row's time and × back on hover, the × on keyboard focus too", () => {
-    const rule = (sel: string) => all.filter((r) => r.selectors.includes(sel) && !r.media);
-    expect(rule(".task-item:hover .task-time")[0].body).toMatch(/display:\s*inline/);
-    expect(rule(".task-item-archived .task-time")[0].body).toMatch(/display:\s*inline/);
-    const shown = rule(".task-item .task-delete:focus-visible")[0];
-    expect(shown.selectors).toContain(".task-item:hover .task-delete");
-    expect(shown.body).toMatch(/width:\s*auto/);
+  it("shows a session row's time and × on hover, keyboard focus or, on touch, when open", () => {
+    const rule = (sel: string, media: string | null = null) =>
+      all.find((r) => r.selectors.includes(sel) && r.media === media)!;
+    const shown = rule(".task-item:hover .task-hover");
+    expect(shown.selectors).toContain(".task-hover:focus-within");
     expect(shown.body).toMatch(/opacity:\s*1/);
-    // The project's row keeps its own ×, shown on hover.
-    expect(rule(".ws-group-header:hover .task-delete")[0].body).toMatch(/opacity:\s*1/);
-    expect(all.filter((r) => r.selectors.includes(".task-delete") && !r.media)[0].body).not.toMatch(
-      /display:\s*none/,
+    expect(shown.body).toMatch(/pointer-events:\s*auto/);
+    expect(rule(".task-item.active .task-hover", "@media (hover: none)").body).toMatch(
+      /opacity:\s*1/,
     );
+    // The project's row keeps its own ×: shown on hover, on touch only when
+    // open, and no tap lands on it while hidden.
+    expect(rule(".ws-group-header:hover .task-delete").body).toMatch(/opacity:\s*1/);
+    expect(rule(".ws-group-header:not(.active) .task-delete", "@media (hover: none)").body).toMatch(
+      /visibility:\s*hidden/,
+    );
+    for (const sel of [".ws-group-add", ".ws-archived-purge", ".ws-group-restore"]) {
+      expect(rule(sel, "@media (hover: none)").body).toMatch(/opacity:\s*1/);
+    }
+  });
+
+  it("fits a dialog in a narrow phone", () => {
+    const dialog = all.find((r) => r.selectors.includes(".dialog") && !r.media)!;
+    expect(dialog.body).toMatch(/min-width:\s*min\(360px, calc\(100vw - 24px\)\)/);
   });
 
   it("keeps the chat header's title on the row of its menu and agents, cut short", () => {

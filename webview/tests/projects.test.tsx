@@ -169,14 +169,17 @@ describe("project groups", () => {
         "0px",
       ]);
       expect(getComputedStyle(row.querySelector(".awaits-tag")!).flexShrink).toBe("0");
-      // The time and × take no room until the row is hovered; the × stays
-      // in the keyboard's reach.
-      expect(getComputedStyle(container.querySelector(".task-item .task-time")!).display).toBe(
+      // The time and × lie over the name's end, shown on hover: nothing
+      // moves, and the × stays in the keyboard's reach.
+      const hover = container.querySelector(".task-item .task-hover")!;
+      expect([...hover.children].map((e) => e.className)).toEqual(["task-time", "task-delete"]);
+      const shown = getComputedStyle(hover);
+      expect([shown.position, shown.opacity, shown.pointerEvents]).toEqual([
+        "absolute",
+        "0",
         "none",
-      );
-      const del = getComputedStyle(container.querySelector(".task-item .task-delete")!);
-      expect(del.display).not.toBe("none");
-      expect([del.width, del.marginLeft]).toEqual(["0px", "-8px"]);
+      ]);
+      expect(getComputedStyle(hover.querySelector(".task-delete")!).display).not.toBe("none");
     } finally {
       sheet.remove();
     }
@@ -349,6 +352,26 @@ describe("CreateWorkspaceDialog", () => {
     expect(queryByRole("checkbox")).toBeNull();
     fireEvent.click(getByText("Create"));
     expect(onCreate).toHaveBeenCalledWith("clice", "/repo/clice", "local");
+  });
+
+  it("closes on Escape, the path's suggestions first", () => {
+    const onClose = vi.fn();
+    const { getByPlaceholderText, container } = render(
+      <CreateWorkspaceDialog
+        hosts={[]}
+        onClose={onClose}
+        onCreate={() => {}}
+        onListDirs={() => {}}
+        dirSuggestions={{ prefix: "/repo/", dirs: ["/repo/clice/", "/repo/other/"] }}
+      />,
+    );
+    fireEvent.change(getByPlaceholderText("~/workspace/..."), { target: { value: "/repo/" } });
+    expect(container.querySelector(".dir-suggest")).not.toBeNull();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(container.querySelector(".dir-suggest")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
