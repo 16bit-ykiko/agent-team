@@ -23,7 +23,6 @@ import { formatRelative } from "./format";
 import { MessageItem, MessageBoundary, originLabel, SessionLinkContext } from "./chat/messages";
 import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./workspace/dialogs";
 import { Sidebar } from "./sidebar/Sidebar";
-import { ViewportInfo } from "./viewport/ViewportInfo";
 import { GitBar } from "./workspace/GitBar";
 import { BoardPage, type SessionInfo } from "./project/BoardPage";
 import { HistoryHint } from "./chat/HistoryHint";
@@ -369,10 +368,6 @@ export function App() {
     const t = setTimeout(() => setSidebarShield(false), 400);
     return () => clearTimeout(t);
   }, [sidebarOpen]);
-  const openBoard = useCallback((projectId: string) => {
-    setBoardProjectId(projectId);
-    setSidebarOpen(false);
-  }, []);
   const [pendingImages, setPendingImages] = useState<Array<{ file: File; preview: string }>>([]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1287,7 +1282,6 @@ export function App() {
             onSelect={onSelectWorkspace}
             onDelete={onDeleteWorkspace}
             onDeleteProject={askDeleteProject}
-            onOpenBoard={openBoard}
             onToggleGroup={toggleGroup}
             onSearchChange={setSearchQuery}
             onJump={jumpToMessage}
@@ -1299,8 +1293,6 @@ export function App() {
             onDebugSnapshot={takeSnapshot}
             onSetDefaultAccount={setDefaultAccount}
           />
-          {/* Measures the layout on every viewport resize: only while visible. */}
-          {sidebarOpen && <ViewportInfo />}
         </div>
 
         <div className="resize-handle" onMouseDown={onResizeStart} />

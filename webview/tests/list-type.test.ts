@@ -96,9 +96,17 @@ describe("the lists' type", () => {
     expect(rule(".ws-group-header:not(.active) .task-delete", "@media (hover: none)").body).toMatch(
       /visibility:\s*hidden/,
     );
-    for (const sel of [".ws-group-add", ".ws-archived-purge", ".ws-group-restore"]) {
+    for (const sel of [".ws-archived-purge", ".ws-group-restore"]) {
       expect(rule(sel, "@media (hover: none)").body).toMatch(/opacity:\s*1/);
     }
+    // A new session only from the open session's project; the others' +
+    // take no room and no tap.
+    expect(rule(".ws-group-header.current .ws-group-add", "@media (hover: none)").body).toMatch(
+      /opacity:\s*1/,
+    );
+    expect(
+      rule(".ws-group-header:not(.current) .ws-group-add", "@media (hover: none)").body,
+    ).toMatch(/display:\s*none/);
   });
 
   it("breaks a board's long paths and URLs, and keeps one close button on a phone's details", () => {

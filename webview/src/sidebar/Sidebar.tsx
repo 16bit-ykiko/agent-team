@@ -7,8 +7,10 @@ import {
   type WorkspaceGroup,
 } from "./groups";
 import { isAgentActive } from "../workspace/agents";
-import { Icon } from "../panels/Icon";
 import { formatBytes, formatRelative, formatResetTime } from "../format";
+
+// The branch a project usually sits on: not worth a word on every row.
+const DEFAULT_BRANCH = /^(main|master)$/;
 
 function gitTitle(git: { dirty: number; ahead: number; behind: number }): string {
   const parts: string[] = [];
@@ -129,7 +131,6 @@ export interface SidebarProps {
   onDelete: (wsId: string) => void;
   // The × on a project's lead deletes the project (after confirming).
   onDeleteProject?: (projectId: string) => void;
-  onOpenBoard?: (projectId: string) => void;
   onToggleGroup: (key: string, expanded: boolean) => void;
   onSearchChange: (q: string) => void;
   onJump: (wsId: string, msgId: string) => void;
@@ -225,8 +226,8 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
         >
           <span className="events-toggle">{open ? "▾" : "▸"}</span>
           <span>Archived</span>
-          <span className="ws-group-count">{g.archived.length}</span>
-          {g.project && (
+          {open && <span className="ws-group-count">{g.archived.length}</span>}
+          {open && g.project && (
             <button
               className="ws-archived-purge"
               title={`Delete the archived sessions of ${g.label}`}
@@ -268,10 +269,12 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
     const hasContent = items.length > 0 || g.archived.length > 0;
     // A project of archived sessions only (its lead archived too) has no live one.
     const git = (g.workspaces[0] ?? g.archived[0])?.git;
+    // The group of the open session: on touch only its row offers a new one.
+    const current = [...g.workspaces, ...g.archived].some((w) => w.id === p.activeWsId);
     return (
       <div key={g.key} className="ws-group">
         <div
-          className={`ws-group-header${g.project ? " ws-group-project" : ""}${lead && lead.id === p.activeWsId ? " active" : ""}`}
+          className={`ws-group-header${g.project ? " ws-group-project" : ""}${lead && lead.id === p.activeWsId ? " active" : ""}${current ? " current" : ""}`}
           title={lead ? `Open the lead of ${g.label}` : (g.project?.root ?? g.key)}
           onClick={() => (lead ? p.onSelect(lead.id) : toggle())}
         >
@@ -297,23 +300,11 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
           {leadUnread > 0 && lead!.id !== p.activeWsId && (
             <span className="unread-badge">{leadUnread}</span>
           )}
-          {git?.branch && (
+          {git?.branch && (!DEFAULT_BRANCH.test(git.branch) || git.dirty > 0) && (
             <span className="ws-group-branch" title={gitTitle(git)}>
-              {git.branch}
+              {!DEFAULT_BRANCH.test(git.branch) && git.branch}
               {git.dirty > 0 && <span className="ws-group-dirty">●</span>}
             </span>
-          )}
-          {g.project && p.onOpenBoard && (
-            <button
-              className="ws-group-add ws-group-board"
-              title={`Objectives of ${g.project.name}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                p.onOpenBoard!(g.project!.id);
-              }}
-            >
-              <Icon name="board" />
-            </button>
           )}
           <button
             className="ws-group-add"
@@ -325,7 +316,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
           >
             +
           </button>
-          {items.length > 0 && <span className="ws-group-count">{items.length}</span>}
+          {!expanded && items.length > 0 && <span className="ws-group-count">{items.length}</span>}
           {g.running && <span className="streaming-dot" />}
           {shelf && g.project && p.onRestoreProject && (
             <button
@@ -487,17 +478,19 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
               >
                 <span className="events-toggle">{showArchived ? "▾" : "▸"}</span>
                 <span className="ws-group-label">Archived</span>
-                <span className="ws-group-count">{archived.length}</span>
-                <button
-                  className="ws-archived-purge"
-                  title="Delete the archived workspaces that belong to no project"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    p.onPurgeArchived(null);
-                  }}
-                >
-                  Clear
-                </button>
+                {showArchived && <span className="ws-group-count">{archived.length}</span>}
+                {showArchived && (
+                  <button
+                    className="ws-archived-purge"
+                    title="Delete the archived workspaces that belong to no project"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      p.onPurgeArchived(null);
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
               {showArchived && (
                 <div className="ws-group-items">

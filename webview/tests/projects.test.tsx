@@ -102,10 +102,35 @@ describe("project groups", () => {
     expect(props.onCreateIn).toHaveBeenCalledWith("/repo/clice");
     const names = [...container.querySelectorAll(".task-name-text")].map((e) => e.textContent);
     expect(names).toEqual(["modules"]);
-    expect(header.querySelector(".ws-group-count")!.textContent).toBe("1");
+    // Unfolded, its sessions are in view: no count of them.
+    expect(header.querySelector(".ws-group-count")).toBeNull();
     fireEvent.click(header);
     expect(props.onSelect).toHaveBeenCalledWith("lead");
     expect(props.onToggleGroup).not.toHaveBeenCalled();
+  });
+
+  it("keep a project's row short: a count only when folded, no board, the branch only off main", () => {
+    const git = (branch: string, dirty: number) => ({ branch, dirty, ahead: 0, behind: 0 });
+    const props = sidebarProps();
+    const { container, rerender } = render(
+      <Sidebar {...props} groupOverrides={{ "project:p1": false }} />,
+    );
+    const header = () => container.querySelector(".ws-group-project")!;
+    expect(header().querySelector(".ws-group-count")!.textContent).toBe("1");
+    // The board opens from the chat header of any of its sessions.
+    expect(header().querySelector('[title^="Objectives"]')).toBeNull();
+    const branch = (b: string, dirty: number) => {
+      rerender(<Sidebar {...props} workspaces={[{ ...lead, git: git(b, dirty) }, worker]} />);
+      return header().querySelector(".ws-group-branch")?.textContent ?? null;
+    };
+    expect(branch("main", 0)).toBeNull();
+    expect(branch("master", 0)).toBeNull();
+    expect(branch("main", 2)).toBe("●");
+    expect(branch("feat/x", 2)).toBe("feat/x●");
+    // On touch, only the open session's project offers a new session.
+    expect(header().className).toContain("current");
+    rerender(<Sidebar {...props} activeWsId={null} />);
+    expect(header().className).not.toContain("current");
   });
 
   it("offer no arrow while the lead has no sessions under it", () => {
@@ -427,8 +452,10 @@ describe("archives in the sidebar", () => {
     expect(names(container)).toEqual(["modules"]);
     expect(container.querySelector(".ws-archived")).toBeNull();
     const toggle = container.querySelector(".ws-archive-toggle")!;
-    expect(toggle.querySelector(".ws-group-count")!.textContent).toBe("2");
+    // Folded, the row is just its name: the count and Clear come with the list.
+    expect(toggle.textContent).toBe("▸Archived");
     fireEvent.click(toggle);
+    expect(toggle.querySelector(".ws-group-count")!.textContent).toBe("2");
     expect(names(container)).toEqual(["modules", "old-a", "old-b"]);
     // A session in a worktree names its folder.
     expect(

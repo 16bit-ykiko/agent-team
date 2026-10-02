@@ -89,7 +89,8 @@ const frame = () =>
   });
 const textarea = () => document.querySelector("textarea") as HTMLTextAreaElement;
 const type = (text: string) => fireEvent.change(textarea(), { target: { value: text } });
-const openBoard = () => fireEvent.click(document.querySelector(".ws-group-board")!);
+const openBoard = () =>
+  fireEvent.click(document.querySelector('.side-rail [aria-label^="Objectives of"]')!);
 const ask = () => {
   fireEvent.click(document.querySelector(".bp-card")!);
   fireEvent.click(document.querySelector(".bp-ask")!);
@@ -178,7 +179,8 @@ describe("stream frames", () => {
         },
       ],
     });
-    const { recv } = boot([lead, worker, busy], [project()], "other");
+    // The board is open from the lead while another workspace streams.
+    const { recv } = boot([lead, worker, busy], [project()], "lead");
     recv({
       type: "new_message",
       workspaceId: "other",

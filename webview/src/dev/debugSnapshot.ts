@@ -3,7 +3,7 @@
 // CSS variables that drive sizing, and the DOM itself (message bodies
 // trimmed). Posted to the server, which stores it as a JSON file.
 
-import { readViewportFacts, ViewportFacts } from "../viewport/ViewportInfo";
+import { readViewportFacts, ViewportFacts } from "../viewport/facts";
 
 export interface ElementGeometry {
   selector: string;

@@ -666,13 +666,17 @@ button {
   border-color: var(--accent);
 }
 /* Touch has no hover: the group's actions show, the open project's × too;
-   a hidden one takes no tap. */
+   a new session is offered only in the open session's group. A hidden one
+   takes no tap. */
 @media (hover: none) {
   .ws-group-restore,
-  .ws-group-add,
+  .ws-group-header.current .ws-group-add,
   .ws-archived-purge,
   .ws-group-header.active .task-delete {
     opacity: 1;
+  }
+  .ws-group-header:not(.current) .ws-group-add {
+    display: none;
   }
   .ws-group-header:not(.active) .task-delete {
     visibility: hidden;
@@ -2565,16 +2569,6 @@ button.action-target:hover {
   font-family: inherit;
 }
 
-.viewport-info {
-  display: none;
-  padding: 4px 14px calc(6px + env(safe-area-inset-bottom, 0px));
-  font-size: 9.5px;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 /* ---- Scrollbar ---------------------------------------------------------- */
 
 ::-webkit-scrollbar {
@@ -2661,7 +2655,8 @@ button.action-target:hover {
     transform: translateX(-100%);
     transition: transform 0.2s ease;
     box-shadow: none;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    /* The status panel's own bottom padding counts toward the home bar's. */
+    padding-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - 10px));
   }
   .sidebar.sidebar-open {
     transform: translateX(0);
@@ -2804,9 +2799,6 @@ button.action-target:hover {
   }
   .ctx-bar {
     display: none;
-  }
-  .viewport-info {
-    display: block;
   }
   .event-row .btn-inline {
     opacity: 1;
@@ -2969,16 +2961,6 @@ button.action-target:hover {
 
 /* ---- Board page ---------------------------------------------------------- */
 
-.ws-group-board {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.7;
-}
-.ws-group-board .icon {
-  width: 13px;
-  height: 13px;
-}
 .board-overlay {
   position: fixed;
   inset: 0;
@@ -3739,9 +3721,6 @@ button.action-target:hover {
 @media (max-width: 768px), (max-height: 500px) {
   .ws-project-btn-label {
     display: none;
-  }
-  .ws-group-board {
-    opacity: 1;
   }
   .board-overlay {
     align-items: stretch;

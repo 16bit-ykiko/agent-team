@@ -476,17 +476,6 @@ describe("agent avatars", () => {
   });
 });
 
-describe("viewport diagnostics", () => {
-  it("is only mounted while the sidebar drawer is open", () => {
-    boot([settled(1)]);
-    expect(document.querySelector(".viewport-info")).toBeNull();
-    fireEvent.click(document.querySelector(".mobile-menu-btn")!);
-    expect(document.querySelector(".viewport-info")).not.toBeNull();
-    fireEvent.click(document.querySelector(".sidebar-overlay")!);
-    expect(document.querySelector(".viewport-info")).toBeNull();
-  });
-});
-
 describe("the sidebar drawer", () => {
   it("takes the second tap of a double tap on a session as it closes", () => {
     boot([settled(1)], { others: ["w2"] });

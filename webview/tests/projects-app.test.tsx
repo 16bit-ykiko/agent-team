@@ -161,6 +161,9 @@ describe("purging archived workspaces", () => {
     const live = ws("live", { lastMessageAt: NOW });
     boot([live, archivedLead, archivedWorker, archivedPlain], [project()], "live");
     const body = () => document.querySelector(".dialog-body")!.textContent;
+    // Each Clear comes with the archived list it clears.
+    fireEvent.click(document.querySelector(".ws-archive-toggle")!);
+    fireEvent.click(document.querySelector(".ws-archived-header")!);
     fireEvent.click(document.querySelector('[title="Delete the archived sessions of clice"]')!);
     expect(body()).toBe(
       "Permanently delete the 1 archived session(s) of clice, with their message history and logs.",
@@ -234,17 +237,14 @@ describe("the board page", () => {
     expect(document.querySelector("[role='dialog'][aria-label='clice objectives']")).not.toBeNull();
     fireEvent.click(document.querySelector(".bp-close")!);
     expect(document.querySelector(".board-page")).toBeNull();
-    // On a phone the sidebar is a drawer over the page: it gets out of the way.
-    fireEvent.click(document.querySelector(".mobile-menu-btn")!);
-    expect(document.querySelector(".sidebar-open")).not.toBeNull();
-    fireEvent.click(document.querySelector(".ws-group-board")!);
-    expect(document.querySelector(".board-page")).not.toBeNull();
-    expect(document.querySelector(".sidebar-open")).toBeNull();
+    // Not from the sidebar: every session of the project has it in its header.
+    expect(document.querySelector('.sidebar [aria-label^="Objectives"]')).toBeNull();
+    expect(document.querySelector('.sidebar [title^="Objectives"]')).toBeNull();
   });
 
   it("opens a working session from an objective and closes itself", () => {
     boot([lead, worker], [withBoard], "lead");
-    fireEvent.click(document.querySelector(".ws-group-board")!);
+    fireEvent.click(document.querySelector('.side-rail [aria-label="Objectives of clice"]')!);
     fireEvent.click(document.querySelector(".bp-card")!);
     fireEvent.click(document.querySelector(".bp-session")!);
     expect(document.querySelector(".board-page")).toBeNull();
@@ -253,7 +253,7 @@ describe("the board page", () => {
 
   it("hands the question to the lead with the objective named in the composer", () => {
     boot([lead, worker], [withBoard], "w1");
-    fireEvent.click(document.querySelector(".ws-group-board")!);
+    fireEvent.click(document.querySelector('.side-rail [aria-label="Objectives of clice"]')!);
     fireEvent.click(document.querySelector(".bp-card")!);
     fireEvent.click(document.querySelector(".bp-ask")!);
     frame();
@@ -321,6 +321,7 @@ describe("a lead whose project the server could not read", () => {
 
   it("is purged with the other archived workspaces", () => {
     boot([{ ...orphan, archivedAt: NOW - 100 }], [], "lead");
+    fireEvent.click(document.querySelector(".ws-archived-header")!);
     fireEvent.click(document.querySelector(".ws-archived-purge")!);
     expect(document.querySelector(".dialog-body")!.textContent).toBe(
       "Permanently delete the 1 archived session(s) that belong to no project, with their message history and logs.",

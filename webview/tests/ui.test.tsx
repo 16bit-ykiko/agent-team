@@ -300,11 +300,12 @@ describe("Sidebar archived section", () => {
     ...over,
   });
 
-  it("folds archived workspaces into a collapsed section with a count", () => {
+  it("folds archived workspaces into a collapsed section, its count and Clear inside", () => {
     const props = base();
     const { container, getByTitle } = render(<Sidebar {...props} />);
     const header = container.querySelector(".ws-archived-header")!;
-    expect(header.querySelector(".ws-group-count")!.textContent).toBe("1");
+    expect(header.querySelector(".ws-group-count")).toBeNull();
+    expect(header.querySelector(".ws-archived-purge")).toBeNull();
     expect(container.querySelector(".task-item-archived")).toBeNull();
     // The live group does not list the archived one.
     expect(
@@ -312,6 +313,7 @@ describe("Sidebar archived section", () => {
     ).toEqual(["live"]);
 
     fireEvent.click(header);
+    expect(header.querySelector(".ws-group-count")!.textContent).toBe("1");
     const item = container.querySelector(".task-item-archived")!;
     expect(item.textContent).toContain("dusty");
     expect(item.textContent).toContain("20d ago");
