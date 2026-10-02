@@ -145,6 +145,35 @@ describe("the lists' type", () => {
     expect(body(".ap-toggle")).toMatch(/text-align:\s*left/);
   });
 
+  it("keeps every grey of the text readable on every background, each step apart", () => {
+    const rule = (sel: string) => all.find((r) => r.selectors.includes(sel) && r.media === null)!;
+    const root = rule(":root").body;
+    const hex = (name: string) => new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`).exec(root)![1];
+    const luminance = (h: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => {
+        const c = parseInt(h.slice(i, i + 2), 16) / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const contrast = (fg: string, bg: string) =>
+      (luminance(hex(fg)) + 0.05) / (luminance(hex(bg)) + 0.05);
+    const least = (fg: string) =>
+      Math.min(
+        ...["bg-primary", "bg-secondary", "bg-tertiary", "bg-elevated"].map((bg) =>
+          contrast(fg, bg),
+        ),
+      );
+    expect(least("text-strong")).toBeGreaterThanOrEqual(9);
+    expect(least("text-primary")).toBeGreaterThanOrEqual(6);
+    expect(least("text-secondary")).toBeGreaterThanOrEqual(4.5);
+    expect(least("text-muted")).toBeGreaterThanOrEqual(3);
+    // An objective's title stands out of its text; its sections' names read.
+    expect(rule(".bp-detail-title").body).toMatch(/color:\s*var\(--text-strong\)/);
+    expect(rule(".bp-card-title").body).toMatch(/color:\s*var\(--text-strong\)/);
+    expect(rule(".bp-section-title").body).toMatch(/color:\s*var\(--text-secondary\)/);
+  });
+
   it("gives an objective's details room: its notes as airy as its goal, sections well apart", () => {
     const body = (sel: string) =>
       all.find((r) => r.selectors.includes(sel) && r.media === null)!.body;

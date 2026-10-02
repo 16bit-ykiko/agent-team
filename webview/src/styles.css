@@ -11,9 +11,12 @@
   --bg-hover: rgba(255, 255, 255, 0.04);
   --bg-active: rgba(82, 139, 255, 0.1);
   --bg-elevated: #2c313a;
+  /* Contrast on the backgrounds above (WCAG): titles 9+, text 6+,
+     secondary 4.5+, muted 3+; the steps far enough apart to tell. */
+  --text-strong: #d7dae0;
   --text-primary: #abb2bf;
-  --text-secondary: #7f848e;
-  --text-muted: #5c6370;
+  --text-secondary: #959ba6;
+  --text-muted: #767d8a;
   --border: #181a1f;
   --border-strong: #363c47;
   --accent: #528bff;
@@ -3343,6 +3346,7 @@ button.action-target:hover {
 .bp-card-title {
   font-size: var(--fs-name);
   font-weight: 600;
+  color: var(--text-strong);
   line-height: 1.35;
 }
 .bp-card-goal {
@@ -3598,7 +3602,7 @@ button.action-target:hover {
   margin: 12px 0 10px;
   font-size: 16px;
   line-height: 1.35;
-  color: var(--text-primary);
+  color: var(--text-strong);
 }
 .bp-meta {
   display: flex;
@@ -3629,7 +3633,7 @@ button.action-target:hover {
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .bp-goal {
   margin: 0;
