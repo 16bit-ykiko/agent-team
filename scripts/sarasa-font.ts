@@ -1,9 +1,10 @@
 // Cuts Sarasa Mono SC (be5invis/Sarasa-Gothic, its SarasaMonoSC TTF release)
 // into slices by character, as Google Fonts serves Chinese: a page loads
-// only the slices of the characters it shows. Its regular and semibold
-// weights; the browser slants them for italics.
+// only the slices of the characters it shows. Regular, bold and their
+// italics, all four real faces, so no browser fakes one from another (Sarasa
+// slants its Chinese as well).
 //
-//   npm run sarasa-font -- <dir with SarasaMonoSC-Regular.ttf and SarasaMonoSC-SemiBold.ttf>
+//   npm run sarasa-font -- <dir with SarasaMonoSC-{Regular,Bold,Italic,BoldItalic}.ttf>
 import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
@@ -16,18 +17,17 @@ const out = path.resolve(import.meta.dirname, "..", "webview", "src", "fonts", "
 
 // A copy installed on the machine is used instead, by its full or PostScript
 // name: the family name alone would match the regular for every weight.
-const WEIGHTS = [
+const FACES = [
+  { dir: "regular", file: "Regular", weight: 400, style: "normal", full: "", ps: "Regular" },
+  { dir: "bold", file: "Bold", weight: 700, style: "normal", full: " Bold", ps: "Bold" },
+  { dir: "italic", file: "Italic", weight: 400, style: "italic", full: " Italic", ps: "Italic" },
   {
-    dir: "regular",
-    file: "Regular",
-    weight: 400,
-    local: ["Sarasa Mono SC", "Sarasa-Mono-SC-Regular"],
-  },
-  {
-    dir: "semibold",
-    file: "SemiBold",
-    weight: 600,
-    local: ["Sarasa Mono SC SemiBold", "Sarasa-Mono-SC-SemiBold"],
+    dir: "bold-italic",
+    file: "BoldItalic",
+    weight: 700,
+    style: "italic",
+    full: " Bold Italic",
+    ps: "Bold-Italic",
   },
 ];
 
@@ -42,7 +42,7 @@ const { fontSplit } = (await import(
 )) as { fontSplit: (config: Record<string, unknown>) => Promise<void> };
 
 fs.rmSync(out, { recursive: true, force: true });
-for (const w of WEIGHTS) {
+for (const w of FACES) {
   const dir = path.join(out, w.dir);
   await fontSplit({
     input: path.join(src, `SarasaMonoSC-${w.file}.ttf`),
@@ -50,6 +50,7 @@ for (const w of WEIGHTS) {
     css: {
       fontFamily: "Sarasa Mono SC",
       fontWeight: String(w.weight),
+      fontStyle: w.style,
       fontDisplay: "swap",
       commentUnicodes: false,
       commentNameTable: false,
@@ -59,7 +60,9 @@ for (const w of WEIGHTS) {
   });
   fs.rmSync(path.join(dir, "index.proto"), { force: true });
   const css = path.join(dir, "result.css");
-  const local = w.local.map((n) => `local("${n}")`).join(",");
+  const local = [`Sarasa Mono SC${w.full}`, `Sarasa-Mono-SC-${w.ps}`]
+    .map((n) => `local("${n}")`)
+    .join(",");
   fs.writeFileSync(css, fs.readFileSync(css, "utf8").replaceAll('local("Sarasa Mono SC")', local));
 }
 

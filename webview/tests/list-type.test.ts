@@ -206,10 +206,13 @@ describe("the bundled font", () => {
   });
   const slices = new Set(Object.keys(import.meta.glob("../src/fonts/sarasa-mono-sc/*/*.woff2")));
 
-  it("is loaded in both weights, sliced by character, and first in the stack", () => {
-    for (const [dir, weight] of [
-      ["regular", 400],
-      ["semibold", 600],
+  it("is loaded in all four faces, sliced by character, and first in the stack", () => {
+    // Every face real: none faked by slanting or smearing another.
+    for (const [dir, weight, style] of [
+      ["regular", 400, "normal"],
+      ["bold", 700, "normal"],
+      ["italic", 400, "italic"],
+      ["bold-italic", 700, "italic"],
     ] as const) {
       const sheet = `fonts/sarasa-mono-sc/${dir}/result.css`;
       expect(main).toContain(`import "./${sheet}";`);
@@ -218,6 +221,7 @@ describe("the bundled font", () => {
       for (const f of faces) {
         expect(f).toContain('font-family:"Sarasa Mono SC"');
         expect(f).toContain(`font-weight:${weight}`);
+        expect(f).toContain(`font-style:${style}`);
         const slice = /url\("\.\/([0-9a-f]+\.woff2)"\)/.exec(f)![1];
         expect(slices.has(`../src/fonts/sarasa-mono-sc/${dir}/${slice}`)).toBe(true);
       }

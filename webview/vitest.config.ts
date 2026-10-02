@@ -9,6 +9,6 @@ export default defineConfig({
     globals: true,
     include: ["tests/**/*.test.{ts,tsx}"],
     // Otherwise every stylesheet reads as empty, even with ?raw.
-    css: { include: [/styles\.css/, /sarasa-mono-sc\/\w+\/result\.css/] },
+    css: { include: [/styles\.css/, /sarasa-mono-sc\/[\w-]+\/result\.css/] },
   },
 });
