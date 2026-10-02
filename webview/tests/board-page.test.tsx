@@ -219,6 +219,27 @@ describe("BoardPage", () => {
     expect(document.activeElement).toBe(next);
   });
 
+  it("writes the markdown of titles, goals, tasks and decisions out instead of its marks", () => {
+    const md = o("cli/graph", {
+      title: "Split `TaskGraph`",
+      goal: "One **round** state",
+      tasks: [{ id: "t1", text: "merge `join_node`\nand `request`", state: "todo" }],
+      decisions: [{ id: "d1", question: "keep `round`?", outcome: "**no**" }],
+    });
+    const { getByText, container } = page({ ...project, objectives: [md] });
+    const card = container.querySelector(".bp-card")!;
+    expect(card.querySelector(".bp-card-title code")!.textContent).toBe("TaskGraph");
+    expect(card.querySelector(".bp-card-goal strong")!.textContent).toBe("round");
+    fireEvent.click(getByText("TaskGraph"));
+    const detail = container.querySelector(".bp-detail")!;
+    expect(detail.querySelector(".bp-detail-title")!.textContent).toBe("Split TaskGraph");
+    const task = detail.querySelector(".bp-task-text")!;
+    expect(task.textContent).toBe("merge join_node and request");
+    expect(task.querySelectorAll("code")).toHaveLength(2);
+    expect(detail.querySelector(".bp-question code")!.textContent).toBe("round");
+    expect(detail.querySelector(".bp-outcome strong")!.textContent).toBe("no");
+  });
+
   it("draws the dependency graph in columns with an edge per prerequisite", () => {
     const { getByRole, container } = page();
     fireEvent.click(getByRole("button", { name: "Dependencies" }));

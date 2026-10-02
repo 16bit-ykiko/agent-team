@@ -131,15 +131,27 @@ describe("the lists' type", () => {
     expect(rule(".tp-desc", PHONE).body).toMatch(/white-space:\s*normal/);
   });
 
-  it("lets the dependency graph fill what the board's banners leave, and lines + Agent up on phones", () => {
+  it("parts a card into sections on one edge: header, where and what, agents, actions", () => {
+    const body = (sel: string) =>
+      all.find((r) => r.selectors.includes(sel) && r.media === null)!.body;
+    for (const sel of [".ap-session-head", ".ap-brief", ".ap-info", ".ap-agents"]) {
+      expect(body(sel)).toMatch(/padding:[^;]*var\(--ap-pad\)/);
+    }
+    expect(body(".ap-agents")).toMatch(/border-top:\s*1px solid/);
+    expect(body(".ap-session-foot")).toMatch(/border-top:\s*1px solid/);
+    expect(body(".ap-session-foot")).toMatch(/padding:\s*4px var\(--ap-pad\)/);
+    // A button at the edge puts its label there, not its border.
+    expect(body(".ap-add")).toMatch(/margin-left:\s*calc\(-1px - var\(--panel-btn-pad\)\)/);
+    expect(body(".ap-toggle")).toMatch(/text-align:\s*left/);
+  });
+
+  it("lets the dependency graph fill what the board's banners leave", () => {
     const rule = (sel: string, media: string | null = null) =>
       all.find((r) => r.selectors.includes(sel) && r.media === media)!;
     expect(rule(".bp-graph").body).not.toMatch(/min-height:\s*100%/);
     expect(rule(".bp-graph").body).toMatch(/flex:\s*1 0 auto/);
     expect(rule(".bp-main:has(> .bp-graph)").body).toMatch(/flex-direction:\s*column/);
     expect(rule(".bp-main > .bp-broken").body).toMatch(/position:\s*sticky/);
-    // 22px less the phone button's 3px more padding.
-    expect(rule(".ap-add", PHONE).body).toMatch(/margin-left:\s*19px/);
   });
 
   it("keeps Archive project in a short desktop window, and the quota bars in one column", () => {
@@ -160,10 +172,9 @@ describe("the lists' type", () => {
     expect(edge.selectors).toEqual([".ap-actions > :last-child", ".tp-stop"]);
     expect(edge.body).toMatch(/margin-right:\s*calc\(-1px - var\(--panel-btn-pad\)\)/);
     // The padding an edge button takes back fits in the card's own.
-    const cardPad = (media: string | null) =>
-      Number(/padding:\s*\d+px (\d+)px/.exec(rule(".ap-session", media).body)![1]);
-    expect(pad(null) + 1).toBeLessThanOrEqual(cardPad(null));
-    expect(pad(PHONE) + 1).toBeLessThanOrEqual(cardPad(PHONE));
+    const cardPad = Number(/--ap-pad:\s*(\d+)px/.exec(rule(".ap-session").body)![1]);
+    expect(pad(null) + 1).toBeLessThanOrEqual(cardPad);
+    expect(pad(PHONE) + 1).toBeLessThanOrEqual(cardPad);
     // An icon button is wider than its 16px icon: the difference, taken back.
     const iconPad = (media: string | null, button: string) =>
       (Number(new RegExp(`width:\\s*(\\d+)px`).exec(button)![1]) - 16) / 2 ===

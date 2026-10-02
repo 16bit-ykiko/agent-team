@@ -13,7 +13,13 @@ vi.mock("react-markdown", async (importOriginal) => {
   return { ...real, default: Counted };
 });
 
-import { MdBlock, StreamingMdBlock, markdownBlocks, loadMath } from "../src/chat/markdown";
+import {
+  InlineMd,
+  MdBlock,
+  StreamingMdBlock,
+  markdownBlocks,
+  loadMath,
+} from "../src/chat/markdown";
 import { MessageItem } from "../src/chat/messages";
 import type { AgentInfo, Message } from "../src/state/useServer";
 
@@ -253,5 +259,16 @@ describe("math loading", () => {
     const plugins = await load();
     expect(Array.isArray(plugins.remark)).toBe(true);
     vi.doUnmock("../src/chat/mathPlugins");
+  });
+});
+
+describe("markdown in a row", () => {
+  it("keeps a line's own marks and brackets as text: no list, heading or tag", () => {
+    const html = (text: string) => renderToStaticMarkup(<InlineMd>{text}</InlineMd>);
+    expect(html("1. scan `imports`")).toBe('1. scan <code class="inline-code">imports</code>');
+    expect(html("- one\n- two")).toBe("- one - two");
+    expect(html("# 640 first")).toBe("# 640 first");
+    expect(html("std::vector<int> **x**")).toBe("std::vector&lt;int&gt; <strong>x</strong>");
+    expect(html("**bold** start")).toBe("<strong>bold</strong> start");
   });
 });

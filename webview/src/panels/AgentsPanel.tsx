@@ -6,6 +6,7 @@ import { formatRelative, formatTokens, shortModel } from "../format";
 import { DEFAULT_BRANCH, sessionName, sessionState, sessionWork } from "./scope";
 import { AgentTasks, hasWork, soon, workCount, type TaskActions } from "./SessionTasks";
 import { Icon } from "./Icon";
+import { InlineMd } from "../chat/markdown";
 
 export interface AgentsPanelActions extends TaskActions {
   onOpen: (workspaceId: string) => void;
@@ -163,19 +164,31 @@ function SessionCard({
       )}
       {open && (
         <>
-          {elsewhere && (
-            <div className="ap-where" title={w.cwd}>
-              {branch && <span className="ap-branch">{branch}</span>}
-              {w.git && w.git.dirty > 0 && <span className="ap-dirty">{w.git.dirty} changed</span>}
-              <span className="ap-cwd">{shortPath(w.cwd)}</span>
+          {(elsewhere || work.length > 0) && (
+            <div className="ap-info">
+              {elsewhere && (
+                <div className="ap-where" title={w.cwd}>
+                  {branch && <span className="ap-branch">{branch}</span>}
+                  {w.git && w.git.dirty > 0 && (
+                    <span className="ap-dirty">{w.git.dirty} changed</span>
+                  )}
+                  <span className="ap-cwd">{shortPath(w.cwd)}</span>
+                </div>
+              )}
+              {work.map(({ objective, task }) => (
+                <div key={objective.id} className="ap-work" title={objective.goal}>
+                  <span className="ap-work-title">
+                    <InlineMd>{objective.title}</InlineMd>
+                  </span>
+                  {task && (
+                    <span className="ap-task">
+                      <InlineMd>{task.text}</InlineMd>
+                    </span>
+                  )}
+                </div>
+              ))}
             </div>
           )}
-          {work.map(({ objective, task }) => (
-            <div key={objective.id} className="ap-work" title={objective.goal}>
-              ◆ {objective.title}
-              {task && <span className="ap-task"> · {task.text}</span>}
-            </div>
-          ))}
           <div className="ap-agents">
             {w.agents.length === 0 && <div className="ap-none">No agents.</div>}
             {w.agents.map((a) => (

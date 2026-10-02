@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { Objective, ObjectiveStatus, Project, TaskState } from "../state/useServer";
-import { MdBlock } from "../chat/markdown";
+import { InlineMd, MdBlock } from "../chat/markdown";
 import { isImeKeyEvent } from "../chat/ime";
 import { formatRelative } from "../format";
 import { Icon } from "../panels/Icon";
@@ -377,8 +377,12 @@ function ObjectiveCard({
           <span className={`bp-pill st-${o.status}`}>{STATUS_LABEL[o.status]}</span>
         )}
       </span>
-      <span className="bp-card-title">{o.title}</span>
-      <span className="bp-card-goal">{o.goal}</span>
+      <span className="bp-card-title">
+        <InlineMd>{o.title}</InlineMd>
+      </span>
+      <span className="bp-card-goal">
+        <InlineMd>{o.goal}</InlineMd>
+      </span>
       {o.reason && o.status !== "active" && <span className="bp-card-reason">{o.reason}</span>}
       <span className="bp-card-foot">
         {total > 0 && (
@@ -507,7 +511,9 @@ function DependencyGraph({
         onPointerEnter={(e) => e.pointerType === "mouse" && setFocus(o.id)}
         onPointerLeave={(e) => e.pointerType === "mouse" && setFocus(null)}
       >
-        <span className="bp-node-title">{o.title}</span>
+        <span className="bp-node-title">
+          <InlineMd>{o.title}</InlineMd>
+        </span>
         <span className="bp-node-meta">
           {o.id}
           {st && <span className={`bp-stage stage-${st.replace(" ", "-")}`}>{st}</span>}
@@ -599,7 +605,9 @@ function ObjectiveDetail({
         onClick={() => onSelect(id)}
         title={`${STATUS_LABEL[target.status]}${note}: ${target.goal}`}
       >
-        <span className="clip">{target.title}</span>
+        <span className="clip">
+          <InlineMd>{target.title}</InlineMd>
+        </span>
       </button>
     );
   };
@@ -639,17 +647,25 @@ function ObjectiveDetail({
           <Icon name="close" />
         </button>
       </div>
-      <h2 className="bp-detail-title">{o.title}</h2>
+      <h2 className="bp-detail-title">
+        <InlineMd>{o.title}</InlineMd>
+      </h2>
       <div className="bp-meta">
         <span className={`bp-pill st-${o.status}`}>{STATUS_LABEL[o.status]}</span>
         {o.archived && <span className="bp-pill">Archived</span>}
         <span className={`bp-prio prio-${o.priority}`}>{o.priority} priority</span>
         <span className="bp-updated">updated {formatRelative(o.updatedAt)}</span>
       </div>
-      {o.reason && <p className="bp-reason">{o.reason}</p>}
+      {o.reason && (
+        <p className="bp-reason">
+          <InlineMd>{o.reason}</InlineMd>
+        </p>
+      )}
 
       <DetailSection title="Goal">
-        <p className="bp-goal">{o.goal}</p>
+        <p className="bp-goal">
+          <InlineMd>{o.goal}</InlineMd>
+        </p>
       </DetailSection>
 
       <DetailSection title="Depends on">
@@ -681,7 +697,9 @@ function ObjectiveDetail({
                 <span className="bp-task-mark" title={t.state}>
                   {TASK_MARK[t.state]}
                 </span>
-                <span className="bp-task-text">{t.text}</span>
+                <span className="bp-task-text">
+                  <InlineMd>{t.text}</InlineMd>
+                </span>
                 {t.session && session(t.session)}
               </li>
             ))}
@@ -695,7 +713,9 @@ function ObjectiveDetail({
         <DetailSection title={`To decide · ${open.length}`}>
           <ul className="bp-decisions open">
             {open.map((d) => (
-              <li key={d.id}>{d.question}</li>
+              <li key={d.id}>
+                <InlineMd>{d.question}</InlineMd>
+              </li>
             ))}
           </ul>
         </DetailSection>
@@ -705,8 +725,12 @@ function ObjectiveDetail({
           <ul className="bp-decisions">
             {settled.map((d) => (
               <li key={d.id}>
-                <span className="bp-question">{d.question}</span>
-                <span className="bp-outcome">{d.outcome}</span>
+                <span className="bp-question">
+                  <InlineMd>{d.question}</InlineMd>
+                </span>
+                <span className="bp-outcome">
+                  <InlineMd>{d.outcome ?? ""}</InlineMd>
+                </span>
               </li>
             ))}
           </ul>

@@ -187,6 +187,33 @@ export const MdBlock = memo(function MdBlock({ children }: { children: string })
   );
 });
 
+// Text written as markdown (a task, an objective's title or goal) shown in
+// a row: one paragraph, its code, bold and italics; no blocks or links.
+const INLINE_ELEMENTS = ["p", "code", "strong", "em", "del"];
+// "1. first", "- item", "# 640": text, not a list or a heading.
+const BLOCK_START = /^(?:(\d{1,9})([.)])|([-+*>]|#{1,6}))(?=\s|$)/;
+const inlineComponents: Options["components"] = {
+  p: ({ children }) => <>{children}</>,
+  code: ({ children }) => <code className="inline-code">{children}</code>,
+};
+export const InlineMd = memo(function InlineMd({ children }: { children: string }) {
+  return (
+    <Markdown
+      remarkPlugins={mdRemarkPlugins}
+      allowedElements={INLINE_ELEMENTS}
+      unwrapDisallowed
+      components={inlineComponents}
+    >
+      {children
+        .trim()
+        .replace(/\s*\n\s*/g, " ")
+        .replace(BLOCK_START, (_, n: string, dot: string, mark: string) =>
+          n ? `${n}\\${dot}` : `\\${mark}`,
+        )}
+    </Markdown>
+  );
+});
+
 // A backtick fence's info string cannot contain a backtick: "```x``` y" is
 // inline code, not a fence.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})/;

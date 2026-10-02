@@ -146,9 +146,9 @@ describe("AgentsPanel", () => {
     const card = within(container.querySelector('[aria-label="modules"]') as HTMLElement);
     expect(card.getByText("feat/modules")).toBeTruthy();
     expect(card.getByText("2 changed")).toBeTruthy();
-    expect(container.querySelector('[aria-label="modules"] .ap-work')!.textContent).toBe(
-      "◆ C++20 modules · scan imports",
-    );
+    const work = container.querySelector('[aria-label="modules"] .ap-work')!;
+    expect(work.querySelector(".ap-work-title")!.textContent).toBe("C++20 modules");
+    expect(work.querySelector(".ap-task")!.textContent).toBe("scan imports");
     expect(card.getByText("running tests")).toBeTruthy();
     expect(card.getByText("opus 5.5 [1m] · high")).toBeTruthy();
     expect(card.getByText("850k / 1M")).toBeTruthy();
@@ -186,7 +186,45 @@ describe("AgentsPanel", () => {
     const card = container.querySelector('[aria-label="modules"]')!;
     expect(card.querySelector(".ap-brief")).toBeNull();
     expect(card.querySelector(".ap-agent")).not.toBeNull();
-    expect(card.querySelector(".ap-work")!.textContent).toBe("◆ C++20 modules · scan imports");
+    expect(card.querySelector(".ap-task")!.textContent).toBe("scan imports");
+  });
+
+  it("writes a task's markdown out: its code and bold, its lines run together", () => {
+    const md: Project = {
+      ...project,
+      objectives: [
+        objective({
+          title: "`modules` support",
+          sessions: ["w1"],
+          tasks: [
+            {
+              id: "t1",
+              text: "评估：`CMake` / **Bazel**\n先跑 `check.py`",
+              state: "doing",
+              session: "w1",
+            },
+          ],
+        }),
+      ],
+    };
+    const { container } = render(
+      <AgentsPanel
+        sessions={[w1]}
+        project={md}
+        activeWsId="w1"
+        connected
+        models={[]}
+        actions={actions()}
+      />,
+    );
+    const task = container.querySelector(".ap-task")!;
+    expect(task.textContent).toBe("评估：CMake / Bazel 先跑 check.py");
+    expect([...task.querySelectorAll("code")].map((c) => c.textContent)).toEqual([
+      "CMake",
+      "check.py",
+    ]);
+    expect(task.querySelector("strong")!.textContent).toBe("Bazel");
+    expect(container.querySelector(".ap-work-title code")!.textContent).toBe("modules");
   });
 
   it("says where a session works only when it is not the project's checkout on main", () => {
