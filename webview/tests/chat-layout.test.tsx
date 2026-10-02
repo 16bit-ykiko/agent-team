@@ -129,29 +129,16 @@ describe("the transcript's rules", () => {
     expect(rule(".subagent-label").body).not.toMatch(/flex-shrink:\s*0/);
   });
 
-  it("on touch, put a code block's Copy above the code, not over its first line", () => {
-    const copy = rule("pre .copy-btn", "@media (hover: none)");
-    expect(copy.body).toMatch(/float:\s*none/);
-    expect(copy.body).toMatch(/display:\s*block/);
-  });
-
-  it("on touch, float Copy beside code that wraps, instead of an empty line above it", () => {
-    for (const sel of [
-      ".event-content pre .copy-btn",
-      ".subagent-prompt pre .copy-btn",
-      ".subagent-summary pre .copy-btn",
-      ".banner-text pre .copy-btn",
-    ]) {
-      const copy = rule(sel, "@media (hover: none)");
-      expect(copy.body).toMatch(/float:\s*right/);
-      // Sticky, it would ride over the lines scrolled under it.
-      expect(copy.body).toMatch(/position:\s*static/);
-    }
-    for (const sel of [".event-content pre", ".subagent-prompt pre", ".banner-text pre"]) {
-      expect(
-        all.some((r) => r.selectors.includes(sel) && /white-space:\s*pre-wrap/.test(r.body)),
-      ).toBe(true);
-    }
+  it("float a code block's Copy over its corner, taking no room from the code", () => {
+    const copy = rule("pre .copy-btn");
+    expect(copy.body).toMatch(/float:\s*right/);
+    // Positioned, so it is drawn above the text it overlaps.
+    expect(copy.body).toMatch(/position:\s*sticky/);
+    // No width or height left for the text to wrap around.
+    expect(copy.body).toMatch(/margin:\s*-4px -6px -100% -100%/);
+    // On touch it stays faintly visible; nothing moves it off the code.
+    const touch = all.filter((r) => r.selectors.some((s) => s.includes(".copy-btn")) && r.media);
+    expect(touch.map((r) => r.body.trim())).toEqual(["opacity: 0.6;"]);
   });
 
   it("keep images their own shape, and a queued message's ✕ a target bigger than its glyph", () => {

@@ -1198,6 +1198,9 @@ button {
   padding: 0;
   font-size: inherit;
 }
+/* Over the code's top right corner, taking no room from it: the negative
+   margins leave the float nothing to wrap the text around, and sticky keeps
+   it above the text and in view as a tall block scrolls. */
 pre .copy-btn {
   float: right;
   position: sticky;
@@ -1209,7 +1212,7 @@ pre .copy-btn {
   font-size: 10.5px;
   padding: 1px 7px;
   border-radius: 4px;
-  margin: -4px -6px 0 8px;
+  margin: -4px -6px -100% -100%;
   opacity: 0;
   transition: opacity 0.15s;
 }
@@ -1219,24 +1222,8 @@ pre:hover .copy-btn {
 /* No hover on touch screens: keep the button faintly visible so a tap has a
    target and "Copied" has somewhere to show. */
 @media (hover: none) {
-  /* A line of its own above the code: a line that scrolls sideways runs
-     under a float instead of past it. */
   pre .copy-btn {
     opacity: 0.6;
-    float: none;
-    display: block;
-    width: fit-content;
-    margin: -2px -4px 4px auto;
-  }
-  /* Code that wraps flows around it, with no empty line above. */
-  .event-content pre .copy-btn,
-  .subagent-prompt pre .copy-btn,
-  .subagent-summary pre .copy-btn,
-  .banner-text pre .copy-btn {
-    float: right;
-    display: inline-block;
-    position: static;
-    margin: -3px -5px 0 8px;
   }
 }
 pre .copy-btn:hover {
