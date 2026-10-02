@@ -2747,11 +2747,32 @@ button.action-target:hover {
   .ws-info-item:first-child {
     display: none;
   }
-  /* The branch gives way to the rail and Lead beside it. */
+  /* The branch gives way to the rail and Lead beside it, keeping a few of
+     its letters. */
   .ws-info-branch {
     flex-shrink: 1;
-    min-width: 0;
+    min-width: 6em;
     max-width: none;
+  }
+  /* A PR by its number, its state in the number's colour and its checks in
+     the dot: its title and state word would push the branch off the line. */
+  .pr-title,
+  .pr-state {
+    display: none;
+  }
+  .pr-card {
+    flex-shrink: 0;
+    max-width: none;
+    padding: 1px 6px;
+  }
+  .pr-open .pr-number {
+    color: var(--success);
+  }
+  .pr-merged .pr-number {
+    color: var(--purple);
+  }
+  .pr-closed .pr-number {
+    color: var(--error);
   }
   .ws-archive-btn {
     display: none;

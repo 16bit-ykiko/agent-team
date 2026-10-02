@@ -251,6 +251,15 @@ describe("the transcript's rules", () => {
     expect(rule(".command-desc", phone).body).toMatch(/flex-basis:\s*100%/);
   });
 
+  it("give a phone's branch line room for the branch: the PR goes by its number", () => {
+    const phone = "@media (max-width: 768px), (max-height: 500px)";
+    expect(rule(".pr-title", phone).body).toMatch(/display:\s*none/);
+    expect(rule(".pr-state", phone).body).toMatch(/display:\s*none/);
+    expect(rule(".pr-card", phone).body).toMatch(/flex-shrink:\s*0/);
+    expect(rule(".pr-open .pr-number", phone).body).toMatch(/var\(--success\)/);
+    expect(rule(".ws-info-branch", phone).body).toMatch(/min-width:\s*6em/);
+  });
+
   it("colour a failed subagent's summary and an error's label as errors", () => {
     expect(rule(".subagent-failed .subagent-summary").body).toMatch(/var\(--error\)/);
     expect(rule(".banner-error .banner-label").body).toMatch(/var\(--error\)/);
