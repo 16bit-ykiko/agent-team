@@ -1,0 +1,12 @@
+{"header":{"backend":"codex","fixture":"command-time","description":"a command's run time is the gap between its item.started and item.completed: codex announces a command when it starts, not when it is done","model":"gpt-6-astra","cli":"codex-cli 0.153.4","recordedAt":"2026-10-02T04:37:31.127Z"}}
+{"t":263,"step":{"i":0,"op":"send","text":"Run the shell command `sleep 2` once, in the foreground, as its own command. Then reply with the single word done."}}
+{"t":2592,"frame":{"type":"thread.started","thread_id":"01a0fae6-d92f-7f81-a309-512b24a4b403"}}
+{"t":2692,"frame":{"type":"turn.started"}}
+{"t":10611,"frame":{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’ll run `sleep 2` once in the foreground.\n"}}}
+{"t":13801,"frame":{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/bash -lc 'sleep 2'","aggregated_output":"","exit_code":null,"status":"in_progress"}}}
+{"t":15669,"frame":{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/bash -lc 'sleep 2'","aggregated_output":"","exit_code":0,"status":"completed"}}}
+{"t":20043,"frame":{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"done"}}}
+{"t":20387,"frame":{"type":"turn.completed","usage":{"input_tokens":29653,"cached_input_tokens":26752,"cache_write_input_tokens":0,"output_tokens":53,"reasoning_output_tokens":0}}}
+{"t":25573,"close":true}
+{"t":25573,"rollout":{"threadId":"01a0fae6-d92f-7f81-a309-512b24a4b403","tokens":14867,"window":258400}}
+{"t":25574,"step":{"i":1,"op":"wait","for":"idle"}}
