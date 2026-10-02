@@ -40,6 +40,30 @@ describe("the transcript", () => {
     expect(body).not.toContain("src/session/claude.ts");
   });
 
+  it("writes a file tool's path out whole too, for a phone to show under the row", () => {
+    const path = "/home/ykiko/workspace/agent-team/webview/src/chat/messages.tsx";
+    const write = render(
+      <EventItem
+        ev={{
+          kind: "tool_use",
+          toolName: "Write",
+          content: `**Write** \`${path}\`\n\`\`\`tsx\nexport {};\n\`\`\``,
+        }}
+      />,
+    ).container;
+    expect(write.querySelector(".event-row .event-chip")!.textContent).toBe("Write");
+    expect(write.querySelector(".event-summary-line code")!.textContent).toBe(path);
+    // The body is the file's content, without the path again.
+    expect(write.querySelector(".event-content")!.textContent).not.toContain(path);
+    // A Bash call has no summary: its command is the body already.
+    const bash = render(
+      <EventItem
+        ev={{ kind: "tool_use", toolName: "Bash", content: "**Bash**\n```bash\nls\n```" }}
+      />,
+    ).container;
+    expect(bash.querySelector(".event-summary-line")).toBeNull();
+  });
+
   it("shows how long each tool call and task ran, a quick one in milliseconds", () => {
     const call = (durationMs?: number) =>
       render(
@@ -194,12 +218,14 @@ describe("the transcript's rules", () => {
     expect(rule(".event-chip").body).toMatch(/flex-shrink:\s*1/);
     // The summary goes first: a short chip (Read, Edit) keeps its name.
     expect(rule(".event-summary").body).toMatch(/flex-shrink:\s*100/);
-    // A phone wraps a row's time and buttons rather than push them off it;
-    // the summary takes what is left of the first line, at most its width.
+    // A phone wraps a row's time and buttons rather than push them off it,
+    // and gives the path or pattern a line of its own under the row.
     const phone = "@media (max-width: 768px), (max-height: 500px)";
     expect(rule(".event-row", phone).body).toMatch(/flex-wrap:\s*wrap/);
-    expect(rule(".event-summary", phone).body).toMatch(/flex:\s*1 1 0/);
-    expect(rule(".event-summary", phone).body).toMatch(/max-width:\s*max-content/);
+    expect(rule(".event-row .event-summary", phone).body).toMatch(/display:\s*none/);
+    expect(rule(".event-summary-line").body).toMatch(/display:\s*none/);
+    expect(rule(".event-summary-line", phone).body).toMatch(/display:\s*block/);
+    expect(rule(".event-summary-line", phone).body).toMatch(/overflow-wrap:\s*anywhere/);
     expect(rule(".subagent-label").body).toMatch(/text-overflow:\s*ellipsis/);
     expect(rule(".subagent-label").body).not.toMatch(/flex-shrink:\s*0/);
   });

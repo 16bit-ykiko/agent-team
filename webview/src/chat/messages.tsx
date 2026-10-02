@@ -410,6 +410,13 @@ export const EventItem = memo(function EventItem({
           </button>
         )}
       </div>
+      {/* On a phone the path or pattern takes a line of its own instead of
+          squeezing the tool's name in the row (CSS shows one or the other). */}
+      {isToolUse && summary && (
+        <div className="event-summary-line">
+          <code>{summary}</code>
+        </div>
+      )}
       {(bodyMissing || (toolBodyMissing && !bodyOpen)) && (
         <div
           className="event-content event-placeholder"
