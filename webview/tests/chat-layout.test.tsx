@@ -1,10 +1,10 @@
 // The transcript on narrow screens and touch: nothing said twice, nothing
 // pushed off the row, no invisible tap targets over the text.
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import css from "../src/styles.css?raw";
 import { EventItem, MessageItem, SubAgentItem } from "../src/chat/messages";
-import type { AgentInfo, Message, StreamEvent } from "../src/state/useServer";
+import type { AgentInfo, Message, StreamEvent, SubAgentInfo } from "../src/state/useServer";
 
 const agent: AgentInfo = {
   id: "a1",
@@ -75,6 +75,40 @@ describe("the transcript", () => {
       />,
     ).container;
     expect(card.querySelector(".subagent-header .subagent-time")!.textContent).toBe("6s");
+    // A thinking block keeps its own time, in its label.
+    const thought = render(
+      <EventItem ev={{ kind: "thinking", content: "hm", durationMs: 2700 }} />,
+    );
+    expect(thought.container.querySelector(".event-time")).toBeNull();
+  });
+
+  it("gives a card one time: this run's, or a finished agent's from the CLI on old records", () => {
+    const agentCard = (sa: Partial<SubAgentInfo>) =>
+      render(
+        <SubAgentItem
+          ev={{
+            kind: "subagent_start",
+            content: "",
+            subagent: {
+              taskId: "a1",
+              description: "look",
+              agentType: "Explore",
+              status: "completed",
+              events: [{ kind: "text", content: "found" }],
+              ...sa,
+            },
+          }}
+        />,
+      ).container;
+    const time = (c: HTMLElement) => c.querySelector(".subagent-time")?.textContent ?? null;
+    const usage = { totalTokens: 14_000, toolUses: 3, durationMs: 43_600 };
+    // Resumed: the CLI counts from the first run, idle time included.
+    const resumed = agentCard({ usage, durationMs: 27_800 });
+    expect(time(resumed)).toBe("27.8s");
+    fireEvent.click(resumed.querySelector(".subagent-header")!);
+    expect(resumed.querySelector(".subagent-usage")!.textContent).toBe("14k tokens · 3 tools");
+    expect(time(agentCard({ usage }))).toBe("43.6s");
+    expect(time(agentCard({ usage, status: "running" }))).toBeNull();
   });
 
   it("keeps the quote button in the header row, off the text", () => {
@@ -160,8 +194,12 @@ describe("the transcript's rules", () => {
     expect(rule(".event-chip").body).toMatch(/flex-shrink:\s*1/);
     // The summary goes first: a short chip (Read, Edit) keeps its name.
     expect(rule(".event-summary").body).toMatch(/flex-shrink:\s*100/);
-    // On touch there is no tooltip to read a cut summary by.
-    expect(rule(".event-summary", "@media (hover: none)").body).toMatch(/white-space:\s*normal/);
+    // A phone wraps a row's time and buttons rather than push them off it;
+    // the summary takes what is left of the first line, at most its width.
+    const phone = "@media (max-width: 768px), (max-height: 500px)";
+    expect(rule(".event-row", phone).body).toMatch(/flex-wrap:\s*wrap/);
+    expect(rule(".event-summary", phone).body).toMatch(/flex:\s*1 1 0/);
+    expect(rule(".event-summary", phone).body).toMatch(/max-width:\s*max-content/);
     expect(rule(".subagent-label").body).toMatch(/text-overflow:\s*ellipsis/);
     expect(rule(".subagent-label").body).not.toMatch(/flex-shrink:\s*0/);
   });

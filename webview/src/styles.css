@@ -1368,11 +1368,6 @@ span.katex-display {
   .btn-quote {
     opacity: 0.6;
   }
-  /* No tooltip to read a cut summary by: it wraps. */
-  .event-summary {
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
 }
 .btn-quote:hover {
   color: var(--accent);
@@ -1515,6 +1510,10 @@ span.katex-display {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+/* At the header's end even with no description to push it there. */
+.subagent-time {
+  margin-left: auto;
 }
 .event-row .btn-inline {
   opacity: 0;
@@ -2836,6 +2835,17 @@ button.action-target:hover {
   }
   .event-row .btn-inline {
     opacity: 1;
+  }
+  /* Its time and buttons never shrink: rather than push them off the row,
+     it wraps them. The summary takes what they leave on the first line,
+     no more than its own width. */
+  .event-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .event-summary {
+    flex: 1 1 0;
+    max-width: max-content;
   }
 
   /* Composer: one rounded pill, icon-only round buttons (Discord-style). */

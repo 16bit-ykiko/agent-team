@@ -262,6 +262,45 @@ describe("codex context from the rollout", () => {
 });
 
 describe("codex item edge cases", () => {
+  it("times commands, MCP calls and searches from start to completion; an edit has none", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(0);
+      const { events, dispatch } = makeSession();
+      const started = [
+        { id: "c", type: "command_execution", command: "sleep 1", status: "in_progress" },
+        { id: "m", type: "mcp_tool_call", server: "panel", tool: "list", status: "in_progress" },
+        { id: "w", type: "web_search", query: "x" },
+      ];
+      for (const item of started) dispatch({ type: "item.started", item });
+      vi.setSystemTime(250);
+      dispatch({
+        type: "item.completed",
+        item: { ...started[0], aggregated_output: "", exit_code: 0, status: "completed" },
+      });
+      dispatch({
+        type: "item.completed",
+        item: { ...started[1], result: { content: [] }, status: "completed" },
+      });
+      dispatch({ type: "item.completed", item: started[2] });
+      dispatch({
+        type: "item.completed",
+        item: {
+          id: "e",
+          type: "file_change",
+          changes: [{ kind: "update", path: "a" }],
+          status: "completed",
+        },
+      });
+      expect(events.filter((e) => e.kind === "tool_result").map((e) => e.durationMs)).toEqual([
+        250, 250, 250,
+      ]);
+      expect(events.find((e) => e.toolName === "Edit")!.durationMs).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("times a call within its turn: item ids repeat every turn", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {

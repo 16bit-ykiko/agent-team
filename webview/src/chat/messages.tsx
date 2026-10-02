@@ -508,8 +508,12 @@ export const SubAgentItem = memo(function SubAgentItem({
     if (willOpen && onLoadDetails) onLoadDetails();
   };
 
+  // Its time is in the header, measured from this run's start: the CLI's
+  // counts from the first, a resumed agent's idle time between included.
+  // Records from before it was measured: the CLI's time of a finished agent.
+  const ran = sa.durationMs ?? (isRunning ? undefined : sa.usage?.durationMs);
   const usageStr = sa.usage
-    ? `${Math.round(sa.usage.totalTokens / 1000)}k tokens · ${sa.usage.toolUses} tools · ${(sa.usage.durationMs / 1000).toFixed(1)}s`
+    ? `${Math.round(sa.usage.totalTokens / 1000)}k tokens · ${sa.usage.toolUses} tools`
     : null;
 
   const headerParts: string[] = [];
@@ -537,9 +541,9 @@ export const SubAgentItem = memo(function SubAgentItem({
               : `${totalCount} event(s)`}
           </span>
         )}
-        {sa.durationMs != null && (
+        {ran != null && (
           <span className="subagent-time" title="How long it ran">
-            {formatRunTime(sa.durationMs)}
+            {formatRunTime(ran)}
           </span>
         )}
         {isRunning && <span className="streaming-dot" />}

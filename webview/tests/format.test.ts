@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   formatSize,
   formatDuration,
+  formatRunTime,
   formatRelative,
   formatResetTime,
   formatTokens,
@@ -63,6 +64,18 @@ describe("formatDuration", () => {
     expect(formatDuration(3_900_000)).toBe("1h 5m");
     // Rounds before picking the unit.
     expect(formatDuration(59_960)).toBe("1m 0s");
+  });
+});
+
+describe("formatRunTime", () => {
+  it("gives a quick run in milliseconds, a longer one as a duration", () => {
+    expect([0, 999, 1000, 59_960, 3_600_000].map(formatRunTime)).toEqual([
+      "0ms",
+      "999ms",
+      "1s",
+      "1m 0s",
+      "1h 0m",
+    ]);
   });
 });
 

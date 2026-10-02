@@ -121,6 +121,27 @@ describe("Workspace event aggregation", () => {
     expect(events.some((e) => e.kind === "subagent_progress")).toBe(false);
   });
 
+  it("keeps a card's time when a later end carries none, as the client does", () => {
+    const { emit, agentMsgs } = makeWorkspace();
+    const start = subagentStart("task-1");
+    const end = (durationMs?: number): Partial<StreamEvent> => ({
+      kind: "subagent_done",
+      content: "",
+      subagent: {
+        taskId: "task-1",
+        description: "",
+        status: "completed",
+        ...(durationMs != null && { durationMs }),
+      },
+    });
+    emit(start);
+    emit(end(6000));
+    emit(end());
+    const card = agentMsgs()[0].events!.find((e) => e.kind === "subagent_start")!;
+    expect(card.subagent?.durationMs).toBe(6000);
+    // The client side: tests/snap/merge.test.ts.
+  });
+
   it("routes late subagent events to the finalized owner message", () => {
     const { emit, done, agentMsgs } = makeWorkspace();
     emit(subagentStart("task-1"));
@@ -835,9 +856,10 @@ describe("events between turns and late results", () => {
     session.isRunning = false;
     const first = agentMsgs()[0];
     expect(first.status).toBe("done");
-    emit({ kind: "tool_result", content: "finished", toolUseId: "t1" });
+    emit({ kind: "tool_result", content: "finished", toolUseId: "t1", durationMs: 9000 });
     expect(agentMsgs()).toHaveLength(1);
     expect(first.events![0].toolResult).toBe("finished");
+    expect(first.events![0].durationMs).toBe(9000);
     // The owner is re-announced so open clients pick up the result.
     expect(done.filter((d) => d.msgId === first.id).length).toBeGreaterThanOrEqual(2);
   });
