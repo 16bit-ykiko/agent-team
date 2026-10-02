@@ -27,20 +27,22 @@ const withSheet = (fn: () => void) => {
 };
 
 describe("the transcript", () => {
-  it("names an edited file once: in the row, not again atop the body", () => {
+  it("names an edited file once: in its block under the row, not again atop the diff", () => {
     const ev: StreamEvent = {
       kind: "tool_use",
       toolName: "Edit",
       content: "**Edit** `src/session/claude.ts`\n```diff\n-const a = 1;\n+const a = 2;\n```",
     };
     const { container } = render(<EventItem ev={ev} />);
-    expect(container.querySelector(".event-summary")!.textContent).toBe("src/session/claude.ts");
+    expect(container.querySelector(".event-summary-line")!.textContent).toBe(
+      "src/session/claude.ts",
+    );
     const body = container.querySelector(".event-content")!.textContent;
     expect(body).toContain("const a = 2;");
     expect(body).not.toContain("src/session/claude.ts");
   });
 
-  it("writes a file tool's path out whole too, for a phone to show under the row", () => {
+  it("writes a file tool's path out whole in a block under its row, the row keeping the tool's name", () => {
     const path = "/home/ykiko/workspace/agent-team/webview/src/chat/messages.tsx";
     const write = render(
       <EventItem
@@ -216,16 +218,12 @@ describe("the transcript's rules", () => {
 
   it("let a long tool name or subagent type give way to the buttons beside it", () => {
     expect(rule(".event-chip").body).toMatch(/flex-shrink:\s*1/);
-    // The summary goes first: a short chip (Read, Edit) keeps its name.
-    expect(rule(".event-summary").body).toMatch(/flex-shrink:\s*100/);
-    // A phone wraps a row's time and buttons rather than push them off it,
-    // and gives the path or pattern a line of its own under the row.
+    // A phone wraps a row's time and buttons rather than push them off it.
     const phone = "@media (max-width: 768px), (max-height: 500px)";
     expect(rule(".event-row", phone).body).toMatch(/flex-wrap:\s*wrap/);
-    expect(rule(".event-row .event-summary", phone).body).toMatch(/display:\s*none/);
-    expect(rule(".event-summary-line").body).toMatch(/display:\s*none/);
-    expect(rule(".event-summary-line", phone).body).toMatch(/display:\s*block/);
-    expect(rule(".event-summary-line", phone).body).toMatch(/overflow-wrap:\s*anywhere/);
+    // A path or pattern is a block of its own, whole, on every screen.
+    expect(rule(".event-summary-line").body).toMatch(/overflow-wrap:\s*anywhere/);
+    expect(rule(".event-summary-line").body).not.toMatch(/display:\s*none/);
     expect(rule(".subagent-label").body).toMatch(/text-overflow:\s*ellipsis/);
     expect(rule(".subagent-label").body).not.toMatch(/flex-shrink:\s*0/);
   });

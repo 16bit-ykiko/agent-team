@@ -26,7 +26,8 @@ describe("EventItem", () => {
       <EventItem ev={ev("tool_use", { toolName: "Read", content: "**Read** `src/a.ts`" })} />,
     );
     expect(container.querySelector(".event-chip")!.textContent).toBe("Read");
-    expect(container.querySelector(".event-summary")!.textContent).toBe("src/a.ts");
+    expect(container.querySelector(".event-row")!.textContent).toBe("Read");
+    expect(container.querySelector(".event-summary-line")!.textContent).toBe("src/a.ts");
     // Nothing else to show: the body is the summary.
     expect(container.querySelector(".event-content")).toBeNull();
     expect(queryByText("Details")).toBeNull();

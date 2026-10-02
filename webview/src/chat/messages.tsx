@@ -389,11 +389,6 @@ export const EventItem = memo(function EventItem({
     <div className={`event event-${ev.kind}`}>
       <div className="event-row">
         <span className={`event-chip ${chipClass}`}>{label}</span>
-        {isToolUse && summary && (
-          <span className="event-summary" title={summary}>
-            {summary}
-          </span>
-        )}
         {isToolUse && ev.durationMs != null && (
           <span className="event-time" title="From the call to its result">
             {formatRunTime(ev.durationMs)}
@@ -410,8 +405,6 @@ export const EventItem = memo(function EventItem({
           </button>
         )}
       </div>
-      {/* On a phone the path or pattern takes a line of its own instead of
-          squeezing the tool's name in the row (CSS shows one or the other). */}
       {isToolUse && summary && (
         <div className="event-summary-line">
           <code>{summary}</code>
