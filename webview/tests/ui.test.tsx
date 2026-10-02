@@ -824,6 +824,10 @@ describe("live thinking", () => {
     );
     const box = () => container.querySelector(".step-group")!;
     expect(box().querySelector(".live-thinking")!.textContent).toContain("Let me see.");
+    // Nothing else in the box: the time heads it, once, and leaves no empty
+    // header line above a row of its own.
+    expect(box().querySelector(".step-header")!.textContent).toBe("▾Thinking · 0s");
+    expect(box().textContent.match(/Thinking · /g)).toHaveLength(1);
     // The reader folds it: it stays folded while the block streams on.
     fireEvent.click(box().querySelector(".step-header")!);
     expect(box().className).not.toContain("open");
@@ -884,6 +888,6 @@ describe("live thinking", () => {
       />,
     );
     expect(container.querySelector(".working-indicator")).toBeNull();
-    expect(container.querySelector(".live-thinking")).not.toBeNull();
+    expect(container.querySelector(".step-header")!.textContent).toContain("Thinking · 0s");
   });
 });
