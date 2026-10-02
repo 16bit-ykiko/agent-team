@@ -53,6 +53,7 @@ describe("the lists' type", () => {
       ".bp-name-input",
       ".bp-detail-title",
       ".ap-agent-actions button",
+      ".ap-toggle",
     ]);
     const raw = all
       .filter((r) => r.selectors.some((s) => list.test(s) && !own.has(s)))
@@ -155,15 +156,14 @@ describe("the lists' type", () => {
       all.find((r) => r.selectors.includes(sel) && r.media === media)!;
     const pad = (media: string | null) =>
       Number(/--panel-btn-pad:\s*(\d+)px/.exec(rule(".panel-btn", media).body)![1]);
-    const edge = rule(".ap-act");
-    expect(edge.selectors).toEqual([".ap-act", ".tp-stop-all", ".tp-stop"]);
+    const edge = rule(".ap-actions > :last-child");
+    expect(edge.selectors).toEqual([".ap-actions > :last-child", ".tp-stop"]);
     expect(edge.body).toMatch(/margin-right:\s*calc\(-1px - var\(--panel-btn-pad\)\)/);
     // The padding an edge button takes back fits in the card's own.
     const cardPad = (media: string | null) =>
       Number(/padding:\s*\d+px (\d+)px/.exec(rule(".ap-session", media).body)![1]);
     expect(pad(null) + 1).toBeLessThanOrEqual(cardPad(null));
     expect(pad(PHONE) + 1).toBeLessThanOrEqual(cardPad(PHONE));
-    expect(rule(".tp-session", PHONE)).toBe(rule(".ap-session", PHONE));
     // An icon button is wider than its 16px icon: the difference, taken back.
     const iconPad = (media: string | null, button: string) =>
       (Number(new RegExp(`width:\\s*(\\d+)px`).exec(button)![1]) - 16) / 2 ===

@@ -65,6 +65,9 @@ const project: Project = {
 };
 const lead = ws("lead", {
   name: "clice · lead",
+  cwd: "/repo",
+  git: { branch: "main", dirty: 1, ahead: 0, behind: 0 },
+  agents: [agent("lead-a", { context: { tokens: 225_000, window: 1_000_000 } })],
   projectLink: { projectId: "p1", role: "lead" },
   lastMessageAt: NOW - 90_000,
 });
@@ -119,6 +122,9 @@ describe("AgentsPanel", () => {
     onClearContext: vi.fn(),
     onRemoveAgent: vi.fn(),
     onSetModel: vi.fn(),
+    onStopTask: vi.fn(),
+    onCancelWake: vi.fn(),
+    onStopAll: vi.fn(),
   });
   const panel = (a = actions()) => {
     const utils = render(
@@ -146,8 +152,48 @@ describe("AgentsPanel", () => {
     expect(card.getByText("running tests")).toBeTruthy();
     expect(card.getByText("opus 5.5 [1m] · high")).toBeTruthy();
     expect(card.getByText("850k / 1M")).toBeTruthy();
-    expect(container.querySelector(".ap-context-bar span")!.className).toBe("high");
+    expect(container.querySelector('[aria-label="modules"] .ap-context-bar span')!.className).toBe(
+      "high",
+    );
     expect(container.querySelector('[aria-label="modules"]')!.className).toContain("active");
+  });
+
+  it("folds every card of a project's overview to two lines, unfolded on demand", () => {
+    const a = actions();
+    const { container } = render(
+      <AgentsPanel
+        sessions={[lead, w1, w2]}
+        project={project}
+        activeWsId="lead"
+        connected
+        models={[]}
+        actions={a}
+        overview
+      />,
+    );
+    expect(container.querySelector(".ap-agent")).toBeNull();
+    const brief = (id: string) => container.querySelector(`[aria-label="${id}"] .ap-brief`)!;
+    // An idle agent shows how full its context is; a working one what it does.
+    // (Each line starts with the agent's avatar, "A" here.)
+    expect(brief("clice · lead").textContent).toBe("Alead-a225k");
+    expect(brief("modules").textContent).toBe("Akisararunning testsStop");
+    // A running turn stops without unfolding.
+    fireEvent.click(within(brief("modules") as HTMLElement).getByText("Stop"));
+    expect(a.onStop).toHaveBeenCalledWith("w1");
+    const toggle = container.querySelector('[aria-label="modules"] .ap-toggle')!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    const card = container.querySelector('[aria-label="modules"]')!;
+    expect(card.querySelector(".ap-brief")).toBeNull();
+    expect(card.querySelector(".ap-agent")).not.toBeNull();
+    expect(card.querySelector(".ap-work")!.textContent).toBe("◆ C++20 modules · scan imports");
+  });
+
+  it("says where a session works only when it is not the project's checkout on main", () => {
+    const { container } = panel();
+    const where = (id: string) => container.querySelector(`[aria-label="${id}"] .ap-where`);
+    expect(where("clice · lead")).toBeNull();
+    expect(where("modules")!.textContent).toBe("feat/modules2 changed…/work/w1");
   });
 
   it("acts on the session and agent it was asked from", () => {
@@ -227,6 +273,9 @@ describe("a session's actions by its state", () => {
           onClearContext: vi.fn(),
           onRemoveAgent: vi.fn(),
           onSetModel: vi.fn(),
+          onStopTask: vi.fn(),
+          onCancelWake: vi.fn(),
+          onStopAll: vi.fn(),
         }}
       />,
     );
@@ -262,8 +311,8 @@ describe("the agents panel in the app", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  const boot = () => {
-    localStorage.setItem("activeWsId", "w1");
+  const boot = (active = "lead") => {
+    localStorage.setItem("activeWsId", active);
     render(<App />);
     const sock = FakeSocket.instances.at(-1)!;
     act(() => sock.open());
@@ -285,19 +334,41 @@ describe("the agents panel in the app", () => {
   };
 
   it("opens from the header chip, which sums up the open session's agents", () => {
-    boot();
+    boot("w1");
     const chip = document.querySelector(".agents-chip")!;
     expect(chip.textContent).toBe("Arunning tests");
     fireEvent.click(chip);
     expect(document.querySelector(".side-panel")!.getAttribute("aria-label")).toBe("Agents");
+    fireEvent.click(chip);
+    expect(document.querySelector(".side-panel")).toBeNull();
+  });
+
+  it("is the project's overview from its lead, folded; a worker's own session alone, unfolded", () => {
+    boot("lead");
+    fireEvent.click(document.querySelector(".agents-chip")!);
     expect(document.querySelector(".side-panel-sub")!.textContent).toBe(
       "clice · 2 sessions · 1 working",
     );
     expect(
       document.querySelector('.side-rail [aria-label="Agents and sessions"]')!.textContent,
     ).toBe("1");
-    fireEvent.click(chip);
-    expect(document.querySelector(".side-panel")).toBeNull();
+    const cards = () =>
+      [...document.querySelectorAll(".ap-session")].map((c) => [
+        c.getAttribute("aria-label"),
+        c.querySelector(".ap-toggle")!.getAttribute("aria-expanded"),
+      ]);
+    expect(cards()).toEqual([
+      ["clice · lead", "false"],
+      ["modules", "false"],
+      ["docs", "false"],
+    ]);
+    fireEvent.click(document.querySelector('[aria-label="modules"] .ap-session-name')!);
+    expect(cards()).toEqual([["modules", "true"]]);
+    expect(document.querySelector(".side-panel-sub")!.textContent).toBe(
+      "modules · 1 agent · 1 working",
+    );
+    // Background work is in the session's own card: no panel of its own.
+    expect(document.querySelector('.side-rail [aria-label="Background tasks"]')).toBeNull();
   });
 
   it("pins beside the chat and remembers it", () => {
@@ -334,6 +405,7 @@ describe("the agents panel in the app", () => {
     fireEvent.click(document.querySelector(".agents-chip")!);
     const panel = document.querySelector(".side-panel")!;
     expect(document.activeElement).toBe(panel);
+    fireEvent.click(document.querySelector('[aria-label="clice · lead"] .ap-toggle')!);
     const leadCard = within(document.querySelector('[aria-label="clice · lead"]') as HTMLElement);
     fireEvent.click(leadCard.getByText("+ Agent"));
     expect(document.querySelector(".dialog")!.contains(document.activeElement)).toBe(true);
@@ -373,7 +445,8 @@ describe("the agents panel in the app", () => {
     boot();
     const rail = document.querySelector(".header-rail")!;
     expect(rail.parentElement!.className).toBe("workspace-info-bar");
-    expect(rail.querySelectorAll(".rail-btn")).toHaveLength(4);
+    // Objectives, agents (background work included), files.
+    expect(rail.querySelectorAll(".rail-btn")).toHaveLength(3);
   });
 
   it("maximises over the chat until closed", () => {
@@ -406,7 +479,7 @@ describe("the agents panel in the app", () => {
   });
 
   it("switches an agent's model through the chat, so the switch shows where it happened", () => {
-    const sock = boot();
+    const sock = boot("w1");
     fireEvent.click(document.querySelector(".agents-chip")!);
     const card = document.querySelector('[aria-label="modules"]')!;
     fireEvent.change(card.querySelector(".ap-model")!, { target: { value: "claude-opus-5-5" } });
@@ -420,6 +493,7 @@ describe("the agents panel in the app", () => {
   it("adds an agent to the session it was asked from", () => {
     const sock = boot();
     fireEvent.click(document.querySelector(".agents-chip")!);
+    fireEvent.click(document.querySelector('[aria-label="clice · lead"] .ap-toggle')!);
     const leadCard = within(document.querySelector('[aria-label="clice · lead"]') as HTMLElement);
     fireEvent.click(leadCard.getByText("+ Agent"));
     fireEvent.click(document.querySelector(".dialog .btn-primary")!);
@@ -449,6 +523,9 @@ describe("an agent's state line", () => {
           onClearContext: vi.fn(),
           onRemoveAgent: vi.fn(),
           onSetModel: vi.fn(),
+          onStopTask: vi.fn(),
+          onCancelWake: vi.fn(),
+          onStopAll: vi.fn(),
         }}
       />,
     );
@@ -521,6 +598,9 @@ describe("switching an agent's model", () => {
           onClearContext: vi.fn(),
           onRemoveAgent: vi.fn(),
           onSetModel,
+          onStopTask: vi.fn(),
+          onCancelWake: vi.fn(),
+          onStopAll: vi.fn(),
         }}
       />,
     );

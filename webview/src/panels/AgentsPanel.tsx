@@ -1,12 +1,13 @@
-import { memo } from "react";
+import { Fragment, memo, useState } from "react";
 import type { AgentInfo, ModelOption, Project, Workspace } from "../state/useServer";
 import { AgentAvatar } from "../workspace/avatar";
 import { agentState, stateLabel } from "../workspace/agents";
 import { formatRelative, formatTokens, shortModel } from "../format";
-import { sessionName, sessionState, sessionWork } from "./scope";
+import { DEFAULT_BRANCH, sessionName, sessionState, sessionWork } from "./scope";
+import { AgentTasks, hasWork, soon, workCount, type TaskActions } from "./SessionTasks";
 import { Icon } from "./Icon";
 
-export interface AgentsPanelActions {
+export interface AgentsPanelActions extends TaskActions {
   onOpen: (workspaceId: string) => void;
   onStop: (workspaceId: string) => void;
   onArchive: (workspaceId: string) => void;
@@ -25,10 +26,12 @@ const STATE_LABEL = {
   archived: "archived",
 };
 
-// Every session in scope (the project's, or the open workspace) with what
-// its agents are doing: state, the objective or task it carries out, model,
-// context. Opening, stopping and archiving sessions, and adding, clearing or
-// removing agents happen here.
+// The sessions in scope with what their agents are doing. In a project's
+// overview (from its lead) every session is a card of two lines, unfolded
+// for the rest: where it works, its objectives, each agent's model and
+// context, its background work. A single session's card comes unfolded.
+// Opening, stopping and archiving sessions, adding, clearing or removing
+// agents, and stopping background work happen here.
 export const AgentsPanel = memo(function AgentsPanel({
   sessions,
   project,
@@ -36,6 +39,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   connected,
   models,
   actions,
+  overview = false,
 }: {
   sessions: Workspace[];
   project: Project | undefined;
@@ -43,36 +47,31 @@ export const AgentsPanel = memo(function AgentsPanel({
   connected: boolean;
   models: ModelOption[];
   actions: AgentsPanelActions;
+  overview?: boolean;
 }) {
   const live = sessions.filter((w) => w.archivedAt == null);
   const archived = sessions.filter((w) => w.archivedAt != null);
+  // Keyed by the view too: a card folded in the overview comes unfolded
+  // when its own session is the one open.
+  const card = (w: Workspace) => (
+    <SessionCard
+      key={`${overview ? "overview" : "own"}:${w.id}`}
+      session={w}
+      project={project}
+      active={w.id === activeWsId}
+      connected={connected}
+      models={models}
+      actions={actions}
+      defaultOpen={!overview}
+    />
+  );
   return (
     <div className="agents-panel">
-      {live.map((w) => (
-        <SessionCard
-          key={w.id}
-          session={w}
-          project={project}
-          active={w.id === activeWsId}
-          connected={connected}
-          models={models}
-          actions={actions}
-        />
-      ))}
+      {live.map(card)}
       {archived.length > 0 && (
         <details className="ap-archived">
           <summary>Archived · {archived.length}</summary>
-          {archived.map((w) => (
-            <SessionCard
-              key={w.id}
-              session={w}
-              project={project}
-              active={w.id === activeWsId}
-              connected={connected}
-              models={models}
-              actions={actions}
-            />
-          ))}
+          {archived.map(card)}
         </details>
       )}
     </div>
@@ -86,6 +85,7 @@ function SessionCard({
   connected,
   models,
   actions,
+  defaultOpen,
 }: {
   session: Workspace;
   project: Project | undefined;
@@ -93,16 +93,39 @@ function SessionCard({
   connected: boolean;
   models: ModelOption[];
   actions: AgentsPanelActions;
+  defaultOpen: boolean;
 }) {
+  const [open, setOpen] = useState(defaultOpen);
   const state = sessionState(w);
   const work = project ? sessionWork(w.id, project.objectives) : [];
-  // Stop ends a running turn; background work stops in the Tasks panel, and
-  // a sleeping session archives like an idle one.
+  // Stop ends a running turn; background work has its own stops, and a
+  // sleeping session archives like an idle one.
   const busy = state === "working" || state === "waiting";
   const name = sessionName(w, project);
+  const tasks = workCount([w]);
+  // Where it works, when that is not the project's own checkout.
+  const branch = w.git?.branch;
+  const elsewhere =
+    !!project && (w.cwd !== project.root || (!!branch && !DEFAULT_BRANCH.test(branch)));
+  const stop = (
+    <button className="panel-btn danger" onClick={() => actions.onStop(w.id)}>
+      Stop
+    </button>
+  );
   return (
-    <section className={`ap-session ss-${state}${active ? " active" : ""}`} aria-label={w.name}>
+    <section
+      className={`ap-session ss-${state}${active ? " active" : ""}${open ? " open" : ""}`}
+      aria-label={w.name}
+    >
       <header className="ap-session-head">
+        <button
+          className="ap-toggle"
+          aria-expanded={open}
+          aria-label={open ? `Fold ${name}` : `Unfold ${name}`}
+          onClick={() => setOpen(!open)}
+        >
+          {open ? "▾" : "▸"}
+        </button>
         <span className={`ap-dot ss-${state}`} title={STATE_LABEL[state]} />
         <button
           className="ap-session-name"
@@ -123,57 +146,107 @@ function SessionCard({
         </button>
         <span className="ap-when">{formatRelative(w.lastMessageAt ?? w.createdAt)}</span>
       </header>
-      <div className="ap-where" title={w.cwd}>
-        {w.git?.branch && <span className="ap-branch">{w.git.branch}</span>}
-        {w.git && w.git.dirty > 0 && <span className="ap-dirty">{w.git.dirty} changed</span>}
-        <span className="ap-cwd">{shortPath(w.cwd)}</span>
-      </div>
-      {work.map(({ objective, task }) => (
-        <div key={objective.id} className="ap-work" title={objective.goal}>
-          ◆ {objective.title}
-          {task && <span className="ap-task"> · {task.text}</span>}
+      {!open && (
+        <div className="ap-brief">
+          {w.agents.map((a) => (
+            <span key={a.id} className="ap-brief-agent">
+              <AgentAvatar agent={a} size={16} />
+              <span className="clip" style={{ color: a.color }}>
+                {a.name}
+              </span>
+              <span className={`ap-brief-meta as-${agentState(a)}`}>{brief(a, connected)}</span>
+            </span>
+          ))}
+          {tasks > 0 && <span className="ap-brief-tasks">{tasksTag(w)}</span>}
+          {state === "working" && <span className="ap-actions">{stop}</span>}
         </div>
-      ))}
-      <div className="ap-agents">
-        {w.agents.length === 0 && <div className="ap-none">No agents.</div>}
-        {w.agents.map((a) => (
-          <AgentRow
-            key={a.id}
-            agent={a}
-            connected={connected}
-            archived={state === "archived"}
-            models={models}
-            onClear={() => actions.onClearContext(w.id, a.id)}
-            onRemove={() => actions.onRemoveAgent(w.id, a.id)}
-            onModel={(model) => actions.onSetModel(w.id, a.id, model)}
-          />
-        ))}
-      </div>
-      <footer className="ap-session-foot">
-        {state !== "archived" && (
-          <button className="panel-btn ap-add" onClick={() => actions.onAddAgent(w.id)}>
-            + Agent
-          </button>
-        )}
-        {state === "archived" ? (
-          <button className="panel-btn ap-act" onClick={() => actions.onRestore(w.id)}>
-            Restore
-          </button>
-        ) : state === "working" ? (
-          <button className="panel-btn danger ap-act" onClick={() => actions.onStop(w.id)}>
-            Stop
-          </button>
-        ) : (
-          !busy &&
-          w.projectLink?.role !== "lead" && (
-            <button className="panel-btn ap-act" onClick={() => actions.onArchive(w.id)}>
-              Archive
-            </button>
-          )
-        )}
-      </footer>
+      )}
+      {open && (
+        <>
+          {elsewhere && (
+            <div className="ap-where" title={w.cwd}>
+              {branch && <span className="ap-branch">{branch}</span>}
+              {w.git && w.git.dirty > 0 && <span className="ap-dirty">{w.git.dirty} changed</span>}
+              <span className="ap-cwd">{shortPath(w.cwd)}</span>
+            </div>
+          )}
+          {work.map(({ objective, task }) => (
+            <div key={objective.id} className="ap-work" title={objective.goal}>
+              ◆ {objective.title}
+              {task && <span className="ap-task"> · {task.text}</span>}
+            </div>
+          ))}
+          <div className="ap-agents">
+            {w.agents.length === 0 && <div className="ap-none">No agents.</div>}
+            {w.agents.map((a) => (
+              <Fragment key={a.id}>
+                <AgentRow
+                  agent={a}
+                  connected={connected}
+                  archived={state === "archived"}
+                  models={models}
+                  onClear={() => actions.onClearContext(w.id, a.id)}
+                  onRemove={() => actions.onRemoveAgent(w.id, a.id)}
+                  onModel={(model) => actions.onSetModel(w.id, a.id, model)}
+                />
+                {state !== "archived" && hasWork(a) && (
+                  <AgentTasks session={w} agent={a} actions={actions} />
+                )}
+              </Fragment>
+            ))}
+          </div>
+          <footer className="ap-session-foot">
+            {state !== "archived" && (
+              <button className="panel-btn ap-add" onClick={() => actions.onAddAgent(w.id)}>
+                + Agent
+              </button>
+            )}
+            <span className="ap-actions">
+              {tasks > 0 && (
+                <button
+                  className="panel-btn danger"
+                  title="Stop the turn, every background task and the wake-ups of this session"
+                  onClick={() => actions.onStopAll(w.id)}
+                >
+                  Stop everything
+                </button>
+              )}
+              {state === "archived" ? (
+                <button className="panel-btn" onClick={() => actions.onRestore(w.id)}>
+                  Restore
+                </button>
+              ) : state === "working" ? (
+                stop
+              ) : (
+                !busy &&
+                w.projectLink?.role !== "lead" && (
+                  <button className="panel-btn" onClick={() => actions.onArchive(w.id)}>
+                    Archive
+                  </button>
+                )
+              )}
+            </span>
+          </footer>
+        </>
+      )}
     </section>
   );
+}
+
+// An agent in a folded card: what it is doing, or how full its context is.
+function brief(a: AgentInfo, connected: boolean): string {
+  if (agentState(a) !== "idle") return stateLabel(a, connected);
+  return a.context ? formatTokens(a.context.tokens) : "";
+}
+
+// A folded card's background work: how much runs, and the next wake-up.
+function tasksTag(w: Workspace): string {
+  const running = w.agents.reduce((n, a) => n + (a.backgroundTasks?.length ?? 0), 0);
+  const wakes = w.agents.flatMap((a) => (a.wake ? [a.wake.at] : []));
+  const parts: string[] = [];
+  if (running > 0) parts.push(`${running} in background`);
+  if (wakes.length > 0) parts.push(`wake in ${soon(Math.min(...wakes) - Date.now())}`);
+  return parts.join(" · ");
 }
 
 function AgentRow({

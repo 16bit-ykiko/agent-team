@@ -8,10 +8,8 @@ import {
 } from "./groups";
 import { isAgentActive } from "../workspace/agents";
 import { Icon } from "../panels/Icon";
+import { DEFAULT_BRANCH } from "../panels/scope";
 import { formatBytes, formatRelative, formatResetTime } from "../format";
-
-// The branch a project usually sits on: not worth a word on every row.
-const DEFAULT_BRANCH = /^(main|master)$/;
 
 function gitTitle(git: { dirty: number; ahead: number; behind: number }): string {
   const parts: string[] = [];

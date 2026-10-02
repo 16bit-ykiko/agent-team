@@ -73,6 +73,9 @@ export function scopeSummary(sessions: Workspace[], project: Project | undefined
   return `${project.name} · ${count} · ${stateSummary(live.map(sessionState))}`;
 }
 
+// The branch a project usually sits on: not worth a word on every row.
+export const DEFAULT_BRANCH = /^(main|master)$/;
+
 // Within its project a session goes by what follows the project's name
 // ("clice · lead" is the lead).
 export function sessionName(w: Workspace, project: Project | undefined): string {

@@ -170,7 +170,7 @@ describe("a maximised panel", () => {
     rail("Agents and sessions");
     fireEvent.click(document.querySelector(".side-panel-max")!);
     expect(panel().className).toContain("maximized");
-    rail("Background tasks");
+    rail("Files");
     expect(panel().className).not.toContain("maximized");
     expect(document.querySelector(".side-panel-pin")).not.toBeNull();
 

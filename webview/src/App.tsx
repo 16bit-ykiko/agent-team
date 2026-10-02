@@ -12,7 +12,7 @@ import { agentQueues, agentState, isAgentActive, pillLabel } from "./workspace/a
 import { SidePanel } from "./panels/SidePanel";
 import { Rail, type RailItem } from "./panels/Rail";
 import { AgentsPanel, type AgentsPanelActions } from "./panels/AgentsPanel";
-import { TasksPanel, workCount, type TasksPanelActions } from "./panels/TasksPanel";
+import { workCount } from "./panels/SessionTasks";
 import { FilesPanel } from "./panels/FilesPanel";
 import { fileRoots, scopeSessions, scopeSummary, sessionState, stateSummary } from "./panels/scope";
 import { FileOpenContext, parseFileRef, type FileRef } from "./chat/fileRef";
@@ -458,6 +458,13 @@ export function App() {
     () => scopeSessions(activeWs, workspaces, activeProject),
     [activeWs, workspaces, activeProject],
   );
+  // From a project's lead, the Agents panel is the project's overview; from
+  // any other session, that session alone.
+  const overview = activeWs?.projectLink?.role === "lead";
+  const panelSessions = useMemo(
+    () => (overview ? scope : activeWs ? [activeWs] : []),
+    [overview, scope, activeWs],
+  );
   const railItems: RailItem[] = [
     ...(activeProject
       ? [
@@ -476,16 +483,10 @@ export function App() {
       label: "Agents and sessions",
       icon: "agents" as const,
       active: openPanel === "agents",
-      badge: scope.filter((w) => sessionState(w) === "working").length,
+      badge:
+        panelSessions.filter((w) => sessionState(w) === "working").length +
+        workCount(panelSessions),
       onClick: () => togglePanel("agents"),
-    },
-    {
-      id: "tasks",
-      label: "Background tasks",
-      icon: "tasks" as const,
-      active: openPanel === "tasks",
-      badge: workCount(scope),
-      onClick: () => togglePanel("tasks"),
     },
     {
       id: "files",
@@ -632,6 +633,9 @@ export function App() {
       onRemoveAgent: (id, agentId) => removeAgent(id, agentId),
       // Through the chat, so the switch shows where it happened.
       onSetModel: (id, agentId, model) => void sendMessage(id, `/model ${model}`, agentId),
+      onStopTask: (id, agentId, taskId) => cancelSubagent(id, agentId, taskId),
+      onCancelWake: (id, agentId) => cancelWakeup(id, agentId),
+      onStopAll: (id) => abort(id),
     }),
     [
       openWorkspace,
@@ -641,19 +645,10 @@ export function App() {
       clearContext,
       removeAgent,
       sendMessage,
+      cancelSubagent,
+      cancelWakeup,
+      abort,
     ],
-  );
-  const taskActions = useMemo<TasksPanelActions>(
-    () => ({
-      onOpen: (id) => {
-        if (window.matchMedia?.(PHONE).matches) setOpenPanel(null);
-        openWorkspace(id);
-      },
-      onStopTask: (id, agentId, taskId) => cancelSubagent(id, agentId, taskId),
-      onCancelWake: (id, agentId) => cancelWakeup(id, agentId),
-      onStopAll: (id) => abort(id),
-    }),
-    [openWorkspace, cancelSubagent, cancelWakeup, abort],
   );
 
   const onDeleteWorkspace = useCallback(
@@ -1643,7 +1638,7 @@ export function App() {
         {activeWs && openPanel === "agents" && (
           <SidePanel
             title="Agents"
-            subtitle={scopeSummary(scope, activeProject)}
+            subtitle={scopeSummary(panelSessions, overview ? activeProject : undefined)}
             pinned={panelPinned}
             maximized={panelMax}
             inset={sidebarWidth}
@@ -1654,29 +1649,14 @@ export function App() {
             onWidth={setListWidth}
           >
             <AgentsPanel
-              sessions={scope}
+              sessions={panelSessions}
               project={activeProject}
               activeWsId={activeWsId}
               connected={connected}
               models={models}
               actions={agentActions}
+              overview={overview}
             />
-          </SidePanel>
-        )}
-        {activeWs && openPanel === "tasks" && (
-          <SidePanel
-            title="Background tasks"
-            subtitle={`${activeProject?.name ?? activeWs.name} · ${plural(workCount(scope), "task")}`}
-            pinned={panelPinned}
-            maximized={panelMax}
-            inset={sidebarWidth}
-            width={listWidth}
-            onPin={togglePin}
-            onMaximize={toggleMax}
-            onClose={closePanel}
-            onWidth={setListWidth}
-          >
-            <TasksPanel sessions={scope} project={activeProject} actions={taskActions} />
           </SidePanel>
         )}
         {files && openPanel === "files" && (
@@ -1794,10 +1774,6 @@ function headerTitle(ws: Workspace): string {
     : `${ws.name} — ${ws.project}`;
 }
 
-function plural(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? "" : "s"}`;
-}
-
 function purgeBody(workspaces: Workspace[], projects: Project[], projectId: string | null): string {
   const known = new Set(projects.map((p) => p.id));
   const project = projects.find((p) => p.id === projectId);
@@ -1811,7 +1787,7 @@ function purgeBody(workspaces: Workspace[], projects: Project[], projectId: stri
   return `Permanently delete the ${doomed.length} archived session(s)${whose}, with their message history and logs.`;
 }
 
-type PanelId = "agents" | "tasks" | "files";
+type PanelId = "agents" | "files";
 const WORKSPACE_ROOT: FileRef = { path: "." };
 // Where side panels become full-screen sheets (styles.css).
 const PHONE = "(max-width: 768px), (max-height: 500px)";

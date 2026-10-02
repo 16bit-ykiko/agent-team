@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, within, act } from "@testing-library/react";
-import { TasksPanel, workCount, type TasksPanelActions } from "../src/panels/TasksPanel";
+import { render, fireEvent, within, act, cleanup } from "@testing-library/react";
+import { AgentsPanel, type AgentsPanelActions } from "../src/panels/AgentsPanel";
+import { workCount } from "../src/panels/SessionTasks";
 import { App } from "../src/App";
 import type { AgentInfo, Workspace } from "../src/state/useServer";
 import { FakeSocket } from "./fakeSocket";
@@ -46,25 +47,41 @@ const busy = ws("indexer", [
 ]);
 const quiet = ws("docs", [agent("bob")]);
 
-describe("TasksPanel", () => {
+const actions = (): AgentsPanelActions => ({
+  onOpen: vi.fn(),
+  onStop: vi.fn(),
+  onArchive: vi.fn(),
+  onRestore: vi.fn(),
+  onAddAgent: vi.fn(),
+  onClearContext: vi.fn(),
+  onRemoveAgent: vi.fn(),
+  onSetModel: vi.fn(),
+  onStopTask: vi.fn(),
+  onCancelWake: vi.fn(),
+  onStopAll: vi.fn(),
+});
+const panel = (sessions: Workspace[], a = actions(), overview = false) =>
+  render(
+    <AgentsPanel
+      sessions={sessions}
+      project={undefined}
+      activeWsId={sessions[0].id}
+      connected
+      models={[]}
+      actions={a}
+      overview={overview}
+    />,
+  ).container;
+
+describe("a session's background work, in its card", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
   });
   afterEach(() => vi.useRealTimers());
 
-  const actions = (): TasksPanelActions => ({
-    onOpen: vi.fn(),
-    onStopTask: vi.fn(),
-    onCancelWake: vi.fn(),
-    onStopAll: vi.fn(),
-  });
-
-  it("lists background work by session and agent, with its age or its time", () => {
-    const { container } = render(<TasksPanel sessions={[busy, quiet]} actions={actions()} />);
-    expect(
-      [...container.querySelectorAll(".tp-session")].map((s) => s.getAttribute("aria-label")),
-    ).toEqual(["indexer"]);
+  it("is listed by agent, with its age or its time", () => {
+    const container = panel([busy]);
     const rows = [...container.querySelectorAll(".tp-task")].map((r) =>
       [...r.querySelectorAll(".tp-type, .tp-desc, .tp-when")].map((e) => e.textContent),
     );
@@ -78,29 +95,35 @@ describe("TasksPanel", () => {
       ["wake-up", "check the CI run", "in 12m"],
     ]);
     expect(container.querySelector(".tp-wake .tp-when")!.getAttribute("title")).toBe(`at ${at}`);
-    expect(container.querySelectorAll(".tp-agent")).toHaveLength(2);
+    // Each agent's under its own row, not under a name of its own again.
+    expect(
+      [...container.querySelectorAll(".tp-tasks")].map(
+        (t) => t.previousElementSibling!.querySelector(".ap-agent-name")!.textContent,
+      ),
+    ).toEqual(["kisara", "isla"]);
     expect(workCount([busy, quiet])).toBe(3);
+    // A quiet session has none to list.
+    expect(panel([quiet]).querySelector(".tp-tasks")).toBeNull();
   });
 
-  it("stops one task, cancels a wake-up, or stops everything of a session", () => {
+  it("stops one task, cancels a wake-up, or stops everything of the session", () => {
     const a = actions();
-    const { container } = render(<TasksPanel sessions={[busy]} actions={a} />);
-    const panel = within(container);
-    fireEvent.click(panel.getByLabelText("Stop npm run build"));
-    fireEvent.click(panel.getByText("Cancel"));
-    fireEvent.click(panel.getByText("Stop everything"));
-    fireEvent.click(panel.getByTitle("Open this session"));
+    const card = within(panel([busy], a));
+    fireEvent.click(card.getByLabelText("Stop npm run build"));
+    fireEvent.click(card.getByText("Cancel"));
+    fireEvent.click(card.getByText("Stop everything"));
     expect(a.onStopTask).toHaveBeenCalledWith("indexer", "kisara", "b1");
     expect(a.onCancelWake).toHaveBeenCalledWith("indexer", "isla");
     expect(a.onStopAll).toHaveBeenCalledWith("indexer");
-    expect(a.onOpen).toHaveBeenCalledWith("indexer");
   });
 
-  it("says when nothing runs in the background", () => {
-    const { container } = render(<TasksPanel sessions={[quiet]} actions={actions()} />);
-    expect(container.querySelector(".tp-empty")!.textContent).toContain(
-      "Nothing runs in the background",
-    );
+  it("shows in a folded card as how much runs and when it wakes", () => {
+    const container = panel([busy, quiet], actions(), true);
+    const tag = (id: string) =>
+      container.querySelector(`[aria-label="${id}"] .ap-brief-tasks`)?.textContent ?? null;
+    expect(tag("indexer")).toBe("2 in background · wake in 12m");
+    expect(tag("docs")).toBeNull();
+    expect(container.querySelector(".tp-tasks")).toBeNull();
   });
 });
 
@@ -144,24 +167,18 @@ describe("Stop in the app", () => {
     ]);
   });
 
-  it("leaves an agent that only waits on background work to the tasks panel", () => {
+  it("leaves an agent that only waits on background work to its card's own stops", () => {
     const waiting = agent("a", {
       state: "waiting",
       backgroundTasks: [{ id: "b1", type: "local_bash", description: "sleep", since: NOW }],
     });
     const sock = boot([ws("w", [waiting])]);
     expect(document.querySelector(".btn-abort")).toBeNull();
-    fireEvent.click(document.querySelector('.side-rail [aria-label="Background tasks"]')!);
-    expect(document.querySelector(".side-panel")!.getAttribute("aria-label")).toBe(
-      "Background tasks",
-    );
-    expect(document.querySelector(".side-panel-sub")!.textContent).toBe("w · 1 task");
-    expect(document.querySelector('.side-rail [aria-label="Background tasks"]')!.textContent).toBe(
-      "1",
-    );
-    fireEvent.click(
-      within(document.querySelector(".tasks-panel") as HTMLElement).getByText("Stop"),
-    );
+    // The agents button counts it.
+    const agents = document.querySelector('.side-rail [aria-label="Agents and sessions"]')!;
+    expect(agents.textContent).toBe("1");
+    fireEvent.click(agents);
+    fireEvent.click(within(document.querySelector(".tp-tasks") as HTMLElement).getByText("Stop"));
     expect(sock.frames().at(-1)).toEqual({
       type: "cancel_subagent",
       workspaceId: "w",
@@ -179,19 +196,10 @@ describe("cancelling a wake-up", () => {
   afterEach(() => vi.useRealTimers());
   const wake = { at: NOW + 60_000, reason: "check CI" };
   const cancels = (a: AgentInfo) => {
-    const { container, unmount } = render(
-      <TasksPanel
-        sessions={[ws("w", [a])]}
-        actions={{
-          onOpen: vi.fn(),
-          onStopTask: vi.fn(),
-          onCancelWake: vi.fn(),
-          onStopAll: vi.fn(),
-        }}
-      />,
-    );
-    const offered = within(container).queryByRole("button", { name: "Cancel" }) !== null;
-    unmount();
+    const container = panel([ws("w", [a])]);
+    const tasks = container.querySelector(".tp-tasks") as HTMLElement;
+    const offered = within(tasks).queryByRole("button", { name: "Cancel" }) !== null;
+    cleanup();
     return offered;
   };
 
@@ -207,41 +215,5 @@ describe("cancelling a wake-up", () => {
         }),
       ),
     ).toBe(false);
-  });
-});
-
-describe("session names in a project", () => {
-  it("go without the project's name, as in the Agents panel", () => {
-    const project = {
-      id: "p1",
-      name: "clice",
-      root: "/w",
-      leadWorkspaceId: "l",
-      createdAt: 0,
-      objectives: [],
-    };
-    const leadSession = ws(
-      "l",
-      [
-        agent("a", {
-          state: "waiting",
-          backgroundTasks: [{ id: "b", type: "local_bash", description: "x", since: NOW }],
-        }),
-      ],
-      { name: "clice · lead", projectLink: { projectId: "p1", role: "lead" } },
-    );
-    const { container } = render(
-      <TasksPanel
-        sessions={[leadSession]}
-        project={project}
-        actions={{
-          onOpen: vi.fn(),
-          onStopTask: vi.fn(),
-          onCancelWake: vi.fn(),
-          onStopAll: vi.fn(),
-        }}
-      />,
-    );
-    expect(container.querySelector(".ap-session-name")!.textContent).toBe("lead");
   });
 });

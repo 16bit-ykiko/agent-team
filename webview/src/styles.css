@@ -4382,6 +4382,9 @@ button.action-target:hover {
   font-size: var(--fs-text);
 }
 .ap-session {
+  /* Where the name starts, past the fold arrow and the state dot: what
+     the card holds lines up under it. */
+  --ap-indent: 33px;
   padding: 9px 10px;
   background: var(--bg-primary);
   border: 1px solid var(--border);
@@ -4396,6 +4399,21 @@ button.action-target:hover {
   align-items: center;
   gap: 7px;
   min-width: 0;
+}
+.ap-toggle {
+  flex-shrink: 0;
+  width: 12px;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.ap-toggle:hover {
+  color: var(--text-primary);
 }
 .ap-dot {
   flex-shrink: 0;
@@ -4442,7 +4460,7 @@ button.action-target:hover {
   display: flex;
   gap: 8px;
   min-width: 0;
-  margin: 3px 0 0 15px;
+  margin: 3px 0 0 var(--ap-indent);
   font-size: var(--fs-meta);
   color: var(--text-muted);
   white-space: nowrap;
@@ -4463,7 +4481,7 @@ button.action-target:hover {
   text-overflow: ellipsis;
 }
 .ap-work {
-  margin: 4px 0 0 15px;
+  margin: 4px 0 0 var(--ap-indent);
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4476,23 +4494,65 @@ button.action-target:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 8px 0 0 15px;
+  margin: 8px 0 0 var(--ap-indent);
 }
-/* Adding an agent under the names, the session's own action at the edge.
+/* A folded card: each agent, what it does or how full its context is, the
+   session's background work, and Stop while a turn runs. */
+.ap-brief {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  min-width: 0;
+  margin: 4px 0 0 var(--ap-indent);
+  font-size: var(--fs-meta);
+}
+.ap-brief-agent {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.ap-brief-agent .clip {
+  font-weight: 600;
+}
+.ap-brief-meta {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.ap-brief-meta.as-working {
+  color: var(--accent);
+}
+.ap-brief-meta.as-waiting,
+.ap-brief-meta.as-sleeping {
+  color: var(--purple);
+}
+.ap-brief-tasks {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: var(--fs-tag);
+  line-height: 15px;
+  border-radius: 8px;
+  color: var(--purple);
+  background: rgba(198, 120, 221, 0.12);
+}
+/* Adding an agent under the names, the session's own actions at the edge.
    An action at a card's edge sets its label, not its border, on the edge
    the times and the agents' buttons keep. */
 .ap-session-foot {
   display: flex;
   align-items: center;
-  margin: 4px 0 0 15px;
+  margin: 4px 0 0 var(--ap-indent);
 }
-.ap-act,
-.tp-stop-all,
+.ap-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.ap-actions > :last-child,
 .tp-stop {
   margin-right: calc(-1px - var(--panel-btn-pad));
-}
-.ap-act {
-  margin-left: auto;
 }
 .ap-none {
   color: var(--text-muted);
@@ -4620,49 +4680,16 @@ button.action-target:hover {
   margin-bottom: 8px;
 }
 
-/* Tasks panel */
-.tp-empty {
-  color: var(--text-secondary);
-  line-height: 1.6;
-  font-size: var(--fs-text);
-}
-.tasks-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  font-size: var(--fs-text);
-}
-.tp-session {
-  padding: 9px 10px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-.tp-session-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-.tp-stop-all {
-  flex-shrink: 0;
-}
-.tp-agent {
-  margin: 8px 0 0 15px;
-}
-.tp-agent-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  margin-bottom: 4px;
+/* An agent's background work, under its row, past its avatar. */
+.tp-tasks {
+  margin: -2px 0 2px 30px;
 }
 .tp-task {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 3px 0 3px 24px;
+  padding: 3px 0;
 }
 /* One width for every kind and every action: the descriptions start, and
    the times end, in one column. */
@@ -4759,9 +4786,18 @@ button.action-target:hover {
     font-size: var(--fs-text);
   }
   /* Room for an edge button's padding, and for the agents' wider buttons. */
-  .ap-session,
-  .tp-session {
+  .ap-session {
     padding: 10px 12px;
+  }
+  /* A Stop as big as a finger, in a line no taller than its text. */
+  .ap-brief .panel-btn {
+    margin-block: -12px;
+  }
+  /* A finger's target, laid out as wide as the arrow. */
+  .ap-toggle {
+    width: 32px;
+    height: 32px;
+    margin: -10px;
   }
   .ap-agent-actions {
     margin-right: -12px;
