@@ -263,6 +263,7 @@ function applyInnerEvent(saEvents: StreamEvent[], innerEvent: StreamEvent): void
     if (i >= 0) {
       saEvents[i].toolResult = innerEvent.content;
       if (innerEvent.isError) saEvents[i].toolResultIsError = true;
+      if (innerEvent.durationMs != null) saEvents[i].durationMs = innerEvent.durationMs;
       return;
     }
   }
@@ -296,6 +297,7 @@ function applyInnerEvent(saEvents: StreamEvent[], innerEvent: StreamEvent): void
       saEvents[si].subagent!.status = innerEvent.subagent.status;
       saEvents[si].subagent!.summary = innerEvent.subagent.summary;
       saEvents[si].subagent!.usage = innerEvent.subagent.usage;
+      saEvents[si].subagent!.durationMs = innerEvent.subagent.durationMs;
     }
   }
   saEvents.push(innerEvent);
@@ -605,6 +607,7 @@ export class Workspace {
         msg.events[startIdx].subagent!.status = event.subagent?.status;
         msg.events[startIdx].subagent!.summary = event.subagent?.summary;
         msg.events[startIdx].subagent!.usage = event.subagent?.usage;
+        msg.events[startIdx].subagent!.durationMs = event.subagent?.durationMs;
       }
       const progIdx = msg.events.findIndex(
         (e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId,
@@ -668,6 +671,7 @@ export class Workspace {
             call.toolResult = event.content;
             if (event.isMarkdown) call.toolResultIsMarkdown = true;
             if (event.isError) call.toolResultIsError = true;
+            if (event.durationMs != null) call.durationMs = event.durationMs;
             this.streamed(owner, event);
             this.finished(owner.id, owner.status, owner.content, owner.events);
             return;
@@ -794,6 +798,7 @@ export class Workspace {
           msg.events![matchIdx].toolResult = event.content;
           if (event.isMarkdown) msg.events![matchIdx].toolResultIsMarkdown = true;
           if (event.isError) msg.events![matchIdx].toolResultIsError = true;
+          if (event.durationMs != null) msg.events![matchIdx].durationMs = event.durationMs;
         } else {
           event.contentOffset = msg.content.length;
           msg.events!.push(event);

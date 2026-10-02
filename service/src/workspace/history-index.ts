@@ -10,7 +10,7 @@ import type { Message } from "./workspace";
 // so any substring (a path, an identifier, Chinese) is found. Built in a
 // worker thread (history-worker.ts); derived, so a new INDEX_VERSION or a
 // deleted or damaged file just rebuilds it.
-const INDEX_VERSION = 3;
+const INDEX_VERSION = 4;
 
 export type EntryKind = "said" | "thinking" | "tool_call" | "tool_output" | "error" | "subagent";
 export const ENTRY_KINDS: readonly EntryKind[] = [
@@ -32,6 +32,9 @@ export interface Entry {
   text: string;
   // A tool's output: where its call is among the message's entries.
   call?: number;
+  // A tool call: from call to result; a subagent or background task: its
+  // run. Only on records made since it was measured.
+  durationMs?: number;
 }
 
 export function entriesOf(m: Message): Entry[] {
@@ -71,9 +74,18 @@ function walk(events: StreamEvent[], depth: number, out: Entry[]): void {
     text: string | undefined,
     tool: string | null = null,
     call = -1,
+    durationMs?: number,
   ) => {
     if (!text?.trim()) return -1;
-    out.push({ kind, role: null, tool, depth, text, ...(call >= 0 && { call }) });
+    out.push({
+      kind,
+      role: null,
+      tool,
+      depth,
+      text,
+      ...(call >= 0 && { call }),
+      ...(durationMs != null && { durationMs }),
+    });
     return out.length - 1;
   };
   for (const e of events) {
@@ -89,7 +101,7 @@ function walk(events: StreamEvent[], depth: number, out: Entry[]): void {
         break;
       case "tool_use": {
         const tool = toolOf(e);
-        const call = add("tool_call", callText(e.content) || tool || "", tool);
+        const call = add("tool_call", callText(e.content) || tool || "", tool, -1, e.durationMs);
         if (e.toolUseId) tools.set(e.toolUseId, { tool, call });
         add("tool_output", e.toolResult?.replace(ANSI, ""), tool, call);
         break;
@@ -110,6 +122,8 @@ function walk(events: StreamEvent[], depth: number, out: Entry[]): void {
           "subagent",
           [sa.description, sa.prompt, sa.summary].filter(Boolean).join("\n\n"),
           sa.agentType ?? null,
+          -1,
+          sa.durationMs,
         );
         walk(sa.events ?? [], depth + 1, out);
         break;
@@ -426,6 +440,7 @@ export class HistoryIndex {
             depth integer not null,
             lines integer not null,
             call integer,
+            duration_ms integer,
             text text not null
           );
           create index entries_message on entries (session, message);
@@ -530,7 +545,7 @@ export class HistoryIndex {
       db.prepare("delete from entries where session = ? and message = ?").run(session, message);
       if (row) {
         const insert = db.prepare(
-          "insert into entries (session, message, ts, kind, role, tool, depth, lines, call, text) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "insert into entries (session, message, ts, kind, role, tool, depth, lines, call, duration_ms, text) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         );
         const fts = db.prepare("insert into entries_fts (rowid, text) values (?, ?)");
         const ids: Array<number | bigint> = [];
@@ -546,6 +561,7 @@ export class HistoryIndex {
             e.depth,
             lines,
             e.call !== undefined ? ids[e.call] : null,
+            e.durationMs ?? null,
             e.text,
           );
           ids.push(lastInsertRowid);

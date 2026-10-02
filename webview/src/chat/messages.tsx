@@ -15,7 +15,7 @@ import { toolNameOf, toolSummary } from "../state/stream";
 import { copySelectionAsMarkdown } from "./clipboard";
 import { MdBlock, StreamingMdBlock } from "./markdown";
 import { AgentAvatar, Avatar } from "../workspace/avatar";
-import { shortModel, formatTokens, formatDuration } from "../format";
+import { shortModel, formatTokens, formatDuration, formatRunTime } from "../format";
 
 function renderMentionContent(content: string, agents: AgentInfo[]) {
   const match = content.match(/^@(\S+)(\s+|$)/);
@@ -394,6 +394,11 @@ export const EventItem = memo(function EventItem({
             {summary}
           </span>
         )}
+        {isToolUse && ev.durationMs != null && (
+          <span className="event-time" title="From the call to its result">
+            {formatRunTime(ev.durationMs)}
+          </span>
+        )}
         {hasHiddenBody && (
           <button className="btn-inline" onClick={toggleBody}>
             {bodyOpen ? "Hide" : "Details"}
@@ -530,6 +535,11 @@ export const SubAgentItem = memo(function SubAgentItem({
                   .filter(Boolean)
                   .join(" · ")
               : `${totalCount} event(s)`}
+          </span>
+        )}
+        {sa.durationMs != null && (
+          <span className="subagent-time" title="How long it ran">
+            {formatRunTime(sa.durationMs)}
           </span>
         )}
         {isRunning && <span className="streaming-dot" />}

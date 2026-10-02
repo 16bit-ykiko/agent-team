@@ -297,7 +297,10 @@ function renderEvents(events: StreamEvent[], indent: string, out: string[]): voi
       case "subagent_start": {
         const sa = e.subagent!;
         const label = [sa.agentType, sa.taskType].filter(Boolean).join("/");
-        out.push(`${indent}card ${label} ${sa.status ?? "?"} ${q(sa.prompt ?? sa.description)}`);
+        const ran = sa.durationMs != null ? ` ${sa.durationMs}ms` : "";
+        out.push(
+          `${indent}card ${label} ${sa.status ?? "?"}${ran} ${q(sa.prompt ?? sa.description)}`,
+        );
         renderEvents(sa.events ?? [], indent + "  ", out);
         if (sa.summary) out.push(`${indent}  summary ${q(sa.summary)}`);
         continue;
@@ -307,7 +310,8 @@ function renderEvents(events: StreamEvent[], indent: string, out: string[]): voi
           e.toolResult == null
             ? " → (pending)"
             : ` → ${e.toolResultIsError ? "error " : ""}${q(e.toolResult, 80)}`;
-        out.push(`${indent}tool ${e.toolName ?? "?"} ${q(e.content)}${result}`);
+        const took = e.durationMs != null ? ` ${e.durationMs}ms` : "";
+        out.push(`${indent}tool ${e.toolName ?? "?"} ${q(e.content)}${result}${took}`);
         continue;
       }
       case "tool_result":

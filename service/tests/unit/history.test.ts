@@ -278,6 +278,49 @@ describe("the search index", () => {
     ]);
     await expect(history.sql("drop table main.entries", [w1], 5)).rejects.toThrow("readonly");
   });
+
+  it("times every call and task it was measured for, for SQL to add up", async () => {
+    const { history, save } = setup();
+    const events: StreamEvent[] = [
+      { kind: "tool_use", content: "**Bash** `make`", toolName: "Bash", durationMs: 4200 },
+      { kind: "tool_use", content: "**Bash** `ls`", toolName: "Bash", durationMs: 30 },
+      { kind: "tool_use", content: "**Read** `/x`", toolName: "Read" },
+      {
+        kind: "subagent_start",
+        content: "",
+        subagent: {
+          taskId: "b1",
+          description: "sleep 6",
+          agentType: "shell",
+          durationMs: 6000,
+          events: [],
+        },
+      },
+    ];
+    save("w1", [msg("m1", "built", 1, { events })]);
+    const w1 = {
+      id: "w1",
+      name: "one",
+      cwd: "/tmp",
+      project: null,
+      role: null,
+      created_at: 1,
+      last_active: 1,
+      archived_at: null,
+    };
+    const r = await history.sql(
+      `select kind, tool, count(*) as n, sum(duration_ms) as ms from entries
+       where kind in ('tool_call', 'subagent') group by kind, tool order by kind, tool`,
+      [w1],
+      10,
+    );
+    // A call from before it was measured counts, with no time.
+    expect(r.rows).toEqual([
+      { kind: "subagent", tool: "shell", n: 1, ms: 6000 },
+      { kind: "tool_call", tool: "Bash", n: 2, ms: 4230 },
+      { kind: "tool_call", tool: "Read", n: 1, ms: null },
+    ]);
+  });
 });
 
 describe("what a workspace marks for the next save", () => {

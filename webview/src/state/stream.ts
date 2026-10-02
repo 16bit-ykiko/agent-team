@@ -58,6 +58,7 @@ export function applyEventsToMessage(m: Message, evts: StreamEvent[]): Message {
           toolResult: ev.content,
           ...(ev.isMarkdown && { toolResultIsMarkdown: true }),
           ...(ev.isError && { toolResultIsError: true }),
+          ...(ev.durationMs != null && { durationMs: ev.durationMs }),
         };
         continue;
       }
@@ -192,6 +193,7 @@ function applyInnerEvent(sa: SubAgentInfo, innerEv: StreamEvent): void {
         ...sa.events[i],
         toolResult: innerEv.content,
         ...(innerEv.isError && { toolResultIsError: true }),
+        ...(innerEv.durationMs != null && { durationMs: innerEv.durationMs }),
       };
     } else {
       sa.events.push(innerEv);
@@ -243,6 +245,7 @@ function applyInnerEvent(sa: SubAgentInfo, innerEv: StreamEvent): void {
           status: innerEv.subagent.status,
           summary: innerEv.subagent.summary,
           usage: innerEv.subagent.usage,
+          durationMs: innerEv.subagent.durationMs,
         },
       };
     }

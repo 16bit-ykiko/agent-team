@@ -44,6 +44,8 @@ export interface SubAgentInfo {
   status?: "running" | "completed" | "failed" | "stopped";
   lastTool?: string;
   usage?: { totalTokens: number; toolUses: number; durationMs: number };
+  // From the task's start to its end: every kind of task.
+  durationMs?: number;
   summary?: string;
   eventCount?: number;
   events?: StreamEvent[];
@@ -101,7 +103,7 @@ export interface StreamEvent {
   toolResultIsMarkdown?: boolean;
   toolResultIsError?: boolean;
   // A finished thinking block: how long it took and, once its API call
-  // ends, how many tokens it spent.
+  // ends, how many tokens it spent. A tool call: from call to result.
   durationMs?: number;
   tokens?: number;
   subagent?: SubAgentInfo;

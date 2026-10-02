@@ -78,6 +78,8 @@ export class CodexSession extends EventEmitter {
   // clears) and a reconnecting client saw the agent as working.
   private terminal: StreamEvent | null = null;
   private textEmitted = false;
+  // When each command, tool call or search started: their run times.
+  private toolStartedAt = new Map<string, number>();
 
   constructor(config: SessionConfig) {
     super();
@@ -319,6 +321,7 @@ export class CodexSession extends EventEmitter {
 
       case "item.started": {
         const event = parseStartedItem(ev.item);
+        if (event?.toolUseId) this.toolStartedAt.set(event.toolUseId, Date.now());
         if (event) this.emit("event", event);
         break;
       }
@@ -336,6 +339,11 @@ export class CodexSession extends EventEmitter {
           break;
         }
         const event = parseCompletedItem(ev.item);
+        const at = event?.toolUseId ? this.toolStartedAt.get(event.toolUseId) : undefined;
+        if (event?.kind === "tool_result" && at != null) {
+          this.toolStartedAt.delete(event.toolUseId!);
+          event.durationMs = Date.now() - at;
+        }
         if (event) this.emit("event", event);
         break;
       }

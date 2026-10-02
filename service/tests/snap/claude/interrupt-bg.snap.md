@@ -4,14 +4,14 @@
   text "Do exactly these three things, in order, each as its own tool call, and do not poll or check on anything: 1. Run `sleep 300; echo bg-done` with the Bash tool with run_in_background set to true. 2. Sta…"
 ## 3 agent done
   text "*\\[interrupted\\]*"
-  tool Bash "**Bash** ```bash sleep 300; echo bg-done ```" → "Command running in background with ID: bfj37ko3o. Output is being written to: /t…"
-  card shell/local_bash stopped "```bash sleep 300; echo bg-done ```"
+  tool Bash "**Bash** ```bash sleep 300; echo bg-done ```" → "Command running in background with ID: bfj37ko3o. Output is being written to: /t…" 37ms
+  card shell/local_bash stopped 21607ms "```bash sleep 300; echo bg-done ```"
     summary "Sleep 300s then echo in background"
-  tool Agent "**Agent** Run `sleep 240` with the Bash tool in the foreground (not in background; set timeout to 30…" → "Async agent launched successfully. (This tool result is internal metadata — neve…"
-  card general-purpose/local_agent stopped "Run `sleep 240` with the Bash tool in the foreground (not in background; set timeout to 300000 ms). …"
+  tool Agent "**Agent** Run `sleep 240` with the Bash tool in the foreground (not in background; set timeout to 30…" → "Async agent launched successfully. (This tool result is internal metadata — neve…" 12ms
+  card general-purpose/local_agent stopped 24021ms "Run `sleep 240` with the Bash tool in the foreground (not in background; set timeout to 300000 ms). …"
     tool Bash "**Bash** ```bash sleep 240 ```" → (pending)
     summary "Sleep 240 then reply done"
-  tool Bash "**Bash** ```bash sleep 90; echo fg-done ```" → error "The user doesn't want to proceed with this tool use. The tool use was rejected (…"
+  tool Bash "**Bash** ```bash sleep 90; echo fg-done ```" → error "The user doesn't want to proceed with this tool use. The tool use was rejected (…" 4110ms
 ## 4 user done
   text "Without calling any tools, say in one line which of your background tasks are still running."
 ## 5 agent done ctx 18244/1000000 thought 38 tokens

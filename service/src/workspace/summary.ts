@@ -73,6 +73,7 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
           ...(sa.status && { status: sa.status }),
           ...(sa.lastTool && { lastTool: sa.lastTool }),
           ...(sa.usage && { usage: sa.usage }),
+          ...(sa.durationMs != null && { durationMs: sa.durationMs }),
           eventCount: sa.events?.length ?? sa.eventCount ?? 0,
           ...(sa.prompt && { hasPrompt: true }),
           ...(sa.summary && { summaryLength: sa.summary.length }),

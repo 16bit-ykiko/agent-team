@@ -73,7 +73,8 @@ export interface StreamEvent {
   // its background work go on.
   interrupted?: boolean;
   // On thinking events: how long the block took to think, and (patched in
-  // by a later thinking_tokens event) how many tokens it spent.
+  // by a later thinking_tokens event) how many tokens it spent. On a tool
+  // call (its result, then the call it merges into): from call to result.
   durationMs?: number;
   tokens?: number;
   toolInput?: ToolInput;
@@ -117,6 +118,8 @@ export interface SubAgentInfo {
   status?: "running" | "completed" | "failed" | "stopped";
   lastTool?: string;
   usage?: { totalTokens: number; toolUses: number; durationMs: number };
+  // From the task's start to its end, by our clock: every kind of task.
+  durationMs?: number;
   summary?: string;
   eventCount?: number;
   events?: StreamEvent[];
@@ -316,6 +319,10 @@ export class ClaudeSession extends EventEmitter {
   // Bash commands by tool_use id, so a background shell card can show what
   // it is running (task_started only carries the description).
   private toolCommands = new Map<string, string>();
+  // When each tool call was issued and each task started, for their run
+  // times: our clock, as the CLI reports one only for some tools and agents.
+  private toolStartedAt = new Map<string, number>();
+  private taskStartedAt = new Map<string, number>();
   // Agent tool calls this turn: their results are the subagent's markdown
   // report, and a foreground task is cleaned up before its result arrives.
   private agentToolUseIds = new Set<string>();
@@ -605,6 +612,7 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private cleanupTask(taskId: string): void {
+    this.taskStartedAt.delete(taskId);
     const commandToolUseId = this.taskInfo.get(taskId)?.toolUseId;
     if (commandToolUseId) this.toolCommands.delete(commandToolUseId);
     this.agentTaskIds.delete(taskId);
@@ -623,6 +631,14 @@ export class ClaudeSession extends EventEmitter {
   // A tool call is answered: forget what was kept to render it, unless a
   // task started by it is still running (it may yet become a card showing
   // the command).
+  // How long since the call or task started, once: its result or end.
+  private elapsed(started: Map<string, number>, id: string | undefined): number | undefined {
+    const at = id ? started.get(id) : undefined;
+    if (at == null) return undefined;
+    started.delete(id!);
+    return Date.now() - at;
+  }
+
   private forgetToolUse(toolUseId: string | undefined): void {
     if (!toolUseId) return;
     this.agentToolUseIds.delete(toolUseId);
@@ -639,6 +655,8 @@ export class ClaudeSession extends EventEmitter {
     this.agentTaskIds.clear();
     this.taskInfo.clear();
     this.toolCommands.clear();
+    this.toolStartedAt.clear();
+    this.taskStartedAt.clear();
     this.agentToolUseIds.clear();
     this.pendingNested.clear();
     this.setActivity(null);
@@ -667,7 +685,12 @@ export class ClaudeSession extends EventEmitter {
         kind: "subagent_done",
         content: "",
         toolUseId: this.taskToToolUse.get(taskId),
-        subagent: { taskId, description: "", status: "stopped" },
+        subagent: {
+          taskId,
+          description: "",
+          status: "stopped",
+          ...withDuration(this.elapsed(this.taskStartedAt, taskId)),
+        },
       };
       const parent = this.nestedTaskToParent.get(taskId);
       if (parent) this.emitNestedEvent(parent, done);
@@ -938,6 +961,7 @@ export class ClaudeSession extends EventEmitter {
           // type for agents and the task kind ("shell", "monitor") otherwise.
           // Housekeeping tasks (skip_transcript) stay out of the transcript.
           if (sys.skip_transcript || sys.ambient) break;
+          this.taskStartedAt.set(sys.task_id as string, Date.now());
           const taskType = sys.task_type as string | undefined;
           const isAgentTask = taskType ? taskType === "local_agent" : sys.subagent_type != null;
           const taskId = sys.task_id as string;
@@ -1054,6 +1078,7 @@ export class ClaudeSession extends EventEmitter {
               taskId,
               description: "",
               status: sys.status as SubAgentInfo["status"],
+              ...withDuration(this.elapsed(this.taskStartedAt, taskId)),
               usage: sys.usage
                 ? {
                     totalTokens: (sys.usage as Record<string, number>).total_tokens ?? 0,
@@ -1224,6 +1249,7 @@ export class ClaudeSession extends EventEmitter {
           // for it gets routed as a nested event, not a top-level subagent.
           if (taskId) this.nestedToolUseToParent.set(innerToolId, taskId);
           this.noteCommand(innerToolId, b);
+          this.toolStartedAt.set(innerToolId, Date.now());
           ev = {
             kind: "tool_use",
             content: formatToolUse(b),
@@ -1233,11 +1259,13 @@ export class ClaudeSession extends EventEmitter {
           };
         } else if (blockType === "tool_result") {
           const rc = toolResultText(b.content);
+          const durationMs = this.elapsed(this.toolStartedAt, b.tool_use_id as string | undefined);
           if (rc) {
             ev = {
               kind: "tool_result",
               content: rc,
               toolUseId: b.tool_use_id as string | undefined,
+              ...withDuration(durationMs),
             };
           }
           this.forgetToolUse(b.tool_use_id as string | undefined);
@@ -1278,6 +1306,7 @@ export class ClaudeSession extends EventEmitter {
         const toolId = b.id as string;
         const toolInput = extractToolInput(b);
         this.noteCommand(toolId, b);
+        this.toolStartedAt.set(toolId, Date.now());
         this.emit("event", {
           kind: "tool_use",
           content: formatToolUse(b),
@@ -1291,12 +1320,14 @@ export class ClaudeSession extends EventEmitter {
         }
       } else if (blockType === "tool_result") {
         const resultContent = toolResultText(b.content);
+        const durationMs = this.elapsed(this.toolStartedAt, b.tool_use_id as string | undefined);
         if (resultContent) {
           this.emit("event", {
             kind: "tool_result",
             content: resultContent,
             toolUseId: b.tool_use_id as string | undefined,
             step,
+            ...withDuration(durationMs),
           });
         }
         this.forgetToolUse(b.tool_use_id as string | undefined);
@@ -1356,6 +1387,7 @@ export class ClaudeSession extends EventEmitter {
       if (b.type !== "tool_result") continue;
       const toolUseId = b.tool_use_id as string | undefined;
       const text = toolResultText(b.content);
+      const durationMs = this.elapsed(this.toolStartedAt, toolUseId);
 
       if (text && parentToolUseId) {
         const taskId = this.subagentToolMap.get(parentToolUseId);
@@ -1363,6 +1395,7 @@ export class ClaudeSession extends EventEmitter {
           kind: "tool_result",
           content: text,
           toolUseId,
+          ...withDuration(durationMs),
           ...(b.is_error === true && { isError: true }),
         } as StreamEvent;
         if (taskId) this.emitInner(parentToolUseId, taskId, inner);
@@ -1375,6 +1408,7 @@ export class ClaudeSession extends EventEmitter {
           kind: "tool_result",
           content: text,
           toolUseId,
+          ...withDuration(durationMs),
           ...(isSubagentResult && { isMarkdown: true }),
           ...(b.is_error === true && { isError: true }),
         });
@@ -1776,6 +1810,11 @@ type SdkModule = {
   createSdkMcpServer?: typeof import("@anthropic-ai/claude-agent-sdk").createSdkMcpServer;
   tool?: typeof import("@anthropic-ai/claude-agent-sdk").tool;
 };
+
+// A measured run time as an event field: none when nothing was measured.
+function withDuration(durationMs: number | undefined): { durationMs?: number } {
+  return durationMs == null ? {} : { durationMs };
+}
 
 function formatDelay(seconds: number): string {
   if (seconds >= 3600) return `${(seconds / 3600).toFixed(seconds % 3600 ? 1 : 0)}h`;

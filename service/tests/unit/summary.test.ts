@@ -16,6 +16,7 @@ describe("summarizeEvent", () => {
         content: "**Bash**\n```bash\nnpm test\n```",
         toolResult: "x".repeat(5000),
         toolResultIsMarkdown: true,
+        durationMs: 1234,
       }),
     );
     expect(s).toEqual({
@@ -25,6 +26,7 @@ describe("summarizeEvent", () => {
       toolUseId: "t1",
       contentOffset: 12,
       toolResultIsMarkdown: true,
+      durationMs: 1234,
       bodyLength: 29,
       resultLength: 5000,
     });
@@ -129,6 +131,7 @@ describe("summarizeEvent", () => {
           prompt: "look everywhere",
           summary: "found it",
           usage: { totalTokens: 10, toolUses: 2, durationMs: 5 },
+          durationMs: 6,
           events: [ev("tool_use"), ev("tool_result")],
         },
       }),
@@ -139,6 +142,7 @@ describe("summarizeEvent", () => {
       agentType: "Explore",
       status: "completed",
       usage: { totalTokens: 10, toolUses: 2, durationMs: 5 },
+      durationMs: 6,
       eventCount: 2,
       hasPrompt: true,
       summaryLength: 8,

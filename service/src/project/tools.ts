@@ -385,9 +385,9 @@ export function leadToolset(
         name: "query_history",
         description: [
           "One read-only SQL statement (SQLite) over the sessions search_history reaches with everywhere, for what search cannot express: counts, grouping, one tool's use across sessions. At most 200 rows; long cells are cut (read_entry reads an entry in full).",
-          "Tables: sessions(id, name, cwd, project, role, created_at, last_active, archived_at); entries(id, session, message, ts, kind, role, tool, depth, lines, call, text) — kind as in search_history, depth 0 in the session itself and more inside subagents, lines its line count, call a tool_output's tool_call entry id; messages(session, id, seq, ts, kind, status, hash, body) — body is the message as JSON (json_extract(body, '$.model')).",
+          "Tables: sessions(id, name, cwd, project, role, created_at, last_active, archived_at); entries(id, session, message, ts, kind, role, tool, depth, lines, call, duration_ms, text) — kind as in search_history, depth 0 in the session itself and more inside subagents, lines its line count, call a tool_output's tool_call entry id, duration_ms a tool_call's time from call to result and a subagent entry's run (a background command's included), null on records from before it was measured; messages(session, id, seq, ts, kind, status, hash, body) — body is the message as JSON (json_extract(body, '$.model')).",
           "entries_fts is a trigram index of entries.text (its rowid is entries.id), for words of 3 characters or more: `entries.id in (select rowid from entries_fts where entries_fts match '\"words\"')`; shorter ones with instr(text, 'x'). regexp(pattern, text) and iregexp (any case) match JavaScript regular expressions. Times are milliseconds since the epoch.",
-          "For example: select s.name, count(*) as n from entries e join sessions s on s.id = e.session where e.tool = 'Bash' group by s.name order by n desc.",
+          "For example: select s.name, count(*) as n from entries e join sessions s on s.id = e.session where e.tool = 'Bash' group by s.name order by n desc; select tool, count(*), avg(duration_ms), max(duration_ms) from entries where kind = 'tool_call' and duration_ms is not null group by tool.",
         ].join(" "),
         shape: { sql: z.string() },
         handler: (a) => run(() => api.queryHistory(id, String(a.sql))),

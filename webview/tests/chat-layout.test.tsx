@@ -3,7 +3,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
 import css from "../src/styles.css?raw";
-import { EventItem, MessageItem } from "../src/chat/messages";
+import { EventItem, MessageItem, SubAgentItem } from "../src/chat/messages";
 import type { AgentInfo, Message, StreamEvent } from "../src/state/useServer";
 
 const agent: AgentInfo = {
@@ -38,6 +38,43 @@ describe("the transcript", () => {
     const body = container.querySelector(".event-content")!.textContent;
     expect(body).toContain("const a = 2;");
     expect(body).not.toContain("src/session/claude.ts");
+  });
+
+  it("shows how long each tool call and task ran, a quick one in milliseconds", () => {
+    const call = (durationMs?: number) =>
+      render(
+        <EventItem
+          ev={{
+            kind: "tool_use",
+            toolName: "Bash",
+            content: "**Bash**\n```bash\nmake\n```",
+            toolResult: "ok",
+            ...(durationMs != null && { durationMs }),
+          }}
+        />,
+      ).container.querySelector(".event-row .event-time")?.textContent ?? null;
+    expect(call(4230)).toBe("4.2s");
+    expect(call(38)).toBe("38ms");
+    // Recorded before it was measured: nothing, not "0ms".
+    expect(call()).toBeNull();
+    const card = render(
+      <SubAgentItem
+        ev={{
+          kind: "subagent_start",
+          content: "",
+          subagent: {
+            taskId: "b1",
+            description: "sleep 6",
+            agentType: "shell",
+            taskType: "local_bash",
+            status: "completed",
+            durationMs: 6004,
+            events: [],
+          },
+        }}
+      />,
+    ).container;
+    expect(card.querySelector(".subagent-header .subagent-time")!.textContent).toBe("6s");
   });
 
   it("keeps the quote button in the header row, off the text", () => {

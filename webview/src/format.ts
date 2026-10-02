@@ -64,6 +64,11 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
+// A tool call's or task's run: a quick one in milliseconds, not "0s".
+export function formatRunTime(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : formatDuration(ms);
+}
+
 export function shortModel(model: string): string {
   const m = model.match(/^(.*?)(\[1m\])?$/i);
   let base = (m?.[1] ?? model).replace(/^claude-/, "").replace(/-\d{8}$/, "");
