@@ -608,6 +608,41 @@ describe("CLI banners and activity", () => {
     expect(activity).toEqual(["retrying (2/10)"]);
   });
 
+  it("drops a retry's label once the model answers, and a long call's once it returns", () => {
+    const { activity, dispatch } = makeSessionWithChannels();
+    dispatch(sys("api_retry", { attempt: 1, max_retries: 10, retry_delay_ms: 1000 }));
+    // A subagent's output is not the main agent's retry succeeding.
+    dispatch({
+      type: "stream_event",
+      parent_tool_use_id: "toolu_task",
+      session_id: "sess-1",
+      event: { type: "message_start", message: {} },
+    });
+    expect(activity).toEqual(["retrying (1/10)"]);
+    dispatch({
+      type: "stream_event",
+      parent_tool_use_id: null,
+      session_id: "sess-1",
+      event: { type: "message_start", message: {} },
+    });
+    expect(activity).toEqual(["retrying (1/10)", null]);
+    dispatch({
+      type: "tool_progress",
+      tool_use_id: "t1",
+      tool_name: "Bash",
+      parent_tool_use_id: null,
+      elapsed_time_seconds: 42,
+      session_id: "sess-1",
+    });
+    dispatch({
+      type: "user",
+      parent_tool_use_id: null,
+      session_id: "sess-1",
+      message: { content: [{ type: "tool_result", tool_use_id: "t1", content: "done" }] },
+    });
+    expect(activity).toEqual(["retrying (1/10)", null, "Bash · 42s", null]);
+  });
+
   it("tracks compaction as activity and reports a failed compact", () => {
     const { events, activity, dispatch } = makeSessionWithChannels();
     dispatch(sys("status", { status: "compacting" }));

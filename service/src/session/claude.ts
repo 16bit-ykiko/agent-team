@@ -322,6 +322,8 @@ export class ClaudeSession extends EventEmitter {
   // When each tool call was issued and each task started, for their run
   // times: our clock, as the CLI reports one only for some tools and agents.
   private toolStartedAt = new Map<string, number>();
+  // The call a "Bash · 42s" activity label is about, cleared with its result.
+  private longCall: string | null = null;
   private taskStartedAt = new Map<string, number>();
   // Agent tool calls this turn: their results are the subagent's markdown
   // report, and a foreground task is cleaned up before its result arrives.
@@ -710,8 +712,15 @@ export class ClaudeSession extends EventEmitter {
   // tool call, a hook...). Null clears it. Emitted only on change.
   private setActivity(activity: string | null): void {
     if (activity === this.activity) return;
+    this.longCall = null;
     this.activity = activity;
     this.emit("activity", activity);
+  }
+
+  // The model answered: a retry's label is over (it stayed up for the rest
+  // of the turn, tools running under it).
+  private retried(): void {
+    if (this.activity?.startsWith("retrying (")) this.setActivity(null);
   }
 
   // Messages we deliberately do not render. Everything else that falls
@@ -829,6 +838,7 @@ export class ClaudeSession extends EventEmitter {
         if (!msg.parent_tool_use_id) {
           this.awaitingFirstOutput = false;
           this.setProcessing();
+          this.retried();
           const usage = msg.message?.usage as unknown as Record<string, number> | undefined;
           if (usage?.input_tokens != null) this.lastCallUsage = usage;
         }
@@ -843,6 +853,7 @@ export class ClaudeSession extends EventEmitter {
         if (!msg.parent_tool_use_id) {
           this.awaitingFirstOutput = false;
           this.setProcessing();
+          this.retried();
         }
         this.handlePartialMessage(msg);
         break;
@@ -867,6 +878,7 @@ export class ClaudeSession extends EventEmitter {
         if (tp.parent_tool_use_id || tp.task_id) break;
         const secs = Math.round((tp.elapsed_time_seconds as number) ?? 0);
         this.setActivity(`${tp.tool_name as string} · ${secs}s`);
+        this.longCall = tp.tool_use_id as string;
         break;
       }
 
@@ -1392,6 +1404,7 @@ export class ClaudeSession extends EventEmitter {
       const toolUseId = b.tool_use_id as string | undefined;
       const text = toolResultText(b.content);
       const durationMs = this.elapsed(this.toolStartedAt, toolUseId);
+      if (toolUseId && toolUseId === this.longCall) this.setActivity(null);
 
       if (text && parentToolUseId) {
         const taskId = this.subagentToolMap.get(parentToolUseId);
