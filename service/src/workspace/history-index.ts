@@ -248,6 +248,11 @@ function regexpFunctions(db: DatabaseSync): void {
     text != null && compile(str(pattern), flags).test(str(text)) ? 1 : 0;
   db.function("regexp", { deterministic: true }, test("m"));
   db.function("iregexp", { deterministic: true }, test("im"));
+  // SQLite's lower() folds ASCII only, unless built with ICU: Node's own
+  // builds are not (25.9: lower('Ü') is 'Ü').
+  db.function("fold", { deterministic: true }, (v: SQLOutputValue) =>
+    v == null ? null : str(v).toLowerCase(),
+  );
 }
 
 function info(r: Row): EntryInfo {
@@ -332,7 +337,7 @@ function conditions(q: SearchQuery, withKinds = true) {
       where.push("instr(e.text, ?) > 0");
       params.push(t);
     } else if ([...t].length < 3) {
-      where.push("instr(lower(e.text), ?) > 0");
+      where.push("instr(fold(e.text), ?) > 0");
       params.push(t.toLowerCase());
     }
   }
@@ -350,9 +355,9 @@ function conditions(q: SearchQuery, withKinds = true) {
   }
   if (q.call) {
     where.push(
-      "exists (select 1 from entries c where c.id = e.call and instr(lower(c.text), lower(?)) > 0)",
+      "exists (select 1 from entries c where c.id = e.call and instr(fold(c.text), ?) > 0)",
     );
-    params.push(q.call);
+    params.push(q.call.toLowerCase());
   }
   if (q.sessions) {
     // Over many sessions their index would fetch every entry of them all to

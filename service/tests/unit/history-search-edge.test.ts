@@ -157,6 +157,24 @@ describe("what a word or a pattern matches", () => {
     expect(await find(history, { terms: ["üb"] })).toEqual(["de"]);
   });
 
+  it("an output by its call's text, letters beyond ASCII in any case", async () => {
+    const { history, save } = setup();
+    const run: Message = {
+      ...msg("run", "", 1),
+      events: [
+        {
+          kind: "tool_use",
+          toolName: "Bash",
+          content: "**Bash**\n```bash\ncat Überblick.md\n```",
+          toolResult: "inhalt der datei",
+        },
+      ],
+    };
+    save("w", [run]);
+    expect(await find(history, { terms: ["inhalt"], call: "überBLICK" })).toEqual(["run"]);
+    expect(await find(history, { terms: ["inhalt"], call: "Übersicht" })).toEqual([]);
+  });
+
   it("a pattern with words: both must match, the lines shown are the pattern's", async () => {
     const { history } = withText();
     const r = await history.search({ terms: ["lexer"], regex: "^failed: \\w+\\.", limit: 5 });
