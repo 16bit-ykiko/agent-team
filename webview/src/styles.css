@@ -2677,6 +2677,11 @@ button.action-target:hover {
     z-index: 99;
     background: rgba(0, 0, 0, 0.4);
   }
+  /* Over the drawer as it slides away, too. */
+  .sidebar-overlay.closing {
+    z-index: 101;
+    background: transparent;
+  }
   .resize-handle {
     display: none;
   }

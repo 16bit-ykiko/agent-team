@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import { render, act, fireEvent } from "@testing-library/react";
 import { App } from "../src/App";
+import css from "../src/styles.css?raw";
 import type { AgentInfo, Message } from "../src/state/useServer";
 
 // The server end of the socket: the test opens it, feeds frames and reads
@@ -483,6 +484,25 @@ describe("viewport diagnostics", () => {
     expect(document.querySelector(".viewport-info")).not.toBeNull();
     fireEvent.click(document.querySelector(".sidebar-overlay")!);
     expect(document.querySelector(".viewport-info")).toBeNull();
+  });
+});
+
+describe("the sidebar drawer", () => {
+  it("takes the second tap of a double tap on a session as it closes", () => {
+    boot([settled(1)], { others: ["w2"] });
+    fireEvent.click(document.querySelector(".mobile-menu-btn")!);
+    selectWorkspace("w2");
+    expect(document.querySelector(".sidebar-open")).toBeNull();
+    const shield = document.querySelector(".sidebar-overlay.closing")!;
+    expect(shield).not.toBeNull();
+    // Above the drawer sliding away, not only the page.
+    expect(css).toMatch(/\.sidebar-overlay\.closing \{[^}]*z-index: 101;/);
+    fireEvent.click(shield);
+    expect(document.querySelector(".sidebar-open")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(document.querySelector(".sidebar-overlay")).toBeNull();
   });
 });
 

@@ -358,6 +358,17 @@ export function App() {
   const [cmdIdx, setCmdIdx] = useState(0);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // The drawer's overlay outlives it a moment: the second tap of a double
+  // tap on a session lands on it, not on whatever the closing drawer uncovers.
+  const [sidebarShield, setSidebarShield] = useState(false);
+  useEffect(() => {
+    if (sidebarOpen) {
+      setSidebarShield(true);
+      return;
+    }
+    const t = setTimeout(() => setSidebarShield(false), 400);
+    return () => clearTimeout(t);
+  }, [sidebarOpen]);
   const openBoard = useCallback((projectId: string) => {
     setBoardProjectId(projectId);
     setSidebarOpen(false);
@@ -1250,7 +1261,12 @@ export function App() {
             ⚠ {lastError}
           </div>
         )}
-        {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
+        {(sidebarOpen || sidebarShield) && (
+          <div
+            className={`sidebar-overlay${sidebarOpen ? "" : " closing"}`}
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
         <div
           className={`sidebar${sidebarOpen ? " sidebar-open" : ""}`}
           style={{ width: sidebarWidth }}
