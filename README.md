@@ -1,32 +1,70 @@
 # Agent Team
 
-A web panel for running several coding agents side by side, each in its own
-folder, each holding its own conversation. Point it at your projects, add a
-couple of agents, and talk to them from a browser — including a phone, where it
-installs as a home-screen app.
+A self-hosted panel for running a team of coding agents. Each project has a
+long-lived **lead** you plan the work with; when you decide on something, the
+lead starts **workers** in the repository or a git worktree, and every one of
+them is a conversation you can open and join — from a browser, or from a phone
+where the panel installs as a home-screen app.
 
 It drives the agent CLIs you already have: **Claude** through
 `@anthropic-ai/claude-agent-sdk` and **Codex** through `@openai/codex-sdk`.
 There is no model of its own here; this is the orchestration and the UI around
 the CLIs.
 
-## What it gives you
+## How the team works
 
-- **Workspaces** — a folder plus the agents working in it. Each agent keeps a
-  separate session, so two agents in the same repo do not share context.
-- **Projects** — a repository with a long-lived lead agent you plan the work
-  with. When you decide to start something, the lead opens worker sessions
-  (in the repo or a git worktree) through the panel's own tools; they are
-  ordinary conversations you can join, and they report back to the lead.
-  The lead keeps an objectives board and notes outside the repository, and
-  can message other projects' leads.
+- **Projects and leads** — a project is a repository with a lead session. You
+  talk the work over with the lead; it starts worker sessions with a
+  complete, self-contained task through the panel's own MCP tools, in the
+  repository or one of a few worktrees it reuses rather than making one per
+  session. It never starts work you did not ask for.
+- **Autonomous workers** — a worker decides what it can itself and asks you,
+  in its own session, what is yours to decide; the sidebar marks it
+  "your turn". When the task is done it reports to the lead with
+  `finish_task`; `report_progress` is only for news that changes the lead's
+  plans. The lead steps back: it does not relay, chase or poll.
+- **An objectives board** — objectives with tasks, decisions and dependencies,
+  kept current by the workers as they go and read by the lead to talk things
+  over with you. A list by area and a dependency graph; each objective is a
+  TOML file under `.agent-team/projects/`, editable by hand, with the
+  project's notes beside it.
+- **A shared, searchable history** — every message, thinking block, tool call
+  (input, output and how long it ran) and subagent run of every session is
+  stored in `history.db`. Leads and workers search it like grep
+  (`search_history`, `read_entry`, `read_session`) and query it with
+  read-only SQL (`query_history`): counts, grouping, one tool's calls across
+  sessions.
+- **Across projects** — leads message each other's projects
+  (`list_projects`, `message_project`).
+- **Surviving restarts and limits** — a turn a server restart cut off is
+  carried on by the panel itself; a turn stopped by the five-hour limit is
+  retried after the window resets; a weekly limit on the default account
+  fails over to another configured account.
+- Leads and workers write to you in Simplified Chinese (code, identifiers
+  and commits stay English); the instruction is in
+  `service/src/project/tools.ts`.
+
+## The panel
+
+- **Workspaces** — a folder plus the agents working in it, project or not.
+  Each agent keeps a separate session, so two agents in the same repo do not
+  share context.
 - **A transcript that shows the work**, not just the answer: thinking blocks,
-  tool calls, sub-agent runs, and a per-message row with effort level and
-  context usage. Long histories page in lazily.
-- **Run state per agent** — idle, working, waiting on you, or sleeping until a
-  scheduled wake-up, shown in the sidebar. The context figure is the size of
-  the turn's last request against the model's window (for Codex, read from
-  the thread's rollout), not a running total.
+  tool calls with their run times, subagent and background-task cards, and a
+  per-message row with effort level and context usage. Long histories page
+  in lazily.
+- **Side panels**, floating or pinned beside the chat:
+  - _Agents_ — from a lead, every session of the project in a two-line card
+    to unfold; from any other session, that session alone: its agents'
+    models and context, background tasks and wake-ups, and the buttons to
+    stop them.
+  - _Files_ — the workspace's tree and its uncommitted changes as diffs; a
+    file a reply names opens here.
+  - _Objectives_ — the project's board.
+- **Run state per agent** — idle, working, waiting on background work, or
+  sleeping until a scheduled wake-up. The context figure is the size of the
+  turn's last request against the model's window (for Codex, read from the
+  thread's rollout), not a running total.
 - **Slash commands** handled by the panel itself, on top of whatever the
   Claude CLI offers: `/effort <level>`, `/fast [on|off]` (Claude fast mode /
   Codex priority tier), `/goal <objective>` (Codex goals: the agent keeps
@@ -35,17 +73,19 @@ the CLIs.
 - **Scheduled wake-ups** — an agent can put itself to sleep and come back
   later; the banner says what it is waiting for and when it returns.
 - **Git awareness** — branch, dirty count and open PRs per folder.
+- **Search** across every workspace's messages from the sidebar.
 - **Mobile-first UI** — installable PWA, safe-area aware, composer pinned above
   the keyboard. Coming back from the background re-syncs the open transcript
   and replaces a socket the phone silently dropped, so a turn that finished
-  while the screen was off shows as finished.
+  while the screen was off shows as finished. One bundled font (Sarasa Mono
+  SC) for Latin and Chinese, so both line up the same on every device.
 - **Housekeeping** — workspaces idle past `archive_after_days` are archived:
   history leaves memory (still on disk) and idle CLI processes shut down.
   Sending a message restores them.
 
 ## Requirements
 
-- Node.js 22+
+- Node.js 24+ (the history is stored with `node:sqlite`)
 - The agent CLIs you intend to use, on `PATH`:
   - [`claude`](https://docs.claude.com/en/docs/claude-code/overview)
   - [`codex`](https://developers.openai.com/codex/cli)
@@ -79,6 +119,16 @@ pixi run dev-webview         # Vite dev server with HMR
 npm run check                # tsc (strict) + ESLint + prettier, zero tolerance
 npm test                     # service + webview (vitest)
 npm run fmt                  # prettier
+```
+
+To try the UI without touching your own data, seed a demo — a project with a
+lead, workers, history and a board; no session is started — into a separate
+base directory and run a second instance on it:
+
+```bash
+npm run demo -- .agent-team/dev
+cp config.example.toml .agent-team/dev/config.toml
+AGENT_TEAM_PORT=9801 AGENT_TEAM_BASE_DIR=$PWD/.agent-team/dev node dist/server.js
 ```
 
 CI (`.github/workflows/ci.yml`) runs `check`, `test` and `build` on every push
@@ -127,14 +177,15 @@ A provider name must be a prefix of the model ids routed to it, so
 
 ### Environment
 
-| Variable              | Default | Meaning                        |
-| --------------------- | ------- | ------------------------------ |
-| `AGENT_TEAM_PORT`     | `9800`  | HTTP + WebSocket port          |
-| `AGENT_TEAM_BASE_DIR` | cwd     | Where `.agent-team/` is stored |
-| `AGENT_TEAM_DEBUG`    | unset   | `1` logs raw CLI payloads      |
+| Variable              | Default | Meaning                           |
+| --------------------- | ------- | --------------------------------- |
+| `AGENT_TEAM_PORT`     | `9800`  | HTTP + WebSocket port             |
+| `AGENT_TEAM_BASE_DIR` | cwd     | Where `.agent-team/` is stored    |
+| `AGENT_TEAM_WEB_DIR`  | bundled | Where the built UI is served from |
+| `AGENT_TEAM_DEBUG`    | unset   | `1` logs raw CLI payloads         |
 
-State (workspaces, transcripts, debug snapshots) lives under
-`.agent-team/` in the base directory.
+State (workspaces, `history.db` and its search index, projects and their
+boards, debug snapshots) lives under `.agent-team/` in the base directory.
 
 ## Available models
 
@@ -181,11 +232,14 @@ service/src/     Node server
   project/       project leads, worker sessions, objectives, the panel's MCP tools
   config/        config.toml, agent + model lists (presets.ts, hand-maintained)
   repo/          git status, PR lookups, directory completion
-webview/src/     React UI (Vite), one panel per workspace
+webview/src/     React UI (Vite)
   state/         WebSocket client and client-side aggregation
   chat/          transcript rendering, markdown, input helpers
-  sidebar/ workspace/ project/ viewport/ dev/
-scripts/         start script, deferred deploy, SDK capture + smoke tests, one-off migrations
+  panels/        the side panels: agents, files, background work
+  project/       the objectives board and dependency graph
+  sidebar/ workspace/ viewport/ dev/ fonts/
+scripts/         start script, deferred deploy, SDK capture + smoke tests, demo seed,
+                 font and file-icon import
 .claude/         CLAUDE.md + skills: the rules and playbooks agents load when working here
 ```
 
