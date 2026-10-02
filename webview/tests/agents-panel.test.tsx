@@ -449,6 +449,14 @@ describe("the agents panel in the app", () => {
     expect(rail.querySelectorAll(".rail-btn")).toHaveLength(3);
   });
 
+  it("leaves the lead to the sidebar: a worker's branch line has no button for it", () => {
+    boot("w1");
+    const bar = document.querySelector(".workspace-info-bar")!;
+    expect(bar.querySelector('[title^="Open the lead"]')).toBeNull();
+    expect(bar.querySelectorAll("button:not(.rail-btn)")).toHaveLength(1);
+    expect(bar.querySelector("button:not(.rail-btn)")!.textContent).toBe("Archive");
+  });
+
   it("maximises over the chat until closed", () => {
     boot();
     fireEvent.click(document.querySelector(".agents-chip")!);

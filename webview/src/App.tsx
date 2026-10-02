@@ -1331,15 +1331,6 @@ export function App() {
                   <span className="ws-info-spacer" />
                   {/* Phones: the panels' rail shares the branch's line. */}
                   <Rail className="header-rail" items={railItems} />
-                  {activeProject?.leadWorkspaceId && activeWs.projectLink?.role === "worker" && (
-                    <button
-                      className="btn-ghost ws-project-btn"
-                      title={`Open the lead of ${activeProject.name}`}
-                      onClick={() => openWorkspace(activeProject.leadWorkspaceId!)}
-                    >
-                      ◆<span className="ws-project-btn-label"> Lead</span>
-                    </button>
-                  )}
                   {/* A lead goes with its project, archived from the board. */}
                   {activeWs.archivedAt == null && activeWs.projectLink?.role !== "lead" ? (
                     <button

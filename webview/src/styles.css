@@ -2670,9 +2670,6 @@ button.action-target:hover {
     height: 28px;
     margin-left: -9px;
   }
-  .ws-project-btn {
-    min-height: 32px;
-  }
   .search-clear {
     top: 0;
     right: 12px;
@@ -2995,14 +2992,6 @@ button.action-target:hover {
 .from-author:hover {
   text-decoration: underline;
 }
-.ws-project-btn {
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.ws-project-btn.active {
-  color: var(--text-primary);
-  background: var(--bg-elevated);
-}
 .dialog-check {
   display: flex;
   align-items: flex-start;
@@ -3015,12 +3004,6 @@ button.action-target:hover {
 .dialog-check input {
   margin-top: 2px;
   accent-color: var(--purple);
-}
-
-@media (max-width: 768px) {
-  .ws-project-btn-label {
-    display: none;
-  }
 }
 
 /* ---- Board page ---------------------------------------------------------- */
@@ -3783,9 +3766,6 @@ button.action-target:hover {
 }
 
 @media (max-width: 768px), (max-height: 500px) {
-  .ws-project-btn-label {
-    display: none;
-  }
   .board-overlay {
     align-items: stretch;
   }
