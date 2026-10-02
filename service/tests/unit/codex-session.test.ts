@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -262,6 +262,35 @@ describe("codex context from the rollout", () => {
 });
 
 describe("codex item edge cases", () => {
+  it("times a call within its turn: item ids repeat every turn", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(0);
+      const { events, run } = makeSession();
+      // Stopped mid-command: item_1 never completes in this turn.
+      await run([
+        {
+          type: "item.started",
+          item: {
+            id: "item_1",
+            type: "command_execution",
+            command: "sleep 600",
+            status: "in_progress",
+          },
+        },
+      ]);
+      vi.setSystemTime(3_600_000);
+      // A later turn's item_1 that completes without being started.
+      await run([
+        { type: "item.completed", item: { id: "item_1", type: "web_search", query: "x" } },
+      ]);
+      const results = events.filter((e) => e.kind === "tool_result");
+      expect(results.map((e) => e.durationMs)).toEqual([undefined]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps an error terminal when turn.completed follows it", async () => {
     const { events, run } = makeSession();
     await run([

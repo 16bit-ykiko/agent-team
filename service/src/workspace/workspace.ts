@@ -607,7 +607,10 @@ export class Workspace {
         msg.events[startIdx].subagent!.status = event.subagent?.status;
         msg.events[startIdx].subagent!.summary = event.subagent?.summary;
         msg.events[startIdx].subagent!.usage = event.subagent?.usage;
-        msg.events[startIdx].subagent!.durationMs = event.subagent?.durationMs;
+        // As the client merges it: an end without a time keeps the card's.
+        if (event.subagent?.durationMs != null) {
+          msg.events[startIdx].subagent!.durationMs = event.subagent.durationMs;
+        }
       }
       const progIdx = msg.events.findIndex(
         (e) => e.kind === "subagent_progress" && e.subagent?.taskId === taskId,

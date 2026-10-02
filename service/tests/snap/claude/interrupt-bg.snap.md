@@ -5,10 +5,10 @@
 ## 3 agent done
   text "*\\[interrupted\\]*"
   tool Bash "**Bash** ```bash sleep 300; echo bg-done ```" → "Command running in background with ID: bfj37ko3o. Output is being written to: /t…" 37ms
-  card shell/local_bash stopped 21607ms "```bash sleep 300; echo bg-done ```"
+  card shell/local_bash stopped 21640ms "```bash sleep 300; echo bg-done ```"
     summary "Sleep 300s then echo in background"
   tool Agent "**Agent** Run `sleep 240` with the Bash tool in the foreground (not in background; set timeout to 30…" → "Async agent launched successfully. (This tool result is internal metadata — neve…" 12ms
-  card general-purpose/local_agent stopped 24021ms "Run `sleep 240` with the Bash tool in the foreground (not in background; set timeout to 300000 ms). …"
+  card general-purpose/local_agent stopped 24028ms "Run `sleep 240` with the Bash tool in the foreground (not in background; set timeout to 300000 ms). …"
     tool Bash "**Bash** ```bash sleep 240 ```" → (pending)
     summary "Sleep 240 then reply done"
   tool Bash "**Bash** ```bash sleep 90; echo fg-done ```" → error "The user doesn't want to proceed with this tool use. The tool use was rejected (…" 4110ms

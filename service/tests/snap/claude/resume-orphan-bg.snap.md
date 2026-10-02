@@ -5,7 +5,7 @@
 ## 3 agent done ctx 27394/1000000 thought 14 tokens
   text "started"
   tool Bash "**Bash** ```bash sleep 120; echo late ```" → "Command running in background with ID: bsz0cxs52. Output is being written to: /t…" 35ms
-  card shell/local_bash stopped 9280ms "```bash sleep 120; echo late ```"
+  card shell/local_bash stopped 9311ms "```bash sleep 120; echo late ```"
 ## 4 user done
   text "Reply with the single word two."
 ## 5 agent done ctx 27802/1000000

@@ -5,7 +5,7 @@
 ## 3 agent done ctx 27347/1000000
   text "started"
   tool Bash "**Bash** ```bash sleep 6; echo finished ```" → "Command running in background with ID: b7st48gss. Output is being written to: /t…" 28ms
-  card shell/local_bash completed 6004ms "```bash sleep 6; echo finished ```"
+  card shell/local_bash completed 6029ms "```bash sleep 6; echo finished ```"
     summary "Background command \"sleep 6; echo finished\" completed (exit code 0)"
 ## 4 agent done ctx 27714/1000000
   text "The background task finished (output: \"finished\")."

@@ -206,6 +206,9 @@ export class CodexSession extends EventEmitter {
     this.emit("runState", "working");
     this.turnFinalized = false;
     this.textEmitted = false;
+    // Item ids restart every turn: a call a stopped turn left open is not
+    // the next turn's item of the same id.
+    this.toolStartedAt.clear();
     const startTime = Date.now();
     const { signal } = (this.abortController = new AbortController());
     const resuming = this.sessionId !== null;

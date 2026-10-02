@@ -5,6 +5,6 @@
 ## 3 agent done ctx 27412/1000000
   text "The subagent ran `echo sub` and reported the output as `sub`."
   tool Agent "**Agent** Run `echo sub` with Bash and report its output." → "Output: `sub` agentId: a319b9979b42ce954 (use SendMessage with to: 'a319b9979b42…" 3965ms
-  card general-purpose/local_agent completed 3954ms "Run `echo sub` with Bash and report its output."
+  card general-purpose/local_agent completed 3961ms "Run `echo sub` with Bash and report its output."
     tool Bash "**Bash** ```bash echo sub ```" → "sub" 25ms
     summary "Output: `sub`"

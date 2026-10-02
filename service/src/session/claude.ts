@@ -961,7 +961,11 @@ export class ClaudeSession extends EventEmitter {
           // type for agents and the task kind ("shell", "monitor") otherwise.
           // Housekeeping tasks (skip_transcript) stay out of the transcript.
           if (sys.skip_transcript || sys.ambient) break;
-          this.taskStartedAt.set(sys.task_id as string, Date.now());
+          // From the call that started it: a foreground command is announced
+          // only once it has run a few seconds, and may be moved to the
+          // background later (snap fixture claude/bash-long).
+          const call = this.toolStartedAt.get(sys.tool_use_id as string);
+          this.taskStartedAt.set(sys.task_id as string, call ?? Date.now());
           const taskType = sys.task_type as string | undefined;
           const isAgentTask = taskType ? taskType === "local_agent" : sys.subagent_type != null;
           const taskId = sys.task_id as string;

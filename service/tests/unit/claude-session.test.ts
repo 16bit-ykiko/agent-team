@@ -276,6 +276,42 @@ describe("task_started → subagent classification", () => {
     expect(events).toHaveLength(1);
   });
 
+  it("times a command moved to the background from its call, not from its late task frame", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(0);
+      const { events, dispatch } = makeSession();
+      dispatch({
+        type: "assistant",
+        session_id: "s",
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "sleep 60" } },
+          ],
+        },
+      });
+      // The CLI announces a foreground command's task only once it has run
+      // a few seconds (snap fixture claude/bash-long).
+      vi.setSystemTime(3000);
+      dispatch(taskStarted({ task_type: "local_bash", is_backgrounded: false }));
+      vi.setSystemTime(20_000);
+      dispatch({
+        type: "system",
+        subtype: "task_updated",
+        session_id: "s",
+        task_id: "task-1",
+        patch: { is_backgrounded: true },
+      });
+      vi.setSystemTime(60_000);
+      dispatch(taskNotification({ status: "completed" }));
+      const done = events.find((e) => e.kind === "subagent_done")!;
+      expect(done.subagent?.durationMs).toBe(60_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("renders a local_workflow task as a workflow card", () => {
     const { events, dispatch } = makeSession();
     dispatch(taskStarted({ task_type: "local_workflow", workflow_name: "review" }));
