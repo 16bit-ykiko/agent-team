@@ -687,15 +687,16 @@ function StepBox({
     setToggled(!open);
   };
   const tools = stepTools(events);
-  // Alone in its box, the thinking block's time heads the box: its own row
-  // under a header with nothing else in it would leave an empty line.
-  const alone = events.length === 0;
+  // The block streaming in counts as the thinking it will be: the header
+  // reads the same before and after, and is never empty.
+  const counted: StreamEvent[] = live ? [...events, { kind: "thinking", content: "" }] : events;
   return (
     <div className={`step-group${open ? " open" : ""}`}>
       <div className="step-header" onClick={toggle}>
         <span className="events-toggle">{open ? "▾" : "▸"}</span>
-        {live && (alone || !open) && <LiveChip secs={secs} />}
-        {events.length > 0 && <span className="step-summary">{stepSummary(events)}</span>}
+        {/* Open, the block's own row shows its time. */}
+        {live && !open && <LiveChip secs={secs} />}
+        {counted.length > 0 && <span className="step-summary">{stepSummary(counted)}</span>}
         {!open && tools.length > 0 && (
           <span className="step-tools">
             {tools.slice(0, 6).map((t) => (
@@ -712,7 +713,7 @@ function StepBox({
           {events.map((ev, i) => (
             <EventItem key={i} ev={ev} onLoadDetails={onLoadDetails} />
           ))}
-          {live && <LiveThinking text={live.text} secs={secs} chip={!alone} />}
+          {live && <LiveThinking text={live.text} secs={secs} />}
         </div>
       )}
     </div>
@@ -794,23 +795,12 @@ function LiveChip({ secs }: { secs: number }) {
 // A thinking block as it streams in, so a long think does not look like a
 // stuck agent: it grows like the reply's text, drawn as the finished block
 // will be, which then takes its place.
-export function LiveThinking({
-  text,
-  secs,
-  chip = true,
-}: {
-  text: string;
-  secs: number;
-  chip?: boolean;
-}) {
-  if (!chip && !text) return null;
+export function LiveThinking({ text, secs }: { text: string; secs: number }) {
   return (
     <div className="live-thinking event event-thinking">
-      {chip && (
-        <div className="event-row">
-          <LiveChip secs={secs} />
-        </div>
-      )}
+      <div className="event-row">
+        <LiveChip secs={secs} />
+      </div>
       {text && (
         <div className="event-content">
           <StreamingMdBlock>{text}</StreamingMdBlock>

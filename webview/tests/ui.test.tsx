@@ -781,7 +781,7 @@ describe("live thinking", () => {
     // time shows once, on the block's own row.
     expect(boxes()).toHaveLength(1);
     expect(panel()!.closest(".step-group")!.className).toContain("open");
-    expect(boxes()[0].querySelector(".step-header")!.textContent).not.toContain("Thinking");
+    expect(boxes()[0].querySelector(".step-header")!.textContent).toBe("▾1 thinking · 1 tool call");
     expect(panel()!.textContent).toContain("Thinking · 0s");
     expect(boxes()[0].textContent.match(/Thinking · /g)).toHaveLength(1);
     expect(panel()!.querySelector(".event-content")).toBeNull();
@@ -826,9 +826,10 @@ describe("live thinking", () => {
     );
     const box = () => container.querySelector(".step-group")!;
     expect(box().querySelector(".live-thinking")!.textContent).toContain("Let me see.");
-    // Nothing else in the box: the time heads it, once, and leaves no empty
-    // header line above a row of its own.
-    expect(box().querySelector(".step-header")!.textContent).toBe("▾Thinking · 0s");
+    // The header counts the block as the thinking it will be, never empty;
+    // the time shows once, on the block's own row.
+    expect(box().querySelector(".step-header")!.textContent).toBe("▾1 thinking");
+    expect(box().querySelector(".live-thinking .event-row")!.textContent).toBe("Thinking · 0s");
     expect(box().textContent.match(/Thinking · /g)).toHaveLength(1);
     // The reader folds it: it stays folded while the block streams on.
     fireEvent.click(box().querySelector(".step-header")!);
@@ -890,6 +891,6 @@ describe("live thinking", () => {
       />,
     );
     expect(container.querySelector(".working-indicator")).toBeNull();
-    expect(container.querySelector(".step-header")!.textContent).toContain("Thinking · 0s");
+    expect(container.querySelector(".live-thinking")!.textContent).toContain("Thinking · 0s");
   });
 });
