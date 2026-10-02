@@ -109,6 +109,18 @@ describe("project groups", () => {
     expect(props.onToggleGroup).not.toHaveBeenCalled();
   });
 
+  it("draw the sidebar's buttons as icons, not a font's glyphs of three sizes", () => {
+    const { container } = render(<Sidebar {...sidebarProps()} />);
+    const buttons = [
+      ...container.querySelectorAll(".sidebar-header button, .ws-group-add, .task-delete"),
+    ];
+    expect(buttons.length).toBeGreaterThanOrEqual(5);
+    for (const b of buttons) {
+      expect(b.querySelector("svg.icon"), b.getAttribute("title")!).not.toBeNull();
+      expect(b.textContent).toBe("");
+    }
+  });
+
   it("keep a project's row short: a count only when folded, no board, the branch only off main", () => {
     const git = (branch: string, dirty: number) => ({ branch, dirty, ahead: 0, behind: 0 });
     const props = sidebarProps();

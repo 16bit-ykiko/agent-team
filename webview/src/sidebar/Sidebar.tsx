@@ -7,6 +7,7 @@ import {
   type WorkspaceGroup,
 } from "./groups";
 import { isAgentActive } from "../workspace/agents";
+import { Icon } from "../panels/Icon";
 import { formatBytes, formatRelative, formatResetTime } from "../format";
 
 // The branch a project usually sits on: not worth a word on every row.
@@ -164,7 +165,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
           else p.onDelete(ws.id);
         }}
       >
-        ×
+        <Icon name="close" />
       </button>
     );
   };
@@ -314,7 +315,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
               p.onCreateIn(g.project?.root ?? g.key);
             }}
           >
-            +
+            <Icon name="plus" />
           </button>
           {!expanded && items.length > 0 && <span className="ws-group-count">{items.length}</span>}
           {g.running && <span className="streaming-dot" />}
@@ -394,17 +395,17 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
             title="Replay rendering demo (synthetic events for visual review)"
             onClick={p.onReplayDemo}
           >
-            ▶
+            <Icon name="play" />
           </button>
           <button title="New workspace" onClick={p.onCreate}>
-            +
+            <Icon name="plus" />
           </button>
           <button
             className="sidebar-debug"
             title="Save a layout debug snapshot (viewport, geometry, DOM) on the server"
             onClick={p.onDebugSnapshot}
           >
-            ⌗
+            <Icon name="snapshot" />
           </button>
         </span>
       </div>

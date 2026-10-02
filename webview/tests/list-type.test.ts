@@ -187,6 +187,18 @@ describe("the lists' type", () => {
     for (const r of hovers) expect(r.media).toBe("@media (hover: hover)");
   });
 
+  it("sizes the sidebar's icons alike: the header's one size, a row's actions another", () => {
+    const size = (sel: string, media: string | null = null) =>
+      all
+        .filter((r) => r.selectors.includes(sel) && r.media === media)
+        .map((r) => /width:\s*(\d+)px/.exec(r.body)?.[1])
+        .find(Boolean);
+    expect(size(".sidebar-header .icon")).toBe("14");
+    expect(size(".ws-group-add .icon")).toBe(size(".task-delete .icon"));
+    expect(size(".sidebar-header .icon", PHONE)).toBe("16");
+    expect(size(".ws-group-add .icon", PHONE)).toBe(size(".task-delete .icon", PHONE));
+  });
+
   it("fits a dialog in a narrow phone", () => {
     const dialog = all.find((r) => r.selectors.includes(".dialog") && !r.media)!;
     expect(dialog.body).toMatch(/min-width:\s*min\(360px, calc\(100vw - 24px\)\)/);

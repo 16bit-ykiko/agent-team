@@ -234,15 +234,28 @@ button {
   gap: 2px;
 }
 .sidebar-header button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   background: none;
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
   width: 24px;
   height: 24px;
   border-radius: var(--radius-sm);
+}
+/* The sidebar's buttons are drawn, not typed: a font's ▶, + and × are
+   three different sizes. Header, row actions: one size each. */
+.sidebar-header .icon {
+  width: 14px;
+  height: 14px;
+}
+.ws-group-add .icon,
+.task-delete .icon {
+  width: 12px;
+  height: 12px;
 }
 .sidebar-header button:hover {
   color: var(--text-primary);
@@ -402,16 +415,18 @@ button {
   white-space: nowrap;
 }
 .ws-group-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   flex-shrink: 0;
   margin-left: auto;
   width: 18px;
   height: 18px;
-  line-height: 1;
   border: none;
   border-radius: 4px;
   background: none;
   color: var(--text-muted);
-  font-size: 14px;
   cursor: pointer;
   opacity: 0;
 }
@@ -571,12 +586,13 @@ button {
   text-align: center;
 }
 .task-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
   padding: 2px 4px;
   border-radius: 4px;
   opacity: 0;
@@ -2624,6 +2640,15 @@ button.action-target:hover {
   .sidebar-header button {
     width: 36px;
     height: 36px;
+  }
+  .sidebar-header .icon {
+    width: 16px;
+    height: 16px;
+  }
+  .ws-group-add .icon,
+  .task-delete .icon {
+    width: 14px;
+    height: 14px;
   }
   .ws-group-add {
     width: 32px;

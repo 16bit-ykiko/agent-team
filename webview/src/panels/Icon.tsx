@@ -14,6 +14,9 @@ export const ICONS = {
   clear: "M13 8a5 5 0 1 1-1.6-3.7M13 2.8v2.7h-2.7",
   up: "M8 13V3M4 7l4-4 4 4",
   changes: "M8 2.5v6M5 5.5h6M5 12.5h6",
+  play: "M5 3.5v9l7.5-4.5z",
+  plus: "M8 3.5v9M3.5 8h9",
+  snapshot: "M6 2.5v11M10 2.5v11M2.5 6h11M2.5 10h11",
 } as const;
 
 export type IconName = keyof typeof ICONS;
