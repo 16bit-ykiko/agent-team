@@ -3568,7 +3568,7 @@ button.action-target:hover {
   flex-shrink: 0;
   width: 440px;
   overflow-y: auto;
-  padding: 10px 16px 24px;
+  padding: 12px 22px 32px;
   border-left: 1px solid var(--border);
   background: var(--bg-secondary);
 }
@@ -3595,7 +3595,7 @@ button.action-target:hover {
   background: rgba(198, 120, 221, 0.18);
 }
 .bp-detail-title {
-  margin: 8px 0 6px;
+  margin: 12px 0 10px;
   font-size: 16px;
   line-height: 1.35;
   color: var(--text-primary);
@@ -3611,17 +3611,20 @@ button.action-target:hover {
   color: var(--text-muted);
 }
 .bp-reason {
-  margin: 8px 0 0;
-  padding: 6px 9px;
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  line-height: 1.6;
   color: var(--warning);
   border-left: 2px solid var(--warning);
   background: rgba(229, 192, 123, 0.06);
 }
+/* Room between sections and between lines: the details are read, not
+   scanned. */
 .bp-section {
-  margin-top: 16px;
+  margin-top: 26px;
 }
 .bp-section-title {
-  margin: 0 0 6px;
+  margin: 0 0 10px;
   font-size: var(--fs-tag);
   font-weight: 600;
   letter-spacing: 0.05em;
@@ -3630,7 +3633,7 @@ button.action-target:hover {
 }
 .bp-goal {
   margin: 0;
-  line-height: 1.55;
+  line-height: 1.7;
   color: var(--text-primary);
 }
 .bp-none {
@@ -3696,9 +3699,9 @@ button.action-target:hover {
 .bp-tasks li {
   display: flex;
   align-items: baseline;
-  gap: 7px;
-  padding: 3px 0;
-  line-height: 1.45;
+  gap: 8px;
+  padding: 5px 0;
+  line-height: 1.6;
 }
 .bp-task-mark {
   flex-shrink: 0;
@@ -3729,12 +3732,12 @@ button.action-target:hover {
   text-decoration: line-through;
 }
 .bp-decisions li {
-  padding: 4px 0 4px 10px;
-  line-height: 1.45;
+  padding: 6px 0 6px 12px;
+  line-height: 1.6;
   border-left: 2px solid var(--border-strong);
 }
 .bp-decisions li + li {
-  margin-top: 4px;
+  margin-top: 8px;
 }
 .bp-decisions.open li {
   border-left-color: var(--warning);
@@ -3742,6 +3745,18 @@ button.action-target:hover {
 /* Markdown in the details, styled like the chat's, in the board's size. */
 .bp-md {
   font-size: var(--fs-text);
+  line-height: 1.7;
+}
+.bp-md p,
+.bp-md ul,
+.bp-md ol {
+  margin: 0 0 12px;
+}
+.bp-md li {
+  margin: 4px 0;
+}
+.bp-md > :last-child {
+  margin-bottom: 0;
 }
 .bp-question {
   display: block;

@@ -145,6 +145,20 @@ describe("the lists' type", () => {
     expect(body(".ap-toggle")).toMatch(/text-align:\s*left/);
   });
 
+  it("gives an objective's details room: its notes as airy as its goal, sections well apart", () => {
+    const body = (sel: string) =>
+      all.find((r) => r.selectors.includes(sel) && r.media === null)!.body;
+    const lineHeight = (sel: string) => Number(/line-height:\s*([\d.]+);/.exec(body(sel))![1]);
+    expect(lineHeight(".bp-md")).toBe(lineHeight(".bp-goal"));
+    expect(lineHeight(".bp-md")).toBeGreaterThanOrEqual(1.6);
+    // Paragraphs of the notes apart by more than the chat's 4px.
+    expect(body(".bp-md p")).toMatch(/margin:\s*0 0 12px/);
+    expect(Number(/margin-top:\s*(\d+)px/.exec(body(".bp-section"))![1])).toBeGreaterThanOrEqual(
+      24,
+    );
+    expect(body(".bp-detail")).toMatch(/padding:\s*\d+px 22px/);
+  });
+
   it("lets the dependency graph fill what the board's banners leave", () => {
     const rule = (sel: string, media: string | null = null) =>
       all.find((r) => r.selectors.includes(sel) && r.media === media)!;
