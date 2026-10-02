@@ -169,6 +169,12 @@ describe("panel tool arguments", () => {
       "write_objective",
       "add_items",
       "update_item",
+      "project_status",
+      "read_session",
+      "list_history",
+      "search_history",
+      "read_entry",
+      "query_history",
     ]);
     await t.write_objective.handler({ id: "core/modules", context: "lexer done" });
     await t.update_item.handler({ objective_id: "core/modules", item_id: "t1", state: "doing" });
@@ -180,6 +186,30 @@ describe("panel tool arguments", () => {
     ]);
     expect(t.delete_objective).toBeUndefined();
     expect(t.archive_objective).toBeUndefined();
+  });
+
+  it("let a worker read the project's sessions and history as the lead does, but act on none", async () => {
+    const t = byName(workerToolset(api, "ws-w", project));
+    const lead = byName(leadToolset(api, project, "/notes", ["m"]));
+    for (const name of ["read_session", "search_history", "query_history", "project_status"]) {
+      expect(t[name].description).toBe(lead[name].description);
+    }
+    await t.read_session.handler({ session_id: "ws-x" });
+    await t.query_history.handler({ sql: "select 1" });
+    expect(calls).toEqual([
+      ["readSession", "p1", "ws-x", 6, undefined, false, false],
+      ["queryHistory", "p1", "select 1"],
+    ]);
+    for (const name of [
+      "start_session",
+      "message_session",
+      "stop_session",
+      "archive_session",
+      "message_project",
+    ]) {
+      expect(t[name], name).toBeUndefined();
+    }
+    expect(workerToolset(api, "ws-w", project).instructions).toContain("search_history finds it");
   });
 
   it("tell the lead and its workers to write to the user in Chinese, and the lead to reuse worktrees", () => {
