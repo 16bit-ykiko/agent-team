@@ -882,12 +882,6 @@ button {
 .git-behind {
   color: var(--error);
 }
-.ws-group-dirty {
-  color: var(--warning);
-  font-size: 8px;
-  margin-left: 3px;
-  vertical-align: middle;
-}
 .ws-info-spacer {
   flex: 1;
 }

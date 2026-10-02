@@ -47,7 +47,6 @@ describe("the lists' type", () => {
     // Glyphs (+, ×, arrows, dots) and headings are sized for themselves.
     const own = new Set([
       ".ws-group-add",
-      ".ws-group-dirty",
       ".task-delete",
       ".bp-back",
       ".bp-name",

@@ -121,7 +121,7 @@ describe("project groups", () => {
     }
   });
 
-  it("keep a project's row short: a count only when folded, no board, the branch only off main", () => {
+  it("keep a project's row short: a count only when folded, no board, no changed-files dot, the branch only off main", () => {
     const git = (branch: string, dirty: number) => ({ branch, dirty, ahead: 0, behind: 0 });
     const props = sidebarProps();
     const { container, rerender } = render(
@@ -137,8 +137,10 @@ describe("project groups", () => {
     };
     expect(branch("main", 0)).toBeNull();
     expect(branch("master", 0)).toBeNull();
-    expect(branch("main", 2)).toBe("●");
-    expect(branch("feat/x", 2)).toBe("feat/x●");
+    // Changed files are no mark on the row (the header and the changes panel
+    // tell them); a branch off main is.
+    expect(branch("main", 2)).toBeNull();
+    expect(branch("feat/x", 2)).toBe("feat/x");
     // On touch, only the open session's project offers a new session.
     expect(header().className).toContain("current");
     rerender(<Sidebar {...props} activeWsId={null} />);

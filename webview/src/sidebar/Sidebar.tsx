@@ -301,10 +301,9 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
           {leadUnread > 0 && lead!.id !== p.activeWsId && (
             <span className="unread-badge">{leadUnread}</span>
           )}
-          {git?.branch && (!DEFAULT_BRANCH.test(git.branch) || git.dirty > 0) && (
+          {git?.branch && !DEFAULT_BRANCH.test(git.branch) && (
             <span className="ws-group-branch" title={gitTitle(git)}>
-              {!DEFAULT_BRANCH.test(git.branch) && git.branch}
-              {git.dirty > 0 && <span className="ws-group-dirty">●</span>}
+              {git.branch}
             </span>
           )}
           <button
