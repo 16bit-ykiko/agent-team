@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import TOML from "@iarna/toml";
+import { DirWatcher, filesSignature } from "./watch";
 
 // A project's objectives: one TOML file per objective under
 // <dir>/<area>/<name>.toml, so the lead (through its tools), the user (by
@@ -84,11 +85,7 @@ type Entry = Objective | BrokenObjective;
 
 export class ObjectiveStore {
   private cache = new Map<string, { key: string; value: Entry }>();
-  private watchers = new Map<string, fs.FSWatcher>();
-  private onChange: (() => void) | null = null;
-  private timer: ReturnType<typeof setTimeout> | undefined;
-  private seen = "";
-  private closed = false;
+  private watcher: DirWatcher | null = null;
 
   constructor(readonly dir: string) {}
 
@@ -194,79 +191,28 @@ export class ObjectiveStore {
   // the store's own writes do not echo back.
   watch(onChange: () => void): void {
     fs.mkdirSync(this.dir, { recursive: true });
-    this.onChange = onChange;
-    this.seen = this.signature();
-    this.rewatch();
+    this.watcher?.close();
+    this.watcher = new DirWatcher(
+      () => {
+        const archive = path.join(this.dir, ARCHIVE);
+        const dirs = [this.dir, ...this.areaDirs(this.dir)];
+        if (fs.existsSync(archive)) dirs.push(archive, ...this.areaDirs(archive));
+        return dirs;
+      },
+      () => filesSignature(this.files().map((f) => f.file)),
+      onChange,
+      this.dir,
+    );
   }
 
   close(): void {
-    this.closed = true;
-    clearTimeout(this.timer);
-    for (const w of this.watchers.values()) w.close();
-    this.watchers.clear();
-  }
-
-  // Recursive fs.watch on Linux follows files by inode and goes blind to a
-  // file once it has been replaced (tmp + rename) twice: watch the
-  // directories themselves instead.
-  private rewatch(): void {
-    const dirs = [this.dir, ...this.areaDirs(this.dir)];
-    const archive = path.join(this.dir, ARCHIVE);
-    if (fs.existsSync(archive)) dirs.push(archive, ...this.areaDirs(archive));
-    for (const d of dirs) {
-      if (this.watchers.has(d)) continue;
-      try {
-        const w = fs.watch(d, () => this.poke());
-        w.on("error", () => {
-          w.close();
-          this.watchers.delete(d);
-        });
-        this.watchers.set(d, w);
-      } catch {
-        // Gone again; the next event rescans.
-      }
-    }
-    for (const [d, w] of this.watchers) {
-      if (!dirs.includes(d)) {
-        w.close();
-        this.watchers.delete(d);
-      }
-    }
-  }
-
-  private poke(): void {
-    if (this.closed) return;
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      if (this.closed) return;
-      try {
-        this.rewatch();
-        const now = this.signature();
-        if (now === this.seen) return;
-        this.seen = now;
-        this.onChange?.();
-      } catch (e) {
-        console.error(`[projects] ${this.dir}: change not picked up`, e);
-      }
-    }, 200);
+    this.watcher?.close();
+    this.watcher = null;
   }
 
   // After the store's own change: what the watcher will see is known.
   private settled(): void {
-    if (this.onChange) this.seen = this.signature();
-  }
-
-  private signature(): string {
-    return this.files()
-      .map(({ file }) => {
-        try {
-          const st = fs.statSync(file);
-          return `${file}:${st.ino}:${st.size}:${st.mtimeMs}`;
-        } catch {
-          return "";
-        }
-      })
-      .join("\n");
+    this.watcher?.settled();
   }
 
   private fileOf(id: string, archived: boolean): string {
@@ -488,7 +434,7 @@ export function serialize(o: Objective): string {
 
 // A TOML basic string (multi-line when the text has line breaks). Lone
 // surrogates cannot be encoded and become U+FFFD.
-function tomlString(raw: string): string {
+export function tomlString(raw: string): string {
   const s = raw.replace(
     /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
     "\uFFFD",

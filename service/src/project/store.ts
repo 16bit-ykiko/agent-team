@@ -8,6 +8,7 @@ import * as path from "path";
 //
 //   .agent-team/projects/<id>/project.json
 //   .agent-team/projects/<id>/objectives/<area>/<name>.toml
+//   .agent-team/projects/<id>/issues/<module>.toml
 //   .agent-team/projects/<id>/notes/*.md
 
 export interface Project {
@@ -54,6 +55,10 @@ export class ProjectStore {
 
   objectivesDir(id: string): string {
     return path.join(this.dir, id, "objectives");
+  }
+
+  issuesDir(id: string): string {
+    return path.join(this.dir, id, "issues");
   }
 
   create(name: string, root: string): Project {

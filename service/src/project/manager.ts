@@ -22,6 +22,8 @@ import {
   type BrokenObjective,
   type Objective,
 } from "./objectives";
+import { IssueStore, type ModuleEntry } from "./issues";
+import { IssueBoard } from "./issue-board";
 import {
   leadToolset,
   workerToolset,
@@ -96,6 +98,7 @@ export class ProjectManager {
   private peerLog = new Map<string, number[]>();
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private boards = new Map<string, ObjectiveStore>();
+  private issueStores = new Map<string, IssueStore>();
   private settling = new Map<string, ReturnType<typeof setTimeout>>();
   private carrying = new Set<string>();
   private awaiting = new Set<string>();
@@ -119,10 +122,23 @@ export class ProjectManager {
     this.settling.clear();
     for (const b of this.boards.values()) b.close();
     this.boards.clear();
+    for (const s of this.issueStores.values()) s.close();
+    this.issueStores.clear();
   }
 
   list(): ProjectInfo[] {
     return this.store.list().map((p) => ({ ...p, objectives: this.board(p.id).list() }));
+  }
+
+  // Each project's issues, for a client that connects; those with none are
+  // left out.
+  issueSets(): Record<string, ModuleEntry[]> {
+    const out: Record<string, ModuleEntry[]> = {};
+    for (const p of this.store.list()) {
+      const modules = this.issues(p.id).list();
+      if (modules.length) out[p.id] = modules;
+    }
+    return out;
   }
 
   create(name: string, root: string, model = LEAD_MODEL): Project {
@@ -251,6 +267,8 @@ export class ProjectManager {
     }
     this.boards.get(id)?.close();
     this.boards.delete(id);
+    this.issueStores.get(id)?.close();
+    this.issueStores.delete(id);
     this.store.remove(id);
     this.host.broadcast({ type: "project_deleted", projectId: id });
   }
@@ -308,6 +326,29 @@ export class ProjectManager {
       this.boards.set(id, board);
     }
     return board;
+  }
+
+  // The project's issues, watched like its objectives; they go to the
+  // clients in messages of their own.
+  private issues(id: string): IssueStore {
+    let issues = this.issueStores.get(id);
+    if (!issues) {
+      if (this.closed) throw new Error("The server is shutting down");
+      issues = new IssueStore(this.store.issuesDir(id));
+      issues.watch(() => this.issuesChanged(id));
+      this.issueStores.set(id, issues);
+    }
+    return issues;
+  }
+
+  private issueBoard(id: string): IssueBoard {
+    this.require(id);
+    return new IssueBoard(this.issues(id), () => this.objectives(id));
+  }
+
+  private issuesChanged(id: string): void {
+    if (!this.store.get(id)) return;
+    this.host.broadcast({ type: "project_issues", projectId: id, modules: this.issues(id).list() });
   }
 
   private objectives(id: string): Objective[] {
@@ -646,6 +687,7 @@ export class ProjectManager {
       out.push(`- ${w.id} "${w.name}" in ${w.cwd} — ${state}${excerpt}`);
     }
     out.push("", "## Active objectives", this.listObjectives(projectId, { status: "active" }));
+    out.push("", "## Issues", this.issueBoard(projectId).summary());
     return out.join("\n");
   }
 
@@ -1005,6 +1047,7 @@ export class ProjectManager {
         (!filter.area || o.area === filter.area) && (!filter.status || o.status === filter.status),
     );
     const broken = all.filter((o): o is BrokenObjective => "error" in o);
+    const issues = this.issueBoard(projectId).linked();
     const out: string[] = [];
     let area = "";
     for (const o of shown) {
@@ -1016,9 +1059,11 @@ export class ProjectManager {
       const done = live.filter((t) => t.state === "done").length;
       const open = o.decisions.filter((d) => !d.outcome).length;
       const { blockedBy, dropped } = deps.get(o.id)!;
+      const bugs = issues.get(o.id)?.open.length ?? 0;
       out.push(
         `- ${o.id} [${o.status}, ${o.priority}] ${o.title} — tasks ${done}/${live.length}` +
           (open ? `, ${open} open decision${open === 1 ? "" : "s"}` : "") +
+          (bugs ? `, ${bugs} open issue${bugs === 1 ? "" : "s"}` : "") +
           (blockedBy.length ? `; blocked by ${blockedBy.join(", ")}` : "") +
           (dropped.length ? `; prerequisite dropped: ${dropped.join(", ")}` : ""),
       );
@@ -1086,6 +1131,15 @@ export class ProjectManager {
       );
     }
     if (o.decisions.length === 0) out.push("(none)");
+    const issues = this.issueBoard(projectId).linked().get(o.id);
+    if (issues) {
+      out.push("", "issues:");
+      for (const { issue: x } of issues.open) {
+        const flags = [x.state !== "open" && x.state, x.evidence].filter(Boolean).join(", ");
+        out.push(`- ${x.id}${flags ? ` [${flags}]` : ""} ${oneLine(x.text, 140)}`);
+      }
+      if (issues.accepted) out.push(`(${issues.accepted} accepted: list_issues with states)`);
+    }
     if (o.notes) out.push("", "notes:", o.notes);
     return out.join("\n");
   }
@@ -1336,6 +1390,23 @@ export class ProjectManager {
         ? ` Still listed as a prerequisite by ${dependents.map((x) => x.id).join(", ")}.`
         : "";
       return `Deleted ${o.id}.${left}`;
+    },
+    listIssues: (pid, filter) => this.issueBoard(pid).list(filter),
+    readIssue: (pid, t) => this.issueBoard(pid).read(t.id, t.module, t.group),
+    writeIssues: (pid, patches) => {
+      const result = this.issueBoard(pid).write(patches);
+      this.issuesChanged(pid);
+      return result;
+    },
+    writeIssueGroup: (pid, patch) => {
+      const result = this.issueBoard(pid).writeGroup(patch);
+      this.issuesChanged(pid);
+      return result;
+    },
+    closeIssues: (pid, ids, fixedBy) => {
+      const result = this.issueBoard(pid).close(ids, fixedBy);
+      this.issuesChanged(pid);
+      return result;
     },
     listProjects: (pid) => {
       this.require(pid);

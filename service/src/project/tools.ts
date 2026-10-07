@@ -9,6 +9,8 @@ import {
   type Priority,
   type TaskState,
 } from "./objectives";
+import { EVIDENCE, ISSUE_STATES, type Evidence, type IssueState } from "./issues";
+import type { GroupPatch, IssueFilter, IssuePatch } from "./issue-board";
 
 // Tools the panel gives its agents, served in-process to the Claude CLI as
 // the "panel" MCP server (see ClaudeSession.setPanelTools). A project's lead
@@ -136,6 +138,11 @@ export interface PanelApi {
   deleteObjective(projectId: string, id: string): string;
   archiveObjective(projectId: string, id: string): string;
   restoreObjective(projectId: string, id: string): string;
+  listIssues(projectId: string, filter: IssueFilter): string;
+  readIssue(projectId: string, target: { id?: string; module?: string; group?: string }): string;
+  writeIssues(projectId: string, patches: IssuePatch[]): string;
+  writeIssueGroup(projectId: string, patch: GroupPatch): string;
+  closeIssues(projectId: string, ids: string[], fixedBy: string): string;
   listProjects(projectId: string): string;
   messageProject(projectId: string, targetId: string, text: string): string;
   workerReport(workspaceId: string, text: string, final: boolean): string;
@@ -154,6 +161,10 @@ function time(name: string, value: string): number {
 // What the history tools reach, the lead's and its workers' alike.
 const HISTORY =
   "Everything said and done in this project is recorded: the lead's conversation, every worker session's, and the project's history (archived sessions, from before the project too) — what was said, thinking, every tool call with its input and its output, errors, and what subagents did. When the user refers to past work, search_history finds it like grep would (words or a regular expression; by kind, tool, session, message, time; with context lines), read_entry reads a hit in full or by lines (a whole command output, a file that was read), and read_session reads a session in context, with its tool calls when you ask. query_history runs read-only SQL over the same records for what search cannot express (counts, grouping, one tool's calls across sessions). list_history lists the earlier sessions.";
+
+// What the issues are and how they move, the lead's and its workers' alike.
+const ISSUES =
+  "The project's known defects are its issues, kept apart from the objectives: one file per module (an area of the code), the issues in groups that one fix would settle together, each group with what its issues have in common. An issue has an id (one you are given, or the next MM-DD#N), a state (open: to fix; decision: whether it is a defect at all is the user's call; accepted: recorded, not to be fixed, until a real user runs into it), its evidence (R reproduced by a script, V confirmed by a probe, H read from the code only, S still there on an earlier re-test, C another agent's probe not checked here), tags, its text (what goes wrong, how common, where in the code, how to fix it) and the objectives that work on it; a group or a module can name objectives for all its issues. Confirm an H or C issue and raise its evidence before fixing it; a fix comes with a regression test. Once the fix is merged, close_issues deletes the issues with what fixed them: nothing else keeps fixed issues. list_issues, read_issue, write_issues (many at once) and write_issue_group keep them.";
 
 // How the panel's agents talk to the user.
 const LANGUAGE =
@@ -182,6 +193,7 @@ export function leadToolset(
         "Workers keep the objectives they work on current themselves: where it stands, their tasks as they move, the decisions settled with them, new work decided with them. Read the board for where things stand rather than asking them, and do not mirror their progress onto it. You record what the user decides with you, including in passing: new objectives, status later for what is put off, dropped with the reason for what will not be done (so it is not reopened), priority high/normal/low, and the reason for either. Tasks move todo → doing → review → done (or dropped); settle a decision by giving its outcome.",
         "Change them only through write_objective, add_items and update_item; list_objectives gives the board, read_objective one objective in full. When an objective is done or dropped for good, archive_objective files it away. The user sees the board as a dependency view: keep depends_on accurate.",
       ].join(" "),
+      ISSUES,
       `Longer-lived notes (decisions, background, plans) go in markdown files under ${notesDir}; read and write them with your file tools. Subagents can maintain them too.`,
       "Other projects have leads of their own: list_projects shows them, message_project sends one a message without waiting. Its answer arrives later as a message from that project.",
       "project_status gives the board, the running sessions and the repository's worktrees at a glance.",
@@ -240,6 +252,7 @@ export function leadToolset(
         handler: (a) => run(() => api.archiveSession(id, String(a.session_id))),
       },
       ...boardTools(api, id),
+      ...issueTools(api, id),
       {
         name: "delete_objective",
         description:
@@ -571,6 +584,139 @@ function boardTools(api: PanelApi, id: string, sessionId?: string): PanelTool[] 
   ];
 }
 
+const ISSUE_FIELDS = {
+  id: z
+    .string()
+    .optional()
+    .describe("The issue to change; a new one without it gets the next MM-DD#N"),
+  module: z.string().optional().describe("Its module: required for a new issue; another moves it"),
+  group: z.string().optional().describe('Its group in the module; "" takes it out of its group'),
+  state: z.enum(ISSUE_STATES).optional(),
+  evidence: z
+    .enum([...EVIDENCE, ""])
+    .optional()
+    .describe('R, V, H, S or C; "" clears it'),
+  tags: z.array(z.string()).optional().describe("Replace its tags"),
+  text: z
+    .string()
+    .optional()
+    .describe(
+      "What goes wrong, how common, where in the code (markdown); required for a new issue",
+    ),
+  objectives: z.array(z.string()).optional().describe("Replace the objectives it is linked to"),
+};
+
+// The issues' tools, the lead's and its workers' alike.
+function issueTools(api: PanelApi, id: string): PanelTool[] {
+  return [
+    {
+      name: "list_issues",
+      description:
+        "The issues by module and group, one line each (id, state, evidence, tags, the start of its text), the open and to-decide ones unless states says otherwise. Filter by module, evidence, tag, a linked objective or words in the id or text.",
+      shape: {
+        module: z.string().optional(),
+        states: z.array(z.enum(ISSUE_STATES)).optional().describe("Default open and decision"),
+        evidence: z.array(z.enum(EVIDENCE)).optional(),
+        tag: z.string().optional(),
+        objective: z.string().optional().describe("Only those linked to this objective"),
+        query: z.string().optional().describe("Words in the id or text, as written"),
+      },
+      handler: (a) =>
+        run(() =>
+          api.listIssues(id, {
+            ...(typeof a.module === "string" && { module: a.module }),
+            ...(Array.isArray(a.states) && { states: a.states as IssueState[] }),
+            ...(Array.isArray(a.evidence) && { evidence: a.evidence as Evidence[] }),
+            ...(typeof a.tag === "string" && { tag: a.tag }),
+            ...(typeof a.objective === "string" && { objective: a.objective }),
+            ...(typeof a.query === "string" && { query: a.query }),
+          }),
+        ),
+    },
+    {
+      name: "read_issue",
+      description:
+        "An issue in full with its module, group and linked objectives; or a module, or one group of it, with all its issues in full.",
+      shape: {
+        id: z.string().optional(),
+        module: z.string().optional(),
+        group: z.string().optional(),
+      },
+      handler: (a) =>
+        run(() =>
+          api.readIssue(id, {
+            ...(typeof a.id === "string" && { id: a.id }),
+            ...(typeof a.module === "string" && { module: a.module }),
+            ...(typeof a.group === "string" && { group: a.group }),
+          }),
+        ),
+    },
+    {
+      name: "write_issues",
+      description:
+        "Create issues or change them, many in one call: only the fields given change. Nothing is written when one of them is refused.",
+      shape: { issues: z.array(z.object(ISSUE_FIELDS)) },
+      handler: (a) =>
+        run(() =>
+          api.writeIssues(
+            id,
+            (Array.isArray(a.issues) ? a.issues : []).map((x: Record<string, unknown>) => ({
+              ...(typeof x.id === "string" && { id: x.id }),
+              ...(typeof x.module === "string" && { module: x.module }),
+              ...(typeof x.group === "string" && { group: x.group }),
+              ...(typeof x.state === "string" && { state: x.state as IssueState }),
+              ...(typeof x.evidence === "string" && { evidence: x.evidence as Evidence | "" }),
+              ...(Array.isArray(x.tags) && { tags: x.tags.map(String) }),
+              ...(typeof x.text === "string" && { text: x.text }),
+              ...(Array.isArray(x.objectives) && { objectives: x.objectives.map(String) }),
+            })),
+          ),
+        ),
+    },
+    {
+      name: "write_issue_group",
+      description:
+        "Create or change a module (without group: its title, notes, objectives for all its issues) or a group of it (its title, notes on what its issues have in common, objectives). A new one needs a title; remove drops one with no issues left.",
+      shape: {
+        module: z.string().describe("lowercase letters, digits and -"),
+        group: z.string().optional().describe("lowercase letters, digits, . and -"),
+        title: z.string().optional(),
+        notes: z.string().optional().describe('Markdown; "" clears it'),
+        objectives: z.array(z.string()).optional(),
+        remove: z.boolean().optional(),
+      },
+      handler: (a) =>
+        run(() =>
+          api.writeIssueGroup(id, {
+            module: String(a.module),
+            ...(typeof a.group === "string" && { group: a.group }),
+            ...(typeof a.title === "string" && { title: a.title }),
+            ...(typeof a.notes === "string" && { notes: a.notes }),
+            ...(Array.isArray(a.objectives) && { objectives: a.objectives.map(String) }),
+            ...(a.remove === true && { remove: true }),
+          }),
+        ),
+    },
+    {
+      name: "close_issues",
+      description:
+        "Delete issues whose fix is merged, saying what fixed them. Their text comes back in the result, which keeps it in the history.",
+      shape: {
+        ids: z.array(z.string()),
+        fixed_by: z.string().describe("The PR or commit that fixed them"),
+      },
+      handler: (a) =>
+        run(() =>
+          api.closeIssues(
+            id,
+            Array.isArray(a.ids) ? a.ids.map(String) : [],
+            typeof a.fixed_by === "string" ? a.fixed_by : "",
+          ),
+        ),
+    },
+  ];
+}
+
 const REPORT_REFUSAL =
   "Only the session's own agent reports to the project's lead. Put this in your final reply instead: it goes to the agent that started you.";
 
@@ -583,6 +729,7 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
       "When the task is done, or the user calls it off, call finish_task once with a concise summary for the lead: what changed, where (branch, commits, PR), what is left. Use report_progress only for what changes the lead's plans before you finish (the scope changed, the plan proved wrong, a finding that affects other work), not for milestones.",
       "The project's board is how the lead and the user follow the work: keep the objectives you work on current as you go, with write_objective, add_items and update_item. Where it stands goes in its context; a task you take up goes to doing (it becomes yours), one you finish to review; add the tasks you find; settle a decision when the user settles it with you; and make an objective for new work the user decides on with you. Change other objectives only for what your work showed about them. list_objectives gives the board; current_task with objective_id reads one objective in full.",
       "The lead's messages reach you prefixed [From the project lead], the panel's [From the panel]; the rest is the user's. When the lead asks you something after the task, just answer: your reply reaches it once you stop, or at once with report_progress while background work or a scheduled wake-up keeps you going. When the user changes the lead's task, say so in your finish_task summary. Work the lead sends after you finished ends with finish_task too; what the user asks after that needs one only if what you reported no longer holds.",
+      ISSUES,
       "current_task shows what you are working on as it stands: the task the lead gave you, its later messages to you, and your objectives on the project's board (tasks, decisions, what they depend on). A long task or a compacted context loses these; call it whenever you are not sure what exactly the task is or what was decided.",
       "project_status shows the board, the other sessions and the repository's worktrees at a glance. When your work touches what another session did or decided, read it there rather than asking the user.",
       HISTORY,
@@ -620,6 +767,7 @@ export function workerToolset(api: PanelApi, workspaceId: string, project: Proje
           ),
       },
       ...boardTools(api, project.id, workspaceId).filter((t) => t.name !== "read_objective"),
+      ...issueTools(api, project.id),
       projectStatusTool(api, project.id),
       ...historyTools(api, project.id),
     ],

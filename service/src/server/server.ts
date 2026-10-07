@@ -249,6 +249,7 @@ export class Server {
       },
       hosts: this.hostRegistry.getAllInfo(),
       projects: this.projects.list(),
+      issues: this.projects.issueSets(),
     });
     this.sendJson(ws, this.getSystemStatus());
     this.refreshQuotaIfStale();
