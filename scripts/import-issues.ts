@@ -3,8 +3,9 @@
 // with tables of 条目 | 状态 | 问题 | 位置, an "## 已接受（只记不修）" section at
 // the end of each (table rows or bullets), and a README with the 速查 table.
 // Only reads the list; writes the modules and a report of what did not fit
-// into a fresh directory, to be looked over before it is copied into
-// .agent-team/projects/<id>/issues/.
+// into a fresh directory, to be looked over before its .toml files are
+// copied into .agent-team/projects/<id>/issues/ (the files, not the
+// directory: a module dir one level down shows as an error).
 //
 //   npm run import-issues -- <list dir> <out dir> [<objectives dir>]
 //
@@ -52,7 +53,8 @@ const TAGS: Record<string, string> = {
 };
 const SEVERE = "严重";
 const ID = /^(\d\d-\d\d#F?\d+|h\d+r\d+#\d+|h\d+v#\d+|F\d+(?:-[A-Z])?|ro#\d+)$/;
-const LEADING_ID = /^(?:§[\d.]+\s+)?(\d\d-\d\d#\d+|h\d+r\d+#\d+|h\d+v#\d+|F\d+)/;
+const LEADING_ID =
+  /^(?:§[\d.]+\s+)?(\d\d-\d\d#F?\d+|h\d+r\d+#\d+|h\d+v#\d+|F\d+(?:-[A-Z])?|ro#\d+)(?![A-Za-z0-9#-])/;
 
 // A paragraph wrapped over lines: no space where the break falls between
 // two CJK characters.
@@ -80,12 +82,17 @@ function paragraphs(lines: string[]): string | undefined {
   return out.length ? out.join("\n\n") : undefined;
 }
 
-function cellsOf(line: string): string[] {
+// Untrimmed: a | left unescaped in code splits a cell, and the pieces are
+// joined back as they were.
+function rawCells(line: string): string[] {
   return line
     .trim()
     .replace(/^\||\|$/g, "")
-    .split(/(?<!\\)\|/)
-    .map((c) => c.trim());
+    .split(/(?<!\\)\|/);
+}
+
+function cellsOf(line: string): string[] {
+  return rawCells(line).map((c) => c.trim());
 }
 
 interface Status {
@@ -110,7 +117,7 @@ function parseStatus(cell: string): Status {
   const decision = !accepted && cell.includes("决策项");
   // Says no more than the state, the evidence and the tags.
   const plain =
-    /^(决策项|接受)?([RVHSC]|R、V)?(（[^）]*）)?$/.test(cell) &&
+    /^(决策项|接受)?[RVHSC]?(（[^）]*）)?$/.test(cell) &&
     parts.every((p) => TAGS[p] || p === "已接受" || p === "决策项");
   const evidence = /^[RVHSC]/.exec(cell)?.[0] as Evidence | undefined;
   return {
@@ -188,11 +195,17 @@ function parseFile(file: string): IssueModule {
     const lead = LEADING_ID.exec(text);
     const tags = new Set<string>();
     const bracket = /^[^（(]{0,40}[（(]([^）)]*)[）)]/.exec(text)?.[1] ?? "";
-    for (const p of bracket.split(/[，、；,;]\s*/)) if (TAGS[p.trim()]) tags.add(TAGS[p.trim()]);
+    let evidence: Evidence | undefined;
+    for (const raw of bracket.split(/[，、；,;]\s*/)) {
+      const p = raw.trim();
+      if (TAGS[p]) tags.add(TAGS[p]);
+      if (/^[RVHSC]$/.test(p)) evidence = p as Evidence;
+    }
     add(
       {
         id: lead?.[1] ?? "",
         state: "accepted",
+        ...(evidence && { evidence }),
         tags: [...tags],
         text,
         objectives: [],
@@ -233,7 +246,10 @@ function parseFile(file: string): IssueModule {
       const [label, ...rest] = cells;
       const four = rest.length >= 3;
       const status = four ? parseStatus(rest[0]) : { tags: [] };
-      const problem = (four ? rest.slice(1, -1) : rest.slice(0, -1)).join(" | ");
+      const problem = rawCells(line)
+        .slice(four ? 2 : 1, -1)
+        .join("|")
+        .trim();
       const location = rest.at(-1) ?? "";
       if (rest.length > 3) {
         irregular.push(`- ${id} ${label}: an unescaped | split the row; joined again`);
@@ -289,15 +305,11 @@ const files = fs
   .sort();
 const modules = files.map((f) => parseFile(path.join(listDir, f)));
 
-// What has no id of its own, or one taken already, gets the next of today.
-const today = new Date();
-const prefix = `${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+// What has no id of its own, or one taken already, gets imp#N: in the
+// order of the list, so a second run numbers them alike, and apart from the
+// project's own MM-DD#N.
 const seen = new Set<string>();
-const all = modules.flatMap((m) => [...m.issues, ...m.groups.flatMap((g) => g.issues)]);
-let next = Math.max(
-  0,
-  ...all.map((x) => (x.id.startsWith(`${prefix}#`) ? Number(x.id.slice(6)) || 0 : 0)),
-);
+let next = 0;
 for (const m of modules) {
   for (const x of [...m.issues, ...m.groups.flatMap((g) => g.issues)]) {
     const p = pending.find((e) => e.issue === x);
@@ -306,7 +318,7 @@ for (const m of modules) {
       continue;
     }
     const was = x.id;
-    x.id = `${prefix}#${++next}`;
+    x.id = `imp#${++next}`;
     seen.add(x.id);
     if (p) {
       const label = p.label.length > 40 ? `${p.label}…` : p.label;
@@ -340,24 +352,73 @@ for (const id of severe) {
   if (!x) irregular.push(`- 速查 names ${id}, which is not in the list`);
 }
 
-// Tasks that name an issue link it to their objective.
+// The ids a text names, the short forms of a list spelled out:
+// "09-23#169、#170、#171", "10-07#50–#57", "09-23#137/138".
+function named(text: string): string[] {
+  const out: string[] = [];
+  const full =
+    /(?<![A-Za-z0-9_#-])(\d\d-\d\d#F?\d+|h\d+r\d+#\d+|h\d+v#\d+|F\d+(?:-[A-Z])?|ro#\d+)(?![A-Za-z0-9_#])/g;
+  for (const m of text.matchAll(full)) {
+    out.push(m[1]);
+    const dated = /^(\d\d-\d\d)#(\d+)$/.exec(m[1]);
+    if (!dated) continue;
+    let last = Number(dated[2]);
+    const tail = /^(\s*(?:、|\/|,|，)\s*#?(\d+)|\s*[–~-]\s*#?(\d+))/;
+    let rest = text.slice(m.index + m[0].length);
+    for (let t = tail.exec(rest); t; t = tail.exec(rest)) {
+      if (t[2]) {
+        last = Number(t[2]);
+        out.push(`${dated[1]}#${last}`);
+      } else {
+        const end = Number(t[3]);
+        for (let n = last + 1; n <= end && n - last <= 50; n++) out.push(`${dated[1]}#${n}`);
+        last = end;
+      }
+      rest = rest.slice(t[0].length);
+    }
+  }
+  return out;
+}
+
+// Tasks still to do that name an issue link it to their objective; what
+// else of an objective names one is listed, not linked: it may only point
+// elsewhere ("moved to …").
 const links: string[] = [];
+const mentions: string[] = [];
 if (objectivesArg) {
   const objectives = new ObjectiveStore(at(objectivesArg))
     .list()
     .filter((o): o is Objective => !("error" in o) && !o.archived);
-  const ids = [...byId.keys()].sort((a, b) => b.length - a.length);
-  const escaped = ids.map((id) => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const pattern = new RegExp(`(?<![A-Za-z0-9_#-])(?:${escaped.join("|")})(?![A-Za-z0-9_#])`, "g");
   for (const o of objectives) {
     for (const t of o.tasks) {
-      for (const m of t.text.matchAll(pattern)) {
-        const x = byId.get(m[0])!.issue;
-        if (x.objectives.includes(o.id)) continue;
+      if (t.state === "done" || t.state === "dropped") continue;
+      for (const id of named(t.text)) {
+        const x = byId.get(id)?.issue;
+        if (!x || x.objectives.includes(o.id)) continue;
         x.objectives.push(o.id);
-        links.push(`- ${m[0]} → ${o.id} (${t.id}: ${t.text.slice(0, 60)})`);
+        links.push(`- ${id} → ${o.id} (${t.id}: ${t.text.slice(0, 60)})`);
       }
     }
+    const elsewhere = [
+      o.context ?? "",
+      o.notes ?? "",
+      ...o.decisions.map((d) => `${d.question} ${d.outcome ?? ""}`),
+      ...o.tasks.filter((t) => t.state === "done" || t.state === "dropped").map((t) => t.text),
+    ].join("\n");
+    const ids = [...new Set(named(elsewhere))].filter(
+      (id) => byId.has(id) && !byId.get(id)!.issue.objectives.includes(o.id),
+    );
+    if (ids.length) mentions.push(`- ${o.id}: ${ids.join(", ")}`);
+  }
+}
+
+// What the README says beside its tables (rules, caveats): not issues, but
+// to keep where the project's agents read it.
+const readmeText: string[] = [];
+if (fs.existsSync(readme)) {
+  for (const block of fs.readFileSync(readme, "utf-8").split(/\n\s*\n/)) {
+    const t = block.trim();
+    if (t && !t.startsWith("|") && !t.startsWith("#") && t !== "---") readmeText.push(t);
   }
 }
 
@@ -411,9 +472,17 @@ report.push(
   "",
   [...severe].join(", ") || "(none)",
   "",
-  "## Linked to objectives (a task names them)",
+  "## Linked to objectives (a task still to do names them)",
   "",
   ...(links.length ? links : ["(none)"]),
+  "",
+  "## Named elsewhere in objectives (context, notes, decisions, finished tasks): not linked",
+  "",
+  ...(mentions.length ? mentions : ["(none)"]),
+  "",
+  "## The README's own text, not imported: keep what still holds where the agents read it",
+  "",
+  ...(readmeText.length ? readmeText.map((t) => `${t}\n`) : ["(none)"]),
 );
 fs.writeFileSync(path.join(outDir, "import-report.md"), report.join("\n") + "\n");
 console.log(`${modules.length} modules, ${open} to fix, ${accepted} accepted → ${outDir}`);
