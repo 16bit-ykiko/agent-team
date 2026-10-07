@@ -19,6 +19,7 @@
     "capture": "tsx scripts/capture-sdk.ts",
     "summarize": "tsx scripts/summarize-capture.ts",
     "demo": "tsx scripts/seed-demo.ts",
+    "import-issues": "tsx scripts/import-issues.ts",
     "vscode-icons": "tsx scripts/vscode-icons.ts",
     "sarasa-font": "tsx scripts/sarasa-font.ts",
     "smoke:claude": "tsx scripts/smoke-claude.ts",
