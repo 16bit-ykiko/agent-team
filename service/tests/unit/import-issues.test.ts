@@ -32,6 +32,7 @@ review 收敛后只记不修的边角；不计入待修，真实用户撞上再�
 | 条目 | 状态 | 问题 | 位置 |
 |---|---|---|---|
 | 10-01#4 | 接受（#784 review） | 只记 | d.cpp |
+| 10-01#10 | 接受 | 另一条 | e.cpp |
 
 - F13-B（低，H）：长条目
   续上一行。
@@ -44,7 +45,7 @@ const README = `# 清单
 
 | § | 文件 | 主题 | 待修 | 已接受 |
 |---|---|---|---|---|
-| 1 | 01-command.md | 命令行 | 4 | 3 |
+| 1 | 01-command.md | 命令行 | 4 | 4 |
 
 ## 崩溃 / 挂死 / 数据丢失速查
 
@@ -73,7 +74,10 @@ it("turns a markdown bug list into issue files and a report", () => {
   fs.writeFileSync(path.join(base, "temp", "repro", "10-01-001", "run.sh"), "");
   const objectives = path.join(base, "objectives");
   fs.mkdirSync(path.join(objectives, "a"), { recursive: true });
-  fs.writeFileSync(path.join(objectives, "a", "todo.toml"), OBJECTIVE("todo", "修 10-01#1、#2"));
+  fs.writeFileSync(
+    path.join(objectives, "a", "todo.toml"),
+    OBJECTIVE("todo", "修 10-01#1、#2，再看 10-01#4、10-01#1"),
+  );
   fs.writeFileSync(path.join(objectives, "a", "done.toml"), OBJECTIVE("done", "10-01#3 转 a/todo"));
   const out = path.join(base, "out");
 
@@ -101,6 +105,7 @@ it("turns a markdown bug list into issue files and a report", () => {
   const byId = new Map<string, Issue>([...m.issues, ...g.issues].map((x) => [x.id, x]));
   expect([...byId.keys()]).toEqual([
     "10-01#4",
+    "10-01#10",
     "F13-B",
     "imp#1",
     "10-01#1",
@@ -123,13 +128,19 @@ it("turns a markdown bug list into issue files and a report", () => {
   expect(byId.get("h1r3#1")!.text).toContain("状态：R、V");
   // Named only by a finished task: not linked.
   expect(byId.get("10-01#3")).toMatchObject({ state: "decision", objectives: [] });
-  expect(byId.get("10-01#4")).toMatchObject({ state: "accepted", tags: [] });
+  expect(byId.get("10-01#4")).toMatchObject({
+    state: "accepted",
+    tags: [],
+    objectives: ["a/todo"],
+  });
+  // "10-01#4、10-01#1" is two ids, not 10-01#4 and a short #10.
+  expect(byId.get("10-01#10")!.objectives).toEqual([]);
   expect(byId.get("F13-B")).toMatchObject({ state: "accepted", evidence: "H", tags: ["低"] });
   expect(byId.get("F13-B")!.text).toBe("F13-B（低，H）：长条目续上一行。");
   expect(byId.get("imp#1")).toMatchObject({ state: "accepted", text: "没有编号的一条" });
 
   const report = fs.readFileSync(path.join(out, "import-report.md"), "utf-8");
-  expect(report).toContain("| 01-command | 4 | 3 |  |");
+  expect(report).toContain("| 01-command | 4 | 4 |  |");
   expect(report).toContain('"没有编号的一条" has no id; it is imp#1');
   expect(report).toContain("10-01#1, 10-01#2, 10-01#3");
   expect(report).toContain("- a/done: 10-01#3");

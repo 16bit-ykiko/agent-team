@@ -87,9 +87,13 @@ export class IssueBoard {
     let shown = 0;
     let cut = 0;
     let size = 0;
-    // Line by line, so a module too large for the listing is cut, not left out.
+    // Line by line, so a module too large for the listing is cut, not left
+    // out; past the first line that does not fit, nothing is, so no issue
+    // shows under a heading not its own.
+    let full = false;
     const put = (line: string, issue: boolean) => {
-      if (size + line.length > OUTPUT_CAP) {
+      if (full || size + line.length > OUTPUT_CAP) {
+        full = true;
         if (issue) cut++;
         return;
       }
@@ -176,11 +180,9 @@ export class IssueBoard {
 
   write(patches: IssuePatch[]): string {
     if (patches.length === 0) return "Nothing to write.";
-    const modules = new Map(this.modules().map((m) => [m.id, structuredClone(m)]));
+    const before = new Map(this.modules().map((m) => [m.id, m]));
+    const modules = new Map([...before].map(([id, m]) => [id, structuredClone(m)]));
     const touched = new Set<string>();
-    // Modules an issue moved out of: written last, so a write that fails
-    // leaves it in two places (which the tools point out) rather than none.
-    const left = new Set<string>();
     const kept: string[] = [];
     const out: string[] = [];
     const known = new Set(this.objectives().map((o) => o.id));
@@ -259,7 +261,6 @@ export class IssueBoard {
         }
         touched.add(at.module.id);
         touched.add(target.id);
-        if (target !== at.module) left.add(at.module.id);
         const moved =
           to !== from ? ` Moved to ${target.id}${targetGroup ? `/${targetGroup.id}` : ""}.` : "";
         out.push(`Updated ${issue.id}.${moved}`);
@@ -267,8 +268,8 @@ export class IssueBoard {
         throw new Error(`${where}${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    this.save(modules, touched, left);
     this.store.reserve(kept);
+    this.save(modules, touched, before);
     if (unknown.size) out.push(`Not objectives (yet): ${[...unknown].join(", ")}.`);
     return out.join("\n");
   }
@@ -287,8 +288,8 @@ export class IssueBoard {
       from.issues.splice(from.issues.indexOf(at.issue), 1);
       touched.add(at.module.id);
     }
-    this.save(modules, touched);
     this.store.reserve(found.map((x) => x.issue.id));
+    this.save(modules, touched);
     return [
       `Closed ${found.map((x) => x.issue.id).join(", ")}, fixed by ${fixedBy.trim()}.`,
       ...found.flatMap((at) => [
@@ -435,15 +436,41 @@ export class IssueBoard {
     return at;
   }
 
+  // With `before`, what moved between modules is written in two steps:
+  // every module with the issues it gained and still those it gave up, then
+  // the ones that gave some up. A write that fails at any point leaves an
+  // issue in two places (which the tools point out), never in none.
   private save(
     modules: Map<string, IssueModule>,
     touched: Set<string>,
-    last: Set<string> = new Set(),
+    before?: Map<string, IssueModule>,
   ): void {
     const now = Date.now();
-    const order = [...touched].sort((a, b) => Number(last.has(a)) - Number(last.has(b)));
-    this.store.writeAll(order.map((id) => ({ ...modules.get(id)!, updatedAt: now })));
+    const ids = (m: IssueModule) => new Set(issuesOf(m).map((x) => x.id));
+    const gaveUp = new Map<string, Issue[]>();
+    for (const id of touched) {
+      const old = before?.get(id);
+      const kept = ids(modules.get(id)!);
+      const gone = old ? issuesOf(old).filter((x) => !kept.has(x.id)) : [];
+      if (gone.length) gaveUp.set(id, gone);
+    }
+    const final = (id: string) => ({ ...modules.get(id)!, updatedAt: now });
+    if (gaveUp.size) {
+      this.store.writeAll(
+        [...touched].map((id) => {
+          const m = final(id);
+          return { ...m, issues: [...m.issues, ...(gaveUp.get(id) ?? [])] };
+        }),
+      );
+      this.store.writeAll([...gaveUp.keys()].map(final));
+      return;
+    }
+    this.store.writeAll([...touched].map(final));
   }
+}
+
+function issuesOf(m: IssueModule): Issue[] {
+  return [...m.issues, ...m.groups.flatMap((g) => g.issues)];
 }
 
 function flags(x: Issue): string[] {

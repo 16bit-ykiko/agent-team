@@ -363,7 +363,8 @@ function named(text: string): string[] {
     const dated = /^(\d\d-\d\d)#(\d+)$/.exec(m[1]);
     if (!dated) continue;
     let last = Number(dated[2]);
-    const tail = /^(\s*(?:、|\/|,|，)\s*#?(\d+)|\s*[–~-]\s*#?(\d+))/;
+    // A number that goes on into "-dd#" is the month of the next full id.
+    const tail = /^(\s*(?:、|\/|,|，)\s*#?(\d+)(?![\d#-])|\s*[–~-]\s*#?(\d+)(?![\d#-]))/;
     let rest = text.slice(m.index + m[0].length);
     for (let t = tail.exec(rest); t; t = tail.exec(rest)) {
       if (t[2]) {

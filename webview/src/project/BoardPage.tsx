@@ -202,8 +202,11 @@ export const BoardPage = memo(function BoardPage({
 
   // A new view starts at its top-left, unless it opens on a selection: the
   // list (whose effects run first) has brought that into view.
-  const opensOn = useRef<string | null>(null);
-  opensOn.current = mode === "issues" ? selectedIssue : selected;
+  const opensOn = useRef(false);
+  opensOn.current =
+    mode === "issues"
+      ? shownIssues.some((e) => e.issue.id === selectedIssue)
+      : shown.some((o) => o.id === selected);
   useEffect(() => {
     if (!opensOn.current) mainRef.current?.scrollTo?.(0, 0);
   }, [mode, view, filter.archive]);

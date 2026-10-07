@@ -8,10 +8,11 @@ import * as fs from "fs";
 // file once it has been replaced (tmp + rename) twice: the directories
 // themselves are watched instead, the set re-read on every change. A
 // directory replaced whole (rm -r, then mv) keeps its old watcher alive
-// and deaf, so each is known by its inode, and the store's parent
-// directory is in the set to hear the replacement.
+// and deaf, so each is known by its inode and birth time (an inode number
+// is reused), and the store's parent directory is in the set to hear the
+// replacement.
 export class DirWatcher {
-  private watchers = new Map<string, { watcher: fs.FSWatcher; ino: number }>();
+  private watchers = new Map<string, { watcher: fs.FSWatcher; ino: string }>();
   private timer: ReturnType<typeof setTimeout> | undefined;
   private seen: string;
   private closed = false;
@@ -39,11 +40,11 @@ export class DirWatcher {
   }
 
   private rewatch(): void {
-    const dirs = new Map<string, number>();
+    const dirs = new Map<string, string>();
     for (const d of this.dirs()) {
       try {
         const st = fs.statSync(d);
-        if (st.isDirectory()) dirs.set(d, st.ino);
+        if (st.isDirectory()) dirs.set(d, `${st.ino}:${st.birthtimeMs}`);
       } catch {
         // Not there (yet); the parent's events rescan.
       }

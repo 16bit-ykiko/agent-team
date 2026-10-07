@@ -299,15 +299,46 @@ describe("issue edge cases from review", () => {
     return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   };
 
-  it("keep an issue moved to a module whose file cannot be written", async () => {
+  // The second module file written fails, as a full disk would.
+  function failSecondWrite() {
+    const proto = IssueStore.prototype as unknown as {
+      put: (this: unknown, file: string, text: string) => void;
+    };
+    const put = proto.put;
+    let n = 0;
+    proto.put = function (this: unknown, file: string, text: string) {
+      if (file.endsWith(".toml") && ++n === 2) throw new Error("ENOSPC");
+      put.call(this, file, text);
+    };
+    return () => void (proto.put = put);
+  }
+
+  it("lose no issue when a write fails halfway, swapping two between modules", async () => {
     const { call, lead, dir } = await board();
-    await call(lead, "write_issues", { issues: [{ id: "x#1", module: "a", text: "t" }] });
-    fs.mkdirSync(path.join(dir, `b.toml.${process.pid}.tmp`));
-    await expect(
-      call(lead, "write_issues", { issues: [{ id: "x#1", module: "b" }] }),
-    ).rejects.toThrow();
-    const files = ["a", "b"].map((m) => fs.readFileSync(path.join(dir, `${m}.toml`), "utf-8"));
-    expect(files.some((t) => t.includes('"x#1"'))).toBe(true);
+    await call(lead, "write_issues", {
+      issues: [
+        { id: "x#1", module: "a", text: "t" },
+        { id: "y#1", module: "b", text: "t" },
+      ],
+    });
+    for (const order of [
+      [
+        { id: "x#1", module: "b" },
+        { id: "y#1", module: "a" },
+      ],
+      [{ id: "x#1", module: "b" }],
+    ]) {
+      const restore = failSecondWrite();
+      try {
+        await expect(call(lead, "write_issues", { issues: order })).rejects.toThrow(/ENOSPC/);
+      } finally {
+        restore();
+      }
+      const files = ["a", "b"].map((m) => fs.readFileSync(path.join(dir, `${m}.toml`), "utf-8"));
+      for (const id of ["x#1", "y#1"]) {
+        expect(files.some((t) => t.includes(`"${id}"`))).toBe(true);
+      }
+    }
   });
 
   it("never give a number twice: not one named later in the batch, nor a closed one, nor one a refused batch took", async () => {
@@ -368,6 +399,31 @@ describe("issue edge cases from review", () => {
     expect(await call(lead, "write_issue_group", { module: "a", group: "", notes: "n" })).toBe(
       "Updated module a.",
     );
+  });
+
+  it("never list an issue under the wrong group once the listing is cut", async () => {
+    const { call, lead } = await board();
+    await call(lead, "write_issue_group", {
+      module: "b",
+      group: "g",
+      title: "G",
+      notes: "n".repeat(200),
+    });
+    // Lines of 139 characters: the group's line (212) is the first that does
+    // not fit, the short issue line after it would.
+    const long = "x".repeat(130);
+    await call(lead, "write_issues", {
+      issues: [
+        ...Array.from({ length: 427 }, (_, i) => ({
+          id: `l#${1000 + i}`,
+          module: "a",
+          text: long,
+        })),
+        { id: "z#1", module: "b", group: "g", text: "z" },
+      ],
+    });
+    const list = await call(lead, "list_issues");
+    expect(list.includes("- z#1 ") && !list.includes("### b/g")).toBe(false);
   });
 
   it("show a module too large for one listing cut, not left out", async () => {
