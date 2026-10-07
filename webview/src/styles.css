@@ -3781,6 +3781,11 @@ button.action-target:hover {
   gap: 4px;
   margin-top: 10px;
 }
+/* A module's title names its source paths: not in capitals. */
+.bi-module-title {
+  text-transform: none;
+  letter-spacing: 0;
+}
 .bi-chip {
   padding: 1px 7px;
   font: inherit;
@@ -3993,10 +3998,15 @@ button.action-target:hover {
   .bp-head .bp-close {
     margin-left: auto;
   }
+  /* The second row: search, and the objectives' views beside it. */
   .bp-search {
     order: 5;
-    width: 100%;
+    flex: 1 1 50%;
+    width: auto;
     margin-left: 0;
+  }
+  .bp-views:not(.bp-modes) {
+    order: 6;
   }
   .bp-body {
     flex-direction: column;
@@ -4023,6 +4033,15 @@ button.action-target:hover {
     overflow-x: auto;
   }
   .bp-area {
+    flex-shrink: 0;
+  }
+  /* Evidence and tags keep to a row each, scrolled sideways. */
+  .bi-chips {
+    flex-wrap: nowrap;
+    margin-top: 0;
+    overflow-x: auto;
+  }
+  .bi-chip {
     flex-shrink: 0;
   }
   .bp-cards {
@@ -5066,7 +5085,9 @@ button.action-target:hover {
   }
   .bp-ref,
   .bp-session,
-  .bp-ask {
+  .bp-ask,
+  .bi-chip,
+  .bi-ref {
     min-height: 32px;
   }
   .bp-status-toggle,

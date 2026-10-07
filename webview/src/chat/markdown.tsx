@@ -97,9 +97,15 @@ function remarkIssueRefs(pattern: RegExp) {
   return () => (tree: MdNode) => linkIssueRefs(tree, pattern);
 }
 
-// The issue an href links to, if it is one.
+// The issue an href links to, if it is one. Text can spell one out by
+// hand, badly escaped too.
 function issueOf(href: string | undefined): string | null {
-  return href?.startsWith(ISSUE_HREF) ? decodeURIComponent(href.slice(ISSUE_HREF.length)) : null;
+  if (!href?.startsWith(ISSUE_HREF)) return null;
+  try {
+    return decodeURIComponent(href.slice(ISSUE_HREF.length));
+  } catch {
+    return null;
+  }
 }
 
 function IssueLink({ id, children }: { id: string; children: ReactNode }) {
@@ -150,7 +156,7 @@ function FileRefCode({
 // as code with the target on hover, and open in the file viewer.
 function Link({ href, children, node: _node, ...rest }: ComponentProps<"a"> & ExtraProps) {
   const openFile = useContext(FileOpenContext);
-  const issue = issueOf(href);
+  const issue = useContext(IssueRefContext) ? issueOf(href) : null;
   if (issue) return <IssueLink id={issue}>{children}</IssueLink>;
   if (href && /^(https?:|mailto:)/i.test(href)) {
     return (

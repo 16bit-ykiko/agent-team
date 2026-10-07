@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import type { Evidence, IssueModule, IssueState, Objective } from "../state/useServer";
-import { InlineMd, MdBlock } from "../chat/markdown";
+import { InlineMd, IssueRefContext, MdBlock } from "../chat/markdown";
 import { Icon } from "../panels/Icon";
 import {
   issueMatches,
@@ -61,9 +61,9 @@ export function IssueNav({
   filter: IssueFilter;
   onFilter: (f: IssueFilter) => void;
 }) {
-  const inView = entries.filter((e) => issueMatches(e, { ...filter, module: null })).length;
-  const inModule = entries.filter((e) => !filter.module || e.module.id === filter.module);
-  const count = (pick: (e: IssueEntry) => boolean) => inModule.filter(pick).length;
+  // Each number is the rows the filter it stands on gives with the others.
+  const count = (f: IssueFilter) => entries.filter((e) => issueMatches(e, f)).length;
+  const inView = count({ ...filter, module: null });
   const tags = tagCounts(entries, filter);
   return (
     <nav className="bp-nav" aria-label="Issue filters">
@@ -96,7 +96,7 @@ export function IssueNav({
             onClick={() => onFilter({ ...filter, states: toggle(filter.states, s) })}
           >
             {ISSUE_STATE_LABEL[s]}{" "}
-            <span className="bp-count">{count((e) => e.issue.state === s)}</span>
+            <span className="bp-count">{count({ ...filter, states: [s] })}</span>
           </button>
         ))}
       </div>
@@ -109,7 +109,7 @@ export function IssueNav({
             aria-pressed={filter.evidence.includes(ev)}
             onClick={() => onFilter({ ...filter, evidence: toggle(filter.evidence, ev) })}
           >
-            {ev} <span className="bp-count">{count((e) => e.issue.evidence === ev)}</span>
+            {ev} <span className="bp-count">{count({ ...filter, evidence: [ev] })}</span>
           </button>
         ))}
       </div>
@@ -160,9 +160,14 @@ export function IssueList({
         return (
           <section key={m.id} className="bp-group">
             {grouped && (
-              <h3 className="bp-group-title" title={m.id}>
+              <h3 className="bp-group-title bi-module-title" title={m.id}>
                 {m.title}
               </h3>
+            )}
+            {m.notes && (
+              <p className="bi-group-notes bi-module-notes">
+                <InlineMd>{issueSummary(m.notes)}</InlineMd>
+              </p>
             )}
             {groups.map((g) => (
               <div key={g?.id ?? ""} className="bi-group">
@@ -296,6 +301,13 @@ export function IssueDetail({
           </div>
         </DetailSection>
       )}
+      {e.module.notes && (
+        <DetailSection title="About the module">
+          <div className="message-content bp-md">
+            <MdBlock>{e.module.notes}</MdBlock>
+          </div>
+        </DetailSection>
+      )}
       <DetailSection title="Objectives">
         {linked.length ? (
           <div className="bp-refs">
@@ -308,9 +320,12 @@ export function IssueDetail({
                   title={o.goal}
                   onClick={() => onSelectObjective(id)}
                 >
-                  <span className="clip">
-                    <InlineMd>{o.title}</InlineMd>
-                  </span>
+                  {/* A button holds no issue links of its own. */}
+                  <IssueRefContext.Provider value={null}>
+                    <span className="clip">
+                      <InlineMd>{o.title}</InlineMd>
+                    </span>
+                  </IssueRefContext.Provider>
                 </button>
               ) : (
                 <span key={id} className="bp-ref missing" title="Not an objective">

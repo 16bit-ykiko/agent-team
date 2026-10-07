@@ -27,6 +27,7 @@ import {
 } from "./board";
 import {
   DEFAULT_ISSUE_FILTER,
+  duplicateIds,
   isBrokenModule,
   isOpen,
   issueEntries,
@@ -136,6 +137,7 @@ export const BoardPage = memo(function BoardPage({
     [issues],
   );
   const brokenModules = issues.filter(isBrokenModule);
+  const duplicates = useMemo(() => duplicateIds(issues), [issues]);
   const entries = useMemo(() => issueEntries(issues), [issues]);
   const byObjective = useMemo(() => issuesByObjective(entries), [entries]);
   const shownIssues = useMemo(
@@ -167,8 +169,18 @@ export const BoardPage = memo(function BoardPage({
       : null;
   }, [entries]);
   const openObjective = (id: string) => {
+    const o = objectives.find((x) => x.id === id);
     setMode("objectives");
     setSelected(id);
+    // One the filter hides is shown: its archive or its status, all areas.
+    if (o && !matches(o, filter)) {
+      setFilter({
+        area: null,
+        statuses: [...new Set([...filter.statuses, o.status])],
+        search: "",
+        archive: !!o.archived,
+      });
+    }
   };
   const detail = mode === "objectives" ? current : currentIssue;
 
@@ -188,9 +200,12 @@ export const BoardPage = memo(function BoardPage({
     return () => opener?.focus?.();
   }, []);
 
-  // A new view starts at its top-left.
+  // A new view starts at its top-left, unless it opens on a selection: the
+  // list (whose effects run first) has brought that into view.
+  const opensOn = useRef<string | null>(null);
+  opensOn.current = mode === "issues" ? selectedIssue : selected;
   useEffect(() => {
-    mainRef.current?.scrollTo?.(0, 0);
+    if (!opensOn.current) mainRef.current?.scrollTo?.(0, 0);
   }, [mode, view, filter.archive]);
 
   // Escape steps back: clears the search, then leaves the details, then the
@@ -297,6 +312,13 @@ export const BoardPage = memo(function BoardPage({
                   <strong>{b.id}.toml</strong> cannot be read: {b.error}
                 </div>
               ))}
+              {duplicates.map((d) => (
+                <div key={d.id} className="bp-broken">
+                  <strong>{d.id}</strong> is in {d.modules.join(" and ")}
+                  {d.modules.length === 1 ? " twice" : ""}: only the first is shown, and the agents
+                  cannot change it until one is renamed.
+                </div>
+              ))}
               {entries.length === 0 ? (
                 brokenModules.length === 0 && (
                   <div className="bp-empty">
@@ -316,13 +338,15 @@ export const BoardPage = memo(function BoardPage({
               )}
             </main>
             {currentIssue && (
-              <IssueDetail
-                key={currentIssue.issue.id}
-                entry={currentIssue}
-                objectives={objectives}
-                onSelectObjective={openObjective}
-                onClose={() => setSelectedIssue(null)}
-              />
+              <IssueRefContext.Provider value={issueRefs}>
+                <IssueDetail
+                  key={currentIssue.issue.id}
+                  entry={currentIssue}
+                  objectives={objectives}
+                  onSelectObjective={openObjective}
+                  onClose={() => setSelectedIssue(null)}
+                />
+              </IssueRefContext.Provider>
             )}
           </div>
         ) : (

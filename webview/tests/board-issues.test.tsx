@@ -5,7 +5,7 @@ import { render, fireEvent, within, screen } from "@testing-library/react";
 import { BoardPage } from "../src/project/BoardPage";
 import { MdBlock } from "../src/chat/markdown";
 import { issueIdPattern, issueSummary } from "../src/project/issues";
-import type { IssueModules, Objective, Project } from "../src/state/useServer";
+import type { Issue, IssueModule, IssueModules, Objective, Project } from "../src/state/useServer";
 
 const o = (id: string, over: Partial<Objective> = {}): Objective => ({
   id,
@@ -276,5 +276,169 @@ describe("issue ids in text", () => {
     expect(issueSummary("First line\nsame paragraph.\n\nSecond.")).toBe(
       "First line same paragraph.",
     );
+  });
+});
+
+describe("issue view edge cases from review", () => {
+  const mod = (id: string, over: Partial<IssueModule> = {}): IssueModule => ({
+    id,
+    title: id,
+    objectives: [],
+    issues: [],
+    groups: [],
+    updatedAt: 0,
+    ...over,
+  });
+  const issue = (id: string, over: Partial<Issue> = {}): Issue => ({
+    id,
+    state: "open",
+    tags: [],
+    text: `text of ${id}`,
+    objectives: [],
+    ...over,
+  });
+  const props = {
+    onClose: vi.fn(),
+    onOpenSession: vi.fn(),
+    onAskLead: vi.fn(),
+    onRename: vi.fn(),
+    onDelete: vi.fn(),
+  };
+  const rows = () => [...document.querySelectorAll(".bi-row .bp-id")].map((e) => e.textContent);
+  const nav = () => within(screen.getByRole("navigation", { name: "Issue filters" }));
+
+  it("leaves the issue opened from an objective in view, not scrolled back to the top", () => {
+    const calls: string[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      calls.push(
+        `into:${(this as HTMLElement).dataset.issue ?? (this as HTMLElement).dataset.objective}`,
+      );
+    };
+    Element.prototype.scrollTo = vi.fn(() => void calls.push("top"));
+    const { container } = page();
+    fireEvent.click(container.querySelector('[data-objective="service/release-fixes"]')!);
+    calls.splice(0);
+    fireEvent.click(
+      screen.getByRole("complementary", { name: "Release fixes" }).querySelector(".issue-ref")!,
+    );
+    expect(calls.at(-1)).toBe("into:10-06#1");
+  });
+
+  it("keeps a picked tag on show, to be cleared, once no issue has it", () => {
+    const one = [mod("m", { issues: [issue("a", { tags: ["崩溃"] }), issue("b")] })];
+    const { rerender } = render(
+      <BoardPage project={project} issues={one} sessions={new Map()} {...props} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Issues/ }));
+    fireEvent.click(nav().getByRole("button", { name: /^崩溃/ }));
+    expect(rows()).toEqual(["a"]);
+    rerender(
+      <BoardPage
+        project={project}
+        issues={[mod("m", { issues: [issue("b")] })]}
+        sessions={new Map()}
+        {...props}
+      />,
+    );
+    const chip = nav().getByRole("button", { name: /^崩溃/ });
+    expect(chip.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(chip);
+    expect(rows()).toEqual(["b"]);
+  });
+
+  it("shows a module's notes over its issues and with each of them", () => {
+    const m = [
+      mod("m", {
+        title: "Paths",
+        notes: "All paths go through one table.\n\nMore.",
+        issues: [issue("a")],
+      }),
+    ];
+    const { container } = render(
+      <BoardPage project={project} issues={m} sessions={new Map()} {...props} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Issues/ }));
+    expect(container.querySelector(".bi-module-notes")!.textContent).toBe(
+      "All paths go through one table.",
+    );
+    fireEvent.click(container.querySelector('[data-issue="a"]')!);
+    expect(screen.getByRole("complementary", { name: "Issue a" }).textContent).toContain("More.");
+  });
+
+  it("counts on each filter the rows it gives", () => {
+    const m = [
+      mod("m", {
+        issues: [
+          issue("a", { evidence: "H" }),
+          issue("b", { evidence: "H", state: "accepted" }),
+          issue("c", { evidence: "H", state: "accepted" }),
+        ],
+      }),
+    ];
+    render(<BoardPage project={project} issues={m} sessions={new Map()} {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: /^Issues/ }));
+    const h = nav().getByRole("button", { name: /^H / });
+    expect(h.textContent).toBe("H 1");
+    fireEvent.click(h);
+    expect(rows()).toEqual(["a"]);
+  });
+
+  it("shows an id that is in two modules once, and says so", () => {
+    const m = [
+      mod("one", { issues: [issue("F7")] }),
+      mod("two", { issues: [issue("F7", { text: "other" })] }),
+    ];
+    const { container } = render(
+      <BoardPage project={project} issues={m} sessions={new Map()} {...props} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Issues/ }));
+    expect(rows()).toEqual(["F7"]);
+    expect(container.querySelector(".bp-broken")!.textContent).toContain("F7");
+  });
+
+  it("links the issues an issue's text names", () => {
+    const m = [mod("m", { issues: [issue("a", { text: "Same root as b#1." }), issue("b#1")] })];
+    const { container } = render(
+      <BoardPage project={project} issues={m} sessions={new Map()} {...props} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Issues/ }));
+    fireEvent.click(container.querySelector('[data-issue="a"]')!);
+    fireEvent.click(
+      screen.getByRole("complementary", { name: "Issue a" }).querySelector(".issue-ref")!,
+    );
+    expect(screen.getByRole("complementary", { name: "Issue b#1" })).toBeTruthy();
+  });
+
+  it("brings an objective hidden by the board's filters back when an issue opens it", () => {
+    const p = {
+      ...project,
+      objectives: [o("x/done", { title: "Done one", status: "done" as const })],
+    };
+    const m = [mod("m", { issues: [issue("a", { objectives: ["x/done"] })] })];
+    const { container } = render(
+      <BoardPage project={p} issues={m} sessions={new Map()} {...props} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Issues/ }));
+    fireEvent.click(container.querySelector('[data-issue="a"]')!);
+    fireEvent.click(screen.getByRole("button", { name: "Done one" }));
+    expect(container.querySelector('[data-objective="x/done"]')!.classList).toContain("selected");
+  });
+});
+
+describe("issue text edge cases from review", () => {
+  it("never breaks markdown over a bad issue link, nor makes one outside the board", () => {
+    const { container } = render(<MdBlock>{"[x](#issue:%E0) and [y](#issue:F7)"}</MdBlock>);
+    expect(container.querySelector(".issue-ref")).toBeNull();
+    expect(container.textContent).toContain("x and y");
+  });
+
+  it("summarise an issue that opens with code by its code", () => {
+    expect(issueSummary("```cpp\nint x;\n\nint y;\n```\n\nbody")).toBe("int x;");
+    expect(issueSummary("## Repro\n\nSteps")).toBe("Repro");
+  });
+
+  it("match an id followed by a dash and more as part of something else, and no ids too short to tell", () => {
+    const pattern = issueIdPattern(["F7", "1"])!;
+    expect([..."F7-A F7. 1 x".matchAll(pattern)].map((m) => m[0])).toEqual(["F7"]);
   });
 });
