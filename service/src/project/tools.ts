@@ -655,14 +655,15 @@ function issueTools(api: PanelApi, id: string): PanelTool[] {
       name: "write_issues",
       description:
         "Create issues or change them, many in one call: only the fields given change. Nothing is written when one of them is refused.",
-      shape: { issues: z.array(z.object(ISSUE_FIELDS)) },
+      shape: { issues: z.array(z.object(ISSUE_FIELDS).strict()) },
       handler: (a) =>
         run(() =>
           api.writeIssues(
             id,
             (Array.isArray(a.issues) ? a.issues : []).map((x: Record<string, unknown>) => ({
-              ...(typeof x.id === "string" && { id: x.id }),
-              ...(typeof x.module === "string" && { module: x.module }),
+              // An empty id or module is one not given.
+              ...(typeof x.id === "string" && x.id && { id: x.id }),
+              ...(typeof x.module === "string" && x.module && { module: x.module }),
               ...(typeof x.group === "string" && { group: x.group }),
               ...(typeof x.state === "string" && { state: x.state as IssueState }),
               ...(typeof x.evidence === "string" && { evidence: x.evidence as Evidence | "" }),
@@ -689,7 +690,7 @@ function issueTools(api: PanelApi, id: string): PanelTool[] {
         run(() =>
           api.writeIssueGroup(id, {
             module: String(a.module),
-            ...(typeof a.group === "string" && { group: a.group }),
+            ...(typeof a.group === "string" && a.group && { group: a.group }),
             ...(typeof a.title === "string" && { title: a.title }),
             ...(typeof a.notes === "string" && { notes: a.notes }),
             ...(Array.isArray(a.objectives) && { objectives: a.objectives.map(String) }),

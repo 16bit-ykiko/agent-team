@@ -43,6 +43,8 @@ const OUTPUT_CAP = 60_000;
 const CELL_CAP = 1000;
 const SQL_ROWS = 200;
 const ENTRIES_SHOWN = 60;
+// Open issues read_objective lists.
+const ISSUES_SHOWN = 30;
 
 // A long-lived lead has the whole project in its context.
 export const LEAD_MODEL = "claude-opus-5-5";
@@ -135,8 +137,13 @@ export class ProjectManager {
   issueSets(): Record<string, ModuleEntry[]> {
     const out: Record<string, ModuleEntry[]> = {};
     for (const p of this.store.list()) {
-      const modules = this.issues(p.id).list();
-      if (modules.length) out[p.id] = modules;
+      // A connect must never fail over one project's files.
+      try {
+        const modules = this.issues(p.id).list();
+        if (modules.length) out[p.id] = modules;
+      } catch (e) {
+        console.error(`[projects] ${p.id}: issues not read`, e);
+      }
     }
     return out;
   }
@@ -154,6 +161,7 @@ export class ProjectManager {
       });
       project.leadWorkspaceId = lead.id;
       this.store.save(project);
+      this.issues(project.id);
       const preset = AGENT_PRESETS[0];
       this.host.addAgent(lead, "Lead", model, preset.avatar, preset.color);
     } catch (e) {
@@ -344,6 +352,16 @@ export class ProjectManager {
   private issueBoard(id: string): IssueBoard {
     this.require(id);
     return new IssueBoard(this.issues(id), () => this.objectives(id));
+  }
+
+  // The clients hear of it even when a write failed halfway.
+  private changingIssues(id: string, change: (board: IssueBoard) => string): string {
+    const board = this.issueBoard(id);
+    try {
+      return change(board);
+    } finally {
+      this.issuesChanged(id);
+    }
   }
 
   private issuesChanged(id: string): void {
@@ -1134,10 +1152,12 @@ export class ProjectManager {
     const issues = this.issueBoard(projectId).linked().get(o.id);
     if (issues) {
       out.push("", "issues:");
-      for (const { issue: x } of issues.open) {
+      for (const { issue: x } of issues.open.slice(0, ISSUES_SHOWN)) {
         const flags = [x.state !== "open" && x.state, x.evidence].filter(Boolean).join(", ");
         out.push(`- ${x.id}${flags ? ` [${flags}]` : ""} ${oneLine(x.text, 140)}`);
       }
+      const more = issues.open.length - ISSUES_SHOWN;
+      if (more > 0) out.push(`(${more} more: list_issues with objective ${o.id})`);
       if (issues.accepted) out.push(`(${issues.accepted} accepted: list_issues with states)`);
     }
     if (o.notes) out.push("", "notes:", o.notes);
@@ -1393,21 +1413,9 @@ export class ProjectManager {
     },
     listIssues: (pid, filter) => this.issueBoard(pid).list(filter),
     readIssue: (pid, t) => this.issueBoard(pid).read(t.id, t.module, t.group),
-    writeIssues: (pid, patches) => {
-      const result = this.issueBoard(pid).write(patches);
-      this.issuesChanged(pid);
-      return result;
-    },
-    writeIssueGroup: (pid, patch) => {
-      const result = this.issueBoard(pid).writeGroup(patch);
-      this.issuesChanged(pid);
-      return result;
-    },
-    closeIssues: (pid, ids, fixedBy) => {
-      const result = this.issueBoard(pid).close(ids, fixedBy);
-      this.issuesChanged(pid);
-      return result;
-    },
+    writeIssues: (pid, patches) => this.changingIssues(pid, (b) => b.write(patches)),
+    writeIssueGroup: (pid, patch) => this.changingIssues(pid, (b) => b.writeGroup(patch)),
+    closeIssues: (pid, ids, fixedBy) => this.changingIssues(pid, (b) => b.close(ids, fixedBy)),
     listProjects: (pid) => {
       this.require(pid);
       return this.listProjects(pid);

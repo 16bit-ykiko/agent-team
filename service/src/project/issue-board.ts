@@ -2,9 +2,9 @@ import { checkId, type Objective } from "./objectives";
 import {
   EVIDENCE,
   GROUP_PATTERN,
-  ISSUE_ID_PATTERN,
   ISSUE_STATES,
   checkModuleId,
+  isIssueId,
   linkedObjectives,
   locate,
   type Evidence,
@@ -14,6 +14,7 @@ import {
   type IssueState,
   type IssueStore,
   type Located,
+  type ModuleEntry,
 } from "./issues";
 
 // What the issue tools do over one project's IssueStore, as text for the
@@ -67,7 +68,7 @@ export class IssueBoard {
   list(f: IssueFilter): string {
     const entries = this.store.list();
     const modules = entries.filter((m): m is IssueModule => !("error" in m));
-    if (f.module) this.module(modules, f.module);
+    if (f.module) this.module(entries, f.module);
     const states = f.states?.length ? f.states : OPEN;
     const q = f.query?.toLowerCase();
     const keep = (at: Located) =>
@@ -80,12 +81,21 @@ export class IssueBoard {
     const out: string[] = [
       summary(
         all.map((x) => x.issue),
-        modules.length,
+        entries,
       ),
     ];
     let shown = 0;
     let cut = 0;
     let size = 0;
+    // Line by line, so a module too large for the listing is cut, not left out.
+    const put = (line: string, issue: boolean) => {
+      if (size + line.length > OUTPUT_CAP) {
+        if (issue) cut++;
+        return;
+      }
+      out.push(line);
+      size += line.length + 1;
+    };
     for (const m of modules) {
       if (f.module && m.id !== f.module) continue;
       const parts: Array<{ group?: IssueGroup; items: Located[] }> = [
@@ -95,25 +105,18 @@ export class IssueBoard {
           items: group.issues.map((issue) => ({ issue, module: m, group })),
         })),
       ];
-      const lines: string[] = [];
-      for (const { group, items } of parts) {
-        const kept = items.filter(keep);
-        if (kept.length === 0) continue;
+      const kept = parts.map((p) => ({ ...p, items: p.items.filter(keep) }));
+      if (kept.every((p) => p.items.length === 0)) continue;
+      put(`\n## ${m.id} — ${m.title}`, false);
+      for (const { group, items } of kept) {
+        if (items.length === 0) continue;
         if (group) {
           const notes = group.notes ? ` — ${oneLine(group.notes, 200)}` : "";
-          lines.push(`### ${m.id}/${group.id} ${group.title}${notes}`);
+          put(`### ${m.id}/${group.id} ${group.title}${notes}`, false);
         }
-        for (const at of kept) lines.push(issueLine(at.issue));
-        shown += kept.length;
+        for (const at of items) put(issueLine(at.issue), true);
+        shown += items.length;
       }
-      if (lines.length === 0) continue;
-      const block = [`\n## ${m.id} — ${m.title}`, ...lines].join("\n");
-      if (size + block.length > OUTPUT_CAP) {
-        cut += lines.filter((l) => l.startsWith("- ")).length;
-        continue;
-      }
-      out.push(block);
-      size += block.length;
     }
     for (const b of entries.filter((m) => "error" in m)) {
       out.push(`- ${b.id}.toml UNREADABLE: ${"error" in b ? b.error : ""}`);
@@ -125,10 +128,13 @@ export class IssueBoard {
 
   // One issue in full, or a module (or one of its groups) with all its
   // issues in full.
+  // A broken file does not keep the others from being read.
   read(id?: string, moduleId?: string, groupId?: string): string {
-    const modules = this.modules();
+    const entries = this.store.list();
+    const modules = entries.filter((m): m is IssueModule => !("error" in m));
     if (id) {
-      const at = this.find(modules, id);
+      const broken = entries.filter((m) => "error" in m).map((m) => `${m.id}.toml`);
+      const at = this.find(modules, id, broken);
       const objectives = new Map(this.objectives().map((o) => [o.id, o]));
       const ref = (oid: string) => {
         const o = objectives.get(oid);
@@ -149,7 +155,7 @@ export class IssueBoard {
       ].join("\n");
     }
     if (!moduleId) throw new Error("Give an issue id, or a module (and group)");
-    const m = this.module(modules, moduleId);
+    const m = this.module(entries, moduleId);
     const group = groupId === undefined ? undefined : this.group(m, groupId);
     const out = [`# ${m.id} — ${m.title}`];
     if (m.objectives.length) out.push(`objectives: ${m.objectives.join(", ")}`);
@@ -172,13 +178,19 @@ export class IssueBoard {
     if (patches.length === 0) return "Nothing to write.";
     const modules = new Map(this.modules().map((m) => [m.id, structuredClone(m)]));
     const touched = new Set<string>();
+    // Modules an issue moved out of: written last, so a write that fails
+    // leaves it in two places (which the tools point out) rather than none.
+    const left = new Set<string>();
+    const kept: string[] = [];
     const out: string[] = [];
     const known = new Set(this.objectives().map((o) => o.id));
     const unknown = new Set<string>();
+    // Named anywhere in the batch: not to be handed out to a new one first.
+    const named = patches.flatMap((p) => (p.id === undefined ? [] : [p.id]));
     for (const [i, p] of patches.entries()) {
       const where = patches.length > 1 ? `issues[${i}]: ` : "";
       try {
-        if (p.id !== undefined && !ISSUE_ID_PATTERN.test(p.id)) {
+        if (p.id !== undefined && !isIssueId(p.id)) {
           throw new Error(`id "${p.id}": no spaces, at most 40 characters`);
         }
         if (p.state !== undefined && !ISSUE_STATES.includes(p.state)) {
@@ -204,7 +216,7 @@ export class IssueBoard {
           const m = this.module(all, p.module);
           const group = p.group ? this.group(m, p.group) : undefined;
           const issue: Issue = {
-            id: p.id ?? this.store.allocate(byId.keys()),
+            id: p.id ?? this.store.allocate([...byId.keys(), ...named]),
             state: p.state ?? "open",
             ...(p.evidence && { evidence: p.evidence }),
             tags: unique(p.tags ?? []),
@@ -213,6 +225,7 @@ export class IssueBoard {
           };
           (group ?? m).issues.push(issue);
           touched.add(m.id);
+          kept.push(issue.id);
           out.push(`Created ${issue.id} in ${m.id}${group ? `/${group.id}` : ""}.`);
           continue;
         }
@@ -246,6 +259,7 @@ export class IssueBoard {
         }
         touched.add(at.module.id);
         touched.add(target.id);
+        if (target !== at.module) left.add(at.module.id);
         const moved =
           to !== from ? ` Moved to ${target.id}${targetGroup ? `/${targetGroup.id}` : ""}.` : "";
         out.push(`Updated ${issue.id}.${moved}`);
@@ -253,7 +267,8 @@ export class IssueBoard {
         throw new Error(`${where}${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    this.save(modules, touched);
+    this.save(modules, touched, left);
+    this.store.reserve(kept);
     if (unknown.size) out.push(`Not objectives (yet): ${[...unknown].join(", ")}.`);
     return out.join("\n");
   }
@@ -273,6 +288,7 @@ export class IssueBoard {
       touched.add(at.module.id);
     }
     this.save(modules, touched);
+    this.store.reserve(found.map((x) => x.issue.id));
     return [
       `Closed ${found.map((x) => x.issue.id).join(", ")}, fixed by ${fixedBy.trim()}.`,
       ...found.flatMap((at) => [
@@ -364,11 +380,12 @@ export class IssueBoard {
 
   // One line for project_status.
   summary(): string {
-    const modules = this.store.list().filter((m): m is IssueModule => !("error" in m));
-    if (modules.length === 0) return "(none)";
+    const entries = this.store.list();
+    if (entries.length === 0) return "(none)";
+    const modules = entries.filter((m): m is IssueModule => !("error" in m));
     return summary(
       [...locate(modules).byId.values()].map((x) => x.issue),
-      modules.length,
+      entries,
     );
   }
 
@@ -385,9 +402,10 @@ export class IssueBoard {
     return entries as IssueModule[];
   }
 
-  private module(modules: IssueModule[], id: string): IssueModule {
+  private module(modules: ModuleEntry[], id: string): IssueModule {
     checkModuleId(id);
     const m = modules.find((x) => x.id === id);
+    if (m && "error" in m) throw new Error(`${id}.toml cannot be read: ${m.error}`);
     if (!m) {
       const names = modules.map((x) => x.id).join(", ");
       throw new Error(
@@ -406,17 +424,25 @@ export class IssueBoard {
     return g;
   }
 
-  private find(modules: IssueModule[], id: string): Located {
+  private find(modules: IssueModule[], id: string, broken: string[] = []): Located {
     const { byId, twice } = locate(modules);
     if (twice.has(id)) throw new Error(`${id} is in more than one place; fix the files by hand`);
     const at = byId.get(id);
-    if (!at) throw new Error(`No issue ${id}`);
+    if (!at) {
+      const maybe = broken.length ? ` (${broken.join(", ")} cannot be read and may hold it)` : "";
+      throw new Error(`No issue ${id}${maybe}`);
+    }
     return at;
   }
 
-  private save(modules: Map<string, IssueModule>, touched: Set<string>): void {
+  private save(
+    modules: Map<string, IssueModule>,
+    touched: Set<string>,
+    last: Set<string> = new Set(),
+  ): void {
     const now = Date.now();
-    for (const id of touched) this.store.write({ ...modules.get(id)!, updatedAt: now });
+    const order = [...touched].sort((a, b) => Number(last.has(a)) - Number(last.has(b)));
+    this.store.writeAll(order.map((id) => ({ ...modules.get(id)!, updatedAt: now })));
   }
 }
 
@@ -429,9 +455,14 @@ function issueLine(x: Issue): string {
   return `- ${x.id}${f.length ? ` [${f.join(", ")}]` : ""} ${oneLine(x.text, LINE_TEXT)}`;
 }
 
-function summary(issues: Issue[], modules: number): string {
+function summary(issues: Issue[], entries: ModuleEntry[]): string {
   const n = (s: IssueState) => issues.filter((x) => x.state === s).length;
-  return `${n("open")} open, ${n("decision")} to decide, ${n("accepted")} accepted, in ${modules} module${modules === 1 ? "" : "s"}.`;
+  const modules = entries.filter((m) => !("error" in m)).length;
+  const broken = entries.length - modules;
+  return (
+    `${n("open")} open, ${n("decision")} to decide, ${n("accepted")} accepted, in ${modules} module${modules === 1 ? "" : "s"}` +
+    (broken ? `; ${broken} unreadable (list_issues names ${broken === 1 ? "it" : "them"}).` : ".")
+  );
 }
 
 function unique(v: string[]): string[] {

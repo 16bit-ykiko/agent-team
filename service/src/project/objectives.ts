@@ -195,7 +195,7 @@ export class ObjectiveStore {
     this.watcher = new DirWatcher(
       () => {
         const archive = path.join(this.dir, ARCHIVE);
-        const dirs = [this.dir, ...this.areaDirs(this.dir)];
+        const dirs = [path.dirname(this.dir), this.dir, ...this.areaDirs(this.dir)];
         if (fs.existsSync(archive)) dirs.push(archive, ...this.areaDirs(archive));
         return dirs;
       },
@@ -288,7 +288,7 @@ const TASK_KEYS = new Set(["id", "text", "state", "session"]);
 const DECISION_KEYS = new Set(["id", "question", "outcome"]);
 
 export function parse(id: string, text: string, mtimeMs = Date.now()): Objective {
-  const raw = TOML.parse(text) as Record<string, unknown>;
+  const raw = TOML.parse(text.replace(/^\uFEFF/, "")) as Record<string, unknown>;
   // A misspelt key (depends = …) would otherwise vanish without a trace.
   for (const key of Object.keys(raw)) if (!KEYS.has(key)) throw new Error(`unknown key ${key}`);
   const str = (key: string, required = false): string | undefined => {

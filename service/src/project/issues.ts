@@ -61,10 +61,19 @@ export type ModuleEntry = IssueModule | BrokenModule;
 
 export const MODULE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 export const GROUP_PATTERN = /^[a-z0-9][a-z0-9.-]*$/;
-export const ISSUE_ID_PATTERN = /^\S{1,40}$/;
+const ISSUE_ID_PATTERN = /^\S{1,40}$/;
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
-// Ids handed out per day, so a closed issue's number is never given again.
+// No spaces, and what TOML can hold: a lone surrogate would be written as
+// U+FFFD and come back as another id.
+export function isIssueId(id: string): boolean {
+  return ISSUE_ID_PATTERN.test(id) && !LONE_SURROGATE.test(id);
+}
+
+// The highest number of each day ever in use, so a closed issue's number
+// is never given again.
 const COUNTERS = ".ids.json";
+const DATED = /^(\d\d-\d\d)#(\d+)$/;
 
 export function checkModuleId(id: string): void {
   if (!MODULE_PATTERN.test(id)) {
@@ -83,7 +92,11 @@ export class IssueStore {
   list(): ModuleEntry[] {
     const out: ModuleEntry[] = [];
     const present = new Set<string>();
-    for (const { file, id } of this.files()) {
+    for (const { file, id, dir } of this.files()) {
+      if (dir) {
+        out.push({ id, error: "a directory: module files go right in issues/" });
+        continue;
+      }
       let key: string;
       try {
         const st = fs.statSync(file);
@@ -119,19 +132,31 @@ export class IssueStore {
     return value;
   }
 
-  // Never over a file that cannot be read, and never a file that would not
-  // read back.
   write(m: IssueModule): void {
-    checkModuleId(m.id);
-    const file = this.fileOf(m.id);
-    if (fs.existsSync(file) && "error" in this.read(file, m.id)) {
-      throw new Error(`${m.id} cannot be read; fix the file first`);
+    this.writeAll([m]);
+  }
+
+  // In this order, each checked first: never over a file that cannot be
+  // read, and never a file that would not read back.
+  writeAll(modules: IssueModule[]): void {
+    const texts = modules.map((m) => {
+      checkModuleId(m.id);
+      const file = this.fileOf(m.id);
+      if (fs.existsSync(file) && "error" in this.read(file, m.id)) {
+        throw new Error(`${m.id} cannot be read; fix the file first`);
+      }
+      const text = serializeModule(m);
+      parseModule(m.id, text);
+      return { file, text };
+    });
+    try {
+      for (const { file, text } of texts) {
+        this.put(file, text);
+        this.cache.delete(file);
+      }
+    } finally {
+      this.watcher?.settled();
     }
-    const text = serializeModule(m);
-    parseModule(m.id, text);
-    this.put(file, text);
-    this.cache.delete(file);
-    this.watcher?.settled();
   }
 
   remove(id: string): void {
@@ -143,32 +168,47 @@ export class IssueStore {
   }
 
   // The next MM-DD#N of `day` (the server's local date), past every number
-  // of that day in use or ever handed out.
+  // of that day in `taken` or ever reserved. Writes nothing: reserve() what
+  // is kept.
   allocate(taken: Iterable<string>, day = new Date()): string {
     const prefix = `${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
-    const file = path.join(this.dir, COUNTERS);
-    let counters: Record<string, number> = {};
-    try {
-      const raw: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
-      if (raw && typeof raw === "object") counters = raw as Record<string, number>;
-    } catch {
-      // None yet, or unreadable: the ids in use still count.
-    }
-    let n = Number(counters[prefix]) || 0;
+    let n = Number(this.counters()[prefix]) || 0;
     for (const id of taken) {
-      const m = /^(\d\d-\d\d)#(\d+)$/.exec(id);
+      const m = DATED.exec(id);
       if (m?.[1] === prefix) n = Math.max(n, Number(m[2]));
     }
-    counters[prefix] = n + 1;
-    this.put(file, JSON.stringify(counters) + "\n");
     return `${prefix}#${n + 1}`;
   }
 
+  // Ids that were in use: their numbers are never handed out again, even
+  // once their issues are closed.
+  reserve(ids: Iterable<string>): void {
+    const counters = this.counters();
+    let changed = false;
+    for (const id of ids) {
+      const m = DATED.exec(id);
+      if (!m || (Number(counters[m[1]]) || 0) >= Number(m[2])) continue;
+      counters[m[1]] = Number(m[2]);
+      changed = true;
+    }
+    if (changed) this.put(path.join(this.dir, COUNTERS), JSON.stringify(counters) + "\n");
+  }
+
+  private counters(): Record<string, number> {
+    try {
+      const raw: unknown = JSON.parse(fs.readFileSync(path.join(this.dir, COUNTERS), "utf-8"));
+      if (raw && typeof raw === "object") return raw as Record<string, number>;
+    } catch {
+      // None yet, or unreadable: the ids in use still count.
+    }
+    return {};
+  }
+
+  // The directory need not be there: the project's own is watched too.
   watch(onChange: () => void): void {
-    fs.mkdirSync(this.dir, { recursive: true });
     this.watcher?.close();
     this.watcher = new DirWatcher(
-      () => [this.dir],
+      () => [path.dirname(this.dir), this.dir],
       () => filesSignature(this.files().map((f) => f.file)),
       onChange,
       this.dir,
@@ -191,17 +231,25 @@ export class IssueStore {
     return path.join(this.dir, `${id}.toml`);
   }
 
-  private files(): Array<{ file: string; id: string }> {
-    let names: string[];
+  // Module files, and the directories beside them (a copy one level too
+  // deep) to point out.
+  private files(): Array<{ file: string; id: string; dir?: boolean }> {
+    let entries: fs.Dirent[];
     try {
-      names = fs.readdirSync(this.dir);
+      entries = fs.readdirSync(this.dir, { withFileTypes: true });
     } catch {
       return [];
     }
     // Editor lock and backup files start with a dot.
-    return names
-      .filter((f) => f.endsWith(".toml") && !f.startsWith("."))
-      .map((f) => ({ file: path.join(this.dir, f), id: f.slice(0, -".toml".length) }));
+    return entries
+      .filter((e) => !e.name.startsWith("."))
+      .flatMap((e) =>
+        e.isDirectory()
+          ? [{ file: path.join(this.dir, e.name), id: e.name, dir: true }]
+          : e.name.endsWith(".toml")
+            ? [{ file: path.join(this.dir, e.name), id: e.name.slice(0, -".toml".length) }]
+            : [],
+      );
   }
 
   private read(file: string, id: string): ModuleEntry {
@@ -253,7 +301,7 @@ function fields(raw: Raw, allowed: Set<string>, where: string) {
 function parseIssue(raw: Raw, where: string): Issue {
   const f = fields(raw, ISSUE_KEYS, where);
   const id = f.str("id", true)!;
-  if (!ISSUE_ID_PATTERN.test(id)) throw new Error(`${where}id "${id}": no spaces, at most 40`);
+  if (!isIssueId(id)) throw new Error(`${where}id "${id}": no spaces, at most 40`);
   const state = f.str("state") ?? "open";
   if (!ISSUE_STATES.includes(state as IssueState)) {
     throw new Error(`${where}state must be one of ${ISSUE_STATES.join(", ")}`);
@@ -273,7 +321,7 @@ function parseIssue(raw: Raw, where: string): Issue {
 }
 
 export function parseModule(id: string, text: string, mtimeMs = Date.now()): IssueModule {
-  const raw = TOML.parse(text) as Raw;
+  const raw = TOML.parse(text.replace(/^\uFEFF/, "")) as Raw;
   const f = fields(raw, MODULE_KEYS, "");
   const issues = f.tables("issues").map((r, i) => parseIssue(r, `issues[${i}].`));
   const groups = f.tables("groups").map((r, i): IssueGroup => {

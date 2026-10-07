@@ -61,4 +61,27 @@ describe("panel tools via createSdkMcpServer", () => {
     console.log(JSON.stringify(res), JSON.stringify(calls));
     expect(calls).toContainEqual(["readSession", "p1", "ws-1", 3, undefined, false, false]);
   });
+
+  it("passes write_issues its patches, and refuses a misspelt field in one", async () => {
+    const call = (issues: unknown[], id: number) =>
+      handlers.get("tools/call")!(
+        {
+          method: "tools/call",
+          params: { name: "write_issues", arguments: { issues } },
+          jsonrpc: "2.0",
+          id,
+        },
+        extra,
+      );
+    await call([{ id: "a#1", evidence: "", group: "", tags: ["低"], module: "" }], 3);
+    expect(calls).toContainEqual([
+      "writeIssues",
+      "p1",
+      [{ id: "a#1", evidence: "", group: "", tags: ["低"] }],
+    ]);
+    const before = calls.length;
+    const res = await call([{ id: "a#1", evidance: "R" }], 4);
+    expect(res.isError).toBe(true);
+    expect(calls).toHaveLength(before);
+  });
 });

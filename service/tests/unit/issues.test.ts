@@ -73,6 +73,8 @@ describe("issue files", () => {
     const store = new IssueStore(tmpDir());
     const day = new Date(2026, 9, 7);
     expect(store.allocate(["10-07#19", "10-06#40", "F71"], day)).toBe("10-07#20");
+    expect(store.allocate([], day)).toBe("10-07#1");
+    store.reserve(["10-07#20", "10-07#3", "F71"]);
     expect(store.allocate([], day)).toBe("10-07#21");
     expect(store.allocate([], new Date(2026, 9, 8))).toBe("10-08#1");
   });
@@ -280,5 +282,172 @@ describe("issue tools", () => {
     for (let i = 0; i < 100 && !frames.some((f) => f.type === "project_issues"); i++) await tick();
     const edited = frames.find((f) => f.type === "project_issues") as { modules: IssueModule[] };
     expect(edited.modules.find((m) => m.id === "paths")!.issues[0].text).toBe("by hand");
+  });
+});
+
+describe("issue edge cases from review", () => {
+  async function board() {
+    const env = setup();
+    const { project, lead } = env.create("clice");
+    await env.call(lead, "write_issue_group", { module: "a", title: "A" });
+    await env.call(lead, "write_issue_group", { module: "b", title: "B" });
+    const dir = path.join(env.base, ".agent-team", "projects", project.id, "issues");
+    return { ...env, lead, dir, pid: project.id };
+  }
+  const today = () => {
+    const d = new Date();
+    return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+
+  it("keep an issue moved to a module whose file cannot be written", async () => {
+    const { call, lead, dir } = await board();
+    await call(lead, "write_issues", { issues: [{ id: "x#1", module: "a", text: "t" }] });
+    fs.mkdirSync(path.join(dir, `b.toml.${process.pid}.tmp`));
+    await expect(
+      call(lead, "write_issues", { issues: [{ id: "x#1", module: "b" }] }),
+    ).rejects.toThrow();
+    const files = ["a", "b"].map((m) => fs.readFileSync(path.join(dir, `${m}.toml`), "utf-8"));
+    expect(files.some((t) => t.includes('"x#1"'))).toBe(true);
+  });
+
+  it("never give a number twice: not one named later in the batch, nor a closed one, nor one a refused batch took", async () => {
+    const { call, lead } = await board();
+    const d = today();
+    const made = await call(lead, "write_issues", {
+      issues: [
+        { module: "a", text: "A" },
+        { id: `${d}#1`, module: "a", text: "B" },
+      ],
+    });
+    expect(made).toBe(`Created ${d}#2 in a.\nCreated ${d}#1 in a.`);
+    await call(lead, "close_issues", { ids: [`${d}#2`, `${d}#1`], fixed_by: "PR #1" });
+    await expect(
+      call(lead, "write_issues", {
+        issues: [
+          { module: "a", text: "x" },
+          { module: "nope", text: "y" },
+        ],
+      }),
+    ).rejects.toThrow(/No module nope/);
+    expect(await call(lead, "write_issues", { issues: [{ module: "a", text: "C" }] })).toBe(
+      `Created ${d}#3 in a.`,
+    );
+  });
+
+  it("refuse an id that would not read back", async () => {
+    const { call, lead } = await board();
+    await expect(
+      call(lead, "write_issues", { issues: [{ id: "\uD800", module: "a", text: "t" }] }),
+    ).rejects.toThrow(/id/);
+  });
+
+  it("read a file saved with a byte order mark", () => {
+    expect(parseModule("m", '﻿title = "B"\n').title).toBe("B");
+  });
+
+  it("still read the good modules beside an unreadable one, and say there is one", async () => {
+    const { call, lead, dir } = await board();
+    await call(lead, "write_issues", { issues: [{ id: "g#1", module: "a", text: "good" }] });
+    fs.writeFileSync(path.join(dir, "c.toml"), "title = ");
+    expect(await call(lead, "read_issue", { id: "g#1" })).toContain("good");
+    await expect(call(lead, "list_issues", { module: "c" })).rejects.toThrow(
+      /c\.toml cannot be read/,
+    );
+    expect(await call(lead, "project_status")).toMatch(/## Issues\n.*1 unreadable/);
+  });
+
+  it("take an empty id, module or group for one not given, and refuse unknown fields", async () => {
+    const { call, lead } = await board();
+    await call(lead, "write_issues", { issues: [{ id: "e#1", module: "a", text: "t" }] });
+    expect(
+      await call(lead, "write_issues", { issues: [{ id: "e#1", module: "", text: "u" }] }),
+    ).toBe("Updated e#1.");
+    expect(
+      await call(lead, "write_issues", { issues: [{ id: "", module: "a", text: "n" }] }),
+    ).toMatch(/^Created \d\d-\d\d#1 in a\.$/);
+    expect(await call(lead, "write_issue_group", { module: "a", group: "", notes: "n" })).toBe(
+      "Updated module a.",
+    );
+  });
+
+  it("show a module too large for one listing cut, not left out", async () => {
+    const { call, lead } = await board();
+    const long = "x".repeat(150);
+    await call(lead, "write_issues", {
+      issues: Array.from({ length: 500 }, (_, i) => ({ id: `l#${i}`, module: "a", text: long })),
+    });
+    const list = await call(lead, "list_issues", { module: "a" });
+    expect(list).toContain("- l#0 ");
+    expect(list).toMatch(/more not shown/);
+  });
+
+  it("cap the issues an objective lists", async () => {
+    const { call, lead } = await board();
+    await call(lead, "write_objective", { id: "x/y", title: "Y", goal: "g" });
+    await call(lead, "write_issue_group", { module: "a", objectives: ["x/y"] });
+    await call(lead, "write_issues", {
+      issues: Array.from({ length: 50 }, (_, i) => ({ id: `o#${i}`, module: "a", text: "t" })),
+    });
+    const read = await call(lead, "read_objective", { id: "x/y" });
+    expect(read.split("\n").filter((l) => l.startsWith("- o#"))).toHaveLength(30);
+    expect(read).toContain("(20 more: list_issues with objective x/y)");
+  });
+
+  it("see hand edits after the issues dir is replaced whole", async () => {
+    const { manager, frames, dir } = await board();
+    manager.issueSets();
+    const fresh = `${dir}.new`;
+    fs.mkdirSync(fresh);
+    fs.writeFileSync(path.join(fresh, "c.toml"), 'title = "C"\n');
+    fs.rmSync(dir, { recursive: true });
+    fs.renameSync(fresh, dir);
+    for (let i = 0; i < 100 && !frames.some((f) => f.type === "project_issues"); i++) await tick();
+    frames.splice(0);
+    for (let i = 0; i < 60; i++) await tick();
+    fs.writeFileSync(path.join(dir, "d.toml"), 'title = "D"\n');
+    const seen = () =>
+      frames.some(
+        (f) =>
+          f.type === "project_issues" && (f.modules as IssueModule[]).some((m) => m.id === "d"),
+      );
+    for (let i = 0; i < 100 && !seen(); i++) await tick();
+    expect(seen()).toBe(true);
+  });
+
+  it("never fail a client's connect over an issues path that is a file", () => {
+    const env = setup();
+    const { project } = env.create("x");
+    fs.writeFileSync(path.join(env.base, ".agent-team", "projects", project.id, "issues"), "");
+    expect(() => env.manager.issueSets()).not.toThrow();
+  });
+
+  it("watch a new project's issues from the start", async () => {
+    const env = setup();
+    const { project } = env.create("x");
+    const dir = path.join(env.base, ".agent-team", "projects", project.id, "issues");
+    for (let i = 0; i < 60; i++) await tick();
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "c.toml"), 'title = "C"\n');
+    const seen = () => env.frames.some((f) => f.type === "project_issues");
+    for (let i = 0; i < 100 && !seen(); i++) await tick();
+    expect(seen()).toBe(true);
+  });
+
+  it("report a module dir inside issues/ instead of passing over it", () => {
+    const dir = tmpDir();
+    fs.mkdirSync(path.join(dir, "out"));
+    fs.writeFileSync(path.join(dir, "out", "a.toml"), 'title = "A"\n');
+    expect(new IssueStore(dir).list()).toEqual([
+      { id: "out", error: expect.stringMatching(/directory/) as string },
+    ]);
+  });
+
+  it("do not echo the tools' own writes back from the watcher", async () => {
+    const { call, lead, frames } = await board();
+    for (let i = 0; i < 60; i++) await tick();
+    frames.splice(0);
+    await call(lead, "write_issues", { issues: [{ id: "n#1", module: "a", text: "t" }] });
+    for (let i = 0; i < 80; i++) await tick();
+    expect(frames.filter((f) => f.type === "project_issues")).toHaveLength(1);
   });
 });
