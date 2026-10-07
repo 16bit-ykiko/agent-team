@@ -3,6 +3,7 @@ import {
   useServer,
   type Message,
   type AgentInfo,
+  type IssueModules,
   type MessageOrigin,
   type Project,
   type Workspace,
@@ -113,12 +114,14 @@ async function uploadImage(file: File): Promise<{ name: string; url: string }> {
 // Paging back to a search hit: the server's maximum page, and how far back
 // to go before giving up.
 const JUMP_PAGE = 200;
+const NO_ISSUES: IssueModules = [];
 const JUMP_MAX_PAGES = 10;
 
 export function App() {
   const {
     workspaces,
     projects,
+    issues,
     connected,
     presets,
     models,
@@ -1700,6 +1703,7 @@ export function App() {
         {boardProject && (
           <BoardPage
             project={boardProject}
+            issues={issues[boardProject.id] ?? NO_ISSUES}
             sessions={boardSessions}
             onClose={closeBoard}
             onOpenSession={openSessionFromBoard}

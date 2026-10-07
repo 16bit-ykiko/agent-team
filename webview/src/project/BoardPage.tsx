@@ -1,7 +1,13 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
-import type { Objective, ObjectiveStatus, Project, TaskState } from "../state/useServer";
-import { InlineMd, MdBlock } from "../chat/markdown";
+import type {
+  IssueModule,
+  IssueModules,
+  Objective,
+  ObjectiveStatus,
+  Project,
+  TaskState,
+} from "../state/useServer";
+import { InlineMd, IssueRefContext, MdBlock, type IssueRefs } from "../chat/markdown";
 import { isImeKeyEvent } from "../chat/ime";
 import { formatRelative } from "../format";
 import { Icon } from "../panels/Icon";
@@ -19,6 +25,19 @@ import {
   type BoardFilter,
   type Relations,
 } from "./board";
+import {
+  DEFAULT_ISSUE_FILTER,
+  isBrokenModule,
+  isOpen,
+  issueEntries,
+  issueIdPattern,
+  issueMatches,
+  issueSummary,
+  issuesByObjective,
+  type IssueEntry,
+  type IssueFilter,
+} from "./issues";
+import { DetailSection, IssueDetail, IssueList, IssueNav } from "./IssuesView";
 
 // A worker session as the board shows it.
 export interface SessionInfo {
@@ -50,12 +69,17 @@ function reveal(root: HTMLElement | null, id: string | null): void {
   el?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
 }
 
+const NO_ISSUES: IssueEntry[] = [];
+const NO_MODULES: IssueModules = [];
+
 // The project's objectives on a page of their own: areas on the left, the
 // objectives as cards or as a dependency graph in the middle, the selected
-// one in full on the right, and the archive of finished ones. Read-only:
-// the lead keeps the board, the user talks to it ("Ask the lead").
+// one in full on the right, and the archive of finished ones; its issues
+// the same way, a switch away. Read-only: the lead keeps the board, the
+// user talks to it ("Ask the lead").
 export const BoardPage = memo(function BoardPage({
   project,
+  issues = NO_MODULES,
   sessions,
   onClose,
   onOpenSession,
@@ -65,6 +89,7 @@ export const BoardPage = memo(function BoardPage({
   onDelete,
 }: {
   project: Project;
+  issues?: IssueModules;
   sessions: Map<string, SessionInfo>;
   onClose: () => void;
   onOpenSession: (workspaceId: string) => void;
@@ -74,6 +99,7 @@ export const BoardPage = memo(function BoardPage({
   onArchive?: (archived: boolean) => void;
   onDelete: () => void;
 }) {
+  const [mode, setMode] = useState<"objectives" | "issues">("objectives");
   const [view, setView] = useState<"list" | "graph">("list");
   const [filter, setFilter] = useState<BoardFilter>({
     area: null,
@@ -82,6 +108,8 @@ export const BoardPage = memo(function BoardPage({
     archive: false,
   });
   const [selected, setSelected] = useState<string | null>(null);
+  const [issueFilter, setIssueFilter] = useState<IssueFilter>(DEFAULT_ISSUE_FILTER);
+  const [selectedIssue, setSelectedIssue] = useState<string | null>(null);
   const pageRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -103,11 +131,55 @@ export const BoardPage = memo(function BoardPage({
   ) as Record<ObjectiveStatus, number>;
   const archivedCount = objectives.length - onBoard.length;
 
+  const modules = useMemo(
+    () => issues.filter((m): m is IssueModule => !isBrokenModule(m)),
+    [issues],
+  );
+  const brokenModules = issues.filter(isBrokenModule);
+  const entries = useMemo(() => issueEntries(issues), [issues]);
+  const byObjective = useMemo(() => issuesByObjective(entries), [entries]);
+  const shownIssues = useMemo(
+    () => entries.filter((e) => issueMatches(e, issueFilter)),
+    [entries, issueFilter],
+  );
+  const currentIssue = entries.find((e) => e.issue.id === selectedIssue) ?? null;
+  const issueFilterRef = useRef(issueFilter);
+  issueFilterRef.current = issueFilter;
+  const openIssues = entries.filter(isOpen).length;
+  const issueRefs = useMemo<IssueRefs | null>(() => {
+    const pattern = issueIdPattern(entries.map((e) => e.issue.id));
+    return pattern
+      ? {
+          pattern,
+          open: (id) => {
+            const e = entries.find((x) => x.issue.id === id);
+            setMode("issues");
+            setSelectedIssue(id);
+            // One the filter hides is shown with the defaults and its state.
+            if (e && !issueMatches(e, issueFilterRef.current)) {
+              setIssueFilter({
+                ...DEFAULT_ISSUE_FILTER,
+                states: [...new Set([...DEFAULT_ISSUE_FILTER.states, e.issue.state])],
+              });
+            }
+          },
+        }
+      : null;
+  }, [entries]);
+  const openObjective = (id: string) => {
+    setMode("objectives");
+    setSelected(id);
+  };
+  const detail = mode === "objectives" ? current : currentIssue;
+
   // A selection whose objective is gone (deleted by the lead) is dropped, so
   // it neither swallows the next Escape nor comes back by itself.
   useEffect(() => {
     if (selected && !current) setSelected(null);
   }, [selected, current]);
+  useEffect(() => {
+    if (selectedIssue && !currentIssue) setSelectedIssue(null);
+  }, [selectedIssue, currentIssue]);
 
   // Focus moves into the page and goes back where it was on close.
   useEffect(() => {
@@ -119,12 +191,18 @@ export const BoardPage = memo(function BoardPage({
   // A new view starts at its top-left.
   useEffect(() => {
     mainRef.current?.scrollTo?.(0, 0);
-  }, [view, filter.archive]);
+  }, [mode, view, filter.archive]);
 
   // Escape steps back: clears the search, then leaves the details, then the
   // page. Not while composing text, and not for a dialog over the page.
-  const state = useRef({ selected, search: filter.search, onClose });
-  state.current = { selected, search: filter.search, onClose };
+  const showIssues = mode === "issues";
+  const state = useRef({ issues: showIssues, selected, search: filter.search, onClose });
+  state.current = {
+    issues: showIssues,
+    selected: showIssues ? selectedIssue : selected,
+    search: showIssues ? issueFilter.search : filter.search,
+    onClose,
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.isComposing || e.defaultPrevented) return;
@@ -132,9 +210,11 @@ export const BoardPage = memo(function BoardPage({
       if (target instanceof Element && target.closest(".dialog-overlay")) return;
       const s = state.current;
       if (target === searchRef.current && s.search) {
-        setFilter((f) => ({ ...f, search: "" }));
+        if (s.issues) setIssueFilter((f) => ({ ...f, search: "" }));
+        else setFilter((f) => ({ ...f, search: "" }));
       } else if (s.selected) {
-        setSelected(null);
+        if (s.issues) setSelectedIssue(null);
+        else setSelected(null);
       } else {
         s.onClose();
       }
@@ -154,7 +234,7 @@ export const BoardPage = memo(function BoardPage({
     <div className="board-overlay" onClick={onClose}>
       <div
         ref={pageRef}
-        className={`board-page${current ? " has-detail" : ""}`}
+        className={`board-page${detail ? " has-detail" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={`${project.name} objectives`}
@@ -163,137 +243,202 @@ export const BoardPage = memo(function BoardPage({
       >
         <header className="bp-head">
           <ProjectName name={project.name} onRename={onRename} />
+          <div className="bp-views bp-modes" role="group" aria-label="Show">
+            <button aria-pressed={!showIssues} onClick={() => setMode("objectives")}>
+              Objectives
+            </button>
+            <button aria-pressed={showIssues} onClick={() => setMode("issues")}>
+              Issues{openIssues > 0 && <span className="bp-count">{openIssues}</span>}
+            </button>
+          </div>
           <span className="bp-summary">
-            {counts.active} active · {counts.later} later · {counts.done} done
+            {showIssues
+              ? `${entries.filter((e) => e.issue.state === "open").length} open · ${entries.filter((e) => e.issue.state === "decision").length} to decide · ${entries.filter((e) => e.issue.state === "accepted").length} accepted`
+              : `${counts.active} active · ${counts.later} later · ${counts.done} done`}
           </span>
           <input
             ref={searchRef}
             className="bp-search"
             type="search"
-            placeholder="Search objectives…"
-            value={filter.search}
-            onChange={(e) => setFilter((f) => ({ ...f, search: e.target.value }))}
+            placeholder={showIssues ? "Search issues…" : "Search objectives…"}
+            value={showIssues ? issueFilter.search : filter.search}
+            onChange={(e) =>
+              showIssues
+                ? setIssueFilter((f) => ({ ...f, search: e.target.value }))
+                : setFilter((f) => ({ ...f, search: e.target.value }))
+            }
           />
-          <div className="bp-views" role="group" aria-label="View">
-            <button aria-pressed={view === "list"} onClick={() => setView("list")}>
-              List
-            </button>
-            <button aria-pressed={view === "graph"} onClick={() => setView("graph")}>
-              Dependencies
-            </button>
-          </div>
+          {!showIssues && (
+            <div className="bp-views" role="group" aria-label="View">
+              <button aria-pressed={view === "list"} onClick={() => setView("list")}>
+                List
+              </button>
+              <button aria-pressed={view === "graph"} onClick={() => setView("graph")}>
+                Dependencies
+              </button>
+            </div>
+          )}
           <button className="side-panel-btn bp-close" aria-label="Close" onClick={onClose}>
             <Icon name="close" />
           </button>
         </header>
 
-        <div className="bp-body">
-          <nav className="bp-nav" aria-label="Filters">
-            <div className="bp-areas">
-              <button
-                className={`bp-area${filter.area === null ? " active" : ""}`}
-                onClick={() => setFilter((f) => ({ ...f, area: null }))}
-              >
-                <span className="bp-area-name">All areas</span>
-                <span className="bp-count">{inView}</span>
-              </button>
-              {areaCounts(objectives, filter).map((a) => (
-                <button
-                  key={a.area}
-                  className={`bp-area${filter.area === a.area ? " active" : ""}${a.count ? "" : " empty"}`}
-                  onClick={() => setFilter((f) => ({ ...f, area: a.area }))}
-                >
-                  <span className="bp-area-name">{a.area}</span>
-                  <span className="bp-count">{a.count}</span>
-                </button>
-              ))}
-            </div>
-            <div className="bp-statuses" role="group" aria-label="Status">
-              {STATUSES.map((s) => (
-                <button
-                  key={s}
-                  className={`bp-status-toggle st-${s}`}
-                  aria-pressed={!filter.archive && filter.statuses.includes(s)}
-                  disabled={filter.archive}
-                  onClick={() => toggleStatus(s)}
-                >
-                  {STATUS_LABEL[s]} <span className="bp-count">{counts[s]}</span>
-                </button>
-              ))}
-              <button
-                className="bp-status-toggle bp-archive-toggle"
-                aria-pressed={filter.archive}
-                onClick={() => {
-                  setSelected(null);
-                  setFilter((f) => ({ ...f, archive: !f.archive }));
-                }}
-              >
-                Archive <span className="bp-count">{archivedCount}</span>
-              </button>
-            </div>
-            {onArchive && (
-              <button className="bp-archive" onClick={() => onArchive(!project.archivedAt)}>
-                {project.archivedAt ? "Restore project" : "Archive project"}
-              </button>
-            )}
-            <button className="bp-delete" onClick={onDelete}>
-              Delete project
-            </button>
-          </nav>
-
-          <main className="bp-main" ref={mainRef}>
-            {!filter.archive &&
-              broken.map((b) => (
+        {showIssues ? (
+          <div className="bp-body">
+            <IssueNav
+              modules={modules}
+              entries={entries}
+              filter={issueFilter}
+              onFilter={setIssueFilter}
+            />
+            <main className="bp-main" ref={mainRef}>
+              {brokenModules.map((b) => (
                 <div key={b.id} className="bp-broken">
                   <strong>{b.id}.toml</strong> cannot be read: {b.error}
                 </div>
               ))}
-            {objectives.length === 0 ? (
-              broken.length === 0 && (
-                <div className="bp-empty">
-                  No objectives yet. Tell the lead what you want done, put off or dropped; it keeps
-                  the board.
-                </div>
-              )
-            ) : shown.length === 0 ? (
-              <div className="bp-empty">
-                {filter.archive && !filter.search && !filter.area
-                  ? "Nothing archived yet. Finished and dropped objectives land here when the lead files them away."
-                  : "Nothing matches."}
-              </div>
-            ) : view === "list" || filter.archive ? (
-              <ObjectiveList
-                objectives={shown}
-                rel={rel}
-                grouped={filter.area === null}
-                selected={selected}
-                sessions={sessions}
-                onSelect={setSelected}
-              />
-            ) : (
-              <DependencyGraph
-                objectives={shown}
-                rel={rel}
-                selected={selected}
-                onSelect={setSelected}
+              {entries.length === 0 ? (
+                brokenModules.length === 0 && (
+                  <div className="bp-empty">
+                    No issues yet. The agents record the known defects here, each with its evidence
+                    and the objectives that work on it, and delete one once its fix is merged.
+                  </div>
+                )
+              ) : shownIssues.length === 0 ? (
+                <div className="bp-empty">Nothing matches.</div>
+              ) : (
+                <IssueList
+                  shown={shownIssues}
+                  grouped={issueFilter.module === null}
+                  selected={selectedIssue}
+                  onSelect={setSelectedIssue}
+                />
+              )}
+            </main>
+            {currentIssue && (
+              <IssueDetail
+                key={currentIssue.issue.id}
+                entry={currentIssue}
+                objectives={objectives}
+                onSelectObjective={openObjective}
+                onClose={() => setSelectedIssue(null)}
               />
             )}
-          </main>
+          </div>
+        ) : (
+          <div className="bp-body">
+            <nav className="bp-nav" aria-label="Filters">
+              <div className="bp-areas">
+                <button
+                  className={`bp-area${filter.area === null ? " active" : ""}`}
+                  onClick={() => setFilter((f) => ({ ...f, area: null }))}
+                >
+                  <span className="bp-area-name">All areas</span>
+                  <span className="bp-count">{inView}</span>
+                </button>
+                {areaCounts(objectives, filter).map((a) => (
+                  <button
+                    key={a.area}
+                    className={`bp-area${filter.area === a.area ? " active" : ""}${a.count ? "" : " empty"}`}
+                    onClick={() => setFilter((f) => ({ ...f, area: a.area }))}
+                  >
+                    <span className="bp-area-name">{a.area}</span>
+                    <span className="bp-count">{a.count}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="bp-statuses" role="group" aria-label="Status">
+                {STATUSES.map((s) => (
+                  <button
+                    key={s}
+                    className={`bp-status-toggle st-${s}`}
+                    aria-pressed={!filter.archive && filter.statuses.includes(s)}
+                    disabled={filter.archive}
+                    onClick={() => toggleStatus(s)}
+                  >
+                    {STATUS_LABEL[s]} <span className="bp-count">{counts[s]}</span>
+                  </button>
+                ))}
+                <button
+                  className="bp-status-toggle bp-archive-toggle"
+                  aria-pressed={filter.archive}
+                  onClick={() => {
+                    setSelected(null);
+                    setFilter((f) => ({ ...f, archive: !f.archive }));
+                  }}
+                >
+                  Archive <span className="bp-count">{archivedCount}</span>
+                </button>
+              </div>
+              {onArchive && (
+                <button className="bp-archive" onClick={() => onArchive(!project.archivedAt)}>
+                  {project.archivedAt ? "Restore project" : "Archive project"}
+                </button>
+              )}
+              <button className="bp-delete" onClick={onDelete}>
+                Delete project
+              </button>
+            </nav>
 
-          {current && (
-            <ObjectiveDetail
-              key={current.id}
-              objective={current}
-              all={objectives}
-              rel={rel.get(current.id)!}
-              sessions={sessions}
-              onSelect={setSelected}
-              onClose={() => setSelected(null)}
-              onOpenSession={onOpenSession}
-              onAskLead={onAskLead}
-            />
-          )}
-        </div>
+            <main className="bp-main" ref={mainRef}>
+              {!filter.archive &&
+                broken.map((b) => (
+                  <div key={b.id} className="bp-broken">
+                    <strong>{b.id}.toml</strong> cannot be read: {b.error}
+                  </div>
+                ))}
+              {objectives.length === 0 ? (
+                broken.length === 0 && (
+                  <div className="bp-empty">
+                    No objectives yet. Tell the lead what you want done, put off or dropped; it
+                    keeps the board.
+                  </div>
+                )
+              ) : shown.length === 0 ? (
+                <div className="bp-empty">
+                  {filter.archive && !filter.search && !filter.area
+                    ? "Nothing archived yet. Finished and dropped objectives land here when the lead files them away."
+                    : "Nothing matches."}
+                </div>
+              ) : view === "list" || filter.archive ? (
+                <ObjectiveList
+                  objectives={shown}
+                  rel={rel}
+                  grouped={filter.area === null}
+                  selected={selected}
+                  sessions={sessions}
+                  issues={byObjective}
+                  onSelect={setSelected}
+                />
+              ) : (
+                <DependencyGraph
+                  objectives={shown}
+                  rel={rel}
+                  selected={selected}
+                  onSelect={setSelected}
+                />
+              )}
+            </main>
+
+            {current && (
+              <IssueRefContext.Provider value={issueRefs}>
+                <ObjectiveDetail
+                  key={current.id}
+                  objective={current}
+                  all={objectives}
+                  rel={rel.get(current.id)!}
+                  sessions={sessions}
+                  issues={byObjective.get(current.id) ?? NO_ISSUES}
+                  onSelect={setSelected}
+                  onClose={() => setSelected(null)}
+                  onOpenSession={onOpenSession}
+                  onOpenIssue={(id) => issueRefs?.open(id)}
+                  onAskLead={onAskLead}
+                />
+              </IssueRefContext.Provider>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -305,6 +450,7 @@ function ObjectiveList({
   grouped,
   selected,
   sessions,
+  issues,
   onSelect,
 }: {
   objectives: Objective[];
@@ -312,6 +458,7 @@ function ObjectiveList({
   grouped: boolean;
   selected: string | null;
   sessions: Map<string, SessionInfo>;
+  issues: Map<string, IssueEntry[]>;
   onSelect: (id: string) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -334,6 +481,7 @@ function ObjectiveList({
                 rel={rel.get(o.id)!}
                 selected={o.id === selected}
                 sessions={sessions}
+                openIssues={issues.get(o.id)?.filter(isOpen).length ?? 0}
                 onSelect={onSelect}
               />
             ))}
@@ -349,12 +497,14 @@ function ObjectiveCard({
   rel,
   selected,
   sessions,
+  openIssues,
   onSelect,
 }: {
   objective: Objective;
   rel: Relations;
   selected: boolean;
   sessions: Map<string, SessionInfo>;
+  openIssues: number;
   onSelect: (id: string) => void;
 }) {
   const { done, total } = progress(o);
@@ -394,6 +544,11 @@ function ObjectiveCard({
           </span>
         )}
         {toDecide > 0 && !o.archived && <span className="bp-decide">{toDecide} to decide</span>}
+        {openIssues > 0 && !o.archived && (
+          <span className="bi-count">
+            {openIssues} issue{openIssues === 1 ? "" : "s"}
+          </span>
+        )}
         {st && (
           <span className={`bp-stage stage-${st.replace(" ", "-")}`}>
             {st === "blocked" ? `blocked by ${rel.blockedBy.length}` : st}
@@ -564,18 +719,23 @@ function ObjectiveDetail({
   all,
   rel,
   sessions,
+  issues,
   onSelect,
   onClose,
   onOpenSession,
+  onOpenIssue,
   onAskLead,
 }: {
   objective: Objective;
   all: Objective[];
   rel: Relations;
   sessions: Map<string, SessionInfo>;
+  // Linked to it, by the issue, its group or its module.
+  issues: IssueEntry[];
   onSelect: (id: string) => void;
   onClose: () => void;
   onOpenSession: (workspaceId: string) => void;
+  onOpenIssue: (id: string) => void;
   onAskLead: ((objectiveId: string) => void) | null;
 }) {
   const self = useRef<HTMLElement>(null);
@@ -605,12 +765,17 @@ function ObjectiveDetail({
         onClick={() => onSelect(id)}
         title={`${STATUS_LABEL[target.status]}${note}: ${target.goal}`}
       >
-        <span className="clip">
-          <InlineMd>{target.title}</InlineMd>
-        </span>
+        {/* A button holds no issue links of its own. */}
+        <IssueRefContext.Provider value={null}>
+          <span className="clip">
+            <InlineMd>{target.title}</InlineMd>
+          </span>
+        </IssueRefContext.Provider>
       </button>
     );
   };
+  const openIssues = issues.filter(isOpen);
+  const accepted = issues.length - openIssues.length;
   const session = (id: string) => {
     const s = sessions.get(id);
     if (!s) return null;
@@ -737,6 +902,31 @@ function ObjectiveDetail({
         </DetailSection>
       )}
 
+      {issues.length > 0 && (
+        <DetailSection title={`Issues · ${openIssues.length} open`}>
+          {openIssues.length > 0 && (
+            <ul className="bi-linked">
+              {openIssues.map((e) => (
+                <li key={e.issue.id}>
+                  <button
+                    className={`bi-ref is-${e.issue.state}`}
+                    onClick={() => onOpenIssue(e.issue.id)}
+                  >
+                    <span className="bp-id">{e.issue.id}</span>
+                    <IssueRefContext.Provider value={null}>
+                      <span className="bi-ref-text">
+                        <InlineMd>{issueSummary(e.issue.text)}</InlineMd>
+                      </span>
+                    </IssueRefContext.Provider>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {accepted > 0 && <p className="bp-none">{accepted} accepted, not to be fixed.</p>}
+        </DetailSection>
+      )}
+
       {o.sessions.some((s) => sessions.has(s)) && (
         <DetailSection title="Sessions">
           <div className="bp-refs">{o.sessions.map(session)}</div>
@@ -750,15 +940,6 @@ function ObjectiveDetail({
         </DetailSection>
       )}
     </aside>
-  );
-}
-
-function DetailSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="bp-section">
-      <h4 className="bp-section-title">{title}</h4>
-      {children}
-    </section>
   );
 }
 

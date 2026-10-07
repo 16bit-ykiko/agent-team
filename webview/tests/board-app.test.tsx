@@ -224,3 +224,44 @@ describe("stream frames", () => {
     expect(areas.mock.calls.length - before).toBe(0);
   });
 });
+
+describe("Issues from the server", () => {
+  const module = (id: string, issueId: string, text: string) => ({
+    id,
+    title: id,
+    objectives: [],
+    issues: [{ id: issueId, state: "open", tags: [], text, objectives: [] }],
+    groups: [],
+    updatedAt: NOW,
+  });
+  const rows = () => [...document.querySelectorAll(".bi-row .bp-id")].map((e) => e.textContent);
+
+  it("come with init and are replaced by a project's own message, apart from its objectives", () => {
+    localStorage.setItem("activeWsId", "lead");
+    render(<App />);
+    const sock = FakeSocket.instances.at(-1)!;
+    const recv = (f: unknown) => act(() => sock.receive(f));
+    act(() => sock.open());
+    recv({
+      type: "init",
+      workspaces: [lead, worker],
+      config: { presets: [], models: [], commands: [], hosts: {} },
+      hosts: [],
+      projects: [project()],
+      issues: { p1: [module("paths", "10-07#1", "Bad path")] },
+    });
+    openBoard();
+    fireEvent.click([...document.querySelectorAll(".bp-modes button")].at(-1)!);
+    expect(rows()).toEqual(["10-07#1"]);
+
+    recv({ type: "project_updated", project: project({ name: "clice!" }) });
+    expect(rows()).toEqual(["10-07#1"]);
+
+    recv({
+      type: "project_issues",
+      projectId: "p1",
+      modules: [module("paths", "10-07#1", "Bad path"), module("hosting", "10-07#2", "Host")],
+    });
+    expect(rows()).toEqual(["10-07#1", "10-07#2"]);
+  });
+});

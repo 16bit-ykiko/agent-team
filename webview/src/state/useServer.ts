@@ -183,6 +183,45 @@ export interface BrokenObjective {
   archived?: boolean;
 }
 
+// A project's issues, one module per file (server: project/issues.ts).
+export type IssueState = "open" | "decision" | "accepted";
+export type Evidence = "R" | "V" | "H" | "S" | "C";
+
+export interface Issue {
+  id: string;
+  state: IssueState;
+  evidence?: Evidence;
+  tags: string[];
+  text: string;
+  objectives: string[];
+}
+
+export interface IssueGroup {
+  id: string;
+  title: string;
+  notes?: string;
+  objectives: string[];
+  issues: Issue[];
+}
+
+export interface IssueModule {
+  id: string;
+  title: string;
+  notes?: string;
+  objectives: string[];
+  issues: Issue[];
+  groups: IssueGroup[];
+  updatedAt: number;
+}
+
+// A module file the server could not read.
+export interface BrokenIssueModule {
+  id: string;
+  error: string;
+}
+
+export type IssueModules = Array<IssueModule | BrokenIssueModule>;
+
 export interface Project {
   id: string;
   name: string;
@@ -354,6 +393,8 @@ function resolveWsUrl(): string {
 export function useServer() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  // By project; a project with no issues has no entry.
+  const [issues, setIssues] = useState<Record<string, IssueModules>>({});
   const [connected, setConnected] = useState(false);
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
@@ -481,6 +522,7 @@ export function useServer() {
           if (config.hosts) setHostConfigs(config.hosts);
           if (msg.hosts) setHosts(msg.hosts as HostInfo[]);
           setProjects((msg.projects as Project[] | undefined) ?? []);
+          setIssues((msg.issues as Record<string, IssueModules> | undefined) ?? {});
           break;
         }
 
@@ -504,6 +546,16 @@ export function useServer() {
 
         case "project_deleted":
           setProjects((prev) => prev.filter((p) => p.id !== msg.projectId));
+          setIssues((prev) =>
+            Object.fromEntries(Object.entries(prev).filter(([id]) => id !== msg.projectId)),
+          );
+          break;
+
+        case "project_issues":
+          setIssues((prev) => ({
+            ...prev,
+            [msg.projectId as string]: msg.modules as IssueModules,
+          }));
           break;
 
         case "project_updated": {
@@ -1007,6 +1059,7 @@ export function useServer() {
   return {
     workspaces,
     projects,
+    issues,
     connected,
     presets,
     models,

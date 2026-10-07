@@ -3771,6 +3771,192 @@ button.action-target:hover {
   color: var(--text-primary);
 }
 
+/* Issues: rows by module and group, evidence as a letter. */
+.bp-modes .bp-count {
+  margin-left: 5px;
+}
+.bi-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+}
+.bi-chip {
+  padding: 1px 7px;
+  font: inherit;
+  font-size: var(--fs-meta);
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.bi-chip[aria-pressed="true"] {
+  color: var(--text-primary);
+  border-color: transparent;
+  background: var(--bg-active);
+}
+.bi-evidence {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-tag);
+  font-weight: 600;
+}
+.bi-evidence.ev-R {
+  color: var(--success);
+}
+.bi-evidence.ev-V {
+  color: var(--accent);
+}
+.bi-evidence.ev-H,
+.bi-evidence.ev-C {
+  color: var(--warning);
+}
+.bi-evidence.ev-S {
+  color: var(--text-secondary);
+}
+.bi-chip.bi-evidence {
+  font-weight: normal;
+}
+.bi-group + .bi-group {
+  margin-top: 16px;
+}
+.bi-group-head {
+  margin-bottom: 8px;
+}
+.bi-group-title {
+  margin: 0;
+  font-size: var(--fs-name);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.bi-group-notes {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.bi-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bi-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 8px 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.bi-row:hover {
+  border-color: var(--text-muted);
+}
+.bi-row.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.bi-row.is-accepted {
+  opacity: 0.7;
+}
+.bi-row-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.bi-row-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+.bi-tag {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: var(--fs-tag);
+  line-height: 15px;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.bp-pill.is-open {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.bp-pill.is-decision {
+  color: var(--warning);
+  background: rgba(229, 192, 123, 0.12);
+}
+.bi-count {
+  color: var(--text-secondary);
+}
+.bi-where {
+  margin: 12px 0 14px;
+  font-size: var(--fs-meta);
+  color: var(--text-muted);
+}
+.bi-linked {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bi-ref {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+  font: inherit;
+  text-align: left;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.bi-ref .bp-id {
+  flex-shrink: 0;
+}
+.bi-ref-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.bi-ref:hover .bi-ref-text {
+  color: var(--text-primary);
+}
+.bi-ref.is-decision .bp-id {
+  color: var(--warning);
+}
+/* An issue named in an objective's text. */
+.issue-ref {
+  padding: 0;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--accent);
+  background: none;
+  border: none;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 /* Too narrow for three columns: the details slide over the cards. */
 @media (max-width: 1100px) {
   .bp-detail {
