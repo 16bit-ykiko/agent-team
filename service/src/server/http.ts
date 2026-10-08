@@ -8,6 +8,14 @@ import * as zlib from "zlib";
 import type { Auth } from "./auth";
 import { NotRegularFile, readFileView, resolveFilePath } from "../repo/files";
 import { changes, fileDiff, NotARepository } from "../repo/diff";
+import { openInVSCode, VSCodeUnavailable } from "../repo/vscode";
+import { resolveProjectPath } from "../project/paths";
+
+// Where a project's board paths lead: its repository and its notes.
+export interface ProjectPaths {
+  root: string;
+  notesDir: string;
+}
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -48,6 +56,8 @@ export class HttpHandler {
     private cwdOf: (workspaceId: string) => string | undefined = () => undefined,
     // The base branch of the workspace's pull request, if it has one.
     private prBaseOf: (workspaceId: string) => string | null | undefined = () => undefined,
+    private projectOf: (projectId: string) => ProjectPaths | undefined = () => undefined,
+    private openFile: (file: string, line: number | undefined) => Promise<void> = openInVSCode,
   ) {}
 
   handle(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -80,6 +90,11 @@ export class HttpHandler {
 
       if (req.method === "GET" && (pathname === "/api/file" || pathname === "/api/file/raw")) {
         this.handleFile(url, pathname === "/api/file/raw", res);
+        return;
+      }
+
+      if (req.method === "POST" && pathname === "/api/open") {
+        this.handleOpen(req, res);
         return;
       }
 
@@ -174,10 +189,20 @@ export class HttpHandler {
   // File preview: a view (listing, text, or what kind of file it is) as JSON,
   // or the raw bytes for images and downloads. Relative paths are resolved
   // against the workspace directory.
+  // With a project instead of a workspace, the path is one its board wrote,
+  // and only its notes and repository are read.
   private handleFile(url: URL, raw: boolean, res: http.ServerResponse): void {
     const input = url.searchParams.get("path") ?? "";
-    const cwd = this.cwdOf(url.searchParams.get("ws") ?? "") ?? os.homedir();
-    const abs = resolveFilePath(cwd, input || ".");
+    const project = url.searchParams.get("project");
+    let abs: string;
+    if (project !== null) {
+      const found = this.projectPath(project, input);
+      if ("status" in found) return json(res, found.status, { error: found.error });
+      abs = found.abs;
+    } else {
+      const cwd = this.cwdOf(url.searchParams.get("ws") ?? "") ?? os.homedir();
+      abs = resolveFilePath(cwd, input || ".");
+    }
     const fail = (e: unknown) => {
       const code = (e as NodeJS.ErrnoException).code;
       const [status, error] =
@@ -201,6 +226,53 @@ export class HttpHandler {
       res.setHeader("Cache-Control", "no-store");
       res.end(JSON.stringify(view));
     }, fail);
+  }
+
+  private projectPath(
+    projectId: string,
+    input: string,
+  ): { abs: string } | { status: number; error: string } {
+    const paths = this.projectOf(projectId);
+    if (!paths) return { status: 404, error: "No such project" };
+    const abs = resolveProjectPath(input || ".", paths.root, paths.notesDir);
+    if (!abs) return { status: 403, error: "Outside the project's repository and notes" };
+    return { abs };
+  }
+
+  // A file of a project's board opened in the user's VS Code. JSON only, so
+  // another site's form cannot post it.
+  private handleOpen(req: http.IncomingMessage, res: http.ServerResponse): void {
+    if (!/^application\/json\b/.test(req.headers["content-type"] ?? "")) {
+      return json(res, 415, { error: "Send JSON" });
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > 64 * 1024) req.destroy();
+      else chunks.push(c);
+    });
+    req.on("end", () => {
+      let body: { project?: unknown; path?: unknown; line?: unknown };
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString()) as typeof body;
+      } catch {
+        return json(res, 400, { error: "Not JSON" });
+      }
+      if (typeof body.project !== "string" || typeof body.path !== "string") {
+        return json(res, 400, { error: "Give the project and the path" });
+      }
+      const found = this.projectPath(body.project, body.path);
+      if ("status" in found) return json(res, found.status, { error: found.error });
+      const line = typeof body.line === "number" && body.line > 0 ? body.line : undefined;
+      this.openFile(found.abs, line).then(
+        () => json(res, 200, { opened: found.abs }),
+        (e: unknown) =>
+          json(res, e instanceof VSCodeUnavailable ? 503 : 500, {
+            error: e instanceof Error ? e.message : String(e),
+          }),
+      );
+    });
   }
 
   // The changes of the repository holding `dir` (the workspace's folder by
@@ -334,4 +406,11 @@ export class HttpHandler {
     this.gzipCache.set(file, { mtimeMs, data });
     return data;
   }
+}
+
+function json(res: http.ServerResponse, status: number, body: unknown): void {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.end(JSON.stringify(body));
 }

@@ -121,6 +121,7 @@ export class Server {
       baseDir,
       (id) => this.workspaces.get(id)?.cwd,
       (id) => this.workspaces.get(id)?.pr?.base,
+      (id) => this.projects.paths(id),
     );
     this.httpServer = http.createServer((req, res) => this.http.handle(req, res));
     this.wss = new WebSocketServer({

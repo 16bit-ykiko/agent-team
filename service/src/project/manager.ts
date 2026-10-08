@@ -117,6 +117,12 @@ export class ProjectManager {
     return this.store.get(id);
   }
 
+  // Where its board's paths lead: the repository and the notes.
+  paths(id: string): { root: string; notesDir: string } | undefined {
+    const p = this.store.get(id);
+    return p && { root: p.root, notesDir: this.store.notesDir(id) };
+  }
+
   close(): void {
     this.closed = true;
     for (const t of this.timers) clearTimeout(t);
