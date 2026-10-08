@@ -442,3 +442,44 @@ describe("issue text edge cases from review", () => {
     expect([..."F7-A F7. 1 x".matchAll(pattern)].map((m) => m[0])).toEqual(["F7"]);
   });
 });
+
+describe("the board's filters and badges", () => {
+  // Each a chip with its count apart, so they share one size and look.
+  const chips = (group: HTMLElement) =>
+    within(group)
+      .getAllByRole("button")
+      .map((b) => ({
+        chip: b.classList.contains("bp-chip"),
+        counts: b.querySelectorAll(".bp-chip-count").length,
+      }));
+
+  it("draws every filter of both views as one chip, the issues' in one row of groups", () => {
+    const { toIssues, nav, container } = page();
+    const status = screen.getByRole("group", { name: "Status" });
+    expect(chips(status).every((c) => c.chip && c.counts === 1)).toBe(true);
+    toIssues();
+    const groups = ["State", "Evidence", "Tags"].map((name) => nav().getByRole("group", { name }));
+    for (const g of groups) {
+      expect(chips(g).every((c) => c.chip && c.counts === 1)).toBe(true);
+      expect(g.parentElement).toBe(container.querySelector(".bp-filters"));
+    }
+    expect(within(groups[1]).getByRole("button", { name: /^R / }).title).toBe(
+      "Reproduced by a script",
+    );
+  });
+
+  it("gives an issue's evidence, state and tags one kind of badge, in its row and in full", () => {
+    const { toIssues, container } = page();
+    toIssues();
+    const row = container.querySelector('[data-issue="h3r2#1"] .bi-row-top')!;
+    expect(row.querySelector(".bi-evidence")!.className).toBe("bi-evidence ev-H");
+    expect(row.querySelector(".bp-pill")!.textContent).toBe("To decide");
+    expect(container.querySelector('[data-issue="09-23#12"] .bi-tag')!.textContent).toBe("部分");
+    fireEvent.click(container.querySelector('[data-issue="h3r2#1"]')!);
+    const meta = container.querySelector(".bp-detail .bi-meta")!;
+    expect([...meta.children].map((e) => e.className)).toEqual([
+      "bp-pill is-decision",
+      "bi-evidence ev-H",
+    ]);
+  });
+});

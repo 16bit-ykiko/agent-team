@@ -38,7 +38,8 @@ import {
   type IssueEntry,
   type IssueFilter,
 } from "./issues";
-import { DetailSection, IssueDetail, IssueList, IssueNav } from "./IssuesView";
+import { IssueDetail, IssueList, IssueNav } from "./IssuesView";
+import { DetailSection, FilterChip } from "./parts";
 
 // A worker session as the board shows it.
 export interface SessionInfo {
@@ -374,28 +375,29 @@ export const BoardPage = memo(function BoardPage({
                   </button>
                 ))}
               </div>
-              <div className="bp-statuses" role="group" aria-label="Status">
-                {STATUSES.map((s) => (
-                  <button
-                    key={s}
-                    className={`bp-status-toggle st-${s}`}
-                    aria-pressed={!filter.archive && filter.statuses.includes(s)}
-                    disabled={filter.archive}
-                    onClick={() => toggleStatus(s)}
-                  >
-                    {STATUS_LABEL[s]} <span className="bp-count">{counts[s]}</span>
-                  </button>
-                ))}
-                <button
-                  className="bp-status-toggle bp-archive-toggle"
-                  aria-pressed={filter.archive}
-                  onClick={() => {
-                    setSelected(null);
-                    setFilter((f) => ({ ...f, archive: !f.archive }));
-                  }}
-                >
-                  Archive <span className="bp-count">{archivedCount}</span>
-                </button>
+              <div className="bp-filters">
+                <div className="bp-statuses" role="group" aria-label="Status">
+                  {STATUSES.map((s) => (
+                    <FilterChip
+                      key={s}
+                      label={STATUS_LABEL[s]}
+                      count={counts[s]}
+                      pressed={!filter.archive && filter.statuses.includes(s)}
+                      disabled={filter.archive}
+                      onClick={() => toggleStatus(s)}
+                    />
+                  ))}
+                  <FilterChip
+                    className="bp-archive-toggle"
+                    label="Archive"
+                    count={archivedCount}
+                    pressed={filter.archive}
+                    onClick={() => {
+                      setSelected(null);
+                      setFilter((f) => ({ ...f, archive: !f.archive }));
+                    }}
+                  />
+                </div>
               </div>
               {onArchive && (
                 <button className="bp-archive" onClick={() => onArchive(!project.archivedAt)}>

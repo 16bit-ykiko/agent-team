@@ -3213,32 +3213,57 @@ button.action-target:hover {
   color: var(--text-muted);
   font-size: var(--fs-tag);
 }
-.bp-statuses {
+/* The filters over the areas, which can run long: rows of chips, a rule
+   under them. */
+.bp-filters {
+  order: -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.bp-statuses,
+.bp-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
 }
-.bp-status-toggle {
-  padding: 2px 8px;
+/* One chip for every filter: the same height, shape and pressed look. */
+.bp-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
   font: inherit;
   font-size: var(--fs-meta);
-  color: var(--text-muted);
+  line-height: 1;
+  color: var(--text-secondary);
   background: none;
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
+  border-radius: 11px;
+  white-space: nowrap;
   cursor: pointer;
 }
-.bp-status-toggle[aria-pressed="true"] {
+.bp-chip:hover:not(:disabled) {
+  border-color: var(--text-muted);
+}
+.bp-chip[aria-pressed="true"] {
   color: var(--text-primary);
   border-color: transparent;
   background: var(--bg-active);
 }
-.bp-status-toggle:disabled {
+.bp-chip:disabled {
   opacity: 0.35;
   cursor: default;
+}
+.bp-chip-count {
+  font-size: var(--fs-tag);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 .bp-archive-toggle[aria-pressed="true"] {
   border-color: var(--text-muted);
@@ -3775,53 +3800,51 @@ button.action-target:hover {
 .bp-modes .bp-count {
   margin-left: 5px;
 }
-.bi-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 10px;
-}
 /* A module's title names its source paths: not in capitals. */
 .bi-module-title {
   text-transform: none;
   letter-spacing: 0;
 }
-.bi-chip {
-  padding: 1px 7px;
-  font: inherit;
-  font-size: var(--fs-meta);
-  color: var(--text-muted);
-  background: none;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  cursor: pointer;
+/* Evidence by its colour: a letter on a filter, a tinted badge on an issue. */
+.ev-R {
+  --ev: var(--success);
+  --ev-bg: rgba(152, 195, 121, 0.14);
 }
-.bi-chip[aria-pressed="true"] {
-  color: var(--text-primary);
-  border-color: transparent;
-  background: var(--bg-active);
+.ev-V {
+  --ev: var(--accent);
+  --ev-bg: var(--accent-soft);
+}
+.ev-H,
+.ev-C {
+  --ev: var(--warning);
+  --ev-bg: rgba(229, 192, 123, 0.14);
+}
+.ev-S {
+  --ev: var(--text-secondary);
+  --ev-bg: var(--bg-tertiary);
+}
+.bi-ev {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ev);
+}
+/* An issue's badges: evidence, state and tags, all one size. */
+.bi-evidence,
+.bi-tag,
+.bi-row-top .bp-pill,
+.bi-meta .bp-pill {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: var(--fs-tag);
+  line-height: 16px;
+  border-radius: 8px;
+  white-space: nowrap;
 }
 .bi-evidence {
-  flex-shrink: 0;
   font-family: var(--font-mono);
-  font-size: var(--fs-tag);
   font-weight: 600;
-}
-.bi-evidence.ev-R {
-  color: var(--success);
-}
-.bi-evidence.ev-V {
-  color: var(--accent);
-}
-.bi-evidence.ev-H,
-.bi-evidence.ev-C {
-  color: var(--warning);
-}
-.bi-evidence.ev-S {
-  color: var(--text-secondary);
-}
-.bi-chip.bi-evidence {
-  font-weight: normal;
+  color: var(--ev);
+  background: var(--ev-bg);
 }
 .bi-group + .bi-group {
   margin-top: 16px;
@@ -3889,14 +3912,8 @@ button.action-target:hover {
   line-height: 1.5;
 }
 .bi-tag {
-  flex-shrink: 0;
-  padding: 0 6px;
-  font-size: var(--fs-tag);
-  line-height: 15px;
   color: var(--text-secondary);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  white-space: nowrap;
+  background: var(--bg-tertiary);
 }
 .bp-pill.is-open {
   color: var(--accent);
@@ -4020,29 +4037,44 @@ button.action-target:hover {
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
-  /* Statuses on a row of their own, first: they must never scroll away. */
-  .bp-statuses {
-    order: -1;
+  /* Two rows scrolled sideways, the filters first: they must never scroll
+     away. Their groups sit side by side, a rule between them; the areas
+     take the chips' shape. */
+  .bp-filters {
+    flex-direction: row;
+    gap: 0;
     margin: 0;
     padding: 0;
-    border-top: none;
+    border-bottom: none;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .bp-filters > * {
+    flex-wrap: nowrap;
+  }
+  .bp-filters > * + * {
+    margin-left: 8px;
+    padding-left: 8px;
+    border-left: 1px solid var(--border);
   }
   .bp-areas {
     flex-direction: row;
     gap: 4px;
     overflow-x: auto;
+    scrollbar-width: none;
   }
   .bp-area {
     flex-shrink: 0;
+    height: 28px;
+    padding: 0 11px;
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
   }
-  /* Evidence and tags keep to a row each, scrolled sideways. */
-  .bi-chips {
-    flex-wrap: nowrap;
-    margin-top: 0;
-    overflow-x: auto;
+  .bp-area.active {
+    border-color: transparent;
   }
-  .bi-chip {
-    flex-shrink: 0;
+  .bp-area-name {
+    flex: none;
   }
   .bp-cards {
     grid-template-columns: 1fr;
@@ -5086,17 +5118,16 @@ button.action-target:hover {
   .bp-ref,
   .bp-session,
   .bp-ask,
-  .bi-chip,
   .bi-ref {
     min-height: 32px;
   }
-  .bp-status-toggle,
-  .bp-area,
   .bp-views button {
     min-height: 40px;
   }
-  .bp-status-toggle {
-    padding: 2px 6px;
+  .bp-chip {
+    height: 28px;
+    padding: 0 11px;
+    border-radius: 14px;
   }
   .ap-agent-actions button {
     width: 40px;

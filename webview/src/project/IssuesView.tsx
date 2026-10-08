@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import type { ReactNode } from "react";
 import type { Evidence, IssueModule, IssueState, Objective } from "../state/useServer";
 import { InlineMd, IssueRefContext, MdBlock } from "../chat/markdown";
 import { Icon } from "../panels/Icon";
@@ -12,6 +11,7 @@ import {
   type IssueEntry,
   type IssueFilter,
 } from "./issues";
+import { DetailSection, FilterChip } from "./parts";
 
 // The project's issues on the board page: modules and filters on the left,
 // the issues by module and group in the middle, the selected one in full on
@@ -39,15 +39,6 @@ function shortTitle(m: IssueModule): string {
 
 function toggle<T>(list: T[], x: T): T[] {
   return list.includes(x) ? list.filter((y) => y !== x) : [...list, x];
-}
-
-export function DetailSection({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="bp-section">
-      <h4 className="bp-section-title">{title}</h4>
-      {children}
-    </section>
-  );
 }
 
 export function IssueNav({
@@ -87,46 +78,44 @@ export function IssueNav({
           </button>
         ))}
       </div>
-      <div className="bp-statuses" role="group" aria-label="State">
-        {ISSUE_STATES.map((s) => (
-          <button
-            key={s}
-            className={`bp-status-toggle is-${s}`}
-            aria-pressed={filter.states.includes(s)}
-            onClick={() => onFilter({ ...filter, states: toggle(filter.states, s) })}
-          >
-            {ISSUE_STATE_LABEL[s]}{" "}
-            <span className="bp-count">{count({ ...filter, states: [s] })}</span>
-          </button>
-        ))}
-      </div>
-      <div className="bi-chips" role="group" aria-label="Evidence">
-        {EVIDENCE.map((ev) => (
-          <button
-            key={ev}
-            className={`bi-chip bi-evidence ev-${ev}`}
-            title={EVIDENCE_LABEL[ev]}
-            aria-pressed={filter.evidence.includes(ev)}
-            onClick={() => onFilter({ ...filter, evidence: toggle(filter.evidence, ev) })}
-          >
-            {ev} <span className="bp-count">{count({ ...filter, evidence: [ev] })}</span>
-          </button>
-        ))}
-      </div>
-      {tags.length > 0 && (
-        <div className="bi-chips" role="group" aria-label="Tags">
-          {tags.map(({ tag, count: n }) => (
-            <button
-              key={tag}
-              className="bi-chip"
-              aria-pressed={filter.tags.includes(tag)}
-              onClick={() => onFilter({ ...filter, tags: toggle(filter.tags, tag) })}
-            >
-              {tag} <span className="bp-count">{n}</span>
-            </button>
+      <div className="bp-filters">
+        <div className="bp-statuses" role="group" aria-label="State">
+          {ISSUE_STATES.map((s) => (
+            <FilterChip
+              key={s}
+              label={ISSUE_STATE_LABEL[s]}
+              count={count({ ...filter, states: [s] })}
+              pressed={filter.states.includes(s)}
+              onClick={() => onFilter({ ...filter, states: toggle(filter.states, s) })}
+            />
           ))}
         </div>
-      )}
+        <div className="bp-chips" role="group" aria-label="Evidence">
+          {EVIDENCE.map((ev) => (
+            <FilterChip
+              key={ev}
+              label={<span className={`bi-ev ev-${ev}`}>{ev}</span>}
+              count={count({ ...filter, evidence: [ev] })}
+              pressed={filter.evidence.includes(ev)}
+              title={EVIDENCE_LABEL[ev]}
+              onClick={() => onFilter({ ...filter, evidence: toggle(filter.evidence, ev) })}
+            />
+          ))}
+        </div>
+        {tags.length > 0 && (
+          <div className="bp-chips" role="group" aria-label="Tags">
+            {tags.map(({ tag, count: n }) => (
+              <FilterChip
+                key={tag}
+                label={tag}
+                count={n}
+                pressed={filter.tags.includes(tag)}
+                onClick={() => onFilter({ ...filter, tags: toggle(filter.tags, tag) })}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </nav>
   );
 }
@@ -274,7 +263,7 @@ export function IssueDetail({
           <Icon name="close" />
         </button>
       </div>
-      <div className="bp-meta">
+      <div className="bp-meta bi-meta">
         <span className={`bp-pill is-${x.state}`}>{ISSUE_STATE_LABEL[x.state]}</span>
         {x.evidence && (
           <span className={`bi-evidence ev-${x.evidence}`}>
