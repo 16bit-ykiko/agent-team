@@ -3979,6 +3979,117 @@ button.action-target:hover {
   cursor: pointer;
 }
 
+/* Notes: the folders on the left, a file in full on the right. */
+.bn-nav {
+  width: 240px;
+  padding: 8px 4px;
+}
+/* No search to push it there. */
+.bp-head.no-search .bp-close {
+  margin-left: auto;
+}
+.bn-tree {
+  display: flex;
+  flex-direction: column;
+}
+.bn-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 8px;
+  font: inherit;
+  text-align: left;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.bn-item:hover {
+  background: var(--bg-hover);
+}
+.bn-item.is-dir {
+  color: var(--text-primary);
+}
+.bn-item.selected {
+  color: var(--text-primary);
+  background: var(--bg-active);
+}
+.bn-caret {
+  flex-shrink: 0;
+  width: 10px;
+  text-align: center;
+  color: var(--text-muted);
+  transition: transform 0.12s;
+}
+.bn-caret.open {
+  transform: rotate(90deg);
+}
+.bn-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bn-note {
+  padding: 8px 12px;
+  color: var(--text-muted);
+}
+.bp-main.bn-main {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.bn-preview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.bn-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.bn-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--text-secondary);
+}
+.bn-notice {
+  margin: 10px 16px 0;
+  padding: 6px 10px;
+  font-size: var(--fs-meta);
+  color: var(--warning);
+  border: 1px solid rgba(229, 192, 123, 0.35);
+  border-radius: var(--radius-sm);
+  background: rgba(229, 192, 123, 0.08);
+}
+.bn-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+/* A note reads at a line length for reading, not the window's. */
+.file-markdown.bn-md {
+  max-width: 860px;
+  padding: 16px 24px 32px;
+  font-size: var(--fs-text);
+  line-height: 1.7;
+}
+
 /* Too narrow for three columns: the details slide over the cards. */
 @media (max-width: 1100px) {
   .bp-detail {
@@ -4088,6 +4199,23 @@ button.action-target:hover {
   }
   .bp-back {
     display: block;
+  }
+  /* The tree, or the file over the whole page with a way back. */
+  .bn-page .bn-nav {
+    flex: 1;
+    overflow-y: auto;
+    border-bottom: none;
+  }
+  .bn-page.has-file .bn-nav,
+  .bn-page:not(.has-file) .bn-main,
+  .bn-bar .bn-close {
+    display: none;
+  }
+  .bn-item {
+    min-height: 36px;
+  }
+  .file-markdown.bn-md {
+    padding: 12px 16px 24px;
   }
 }
 

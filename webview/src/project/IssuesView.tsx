@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Evidence, IssueModule, IssueState, Objective } from "../state/useServer";
-import { InlineMd, IssueRefContext, MdBlock } from "../chat/markdown";
+import { InlineMd, MdBlock, NoLinks } from "../chat/markdown";
 import { Icon } from "../panels/Icon";
 import {
   issueMatches,
@@ -309,12 +309,12 @@ export function IssueDetail({
                   title={o.goal}
                   onClick={() => onSelectObjective(id)}
                 >
-                  {/* A button holds no issue links of its own. */}
-                  <IssueRefContext.Provider value={null}>
+                  {/* A button holds no links of its own. */}
+                  <NoLinks>
                     <span className="clip">
                       <InlineMd>{o.title}</InlineMd>
                     </span>
-                  </IssueRefContext.Provider>
+                  </NoLinks>
                 </button>
               ) : (
                 <span key={id} className="bp-ref missing" title="Not an objective">

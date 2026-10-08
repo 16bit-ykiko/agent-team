@@ -1,4 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import type {
   IssueModule,
   IssueModules,
@@ -7,7 +8,15 @@ import type {
   Project,
   TaskState,
 } from "../state/useServer";
-import { InlineMd, IssueRefContext, MdBlock, type IssueRefs } from "../chat/markdown";
+import {
+  InlineMd,
+  IssueRefContext,
+  MdBlock,
+  NoLinks,
+  ProsePathContext,
+  type IssueRefs,
+} from "../chat/markdown";
+import { FileOpenContext, parseFileRef } from "../chat/fileRef";
 import { isImeKeyEvent } from "../chat/ime";
 import { formatRelative } from "../format";
 import { Icon } from "../panels/Icon";
@@ -40,6 +49,7 @@ import {
 } from "./issues";
 import { IssueDetail, IssueList, IssueNav } from "./IssuesView";
 import { DetailSection, FilterChip } from "./parts";
+import { NotesView, inVSCode, openInEditor, type BoardFile } from "./NotesView";
 
 // A worker session as the board shows it.
 export interface SessionInfo {
@@ -101,7 +111,8 @@ export const BoardPage = memo(function BoardPage({
   onArchive?: (archived: boolean) => void;
   onDelete: () => void;
 }) {
-  const [mode, setMode] = useState<"objectives" | "issues">("objectives");
+  const [mode, setMode] = useState<"objectives" | "issues" | "notes">("objectives");
+  const [noteFile, setNoteFile] = useState<BoardFile | null>(null);
   const [view, setView] = useState<"list" | "graph">("list");
   const [filter, setFilter] = useState<BoardFilter>({
     area: null,
@@ -183,7 +194,32 @@ export const BoardPage = memo(function BoardPage({
       });
     }
   };
-  const detail = mode === "objectives" ? current : currentIssue;
+  const detail = mode === "objectives" ? current : mode === "issues" ? currentIssue : null;
+
+  // A file the board names: in VS Code when the panel is open in VS Code's
+  // own browser, else (or when VS Code is not there) in the notes view.
+  const editor = useMemo(() => inVSCode(), []);
+  const showFile = useCallback((ref: string, notice?: string) => {
+    setMode("notes");
+    setNoteFile({ ...(parseFileRef(ref) ?? { path: ref }), ...(notice && { notice }) });
+  }, []);
+  const openRef = useCallback(
+    (ref: string) => {
+      if (!editor) return showFile(ref);
+      void openInEditor(project.id, parseFileRef(ref) ?? { path: ref }).then((ok) => {
+        if (!ok) showFile(ref, "VS Code is not connected: the file is shown here instead.");
+      });
+    },
+    [editor, project.id, showFile],
+  );
+  // Around the details: the issues and the files their text names link.
+  const links = (children: ReactNode) => (
+    <IssueRefContext.Provider value={issueRefs}>
+      <FileOpenContext.Provider value={openRef}>
+        <ProsePathContext.Provider value={true}>{children}</ProsePathContext.Provider>
+      </FileOpenContext.Provider>
+    </IssueRefContext.Provider>
+  );
 
   // A selection whose objective is gone (deleted by the lead) is dropped, so
   // it neither swallows the next Escape nor comes back by itself.
@@ -215,9 +251,19 @@ export const BoardPage = memo(function BoardPage({
   // Escape steps back: clears the search, then leaves the details, then the
   // page. Not while composing text, and not for a dialog over the page.
   const showIssues = mode === "issues";
-  const state = useRef({ issues: showIssues, selected, search: filter.search, onClose });
+  const showNotes = mode === "notes";
+  const state = useRef({
+    issues: showIssues,
+    notes: showNotes,
+    file: !!noteFile,
+    selected,
+    search: filter.search,
+    onClose,
+  });
   state.current = {
     issues: showIssues,
+    notes: showNotes,
+    file: !!noteFile,
     selected: showIssues ? selectedIssue : selected,
     search: showIssues ? issueFilter.search : filter.search,
     onClose,
@@ -228,7 +274,10 @@ export const BoardPage = memo(function BoardPage({
       const target = e.target as Node | null;
       if (target instanceof Element && target.closest(".dialog-overlay")) return;
       const s = state.current;
-      if (target === searchRef.current && s.search) {
+      if (s.notes) {
+        if (s.file) setNoteFile(null);
+        else s.onClose();
+      } else if (target === searchRef.current && s.search) {
         if (s.issues) setIssueFilter((f) => ({ ...f, search: "" }));
         else setFilter((f) => ({ ...f, search: "" }));
       } else if (s.selected) {
@@ -260,34 +309,41 @@ export const BoardPage = memo(function BoardPage({
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="bp-head">
+        <header className={`bp-head${showNotes ? " no-search" : ""}`}>
           <ProjectName name={project.name} onRename={onRename} />
           <div className="bp-views bp-modes" role="group" aria-label="Show">
-            <button aria-pressed={!showIssues} onClick={() => setMode("objectives")}>
+            <button aria-pressed={mode === "objectives"} onClick={() => setMode("objectives")}>
               Objectives
             </button>
             <button aria-pressed={showIssues} onClick={() => setMode("issues")}>
               Issues{openIssues > 0 && <span className="bp-count">{openIssues}</span>}
             </button>
+            <button aria-pressed={showNotes} onClick={() => setMode("notes")}>
+              Notes
+            </button>
           </div>
-          <span className="bp-summary">
-            {showIssues
-              ? `${entries.filter((e) => e.issue.state === "open").length} open · ${entries.filter((e) => e.issue.state === "decision").length} to decide · ${entries.filter((e) => e.issue.state === "accepted").length} accepted`
-              : `${counts.active} active · ${counts.later} later · ${counts.done} done`}
-          </span>
-          <input
-            ref={searchRef}
-            className="bp-search"
-            type="search"
-            placeholder={showIssues ? "Search issues…" : "Search objectives…"}
-            value={showIssues ? issueFilter.search : filter.search}
-            onChange={(e) =>
-              showIssues
-                ? setIssueFilter((f) => ({ ...f, search: e.target.value }))
-                : setFilter((f) => ({ ...f, search: e.target.value }))
-            }
-          />
-          {!showIssues && (
+          {!showNotes && (
+            <span className="bp-summary">
+              {showIssues
+                ? `${entries.filter((e) => e.issue.state === "open").length} open · ${entries.filter((e) => e.issue.state === "decision").length} to decide · ${entries.filter((e) => e.issue.state === "accepted").length} accepted`
+                : `${counts.active} active · ${counts.later} later · ${counts.done} done`}
+            </span>
+          )}
+          {!showNotes && (
+            <input
+              ref={searchRef}
+              className="bp-search"
+              type="search"
+              placeholder={showIssues ? "Search issues…" : "Search objectives…"}
+              value={showIssues ? issueFilter.search : filter.search}
+              onChange={(e) =>
+                showIssues
+                  ? setIssueFilter((f) => ({ ...f, search: e.target.value }))
+                  : setFilter((f) => ({ ...f, search: e.target.value }))
+              }
+            />
+          )}
+          {mode === "objectives" && (
             <div className="bp-views" role="group" aria-label="View">
               <button aria-pressed={view === "list"} onClick={() => setView("list")}>
                 List
@@ -302,7 +358,15 @@ export const BoardPage = memo(function BoardPage({
           </button>
         </header>
 
-        {showIssues ? (
+        {showNotes ? (
+          <NotesView
+            project={project.id}
+            file={noteFile}
+            onOpen={(path) => setNoteFile({ path })}
+            onRef={openRef}
+            onClose={() => setNoteFile(null)}
+          />
+        ) : showIssues ? (
           <div className="bp-body">
             <IssueNav
               modules={modules}
@@ -341,17 +405,16 @@ export const BoardPage = memo(function BoardPage({
                 />
               )}
             </main>
-            {currentIssue && (
-              <IssueRefContext.Provider value={issueRefs}>
+            {currentIssue &&
+              links(
                 <IssueDetail
                   key={currentIssue.issue.id}
                   entry={currentIssue}
                   objectives={objectives}
                   onSelectObjective={openObjective}
                   onClose={() => setSelectedIssue(null)}
-                />
-              </IssueRefContext.Provider>
-            )}
+                />,
+              )}
           </div>
         ) : (
           <div className="bp-body">
@@ -449,8 +512,8 @@ export const BoardPage = memo(function BoardPage({
               )}
             </main>
 
-            {current && (
-              <IssueRefContext.Provider value={issueRefs}>
+            {current &&
+              links(
                 <ObjectiveDetail
                   key={current.id}
                   objective={current}
@@ -463,9 +526,8 @@ export const BoardPage = memo(function BoardPage({
                   onOpenSession={onOpenSession}
                   onOpenIssue={(id) => issueRefs?.open(id)}
                   onAskLead={onAskLead}
-                />
-              </IssueRefContext.Provider>
-            )}
+                />,
+              )}
           </div>
         )}
       </div>
@@ -794,12 +856,12 @@ function ObjectiveDetail({
         onClick={() => onSelect(id)}
         title={`${STATUS_LABEL[target.status]}${note}: ${target.goal}`}
       >
-        {/* A button holds no issue links of its own. */}
-        <IssueRefContext.Provider value={null}>
+        {/* A button holds no links of its own. */}
+        <NoLinks>
           <span className="clip">
             <InlineMd>{target.title}</InlineMd>
           </span>
-        </IssueRefContext.Provider>
+        </NoLinks>
       </button>
     );
   };
@@ -942,11 +1004,11 @@ function ObjectiveDetail({
                     onClick={() => onOpenIssue(e.issue.id)}
                   >
                     <span className="bp-id">{e.issue.id}</span>
-                    <IssueRefContext.Provider value={null}>
+                    <NoLinks>
                       <span className="bi-ref-text">
                         <InlineMd>{issueSummary(e.issue.text)}</InlineMd>
                       </span>
-                    </IssueRefContext.Provider>
+                    </NoLinks>
                   </button>
                 </li>
               ))}

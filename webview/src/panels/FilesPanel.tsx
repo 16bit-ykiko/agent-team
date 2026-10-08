@@ -130,7 +130,7 @@ function resolveFrom(dir: string, ref: string): string {
   return parts.join("/") || "/";
 }
 
-function CodeView({
+export function CodeView({
   content,
   lang,
   target,

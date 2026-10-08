@@ -251,7 +251,11 @@ describe("Issues from the server", () => {
       issues: { p1: [module("paths", "10-07#1", "Bad path")] },
     });
     openBoard();
-    fireEvent.click([...document.querySelectorAll(".bp-modes button")].at(-1)!);
+    fireEvent.click(
+      [...document.querySelectorAll(".bp-modes button")].find((b) =>
+        b.textContent.startsWith("Issues"),
+      )!,
+    );
     expect(rows()).toEqual(["10-07#1"]);
 
     recv({ type: "project_updated", project: project({ name: "clice!" }) });

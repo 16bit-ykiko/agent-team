@@ -67,25 +67,27 @@ interface MdNode {
   children?: MdNode[];
 }
 
+interface Found {
+  index: number;
+  text: string;
+  url: string;
+}
+
 // Text nodes only: never inside code, nor inside a link of its own.
-function linkIssueRefs(node: MdNode, pattern: RegExp): void {
+function linkText(node: MdNode, find: (text: string) => Found[]): void {
   if (!node.children || node.type === "link" || node.type === "linkReference") return;
   node.children = node.children.flatMap((child) => {
     if (child.type !== "text" || !child.value) {
-      linkIssueRefs(child, pattern);
+      linkText(child, find);
       return [child];
     }
     const text = child.value;
     const parts: MdNode[] = [];
     let last = 0;
-    for (const m of text.matchAll(pattern)) {
-      if (m.index > last) parts.push({ type: "text", value: text.slice(last, m.index) });
-      parts.push({
-        type: "link",
-        url: ISSUE_HREF + encodeURIComponent(m[0]),
-        children: [{ type: "text", value: m[0] }],
-      });
-      last = m.index + m[0].length;
+    for (const f of find(text)) {
+      if (f.index > last) parts.push({ type: "text", value: text.slice(last, f.index) });
+      parts.push({ type: "link", url: f.url, children: [{ type: "text", value: f.text }] });
+      last = f.index + f.text.length;
     }
     if (parts.length === 0) return [child];
     if (last < text.length) parts.push({ type: "text", value: text.slice(last) });
@@ -94,7 +96,46 @@ function linkIssueRefs(node: MdNode, pattern: RegExp): void {
 }
 
 function remarkIssueRefs(pattern: RegExp) {
-  return () => (tree: MdNode) => linkIssueRefs(tree, pattern);
+  const find = (text: string) =>
+    [...text.matchAll(pattern)].map((m) => ({
+      index: m.index,
+      text: m[0],
+      url: ISSUE_HREF + encodeURIComponent(m[0]),
+    }));
+  return () => (tree: MdNode) => linkText(tree, find);
+}
+
+// Where it is on (the board), file paths written in prose, not in code or a
+// link ("见 notes/ideas.md。"), link to the file: those with a folder in
+// them, as a file reference reads them.
+export const ProsePathContext = createContext(false);
+
+const PROSE_PATH = /(?<![\w./~:#-])(?:~\/|\.{1,2}\/|\/)?(?:[\w.-]+\/)+[\w.-]*(?::\d+(?:-\d+)?)?/g;
+
+export function prosePaths(text: string): Found[] {
+  const out: Found[] = [];
+  for (const m of text.matchAll(PROSE_PATH)) {
+    // A sentence's own full stop is not part of the name.
+    const t = m[0].replace(/[.:]+$/, "");
+    const ref = parseFileRef(t);
+    if (ref && ref.path.slice(0, -1).includes("/")) out.push({ index: m.index, text: t, url: t });
+  }
+  return out;
+}
+
+function remarkProsePaths() {
+  return (tree: MdNode) => linkText(tree, prosePaths);
+}
+
+// Inside a button: no link of its own (an issue, a file).
+export function NoLinks({ children }: { children: ReactNode }) {
+  return (
+    <IssueRefContext.Provider value={null}>
+      <ProsePathContext.Provider value={false}>
+        <FileOpenContext.Provider value={null}>{children}</FileOpenContext.Provider>
+      </ProsePathContext.Provider>
+    </IssueRefContext.Provider>
+  );
 }
 
 // The issue an href links to, if it is one. Text can spell one out by
@@ -250,10 +291,20 @@ export const MdBlock = memo(function MdBlock({ children }: { children: string })
   const { text, hasMath } = useMemo(() => prepareSource(children), [children]);
   const math = useMathPlugins(hasMath);
   const refs = useContext(IssueRefContext);
+  const prose = useContext(ProsePathContext);
+  const opener = useContext(FileOpenContext);
+  const paths = prose && !!opener;
   const remark = math?.remark ?? mdRemarkPlugins;
   const remarkPlugins = useMemo(
-    () => (refs ? [...(remark ?? []), remarkIssueRefs(refs.pattern)] : remark),
-    [refs, remark],
+    () =>
+      refs || paths
+        ? [
+            ...(remark ?? []),
+            ...(refs ? [remarkIssueRefs(refs.pattern)] : []),
+            ...(paths ? [remarkProsePaths] : []),
+          ]
+        : remark,
+    [refs, paths, remark],
   );
   return (
     <Markdown
@@ -272,26 +323,41 @@ export const MdBlock = memo(function MdBlock({ children }: { children: string })
 const INLINE_ELEMENTS = ["p", "code", "strong", "em", "del"];
 // "1. first", "- item", "# 640": text, not a list or a heading.
 const BLOCK_START = /^(?:(\d{1,9})([.)])|([-+*>]|#{1,6}))(?=\s|$)/;
+// Only what the board's plugins link gets here (see InlineMd): an issue, a
+// file; any other link is text.
+function InlineLink({ href, children }: ComponentProps<"a">) {
+  const openFile = useContext(FileOpenContext);
+  const issue = issueOf(href);
+  if (issue) return <IssueLink id={issue}>{children}</IssueLink>;
+  const target = openFile && href ? linkFileRef(href) : null;
+  return target ? <FileRefCode target={target}>{children}</FileRefCode> : <>{children}</>;
+}
 const inlineComponents: Options["components"] = {
   p: ({ children }) => <>{children}</>,
   code: ({ children }) => <code className="inline-code">{children}</code>,
-  // Only issue references get here (see InlineMd); any other link is text.
-  a: ({ href, children }) => {
-    const issue = issueOf(href);
-    return issue ? <IssueLink id={issue}>{children}</IssueLink> : <>{children}</>;
-  },
+  a: ({ href, children }) => <InlineLink href={href}>{children}</InlineLink>,
 };
 const INLINE_WITH_LINKS = [...INLINE_ELEMENTS, "a"];
 export const InlineMd = memo(function InlineMd({ children }: { children: string }) {
   const refs = useContext(IssueRefContext);
+  const prose = useContext(ProsePathContext);
+  const opener = useContext(FileOpenContext);
+  const paths = prose && !!opener;
   const remarkPlugins = useMemo(
-    () => (refs ? [...(mdRemarkPlugins ?? []), remarkIssueRefs(refs.pattern)] : mdRemarkPlugins),
-    [refs],
+    () =>
+      refs || paths
+        ? [
+            ...(mdRemarkPlugins ?? []),
+            ...(refs ? [remarkIssueRefs(refs.pattern)] : []),
+            ...(paths ? [remarkProsePaths] : []),
+          ]
+        : mdRemarkPlugins,
+    [refs, paths],
   );
   return (
     <Markdown
       remarkPlugins={remarkPlugins}
-      allowedElements={refs ? INLINE_WITH_LINKS : INLINE_ELEMENTS}
+      allowedElements={refs || paths ? INLINE_WITH_LINKS : INLINE_ELEMENTS}
       unwrapDisallowed
       components={inlineComponents}
     >
