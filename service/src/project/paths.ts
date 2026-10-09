@@ -4,21 +4,39 @@ import * as os from "os";
 import * as path from "path";
 
 // A path as a project's board writes it, made absolute: notes/... in the
-// project's notes, other relative paths in its repository, absolute ones as
-// they are. Null when it lands outside both, by .. or through a symlink:
-// the board reads and opens nothing else.
+// project's notes (./notes/... is the repository's), other relative paths
+// in its repository, absolute ones as they are. Null when it lands outside
+// both, by .. or through a symlink: the board reads and opens nothing else.
 export function resolveProjectPath(input: string, root: string, notesDir: string): string | null {
-  const p = input.trim().replace(/^\.\//, "");
-  const abs =
-    p === "notes" || p.startsWith("notes/")
-      ? path.resolve(notesDir, p.slice("notes".length).replace(/^\/+/, "") || ".")
-      : p === "~" || p.startsWith("~/")
-        ? path.join(os.homedir(), p.slice(1))
-        : path.resolve(root, p);
+  const p = input.trim();
+  if (p.length > MAX_PATH) return null;
+  const abs = /^notes(\/|$)/.test(p)
+    ? path.resolve(notesDir, p.slice("notes".length).replace(/^\/+/, "") || ".")
+    : p === "~" || p.startsWith("~/")
+      ? path.join(os.homedir(), p.slice(1))
+      : path.resolve(root, p);
   const reals = [root, notesDir].map(realOr);
-  if (![root, notesDir, ...reals].some((b) => within(b, abs))) return null;
-  return reals.some((b) => within(b, realNear(abs))) ? abs : null;
+  const base = [root, notesDir, ...reals].find((b) => within(b, abs));
+  const real = base && realNear(base, abs);
+  return real && reals.some((b) => within(b, real)) ? abs : null;
 }
+
+// How the board writes a path inside the project, read back by
+// resolveProjectPath to the same file.
+export function boardRef(abs: string, root: string, notesDir: string): string {
+  for (const notes of [notesDir, realOr(notesDir)]) {
+    if (within(notes, abs)) return path.join("notes", path.relative(notes, abs));
+  }
+  for (const repo of [root, realOr(root)]) {
+    if (!within(repo, abs)) continue;
+    const rel = path.relative(repo, abs) || ".";
+    return /^(notes|~)(\/|$)/.test(rel) ? `./${rel}` : rel;
+  }
+  return abs;
+}
+
+// Linux's PATH_MAX: nothing longer can be opened anyway.
+const MAX_PATH = 4096;
 
 // What a path missing from the repository may mean: the files (or folders)
 // of the repository, ignored ones aside, and of the notes whose paths end
@@ -29,23 +47,32 @@ export async function findBySuffix(
   input: string,
   root: string,
   notesDir: string,
+  limit = 20,
 ): Promise<Array<{ ref: string; abs: string }>> {
-  const p = input.trim().replace(/\/+$/, "");
-  if (!p || /^(\.{1,2}|~|notes)(\/|$)/.test(p) || path.isAbsolute(p)) return [];
+  const t = input.trim();
+  const p = t.replace(/^\.\//, "").replace(/\/+$/, "");
+  if (!p || p.length > MAX_PATH || /^(notes|\.\.|~)(\/|$)/.test(t) || path.isAbsolute(p)) return [];
+  // Matches by the path they would have, many files of one folder one match.
   const found = new Map<string, string>();
-  const look = (base: string, prefix: string, files: string[]) => {
+  const look = (base: string, board: (rel: string) => string, files: string[]) => {
     for (const f of files) {
       for (let at = `/${f}`.indexOf(`/${p}`); at >= 0; at = `/${f}`.indexOf(`/${p}`, at + 1)) {
         const end = at + p.length;
         if (end !== f.length && f[end] !== "/") continue;
-        const abs = resolveProjectPath(path.join(base, f.slice(0, end)), root, notesDir);
-        if (abs) found.set(prefix + f.slice(0, end), abs);
+        const ref = board(f.slice(0, end));
+        if (found.has(ref)) continue;
+        found.set(ref, path.join(base, f.slice(0, end)));
+        if (found.size > limit) return;
       }
     }
   };
-  look(root, "", await repoFiles(root));
-  look(notesDir, "notes/", listFiles(notesDir));
-  return [...found].sort(([a], [b]) => a.localeCompare(b)).map(([ref, abs]) => ({ ref, abs }));
+  const inRepo = (rel: string) => (/^(notes|~)(\/|$)/.test(rel) ? `./${rel}` : rel);
+  look(root, inRepo, await repoFiles(root));
+  if (found.size <= limit) look(notesDir, (rel) => `notes/${rel}`, listFiles(notesDir));
+  return [...found]
+    .filter(([ref, abs]) => fs.existsSync(abs) && resolveProjectPath(ref, root, notesDir) === abs)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([ref, abs]) => ({ ref, abs }));
 }
 
 const listed = new Map<string, { at: number; files: Promise<string[]> }>();
@@ -53,14 +80,19 @@ const listed = new Map<string, { at: number; files: Promise<string[]> }>();
 function repoFiles(root: string): Promise<string[]> {
   const hit = listed.get(root);
   if (hit && Date.now() - hit.at < 30_000) return hit.files;
-  const files = new Promise<string[]>((resolve) =>
-    execFile(
-      "git",
-      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-      { cwd: root, encoding: "utf-8", timeout: 5000, maxBuffer: 64 * 1024 * 1024 },
-      (err, stdout) => resolve(err ? [] : stdout.split("\0").filter(Boolean)),
-    ),
-  );
+  const files = new Promise<string[]>((resolve) => {
+    try {
+      execFile(
+        "git",
+        ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        { cwd: root, encoding: "utf-8", timeout: 5000, maxBuffer: 64 * 1024 * 1024 },
+        (err, stdout) => resolve(err ? [] : stdout.split("\0").filter(Boolean)),
+      );
+    } catch {
+      // Some spawn failures (a cwd that is a file: ENOTDIR) throw at once.
+      resolve([]);
+    }
+  });
   listed.set(root, { at: Date.now(), files });
   return files;
 }
@@ -91,17 +123,29 @@ function realOr(p: string): string {
   }
 }
 
-// The real path of `p`, or of its nearest existing folder with the rest
-// appended: a file not there yet still cannot be reached through a symlink
-// out of the repository.
-function realNear(p: string): string {
-  let rest = "";
-  for (let dir = p; ; dir = path.dirname(dir)) {
+// The real path of `abs`, inside `base`: walked down one lstat a segment,
+// so that a file not there yet still cannot be reached through a symlink
+// out of the repository. Null past a symlink to nowhere, which may come to
+// point anywhere.
+function realNear(base: string, abs: string): string | null {
+  let cur = realOr(base);
+  const rest = path.relative(base, abs).split(path.sep).filter(Boolean);
+  for (let i = 0; i < rest.length; i++) {
+    const next = path.join(cur, rest[i]);
+    let link: boolean;
     try {
-      return path.join(fs.realpathSync(dir), rest);
+      link = fs.lstatSync(next).isSymbolicLink();
     } catch {
-      if (path.dirname(dir) === dir) return p;
-      rest = path.join(path.basename(dir), rest);
+      return path.join(next, ...rest.slice(i + 1));
+    }
+    if (!link) cur = next;
+    else {
+      try {
+        cur = fs.realpathSync(next);
+      } catch {
+        return null;
+      }
     }
   }
+  return cur;
 }

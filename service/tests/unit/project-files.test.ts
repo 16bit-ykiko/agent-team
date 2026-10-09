@@ -10,7 +10,7 @@ import * as path from "path";
 import { Auth } from "../../src/server/auth";
 import { HttpHandler } from "../../src/server/http";
 import { execFileSync } from "child_process";
-import { findBySuffix, resolveProjectPath } from "../../src/project/paths";
+import { boardRef, findBySuffix, resolveProjectPath } from "../../src/project/paths";
 import { openInVSCode, VSCodeUnavailable } from "../../src/repo/vscode";
 
 let base: string;
@@ -57,6 +57,27 @@ describe("board paths", () => {
     expect(resolveProjectPath(path.join(root, "src", "a.cpp"), link, notes)).toBe(
       path.join(root, "src", "a.cpp"),
     );
+    // A link to nowhere may come to point anywhere.
+    const dangling = path.join(root, "dangling");
+    if (!fs.existsSync(dangling)) fs.symlinkSync(path.join(base, "nowhere"), dangling);
+    expect(r("dangling/x.cpp")).toBeNull();
+    // ./notes/ is the repository's own notes folder.
+    expect(r("./notes/a.md")).toBe(path.join(root, "notes", "a.md"));
+  });
+
+  it("are written back as the board writes them", () => {
+    const ref = (abs: string) => boardRef(abs, root, notes);
+    expect(ref(path.join(notes, "rules", "cli.md"))).toBe("notes/rules/cli.md");
+    expect(ref(notes)).toBe("notes");
+    expect(ref(path.join(root, "src", "a.cpp"))).toBe("src/a.cpp");
+    expect(ref(path.join(root, "notes", "a.md"))).toBe("./notes/a.md");
+    expect(ref(root)).toBe(".");
+  });
+
+  it("refuse a path too long to be one, at once", () => {
+    const t = Date.now();
+    expect(resolveProjectPath("a/".repeat(32_000), root, notes)).toBeNull();
+    expect(Date.now() - t).toBeLessThan(500);
   });
 });
 
@@ -68,10 +89,16 @@ describe("a path missing from the repository", () => {
       fs.writeFileSync(path.join(repo, f), "");
     }
     fs.writeFileSync(path.join(repo, "untracked.cpp"), "");
+    fs.mkdirSync(path.join(repo, "notes", "guide"), { recursive: true });
+    fs.mkdirSync(path.join(repo, "docs", "guide"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "notes", "guide", "a.md"), "");
+    fs.writeFileSync(path.join(repo, "docs", "guide", "a.md"), "");
+    fs.writeFileSync(path.join(repo, "src", "gone.cpp"), "");
     fs.writeFileSync(path.join(repo, "ignored.cpp"), "");
     fs.writeFileSync(path.join(repo, ".gitignore"), "ignored.cpp\n");
     execFileSync("git", ["init", "-q"], { cwd: repo });
-    execFileSync("git", ["add", "src", "docs"], { cwd: repo });
+    execFileSync("git", ["add", "src", "docs", "notes"], { cwd: repo });
+    fs.rmSync(path.join(repo, "src", "gone.cpp"));
     const find = async (p: string) => (await findBySuffix(p, repo, notes)).map((f) => f.ref);
     expect(await findBySuffix("sched/batch.cpp", repo, notes)).toEqual([
       { ref: "src/sched/batch.cpp", abs: path.join(repo, "src/sched/batch.cpp") },
@@ -81,6 +108,13 @@ describe("a path missing from the repository", () => {
     expect(await find("sched/")).toEqual(["src/sched"]);
     expect(await find("rules/cli.md")).toEqual(["notes/rules/cli.md"]);
     expect(await find("cli/format.md")).toEqual(["docs/en/cli/format.md", "docs/zh/cli/format.md"]);
+    expect(await find("./sched/batch.cpp")).toEqual(["src/sched/batch.cpp"]);
+    // Each as the board reads it back, the repository's notes/ too.
+    const guide = await findBySuffix("guide/a.md", repo, notes);
+    expect(guide.map((f) => f.ref)).toEqual(["./notes/guide/a.md", "docs/guide/a.md"]);
+    for (const f of guide) expect(resolveProjectPath(f.ref, repo, notes)).toBe(f.abs);
+    // Tracked but deleted.
+    expect(await find("gone.cpp")).toEqual([]);
     // Part of a name, or a path the board reads as it is.
     expect(await find("ched/batch.cpp")).toEqual([]);
     expect(await find("ignored.cpp")).toEqual([]);
@@ -130,12 +164,18 @@ describe("api/file and api/open for a project", () => {
 
   it("read a note, list the notes, and refuse what lies outside", async () => {
     const note = await get("project=p1&path=notes/rules/cli.md");
-    expect(note).toMatchObject({ status: 200, body: { kind: "text", content: "# CLI\n" } });
+    expect(note).toMatchObject({
+      status: 200,
+      body: { kind: "text", content: "# CLI\n", ref: "notes/rules/cli.md" },
+    });
     const dir = await get("project=p1&path=notes");
     expect(dir.body.kind).toBe("dir");
     expect((dir.body.entries as Array<{ name: string }>).map((e) => e.name)).toEqual(["rules"]);
     expect((await get("project=p1&path=src/a.cpp")).body.content).toBe("int a;\n");
-    expect((await get("project=p1&path=cli.md")).body.path).toBe(path.join(notes, "rules/cli.md"));
+    expect((await get("project=p1&path=cli.md")).body).toMatchObject({
+      path: path.join(notes, "rules/cli.md"),
+      ref: "notes/rules/cli.md",
+    });
     expect(await get("project=p1&path=dup.md")).toMatchObject({
       status: 404,
       body: { candidates: ["notes/rules/a/dup.md", "notes/rules/b/dup.md"] },
@@ -143,6 +183,7 @@ describe("api/file and api/open for a project", () => {
     expect((await get("project=p1&path=../secret.txt")).status).toBe(403);
     expect((await get(`project=p1&path=${encodeURIComponent(base)}/secret.txt`)).status).toBe(403);
     expect((await get("project=nope&path=notes")).status).toBe(404);
+    expect((await get(`project=p1&path=${"a/".repeat(3000)}`)).status).toBe(400);
     const raw = await fetch(`http://127.0.0.1:${port}/api/file/raw?project=p1&path=../secret.txt`);
     expect(raw.status).toBe(403);
   });
@@ -168,6 +209,33 @@ describe("api/file and api/open for a project", () => {
     });
     fail = null;
     expect(opened).toHaveLength(1);
+  });
+});
+
+describe("api/file for a project whose folder is gone", () => {
+  it("answers, and the server stays up", async () => {
+    const file = path.join(base, "not-a-dir");
+    fs.writeFileSync(file, "");
+    const handler = new HttpHandler(
+      new Auth(() => null),
+      base,
+      base,
+      base,
+      () => undefined,
+      () => undefined,
+      () => ({ root: file, notesDir: path.join(file, "notes") }),
+    );
+    const server = http.createServer((req, res) => handler.handle(req, res));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/api/file?project=p&path=x.cpp`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   });
 });
 
@@ -237,6 +305,37 @@ describe("VS Code's CLI", () => {
       const sleeper = Number(fs.readFileSync(pid, "utf-8"));
       await new Promise((r) => setTimeout(r, 100));
       expect(() => process.kill(sleeper, 0)).toThrow();
+      await Promise.all(servers.map((srv) => new Promise<void>((r) => srv.close(() => r()))));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("is run once when it fails by itself, and without --goto for no line", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-vsc-"));
+    try {
+      const run = path.join(dir, "run");
+      fs.mkdirSync(run);
+      const cli = path.join(dir, "server", "bin", "abc", "bin", "remote-cli", "code");
+      fs.mkdirSync(path.dirname(cli), { recursive: true });
+      const log = path.join(dir, "log");
+      fs.writeFileSync(
+        cli,
+        `#!/bin/sh\necho "$*" >> ${log}\n[ "$1" = "--goto" ] || exit 0\nexit 1\n`,
+        {
+          mode: 0o755,
+        },
+      );
+      const socks = ["a", "b", "c"].map((n) => path.join(run, `vscode-ipc-${n}.sock`));
+      const servers = socks.map(() => net.createServer((c) => c.end()));
+      await Promise.all(servers.map((srv, i) => new Promise<void>((r) => srv.listen(socks[i], r))));
+      const env = { serverDir: path.join(dir, "server"), runtimeDir: run };
+
+      await expect(openInVSCode("/repo/a.cpp", 3, env)).rejects.toThrow();
+      expect(fs.readFileSync(log, "utf-8").trim().split("\n")).toEqual(["--goto /repo/a.cpp:3"]);
+      fs.rmSync(log);
+      await openInVSCode("/repo/a:3", undefined, env);
+      expect(fs.readFileSync(log, "utf-8").trim()).toBe("/repo/a:3");
       await Promise.all(servers.map((srv) => new Promise<void>((r) => srv.close(() => r()))));
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

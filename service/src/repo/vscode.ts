@@ -45,15 +45,21 @@ export async function openInVSCode(
     ...(env.hook ? [env.hook] : []),
     ...newestFirst(ipcSockets(env.runtimeDir)).filter((s) => s !== env.hook),
   ];
-  const target = line ? `${file}:${line}` : file;
+  // --goto reads a trailing :N of the name as a line: only with one.
+  const args = line ? ["--goto", `${file}:${line}`] : [file];
   let failed: Error = new VSCodeUnavailable("No VS Code window is connected");
+  let tries = 0;
   for (const hook of sockets) {
     if (!(await alive(hook))) continue;
     try {
-      return await run(cli, ["--goto", target], hook, env.timeoutMs ?? 5000);
+      return await run(cli, args, hook, env.timeoutMs ?? 5000);
     } catch (e) {
       failed = e as Error;
     }
+    // Only a window that did not answer is worth passing over, and only
+    // once: a slow one may still open the file, and the CLI failing on its
+    // own fails with every window.
+    if (!(failed instanceof VSCodeUnavailable) || ++tries === 2) break;
   }
   throw failed;
 }

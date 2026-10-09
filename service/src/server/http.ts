@@ -9,7 +9,7 @@ import type { Auth } from "./auth";
 import { NotRegularFile, readFileView, resolveFilePath } from "../repo/files";
 import { changes, fileDiff, NotARepository } from "../repo/diff";
 import { openInVSCode, VSCodeUnavailable } from "../repo/vscode";
-import { findBySuffix, resolveProjectPath } from "../project/paths";
+import { boardRef, findBySuffix, resolveProjectPath } from "../project/paths";
 
 // Where a project's board paths lead: its repository and its notes.
 export interface ProjectPaths {
@@ -198,19 +198,23 @@ export class HttpHandler {
       const cwd = this.cwdOf(url.searchParams.get("ws") ?? "") ?? os.homedir();
       return this.sendFile(resolveFilePath(cwd, input || "."), raw, res);
     }
-    void this.projectPath(project, input).then((found) =>
-      "status" in found
-        ? json(res, found.status, { error: found.error })
-        : this.sendFile(found.abs, raw, res, found.candidates),
+    this.projectPath(project, input).then(
+      (found) =>
+        "status" in found
+          ? json(res, found.status, { error: found.error })
+          : this.sendFile(found.abs, raw, res, found.candidates, found.ref),
+      (e: unknown) => json(res, 500, { error: e instanceof Error ? e.message : String(e) }),
     );
   }
 
-  // `candidates`: what a path that is not there may have meant.
+  // For a project's board: `ref`, the path as it writes it (the one found
+  // for a shorthand), and `candidates`, what a path not there may mean.
   private sendFile(
     abs: string,
     raw: boolean,
     res: http.ServerResponse,
     candidates?: string[],
+    ref?: string,
   ): void {
     const fail = (e: unknown) => {
       const code = (e as NodeJS.ErrnoException).code;
@@ -219,9 +223,11 @@ export class HttpHandler {
           ? [400, e.message]
           : code === "ENOENT" || code === "ENOTDIR"
             ? [404, "No such file or directory"]
-            : code === "EACCES" || code === "EPERM"
-              ? [403, "Permission denied"]
-              : [500, e instanceof Error ? e.message : String(e)];
+            : code === "ENAMETOOLONG" || code === "ELOOP"
+              ? [400, "Not a path that can be opened"]
+              : code === "EACCES" || code === "EPERM"
+                ? [403, "Permission denied"]
+                : [500, e instanceof Error ? e.message : String(e)];
       res.statusCode = status;
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.end(
@@ -235,22 +241,30 @@ export class HttpHandler {
     readFileView(abs).then((view) => {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       res.setHeader("Cache-Control", "no-store");
-      res.end(JSON.stringify(view));
+      res.end(JSON.stringify(ref === undefined ? view : { ...view, ref }));
     }, fail);
   }
 
   private async projectPath(
     projectId: string,
     input: string,
-  ): Promise<{ abs: string; candidates?: string[] } | { status: number; error: string }> {
+  ): Promise<
+    { abs: string; ref: string; candidates?: string[] } | { status: number; error: string }
+  > {
     const paths = this.projectOf(projectId);
     if (!paths) return { status: 404, error: "No such project" };
+    if (input.length > 4096) return { status: 400, error: "Not a path that can be opened" };
     const abs = resolveProjectPath(input || ".", paths.root, paths.notesDir);
     if (!abs) return { status: 403, error: "Outside the project's repository and notes" };
-    if (fs.existsSync(abs)) return { abs };
+    const ref = (p: string) => boardRef(p, paths.root, paths.notesDir);
+    if (fs.existsSync(abs)) return { abs, ref: ref(abs) };
     const found = await findBySuffix(input, paths.root, paths.notesDir);
-    if (found.length === 1) return { abs: found[0].abs };
-    return { abs, ...(found.length > 0 && { candidates: found.slice(0, 20).map((f) => f.ref) }) };
+    if (found.length === 1) return { abs: found[0].abs, ref: found[0].ref };
+    return {
+      abs,
+      ref: ref(abs),
+      ...(found.length > 0 && { candidates: found.slice(0, 20).map((f) => f.ref) }),
+    };
   }
 
   // A file of a project's board opened in the user's VS Code. JSON only, so
@@ -277,8 +291,9 @@ export class HttpHandler {
       if (typeof project !== "string" || typeof input !== "string") {
         return json(res, 400, { error: "Give the project and the path" });
       }
-      void this.open(project, input, typeof line === "number" && line > 0 ? line : undefined).then(
+      this.open(project, input, typeof line === "number" && line > 0 ? line : undefined).then(
         ([status, reply]) => json(res, status, reply),
+        (e: unknown) => json(res, 500, { error: e instanceof Error ? e.message : String(e) }),
       );
     });
   }
