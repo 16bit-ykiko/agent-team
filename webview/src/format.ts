@@ -10,6 +10,11 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Text's size as the server counts it.
+export function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
 export function formatUptime(seconds: number): string {
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);

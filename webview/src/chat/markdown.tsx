@@ -114,7 +114,7 @@ export const ProsePathContext = createContext<((path: string) => boolean) | null
 // A path may follow a word in Chinese ("见src/a.cpp"), but a slash right
 // after one joins words ("孤儿/ABA/无上界"), it starts no absolute path.
 const PROSE_PATH =
-  /(?<![\w./~:#{}-])(?:~\/|\.{1,2}\/|(?<![\p{L}\p{N}])\/)?(?:[\w.-]+\/)+[\w.-]*(?::\d+(?:-\d+)?)?/gu;
+  /(?<![\w./~:#{}@$%+-])(?:~\/|\.{1,2}\/|(?<![\p{L}\p{N}])\/)?(?:[\w.-]+\/)+[\w.-]*(?::\d+(?:-\d+)?)?/gu;
 
 export function prosePaths(text: string): Found[] {
   const out: Found[] = [];
@@ -370,18 +370,23 @@ function InlineLink({ href, children }: ComponentProps<"a">) {
   const issue = issueOf(href);
   if (issue) return <IssueLink id={issue}>{children}</IssueLink>;
   const target = openable && href ? linkFileRef(href) : null;
-  return target && openable?.(target) ? (
-    <FileRefCode target={target}>{children}</FileRefCode>
-  ) : (
-    <>{children}</>
+  return (
+    <InLink.Provider value={true}>
+      {target && openable?.(target) ? (
+        <FileRefCode target={target}>{children}</FileRefCode>
+      ) : (
+        children
+      )}
+    </InLink.Provider>
   );
 }
 // Code naming a file opens it where the board links paths.
 function InlineCodeText({ children }: { children?: ReactNode }) {
   const paths = useProsePaths();
   const openable = useOpenable();
+  const inLink = useContext(InLink);
   const text = typeof children === "string" ? children : null;
-  return paths && openable && text && parseFileRef(text) && openable(text) ? (
+  return paths && openable && !inLink && text && parseFileRef(text) && openable(text) ? (
     <FileRefCode target={text} className="inline-code">
       {children}
     </FileRefCode>

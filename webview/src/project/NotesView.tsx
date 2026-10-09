@@ -3,7 +3,7 @@ import { MdBlock, ProsePathContext } from "../chat/markdown";
 import { FileOpenContext, parseFileRef, type FileRef } from "../chat/fileRef";
 import { CodeView, languageFor, type FileView } from "../panels/FilesPanel";
 import { FileIcon, Icon } from "../panels/Icon";
-import { formatSize } from "../format";
+import { formatSize, utf8Length } from "../format";
 
 // The project's notes on the board page: their folders as a tree on the
 // left, a file in full on the right. Paths are as the board writes them:
@@ -50,7 +50,13 @@ function fileUrl(project: string, path: string, raw = false): string {
 export function reachable(path: string, root: string): boolean {
   if (path.startsWith("~")) return false;
   if (path.startsWith("/")) return path === root || path.startsWith(`${root}/`);
-  return !/^(\.\/)*\.\.(\/|$)/.test(path);
+  let depth = 0;
+  for (const seg of path.split("/")) {
+    if (seg === "..") depth--;
+    else if (seg !== "." && seg !== "") depth++;
+    if (depth < 0) return false;
+  }
+  return true;
 }
 
 // A reference made from inside `from`: ./ and ../ against its folder, the
@@ -218,25 +224,30 @@ function NotesTree({
 // text as code with its line marked, a folder's entries, an image.
 export function FilePreview({
   project,
-  root,
   file,
   onRef,
+  onResolve,
   onClose,
   editor,
 }: {
   project: string;
-  // The repository's folder: a path found elsewhere than written shows as
-  // it is there.
-  root: string;
   file: BoardFile;
+  // The path as the board writes it, when the server found the file under
+  // another (a shorthand for a path in src/, a note).
+  onResolve: (path: string) => void;
   // A reference in it, resolved against it.
   onRef: (ref: string) => void;
   onClose: () => void;
   // Offered inside VS Code: the file in the editor.
   editor: boolean;
 }) {
-  const result = useJson<FileView>(fileUrl(project, file.path));
+  const result = useJson<FileView & { ref?: string }>(fileUrl(project, file.path));
   const view = result && "value" in result ? result.value : null;
+  const found = view?.ref;
+  useEffect(() => {
+    const bare = (p: string) => p.replace(/\/+$/, "");
+    if (found && bare(found) !== bare(file.path)) onResolve(found);
+  }, [found, file.path, onResolve]);
   const markdown = view?.kind === "text" && languageFor(file.path) === "markdown" && !file.line;
   const openRef = useCallback(
     (ref: string) => {
@@ -254,19 +265,15 @@ export function FilePreview({
     [accept, file.path],
   );
   const name = file.path.split("/").filter(Boolean).pop() ?? file.path;
-  const shown =
-    view && !/^(\.\/)?notes(\/|$)/.test(file.path) && view.path.startsWith(`${root}/`)
-      ? view.path.slice(root.length + 1)
-      : file.path;
   const notice = failed ?? file.notice;
   return (
     <section className="bn-preview" aria-label={name}>
       <div className="bn-bar">
-        <button className="bp-back bn-back" aria-label="Back to the notes" onClick={onClose}>
+        <button className="bp-back bn-back" aria-label="Back" onClick={onClose}>
           ‹
         </button>
         <span className="bn-path" title={view?.path ?? file.path}>
-          <bdi>{shown}</bdi>
+          <bdi>{file.path}</bdi>
         </span>
         {editor && view && view.kind !== "dir" && (
           <button
@@ -312,7 +319,7 @@ export function FilePreview({
               <button
                 key={e.name}
                 className={`dir-entry${e.dir ? " is-dir" : ""}`}
-                onClick={() => onRef(`${shown.replace(/\/$/, "")}/${e.name}`)}
+                onClick={() => onRef(`${file.path.replace(/\/$/, "")}/${e.name}`)}
               >
                 <FileIcon name={e.name} dir={e.dir} />
                 <span className="dir-entry-name">{e.name}</span>
@@ -340,7 +347,7 @@ export function FilePreview({
         )}
         {view?.kind === "text" && view.truncated && (
           <div className="file-note">
-            Showing the first {formatSize(view.content.length)} of {formatSize(view.size)}.
+            Showing the first {formatSize(utf8Length(view.content))} of {formatSize(view.size)}.
           </div>
         )}
         {view?.kind === "dir" && view.truncated && (
@@ -353,17 +360,17 @@ export function FilePreview({
 
 export function NotesView({
   project,
-  root,
   file,
   onOpen,
   onRef,
+  onResolve,
   onClose,
 }: {
   project: string;
-  root: string;
   file: BoardFile | null;
   onOpen: (path: string) => void;
   onRef: (ref: string) => void;
+  onResolve: (path: string) => void;
   onClose: () => void;
 }) {
   const editor = useMemo(() => inVSCode(), []);
@@ -377,9 +384,9 @@ export function NotesView({
           <FilePreview
             key={`${file.path}:${file.line ?? ""}`}
             project={project}
-            root={root}
             file={file}
             onRef={onRef}
+            onResolve={onResolve}
             onClose={onClose}
             editor={editor}
           />

@@ -4,7 +4,7 @@ import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { highlightTree } from "../chat/highlight";
 import { MdBlock } from "../chat/markdown";
 import { FileOpenContext, parseFileRef, type FileRef } from "../chat/fileRef";
-import { formatSize } from "../format";
+import { formatSize, utf8Length } from "../format";
 import { FileIcon, Icon } from "./Icon";
 import {
   ChangesList,
@@ -427,7 +427,7 @@ export function FilesPanel({
           ))}
         {view?.kind === "text" && view.truncated && (
           <div className="file-note">
-            Showing the first {formatSize(view.content.length)} of {formatSize(view.size)}.
+            Showing the first {formatSize(utf8Length(view.content))} of {formatSize(view.size)}.
           </div>
         )}
         {view?.kind === "image" && (

@@ -117,9 +117,11 @@ export const BoardPage = memo(function BoardPage({
   const [fileFrom, setFileFrom] = useState<"objectives" | "issues" | null>(null);
   const modeRef = useRef(mode);
   modeRef.current = mode;
-  // Bumped by every file opened: an answer from VS Code that comes after
-  // the user moved on is dropped.
+  // Bumped by every file opened and every step elsewhere: an answer from
+  // VS Code that comes after the user moved on is dropped.
   const opening = useRef(0);
+  // The details' scroll when a file was opened from them, to come back to.
+  const returnScroll = useRef<number | null>(null);
   const [view, setView] = useState<"list" | "graph">("list");
   const [filter, setFilter] = useState<BoardFilter>({
     area: null,
@@ -130,6 +132,9 @@ export const BoardPage = memo(function BoardPage({
   const [selected, setSelected] = useState<string | null>(null);
   const [issueFilter, setIssueFilter] = useState<IssueFilter>(DEFAULT_ISSUE_FILTER);
   const [selectedIssue, setSelectedIssue] = useState<string | null>(null);
+  useEffect(() => {
+    opening.current++;
+  }, [mode, selected, selectedIssue, noteFile]);
   const pageRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -208,7 +213,10 @@ export const BoardPage = memo(function BoardPage({
   const editor = useMemo(() => inVSCode(), []);
   const showFile = useCallback((ref: string, notice?: string) => {
     const from = modeRef.current;
-    if (from !== "notes") setFileFrom(from);
+    if (from !== "notes") {
+      setFileFrom(from);
+      returnScroll.current = pageRef.current?.querySelector(".bp-detail")?.scrollTop ?? null;
+    }
     setMode("notes");
     setNoteFile({ ...(parseFileRef(ref) ?? { path: ref }), ...(notice && { notice }) });
   }, []);
@@ -224,16 +232,23 @@ export const BoardPage = memo(function BoardPage({
     [editor, project.id, showFile],
   );
   const closeFile = () => {
-    opening.current++;
     setNoteFile(null);
     if (fileFrom) setMode(fileFrom);
+    else returnScroll.current = null;
     setFileFrom(null);
   };
+  useLayoutEffect(() => {
+    const detail = pageRef.current?.querySelector(".bp-detail");
+    if (mode === "notes" || returnScroll.current === null || !detail) return;
+    detail.scrollTop = returnScroll.current;
+    returnScroll.current = null;
+  }, [mode]);
   const choose = (m: typeof mode) => {
-    opening.current++;
     setFileFrom(null);
+    returnScroll.current = null;
     setMode(m);
   };
+  const resolveFile = useCallback((path: string) => setNoteFile((f) => f && { ...f, path }), []);
   const accept = useCallback((path: string) => reachable(path, project.root), [project.root]);
   // Around the details and the notes: the issues and the files their text
   // names link.
@@ -388,14 +403,14 @@ export const BoardPage = memo(function BoardPage({
           links(
             <NotesView
               project={project.id}
-              root={project.root}
               file={noteFile}
               onOpen={(path) => {
-                opening.current++;
                 setFileFrom(null);
+                returnScroll.current = null;
                 setNoteFile({ path });
               }}
               onRef={openRef}
+              onResolve={resolveFile}
               onClose={closeFile}
             />,
           )

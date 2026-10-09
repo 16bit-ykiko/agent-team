@@ -5,7 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, screen, within, waitFor } from "@testing-library/react";
 import { BoardPage } from "../src/project/BoardPage";
-import { MdBlock, ProsePathContext, prosePaths } from "../src/chat/markdown";
+import { InlineMd, MdBlock, ProsePathContext, prosePaths } from "../src/chat/markdown";
 import { FileOpenContext } from "../src/chat/fileRef";
 import { inVSCode, reachable, refFrom } from "../src/project/NotesView";
 import type { IssueModules, Objective, Project } from "../src/state/useServer";
@@ -57,6 +57,7 @@ const FILES: Record<string, unknown> = {
     entries: [
       { name: "_archive", dir: true, size: 0 },
       { name: "release", dir: true, size: 0 },
+      { name: "rules", dir: true, size: 0 },
       { name: "ideas.md", dir: false, size: 10 },
     ],
     truncated: false,
@@ -65,6 +66,12 @@ const FILES: Record<string, unknown> = {
     kind: "dir",
     path: "/data/notes/release",
     entries: [{ name: "docs-truth.md", dir: false, size: 10 }],
+    truncated: false,
+  },
+  "notes/rules": {
+    kind: "dir",
+    path: "/data/notes/rules",
+    entries: [{ name: "cli.md", dir: false, size: 10 }],
     truncated: false,
   },
   "notes/release/docs-truth.md": {
@@ -86,15 +93,32 @@ const FILES: Record<string, unknown> = {
     kind: "text",
     path: "/data/notes/rules/cli.md",
     size: 10,
-    content: "# CLI rules\n",
+    content: "# CLI rules\n\nSee [the engine](./engine.md).\n",
     truncated: false,
   },
   // Written from src/: the server finds it there.
   "sched/batch.cpp": {
     kind: "text",
     path: "/repo/clice/src/sched/batch.cpp",
+    ref: "src/sched/batch.cpp",
     size: 10,
     content: "void run();\n",
+    truncated: false,
+  },
+  "src/sched/batch.cpp": {
+    kind: "text",
+    path: "/repo/clice/src/sched/batch.cpp",
+    ref: "src/sched/batch.cpp",
+    size: 3_000_000,
+    content: "汉".repeat(1000),
+    truncated: true,
+  },
+  "rules/cli.md": {
+    kind: "text",
+    path: "/data/notes/rules/cli.md",
+    ref: "notes/rules/cli.md",
+    size: 10,
+    content: "# CLI rules\n",
     truncated: false,
   },
   "src/server/a.cpp": {
@@ -193,6 +217,7 @@ describe("paths in prose", () => {
     ]) {
       expect(found(t), t).toEqual([]);
     }
+    expect(found("见 @types/node/index.d.ts、$XDG_CACHE_HOME/clice/、a+b/c.md")).toEqual([]);
     expect(found("见.github/workflows/ci.yml和.clangd/index/")).toEqual([
       ".github/workflows/ci.yml",
       ".clangd/index/",
@@ -208,6 +233,9 @@ describe("paths in prose", () => {
     expect(reachable("/tmp/hunt/a.cpp", root)).toBe(false);
     expect(reachable("/repo/clice-old/a.cpp", root)).toBe(false);
     expect(reachable("~/x/a.cpp", root)).toBe(false);
+    expect(reachable("src/../../x.cpp", root)).toBe(false);
+    expect(reachable("notes/../../x.md", root)).toBe(false);
+    expect(reachable("src/../a.cpp", root)).toBe(true);
     const { container } = render(
       <FileOpenContext.Provider value={vi.fn()}>
         <ProsePathContext.Provider value={(p) => reachable(p, root)}>
@@ -234,6 +262,20 @@ describe("paths in prose", () => {
     );
     fireEvent.click(container.querySelector(".file-ref")!);
     expect(open).toHaveBeenCalledWith("notes/ideas.md");
+  });
+
+  it("make one link of a code span in a link", () => {
+    const open = vi.fn();
+    const { container } = render(
+      <FileOpenContext.Provider value={open}>
+        <ProsePathContext.Provider value={() => true}>
+          <InlineMd>{"see [`src/a.cpp`](src/b.cpp)"}</InlineMd>
+        </ProsePathContext.Provider>
+      </FileOpenContext.Provider>,
+    );
+    expect(container.querySelector(".file-ref .file-ref")).toBeNull();
+    fireEvent.click(container.querySelector(".file-ref")!);
+    expect(open.mock.calls).toEqual([["src/b.cpp"]]);
   });
 
   it("resolve ./ and ../ against the note that names them", () => {
@@ -332,10 +374,13 @@ describe("the notes view", () => {
     fireEvent.click(within(objective(container)).getByText("sched/batch.cpp"));
     const code = await preview();
     expect(within(code).getByText("Failed to fetch: the file is shown here instead.")).toBeTruthy();
-    // Found under src/, and shown as it is there.
+    // Found under src/, and shown as it is there, only its start: bytes, not characters.
     await waitFor(() =>
-      expect(code.querySelector(".bn-path")!.textContent).toBe("src/sched/batch.cpp"),
+      expect(
+        screen.getByRole("region", { name: "batch.cpp" }).querySelector(".bn-path")!.textContent,
+      ).toBe("src/sched/batch.cpp"),
     );
+    await screen.findByText("Showing the first 2.9 KB of 2.9 MB.");
   });
 
   it("offers what a path not there may have meant", async () => {
@@ -444,6 +489,79 @@ describe("the notes view", () => {
     gates[0]();
     await new Promise((r) => setTimeout(r, 20));
     expect((await preview()).getAttribute("aria-label")).toBe("a.cpp");
+  });
+
+  it("takes a file found under another path for that path, in the tree and its links", async () => {
+    FILES["notes/ideas.md"] = {
+      ...(FILES["notes/ideas.md"] as object),
+      content: "# Ideas\n\nSee rules/cli.md.\n",
+    };
+    try {
+      board();
+      fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+      fireEvent.click(await screen.findByRole("treeitem", { name: /ideas\.md/ }));
+      fireEvent.click(await within(await preview()).findByText("rules/cli.md"));
+      // Shown again under the path found: the one the tree and its links go by.
+      await waitFor(() =>
+        expect(
+          screen.getByRole("region", { name: "cli.md" }).querySelector(".bn-path")!.textContent,
+        ).toBe("notes/rules/cli.md"),
+      );
+      expect(document.querySelector(".bn-item.selected")!.getAttribute("title")).toBe(
+        "notes/rules/cli.md",
+      );
+      fireEvent.click(
+        await within(screen.getByRole("region", { name: "cli.md" })).findByText("the engine"),
+      );
+      await waitFor(() =>
+        expect(requests.at(-1)).toBe(
+          `api/file?project=p1&path=${encodeURIComponent("notes/rules/engine.md")}`,
+        ),
+      );
+    } finally {
+      FILES["notes/ideas.md"] = { ...(FILES["notes/ideas.md"] as object), content: "# Ideas\n" };
+    }
+  });
+
+  it("drops VS Code's late answer once the user went on", async () => {
+    const gates: Array<() => void> = [];
+    const real = fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: RequestInit) =>
+        url === "api/open"
+          ? new Promise<Response>((resolve) =>
+              gates.push(() =>
+                resolve(
+                  new Response(JSON.stringify({ error: "VS Code did not answer" }), {
+                    status: 503,
+                  }),
+                ),
+              ),
+            )
+          : real(url, init),
+      ),
+    );
+    const { container } = board(VSCODE_UA);
+    fireEvent.click(within(objective(container)).getByText("src/server/a.cpp:12"));
+    await waitFor(() => expect(gates).toHaveLength(1));
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    gates[0]();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container.querySelector(".bn-preview")).toBeNull();
+    expect(screen.getByRole("button", { name: "Objectives" }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
+  });
+
+  it("comes back to the details where they were scrolled to", async () => {
+    const { container } = board();
+    const detail = objective(container);
+    detail.scrollTop = 500;
+    fireEvent.click(within(detail).getByText("src/server/a.cpp:12"));
+    await preview();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("complementary", { name: "Docs truth" }).scrollTop).toBe(500);
   });
 
   it("links the issues a note names", async () => {
