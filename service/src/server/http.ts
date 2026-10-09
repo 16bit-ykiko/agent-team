@@ -9,7 +9,7 @@ import type { Auth } from "./auth";
 import { NotRegularFile, readFileView, resolveFilePath } from "../repo/files";
 import { changes, fileDiff, NotARepository } from "../repo/diff";
 import { openInVSCode, VSCodeUnavailable } from "../repo/vscode";
-import { resolveProjectPath } from "../project/paths";
+import { findBySuffix, resolveProjectPath } from "../project/paths";
 
 // Where a project's board paths lead: its repository and its notes.
 export interface ProjectPaths {
@@ -194,15 +194,24 @@ export class HttpHandler {
   private handleFile(url: URL, raw: boolean, res: http.ServerResponse): void {
     const input = url.searchParams.get("path") ?? "";
     const project = url.searchParams.get("project");
-    let abs: string;
-    if (project !== null) {
-      const found = this.projectPath(project, input);
-      if ("status" in found) return json(res, found.status, { error: found.error });
-      abs = found.abs;
-    } else {
+    if (project === null) {
       const cwd = this.cwdOf(url.searchParams.get("ws") ?? "") ?? os.homedir();
-      abs = resolveFilePath(cwd, input || ".");
+      return this.sendFile(resolveFilePath(cwd, input || "."), raw, res);
     }
+    void this.projectPath(project, input).then((found) =>
+      "status" in found
+        ? json(res, found.status, { error: found.error })
+        : this.sendFile(found.abs, raw, res, found.candidates),
+    );
+  }
+
+  // `candidates`: what a path that is not there may have meant.
+  private sendFile(
+    abs: string,
+    raw: boolean,
+    res: http.ServerResponse,
+    candidates?: string[],
+  ): void {
     const fail = (e: unknown) => {
       const code = (e as NodeJS.ErrnoException).code;
       const [status, error] =
@@ -215,7 +224,9 @@ export class HttpHandler {
               : [500, e instanceof Error ? e.message : String(e)];
       res.statusCode = status;
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.end(JSON.stringify({ error, path: abs }));
+      res.end(
+        JSON.stringify({ error, path: abs, ...(status === 404 && candidates && { candidates }) }),
+      );
     };
     if (raw) {
       this.sendRaw(abs, res, fail);
@@ -228,15 +239,18 @@ export class HttpHandler {
     }, fail);
   }
 
-  private projectPath(
+  private async projectPath(
     projectId: string,
     input: string,
-  ): { abs: string } | { status: number; error: string } {
+  ): Promise<{ abs: string; candidates?: string[] } | { status: number; error: string }> {
     const paths = this.projectOf(projectId);
     if (!paths) return { status: 404, error: "No such project" };
     const abs = resolveProjectPath(input || ".", paths.root, paths.notesDir);
     if (!abs) return { status: 403, error: "Outside the project's repository and notes" };
-    return { abs };
+    if (fs.existsSync(abs)) return { abs };
+    const found = await findBySuffix(input, paths.root, paths.notesDir);
+    if (found.length === 1) return { abs: found[0].abs };
+    return { abs, ...(found.length > 0 && { candidates: found.slice(0, 20).map((f) => f.ref) }) };
   }
 
   // A file of a project's board opened in the user's VS Code. JSON only, so
@@ -249,30 +263,41 @@ export class HttpHandler {
     let size = 0;
     req.on("data", (c: Buffer) => {
       size += c.length;
-      if (size > 64 * 1024) req.destroy();
-      else chunks.push(c);
+      if (size <= 64 * 1024) chunks.push(c);
     });
     req.on("end", () => {
-      let body: { project?: unknown; path?: unknown; line?: unknown };
+      if (size > 64 * 1024) return json(res, 413, { error: "Too large" });
+      let body: unknown;
       try {
-        body = JSON.parse(Buffer.concat(chunks).toString()) as typeof body;
+        body = JSON.parse(Buffer.concat(chunks).toString());
       } catch {
         return json(res, 400, { error: "Not JSON" });
       }
-      if (typeof body.project !== "string" || typeof body.path !== "string") {
+      const { project, path: input, line } = (body ?? {}) as Record<string, unknown>;
+      if (typeof project !== "string" || typeof input !== "string") {
         return json(res, 400, { error: "Give the project and the path" });
       }
-      const found = this.projectPath(body.project, body.path);
-      if ("status" in found) return json(res, found.status, { error: found.error });
-      const line = typeof body.line === "number" && body.line > 0 ? body.line : undefined;
-      this.openFile(found.abs, line).then(
-        () => json(res, 200, { opened: found.abs }),
-        (e: unknown) =>
-          json(res, e instanceof VSCodeUnavailable ? 503 : 500, {
-            error: e instanceof Error ? e.message : String(e),
-          }),
+      void this.open(project, input, typeof line === "number" && line > 0 ? line : undefined).then(
+        ([status, reply]) => json(res, status, reply),
       );
     });
+  }
+
+  // Only an existing file: VS Code opens a folder as a new window, and a
+  // missing file as an empty editor that saving would create.
+  private async open(project: string, input: string, line: number | undefined) {
+    const found = await this.projectPath(project, input);
+    if ("status" in found) return [found.status, { error: found.error }] as const;
+    const stat = await fs.promises.stat(found.abs).catch(() => null);
+    if (!stat) return [404, { error: "No such file or directory" }] as const;
+    if (!stat.isFile()) return [400, { error: "Not a file" }] as const;
+    try {
+      await this.openFile(found.abs, line);
+      return [200, { opened: found.abs }] as const;
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      return [e instanceof VSCodeUnavailable ? 503 : 500, { error }] as const;
+    }
   }
 
   // The changes of the repository holding `dir` (the workspace's folder by
