@@ -224,7 +224,9 @@ function IssueRow({
         ))}
       </span>
       <span className="bi-row-text">
-        <InlineMd>{issueSummary(x.text)}</InlineMd>
+        <NoLinks>
+          <InlineMd>{issueSummary(x.text)}</InlineMd>
+        </NoLinks>
       </span>
     </button>
   );

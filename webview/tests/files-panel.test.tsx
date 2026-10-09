@@ -20,7 +20,16 @@ describe("parseFileRef", () => {
   });
 
   it("does not take code or prose for a file", () => {
-    for (const s of ["ws.send", "true/false", "npm run build", "https://x.com/a.ts", ""]) {
+    // An extension alone (".cpp") names a kind of file, not one.
+    for (const s of [
+      "ws.send",
+      "true/false",
+      "npm run build",
+      "https://x.com/a.ts",
+      "",
+      ".cpp",
+      ".cfg",
+    ]) {
       expect(parseFileRef(s), s).toBeNull();
     }
   });

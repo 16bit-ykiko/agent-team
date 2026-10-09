@@ -14,7 +14,7 @@ import Markdown, { defaultUrlTransform, type ExtraProps, type Options } from "re
 import remarkGfm from "remark-gfm";
 import { rehypeCodeHighlight } from "./highlight";
 import { prepareSource } from "./mdSource";
-import { FileOpenContext, linkFileRef, parseFileRef } from "./fileRef";
+import { FILE_EXT, FILE_NAME, FileOpenContext, linkFileRef, parseFileRef } from "./fileRef";
 import "highlight.js/styles/github-dark.css";
 
 function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
@@ -107,10 +107,14 @@ function remarkIssueRefs(pattern: RegExp) {
 
 // Where it is on (the board), file paths written in prose, not in code or a
 // link ("见 notes/ideas.md。"), link to the file: those with a folder in
-// them, as a file reference reads them.
-export const ProsePathContext = createContext(false);
+// them, as a file reference reads them, that it can open. A path in code
+// or a link it cannot open is no link either.
+export const ProsePathContext = createContext<((path: string) => boolean) | null>(null);
 
-const PROSE_PATH = /(?<![\w./~:#-])(?:~\/|\.{1,2}\/|\/)?(?:[\w.-]+\/)+[\w.-]*(?::\d+(?:-\d+)?)?/g;
+// A path may follow a word in Chinese ("见src/a.cpp"), but a slash right
+// after one joins words ("孤儿/ABA/无上界"), it starts no absolute path.
+const PROSE_PATH =
+  /(?<![\w./~:#{}-])(?:~\/|\.{1,2}\/|(?<![\p{L}\p{N}])\/)?(?:[\w.-]+\/)+[\w.-]*(?::\d+(?:-\d+)?)?/gu;
 
 export function prosePaths(text: string): Found[] {
   const out: Found[] = [];
@@ -118,20 +122,55 @@ export function prosePaths(text: string): Found[] {
     // A sentence's own full stop is not part of the name.
     const t = m[0].replace(/[.:]+$/, "");
     const ref = parseFileRef(t);
-    if (ref && ref.path.slice(0, -1).includes("/")) out.push({ index: m.index, text: t, url: t });
+    if (!ref || !ref.path.slice(0, -1).includes("/")) continue;
+    // Words run on past a slash ("UTF-16/CRLF/代理对", "docs/{en,zh}/"), or
+    // alternatives ("clice.toml/compile_commands.json", ".cppm/.cpp").
+    const next = text.slice(m.index + m[0].length);
+    if (ref.path.endsWith("/") && /^[\p{L}\p{N}{]/u.test(next)) continue;
+    const segments = ref.path.split("/").filter(Boolean);
+    if (segments.slice(0, -1).some(namesFile) || segments.some(onlyExtension)) continue;
+    out.push({ index: m.index, text: t, url: t });
   }
   return out;
 }
 
-function remarkProsePaths() {
-  return (tree: MdNode) => linkText(tree, prosePaths);
+function namesFile(segment: string): boolean {
+  return FILE_EXT.test(segment) || (FILE_NAME.test(segment) && !segment.startsWith("."));
+}
+
+function onlyExtension(segment: string): boolean {
+  return /^\.[^.]+$/.test(segment) && FILE_EXT.test(segment);
+}
+
+function remarkProsePaths(accept: (path: string) => boolean) {
+  const find = (text: string) =>
+    prosePaths(text).filter((f) => accept(parseFileRef(f.text)?.path ?? f.text));
+  return () => (tree: MdNode) => linkText(tree, find);
+}
+
+// Which paths in prose link, where the board turns them on and has a viewer.
+function useProsePaths(): ((path: string) => boolean) | null {
+  const openFile = useContext(FileOpenContext);
+  const accept = useContext(ProsePathContext);
+  return openFile ? accept : null;
+}
+
+// Whether a file reference may link here: anywhere a viewer opens files,
+// except paths the board cannot open.
+function useOpenable(): ((ref: string) => boolean) | null {
+  const openFile = useContext(FileOpenContext);
+  const accept = useContext(ProsePathContext);
+  return useMemo(
+    () => openFile && ((ref: string) => !accept || accept(parseFileRef(ref)?.path ?? ref)),
+    [openFile, accept],
+  );
 }
 
 // Inside a button: no link of its own (an issue, a file).
 export function NoLinks({ children }: { children: ReactNode }) {
   return (
     <IssueRefContext.Provider value={null}>
-      <ProsePathContext.Provider value={false}>
+      <ProsePathContext.Provider value={null}>
         <FileOpenContext.Provider value={null}>{children}</FileOpenContext.Provider>
       </ProsePathContext.Provider>
     </IssueRefContext.Provider>
@@ -166,16 +205,18 @@ function IssueLink({ id, children }: { id: string; children: ReactNode }) {
 function FileRefCode({
   target,
   title,
+  className,
   children,
 }: {
   target: string;
   title?: string;
+  className?: string;
   children: ReactNode;
 }) {
   const openFile = useContext(FileOpenContext)!;
   return (
     <code
-      className="file-ref"
+      className={className ? `${className} file-ref` : "file-ref"}
       title={title}
       role="button"
       tabIndex={0}
@@ -196,7 +237,7 @@ function FileRefCode({
 // server answers with "Not found". Web links open a new tab; the rest show
 // as code with the target on hover, and open in the file viewer.
 function Link({ href, children, node: _node, ...rest }: ComponentProps<"a"> & ExtraProps) {
-  const openFile = useContext(FileOpenContext);
+  const openable = useOpenable();
   const issue = useContext(IssueRefContext) ? issueOf(href) : null;
   if (issue) return <IssueLink id={issue}>{children}</IssueLink>;
   if (href && /^(https?:|mailto:)/i.test(href)) {
@@ -209,7 +250,7 @@ function Link({ href, children, node: _node, ...rest }: ComponentProps<"a"> & Ex
   const target = href ? linkFileRef(href) : null;
   return (
     <InLink.Provider value={true}>
-      {openFile && target ? (
+      {openable && target && openable(target) ? (
         <FileRefCode target={target} title={target}>
           {children}
         </FileRefCode>
@@ -222,16 +263,17 @@ function Link({ href, children, node: _node, ...rest }: ComponentProps<"a"> & Ex
 
 // Inline code naming a file ("src/a.ts:12", "/tmp/report.md") opens it.
 function InlineCode({ children, node: _node, ...rest }: ComponentProps<"code"> & ExtraProps) {
-  const openFile = useContext(FileOpenContext);
+  const openable = useOpenable();
   const inLink = useContext(InLink);
   const text = typeof children === "string" ? children : null;
   if (
-    openFile &&
+    openable &&
     !inLink &&
     text &&
     !text.includes("\n") &&
     !rest.className &&
-    parseFileRef(text)
+    parseFileRef(text) &&
+    openable(text)
   ) {
     return <FileRefCode target={text}>{children}</FileRefCode>;
   }
@@ -291,9 +333,7 @@ export const MdBlock = memo(function MdBlock({ children }: { children: string })
   const { text, hasMath } = useMemo(() => prepareSource(children), [children]);
   const math = useMathPlugins(hasMath);
   const refs = useContext(IssueRefContext);
-  const prose = useContext(ProsePathContext);
-  const opener = useContext(FileOpenContext);
-  const paths = prose && !!opener;
+  const paths = useProsePaths();
   const remark = math?.remark ?? mdRemarkPlugins;
   const remarkPlugins = useMemo(
     () =>
@@ -301,7 +341,7 @@ export const MdBlock = memo(function MdBlock({ children }: { children: string })
         ? [
             ...(remark ?? []),
             ...(refs ? [remarkIssueRefs(refs.pattern)] : []),
-            ...(paths ? [remarkProsePaths] : []),
+            ...(paths ? [remarkProsePaths(paths)] : []),
           ]
         : remark,
     [refs, paths, remark],
@@ -326,30 +366,45 @@ const BLOCK_START = /^(?:(\d{1,9})([.)])|([-+*>]|#{1,6}))(?=\s|$)/;
 // Only what the board's plugins link gets here (see InlineMd): an issue, a
 // file; any other link is text.
 function InlineLink({ href, children }: ComponentProps<"a">) {
-  const openFile = useContext(FileOpenContext);
+  const openable = useOpenable();
   const issue = issueOf(href);
   if (issue) return <IssueLink id={issue}>{children}</IssueLink>;
-  const target = openFile && href ? linkFileRef(href) : null;
-  return target ? <FileRefCode target={target}>{children}</FileRefCode> : <>{children}</>;
+  const target = openable && href ? linkFileRef(href) : null;
+  return target && openable?.(target) ? (
+    <FileRefCode target={target}>{children}</FileRefCode>
+  ) : (
+    <>{children}</>
+  );
+}
+// Code naming a file opens it where the board links paths.
+function InlineCodeText({ children }: { children?: ReactNode }) {
+  const paths = useProsePaths();
+  const openable = useOpenable();
+  const text = typeof children === "string" ? children : null;
+  return paths && openable && text && parseFileRef(text) && openable(text) ? (
+    <FileRefCode target={text} className="inline-code">
+      {children}
+    </FileRefCode>
+  ) : (
+    <code className="inline-code">{children}</code>
+  );
 }
 const inlineComponents: Options["components"] = {
   p: ({ children }) => <>{children}</>,
-  code: ({ children }) => <code className="inline-code">{children}</code>,
+  code: ({ children }) => <InlineCodeText>{children}</InlineCodeText>,
   a: ({ href, children }) => <InlineLink href={href}>{children}</InlineLink>,
 };
 const INLINE_WITH_LINKS = [...INLINE_ELEMENTS, "a"];
 export const InlineMd = memo(function InlineMd({ children }: { children: string }) {
   const refs = useContext(IssueRefContext);
-  const prose = useContext(ProsePathContext);
-  const opener = useContext(FileOpenContext);
-  const paths = prose && !!opener;
+  const paths = useProsePaths();
   const remarkPlugins = useMemo(
     () =>
       refs || paths
         ? [
             ...(mdRemarkPlugins ?? []),
             ...(refs ? [remarkIssueRefs(refs.pattern)] : []),
-            ...(paths ? [remarkProsePaths] : []),
+            ...(paths ? [remarkProsePaths(paths)] : []),
           ]
         : mdRemarkPlugins,
     [refs, paths],

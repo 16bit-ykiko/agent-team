@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { MdBlock, ProsePathContext } from "../chat/markdown";
 import { FileOpenContext, parseFileRef, type FileRef } from "../chat/fileRef";
 import { CodeView, languageFor, type FileView } from "../panels/FilesPanel";
 import { FileIcon, Icon } from "../panels/Icon";
+import { formatSize } from "../format";
 
 // The project's notes on the board page: their folders as a tree on the
 // left, a file in full on the right. Paths are as the board writes them:
@@ -17,25 +18,39 @@ export interface BoardFile extends FileRef {
 
 // The panel open in VS Code's own browser: there a file opens in the editor.
 export function inVSCode(ua = navigator.userAgent): boolean {
-  return /\bCode\/\d/.test(ua) && /\bElectron\//.test(ua);
+  return /\bCode(?: - Insiders)?\/\d/.test(ua) && /\bElectron\//.test(ua);
 }
 
-// Opens a file of the project in the user's VS Code; false when it could not.
-export async function openInEditor(project: string, file: FileRef): Promise<boolean> {
+// Opens a file of the project in the user's VS Code. When it could not, why,
+// unless the file itself is the reason (a folder, missing, outside the
+// project): the board's view of it says that.
+export async function openInEditor(project: string, file: FileRef): Promise<string | null> {
   try {
     const res = await fetch("api/open", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ project, path: file.path, line: file.line }),
     });
-    return res.ok;
-  } catch {
-    return false;
+    if (res.ok) return null;
+    if (res.status < 500) return "";
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return body.error || res.statusText || `HTTP ${res.status}`;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
   }
 }
 
 function fileUrl(project: string, path: string, raw = false): string {
   return `api/file${raw ? "/raw" : ""}?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`;
+}
+
+// Whether the server would read a path the board names: not one climbing
+// out of the repository, nor an absolute one outside it (its notes are
+// named notes/...).
+export function reachable(path: string, root: string): boolean {
+  if (path.startsWith("~")) return false;
+  if (path.startsWith("/")) return path === root || path.startsWith(`${root}/`);
+  return !/^(\.\/)*\.\.(\/|$)/.test(path);
 }
 
 // A reference made from inside `from`: ./ and ../ against its folder, the
@@ -51,20 +66,27 @@ export function refFrom(from: string, ref: string): string {
   return from.startsWith("/") && !joined.startsWith("/") ? `/${joined}` : joined;
 }
 
-type Listing = { entries: Array<{ name: string; dir: boolean }> } | { error: string } | null;
+type Listing =
+  { entries: Array<{ name: string; dir: boolean }> } | { error: string; missing: boolean } | null;
 
-function useJson<T>(url: string | null): { value: T } | { error: string } | null {
-  const [state, setState] = useState<{ url: string; result: { value: T } | { error: string } }>();
+// A failure says why, and for a path that is not there what it may have
+// meant.
+type Failure = { error: string; candidates?: string[] };
+
+function useJson<T>(url: string | null): { value: T } | Failure | null {
+  const [state, setState] = useState<{ url: string; result: { value: T } | Failure }>();
   useEffect(() => {
     if (!url) return;
     let cancelled = false;
     fetch(url)
       .then(async (res) => {
-        const body = (await res.json()) as T & { error?: string };
+        const body = (await res.json()) as T & Partial<Failure>;
         if (!cancelled) {
           setState({
             url,
-            result: res.ok ? { value: body } : { error: body.error ?? res.statusText },
+            result: res.ok
+              ? { value: body }
+              : { error: body.error ?? res.statusText, candidates: body.candidates },
           });
         }
       })
@@ -102,7 +124,7 @@ function NotesTree({
           const listing: Listing =
             res.ok && body.kind === "dir"
               ? { entries: body.entries }
-              : { error: body.error ?? "Not a folder" };
+              : { error: body.error ?? "Not a folder", missing: res.status === 404 };
           setListings((m) => new Map(m).set(dir, listing));
           // A folder's subfolders open with it, the archive aside.
           if (dir === "notes" && "entries" in listing) {
@@ -112,7 +134,10 @@ function NotesTree({
         })
         .catch((e: unknown) =>
           setListings((m) =>
-            new Map(m).set(dir, { error: e instanceof Error ? e.message : String(e) }),
+            new Map(m).set(dir, {
+              error: e instanceof Error ? e.message : String(e),
+              missing: false,
+            }),
           ),
         );
     },
@@ -143,10 +168,10 @@ function NotesTree({
     const listing = listings.get(dir);
     if (!listing) return depth === 0 ? <div className="bn-note">Loading…</div> : null;
     if ("error" in listing) {
-      return depth === 0 ? (
-        <div className="bn-note">No notes yet.</div>
-      ) : (
-        <div className="bn-note">{listing.error}</div>
+      return (
+        <div className="bn-note">
+          {depth === 0 && listing.missing ? "No notes yet." : listing.error}
+        </div>
       );
     }
     if (depth === 0 && listing.entries.length === 0) {
@@ -193,12 +218,16 @@ function NotesTree({
 // text as code with its line marked, a folder's entries, an image.
 export function FilePreview({
   project,
+  root,
   file,
   onRef,
   onClose,
   editor,
 }: {
   project: string;
+  // The repository's folder: a path found elsewhere than written shows as
+  // it is there.
+  root: string;
   file: BoardFile;
   // A reference in it, resolved against it.
   onRef: (ref: string) => void;
@@ -218,7 +247,18 @@ export function FilePreview({
     },
     [file.path, onRef],
   );
+  const [failed, setFailed] = useState<string | null>(null);
+  const accept = useContext(ProsePathContext);
+  const acceptHere = useCallback(
+    (ref: string) => accept?.(refFrom(file.path, ref)) ?? true,
+    [accept, file.path],
+  );
   const name = file.path.split("/").filter(Boolean).pop() ?? file.path;
+  const shown =
+    view && !/^(\.\/)?notes(\/|$)/.test(file.path) && view.path.startsWith(`${root}/`)
+      ? view.path.slice(root.length + 1)
+      : file.path;
+  const notice = failed ?? file.notice;
   return (
     <section className="bn-preview" aria-label={name}>
       <div className="bn-bar">
@@ -226,12 +266,18 @@ export function FilePreview({
           ‹
         </button>
         <span className="bn-path" title={view?.path ?? file.path}>
-          <bdi>{file.path}</bdi>
+          <bdi>{shown}</bdi>
         </span>
-        {editor && (
+        {editor && view && view.kind !== "dir" && (
           <button
             className="fp-btn"
-            onClick={() => void openInEditor(project, file)}
+            onClick={() =>
+              void openInEditor(project, file).then((why) =>
+                setFailed(
+                  why === null ? null : `VS Code could not open it: ${why || "not a file"}.`,
+                ),
+              )
+            }
             title="Open it in VS Code"
           >
             VS Code
@@ -241,19 +287,32 @@ export function FilePreview({
           <Icon name="close" />
         </button>
       </div>
-      {file.notice && <div className="bn-notice">{file.notice}</div>}
+      {notice && <div className="bn-notice">{notice}</div>}
       <div className="bn-body">
         {!result ? (
           <div className="file-note">Loading…</div>
         ) : "error" in result ? (
-          <div className="file-note file-error">{result.error}</div>
+          <>
+            <div className="file-note file-error">{result.error}</div>
+            {result.candidates && (
+              <div className="dir-view" aria-label="Did you mean">
+                <div className="file-note">Did you mean</div>
+                {result.candidates.map((c) => (
+                  <button key={c} className="dir-entry" onClick={() => onRef(c)}>
+                    <FileIcon name={c.split("/").pop() ?? c} dir={false} />
+                    <span className="dir-entry-name">{c}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         ) : view?.kind === "dir" ? (
           <div className="dir-view">
             {view.entries.map((e) => (
               <button
                 key={e.name}
                 className={`dir-entry${e.dir ? " is-dir" : ""}`}
-                onClick={() => onRef(`${file.path.replace(/\/$/, "")}/${e.name}`)}
+                onClick={() => onRef(`${shown.replace(/\/$/, "")}/${e.name}`)}
               >
                 <FileIcon name={e.name} dir={e.dir} />
                 <span className="dir-entry-name">{e.name}</span>
@@ -263,7 +322,7 @@ export function FilePreview({
         ) : view?.kind === "text" ? (
           markdown ? (
             <FileOpenContext.Provider value={openRef}>
-              <ProsePathContext.Provider value={true}>
+              <ProsePathContext.Provider value={acceptHere}>
                 <div className="file-markdown message-content bn-md">
                   <MdBlock>{view.content}</MdBlock>
                 </div>
@@ -279,6 +338,14 @@ export function FilePreview({
         ) : (
           <div className="file-note">A binary file: nothing to show.</div>
         )}
+        {view?.kind === "text" && view.truncated && (
+          <div className="file-note">
+            Showing the first {formatSize(view.content.length)} of {formatSize(view.size)}.
+          </div>
+        )}
+        {view?.kind === "dir" && view.truncated && (
+          <div className="file-note">Only the first entries are listed.</div>
+        )}
       </div>
     </section>
   );
@@ -286,12 +353,14 @@ export function FilePreview({
 
 export function NotesView({
   project,
+  root,
   file,
   onOpen,
   onRef,
   onClose,
 }: {
   project: string;
+  root: string;
   file: BoardFile | null;
   onOpen: (path: string) => void;
   onRef: (ref: string) => void;
@@ -308,6 +377,7 @@ export function NotesView({
           <FilePreview
             key={`${file.path}:${file.line ?? ""}`}
             project={project}
+            root={root}
             file={file}
             onRef={onRef}
             onClose={onClose}

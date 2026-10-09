@@ -12,10 +12,10 @@ export interface FileRef {
 
 // Extensions that make a bare "name.ext" read as a file rather than code
 // ("ws.send" is not one).
-const FILE_EXT =
-  /\.(tsx?|jsx?|mjs|cjs|json|jsonl|md|mdx|txt|log|cpp|cc|cxx|c|h|hpp|hh|hxx|py|rs|go|java|kt|swift|rb|lua|sh|bash|zsh|fish|toml|ya?ml|ini|cfg|conf|css|scss|html?|xml|svg|sql|diff|patch|cmake|lock|csv|tex|bib|proto|zig|nix|png|jpe?g|gif|webp|pdf)$/i;
+export const FILE_EXT =
+  /\.(tsx?|jsx?|mjs|cjs|json|jsonl|md|mdx|txt|log|cpp|cppm|cc|cxx|c|h|hpp|hh|hxx|ixx|cu|cuh|py|rs|go|java|kt|swift|rb|lua|sh|bash|zsh|fish|toml|ya?ml|ini|cfg|conf|css|scss|html?|xml|svg|sql|diff|patch|cmake|lock|csv|tex|bib|proto|zig|nix|png|jpe?g|gif|webp|pdf)$/i;
 // Files known by name alone.
-const FILE_NAME =
+export const FILE_NAME =
   /^(Makefile|GNUmakefile|Dockerfile|Containerfile|Justfile|LICENSE|README|CHANGELOG|\.gitignore|\.gitattributes|\.gitmodules|\.editorconfig|\.prettierrc|\.prettierignore|\.npmrc|\.nvmrc|\.clang-format|\.clang-tidy|\.clangd|\.env(\.\w+)?)$/;
 // Regexes, globs, shell and Windows paths (the server resolves POSIX ones).
 const NOT_A_PATH = /[\\*+?^$|(){}<>"'`,;]|^[A-Za-z]:\//;
@@ -36,6 +36,7 @@ export function parseFileRef(text: string): FileRef | null {
   // A slash command or a route ("/compact"), not a folder.
   if (/^\/[^/.]+$/.test(path)) return null;
   if (!anchored && DOMAIN.test(segments[0]) && segments.length > 1) return null;
+  if (segments.length === 1 && /^\.[^.]+$/.test(last) && !FILE_NAME.test(last)) return null;
   if (!anchored && !path.endsWith("/") && !FILE_EXT.test(last) && !FILE_NAME.test(last)) {
     return null;
   }

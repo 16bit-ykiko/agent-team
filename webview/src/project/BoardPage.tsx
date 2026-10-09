@@ -49,7 +49,7 @@ import {
 } from "./issues";
 import { IssueDetail, IssueList, IssueNav } from "./IssuesView";
 import { DetailSection, FilterChip } from "./parts";
-import { NotesView, inVSCode, openInEditor, type BoardFile } from "./NotesView";
+import { NotesView, inVSCode, openInEditor, reachable, type BoardFile } from "./NotesView";
 
 // A worker session as the board shows it.
 export interface SessionInfo {
@@ -113,6 +113,13 @@ export const BoardPage = memo(function BoardPage({
 }) {
   const [mode, setMode] = useState<"objectives" | "issues" | "notes">("objectives");
   const [noteFile, setNoteFile] = useState<BoardFile | null>(null);
+  // Where the open file was opened from: closing it goes back there.
+  const [fileFrom, setFileFrom] = useState<"objectives" | "issues" | null>(null);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  // Bumped by every file opened: an answer from VS Code that comes after
+  // the user moved on is dropped.
+  const opening = useRef(0);
   const [view, setView] = useState<"list" | "graph">("list");
   const [filter, setFilter] = useState<BoardFilter>({
     area: null,
@@ -200,23 +207,40 @@ export const BoardPage = memo(function BoardPage({
   // own browser, else (or when VS Code is not there) in the notes view.
   const editor = useMemo(() => inVSCode(), []);
   const showFile = useCallback((ref: string, notice?: string) => {
+    const from = modeRef.current;
+    if (from !== "notes") setFileFrom(from);
     setMode("notes");
     setNoteFile({ ...(parseFileRef(ref) ?? { path: ref }), ...(notice && { notice }) });
   }, []);
   const openRef = useCallback(
     (ref: string) => {
+      const n = ++opening.current;
       if (!editor) return showFile(ref);
-      void openInEditor(project.id, parseFileRef(ref) ?? { path: ref }).then((ok) => {
-        if (!ok) showFile(ref, "VS Code is not connected: the file is shown here instead.");
+      void openInEditor(project.id, parseFileRef(ref) ?? { path: ref }).then((why) => {
+        if (why === null || n !== opening.current) return;
+        showFile(ref, why && `${why}: the file is shown here instead.`);
       });
     },
     [editor, project.id, showFile],
   );
-  // Around the details: the issues and the files their text names link.
+  const closeFile = () => {
+    opening.current++;
+    setNoteFile(null);
+    if (fileFrom) setMode(fileFrom);
+    setFileFrom(null);
+  };
+  const choose = (m: typeof mode) => {
+    opening.current++;
+    setFileFrom(null);
+    setMode(m);
+  };
+  const accept = useCallback((path: string) => reachable(path, project.root), [project.root]);
+  // Around the details and the notes: the issues and the files their text
+  // names link.
   const links = (children: ReactNode) => (
     <IssueRefContext.Provider value={issueRefs}>
       <FileOpenContext.Provider value={openRef}>
-        <ProsePathContext.Provider value={true}>{children}</ProsePathContext.Provider>
+        <ProsePathContext.Provider value={accept}>{children}</ProsePathContext.Provider>
       </FileOpenContext.Provider>
     </IssueRefContext.Provider>
   );
@@ -256,6 +280,7 @@ export const BoardPage = memo(function BoardPage({
     issues: showIssues,
     notes: showNotes,
     file: !!noteFile,
+    closeFile,
     selected,
     search: filter.search,
     onClose,
@@ -264,6 +289,7 @@ export const BoardPage = memo(function BoardPage({
     issues: showIssues,
     notes: showNotes,
     file: !!noteFile,
+    closeFile,
     selected: showIssues ? selectedIssue : selected,
     search: showIssues ? issueFilter.search : filter.search,
     onClose,
@@ -275,7 +301,7 @@ export const BoardPage = memo(function BoardPage({
       if (target instanceof Element && target.closest(".dialog-overlay")) return;
       const s = state.current;
       if (s.notes) {
-        if (s.file) setNoteFile(null);
+        if (s.file) s.closeFile();
         else s.onClose();
       } else if (target === searchRef.current && s.search) {
         if (s.issues) setIssueFilter((f) => ({ ...f, search: "" }));
@@ -312,13 +338,13 @@ export const BoardPage = memo(function BoardPage({
         <header className={`bp-head${showNotes ? " no-search" : ""}`}>
           <ProjectName name={project.name} onRename={onRename} />
           <div className="bp-views bp-modes" role="group" aria-label="Show">
-            <button aria-pressed={mode === "objectives"} onClick={() => setMode("objectives")}>
+            <button aria-pressed={mode === "objectives"} onClick={() => choose("objectives")}>
               Objectives
             </button>
-            <button aria-pressed={showIssues} onClick={() => setMode("issues")}>
+            <button aria-pressed={showIssues} onClick={() => choose("issues")}>
               Issues{openIssues > 0 && <span className="bp-count">{openIssues}</span>}
             </button>
-            <button aria-pressed={showNotes} onClick={() => setMode("notes")}>
+            <button aria-pressed={showNotes} onClick={() => choose("notes")}>
               Notes
             </button>
           </div>
@@ -359,13 +385,20 @@ export const BoardPage = memo(function BoardPage({
         </header>
 
         {showNotes ? (
-          <NotesView
-            project={project.id}
-            file={noteFile}
-            onOpen={(path) => setNoteFile({ path })}
-            onRef={openRef}
-            onClose={() => setNoteFile(null)}
-          />
+          links(
+            <NotesView
+              project={project.id}
+              root={project.root}
+              file={noteFile}
+              onOpen={(path) => {
+                opening.current++;
+                setFileFrom(null);
+                setNoteFile({ path });
+              }}
+              onRef={openRef}
+              onClose={closeFile}
+            />,
+          )
         ) : showIssues ? (
           <div className="bp-body">
             <IssueNav
@@ -397,12 +430,14 @@ export const BoardPage = memo(function BoardPage({
               ) : shownIssues.length === 0 ? (
                 <div className="bp-empty">Nothing matches.</div>
               ) : (
-                <IssueList
-                  shown={shownIssues}
-                  grouped={issueFilter.module === null}
-                  selected={selectedIssue}
-                  onSelect={setSelectedIssue}
-                />
+                links(
+                  <IssueList
+                    shown={shownIssues}
+                    grouped={issueFilter.module === null}
+                    selected={selectedIssue}
+                    onSelect={setSelectedIssue}
+                  />,
+                )
               )}
             </main>
             {currentIssue &&
