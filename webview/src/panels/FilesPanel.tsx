@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { highlightTree } from "../chat/highlight";
+import { copyText } from "../chat/clipboard";
 import { MdBlock } from "../chat/markdown";
 import { FileOpenContext, parseFileRef, type FileRef } from "../chat/fileRef";
 import { formatSize, utf8Length } from "../format";
@@ -386,13 +387,11 @@ export function FilesPanel({
           className="fp-btn"
           title="Copy path"
           onClick={() => {
-            navigator.clipboard?.writeText(path).then(
-              () => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              },
-              () => {},
-            );
+            void copyText(path).then((ok) => {
+              if (!ok) return;
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            });
           }}
         >
           {copied ? "Copied" : "Copy"}

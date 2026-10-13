@@ -1218,7 +1218,8 @@ button {
 /* Over the code's top right corner, taking no room from it: the negative
    margins leave the float nothing to wrap the text around, and sticky keeps
    it above the text and in view as a tall block scrolls. */
-pre .copy-btn {
+pre .copy-btn,
+.event-summary-line .copy-btn {
   float: right;
   position: sticky;
   top: 0;
@@ -1232,18 +1233,28 @@ pre .copy-btn {
   margin: -4px -6px -100% -100%;
   opacity: 0;
   transition: opacity 0.15s;
+  user-select: none;
 }
-pre:hover .copy-btn {
+/* A path wraps, it does not scroll: its first line makes room for the
+   button, which stays there instead of running over the lines below. */
+.event-summary-line .copy-btn {
+  position: static;
+  margin: -4px -6px 0 8px;
+}
+pre:hover .copy-btn,
+.event-summary-line:hover .copy-btn {
   opacity: 1;
 }
 /* No hover on touch screens: keep the button faintly visible so a tap has a
    target and "Copied" has somewhere to show. */
 @media (hover: none) {
-  pre .copy-btn {
+  pre .copy-btn,
+  .event-summary-line .copy-btn {
     opacity: 0.6;
   }
 }
-pre .copy-btn:hover {
+pre .copy-btn:hover,
+.event-summary-line .copy-btn:hover {
   color: var(--text-primary);
 }
 .message-content blockquote {

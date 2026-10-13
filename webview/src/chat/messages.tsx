@@ -13,7 +13,7 @@ import type { Message, MessageOrigin, AgentInfo, StreamEvent } from "../state/us
 import { splitEvents, timelineBlocks } from "./events";
 import { toolNameOf, toolSummary } from "../state/stream";
 import { copySelectionAsMarkdown } from "./clipboard";
-import { MdBlock, StreamingMdBlock } from "./markdown";
+import { CodeBlock, CopyButton, MdBlock, StreamingMdBlock } from "./markdown";
 import { AgentAvatar, Avatar } from "../workspace/avatar";
 import { shortModel, formatTokens, formatDuration, formatRunTime } from "../format";
 
@@ -376,6 +376,8 @@ export const EventItem = memo(function EventItem({
   const bodyMissing = summarized && !isToolUse && !ev.content && (ev.contentLength ?? 0) > 0;
   const toolBodyMissing =
     summarized && isToolUse && showBodyByDefault && bodyLen > ev.content.length;
+  // A summary page cuts a long first line short: nothing whole to copy yet.
+  const summaryCut = summarized && ev.content.endsWith("…");
   const toggleResult = () => {
     if (summarized) onLoadDetails?.();
     setResultOpen((v) => !v);
@@ -407,6 +409,7 @@ export const EventItem = memo(function EventItem({
       </div>
       {isToolUse && summary && (
         <div className="event-summary-line">
+          {!summaryCut && <CopyButton text={() => summary} />}
           <code>{summary}</code>
         </div>
       )}
@@ -425,9 +428,9 @@ export const EventItem = memo(function EventItem({
             {ev.isMarkdown ? (
               <MdBlock>{ev.content}</MdBlock>
             ) : (
-              <pre>
+              <CodeBlock>
                 <code>{ev.content}</code>
-              </pre>
+              </CodeBlock>
             )}
           </div>
         )
@@ -443,9 +446,9 @@ export const EventItem = memo(function EventItem({
               {ev.toolResultIsMarkdown ? (
                 <MdBlock>{ev.toolResult}</MdBlock>
               ) : (
-                <pre>
+                <CodeBlock>
                   <code>{ev.toolResult}</code>
-                </pre>
+                </CodeBlock>
               )}
             </div>
           )}

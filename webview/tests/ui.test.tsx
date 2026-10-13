@@ -27,7 +27,9 @@ describe("EventItem", () => {
     );
     expect(container.querySelector(".event-chip")!.textContent).toBe("Read");
     expect(container.querySelector(".event-row")!.textContent).toBe("Read");
-    expect(container.querySelector(".event-summary-line")!.textContent).toBe("src/a.ts");
+    expect(container.querySelector(".event-summary-line code")!.textContent).toBe("src/a.ts");
+    const line = container.querySelector(".event-summary-line")!;
+    expect([...line.children].map((e) => e.className || e.tagName)).toEqual(["copy-btn", "CODE"]);
     // Nothing else to show: the body is the summary.
     expect(container.querySelector(".event-content")).toBeNull();
     expect(queryByText("Details")).toBeNull();

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
-import { MessageItem } from "../src/chat/messages";
+import { render, fireEvent, act } from "@testing-library/react";
+import { EventItem, MessageItem } from "../src/chat/messages";
 import { MdBlock } from "../src/chat/markdown";
 import { FileOpenContext } from "../src/chat/fileRef";
 import type { AgentInfo, Message, StreamEvent } from "../src/state/useServer";
@@ -66,6 +66,8 @@ function textNodeOf(el: Element): Text {
 afterEach(() => {
   vi.unstubAllGlobals();
   window.getSelection()?.removeAllRanges();
+  // The tests set their own on the document, over its prototype's.
+  Reflect.deleteProperty(document, "execCommand");
 });
 
 describe("copying a selection from a reply", () => {
@@ -306,5 +308,147 @@ describe("selecting a file reference", () => {
     fireEvent.click(ref, { clientX: 6, clientY: 5 });
     expect(open).toHaveBeenCalledTimes(2);
     expect(open).toHaveBeenCalledWith("src/a_b.ts");
+  });
+});
+
+// Over plain http (a phone on the LAN) navigator.clipboard does not exist;
+// in VS Code's browser it may refuse to write.
+describe("Copy buttons", () => {
+  // execCommand("copy") copies what is selected in the focused field.
+  function stubExecCommand() {
+    const copiedTexts: string[] = [];
+    const exec = vi.fn((cmd: string) => {
+      const el = document.activeElement;
+      if (cmd !== "copy" || !(el instanceof HTMLTextAreaElement)) return false;
+      copiedTexts.push(el.value.slice(el.selectionStart, el.selectionEnd));
+      return true;
+    });
+    document.execCommand = exec;
+    return copiedTexts;
+  }
+
+  async function click(button: Element) {
+    await act(async () => {
+      fireEvent.click(button);
+      await Promise.resolve();
+    });
+  }
+
+  it("copies a code block without the clipboard API", async () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    const texts = stubExecCommand();
+    const { container } = render(<MdBlock>{"```sh\nls foo_bar/\n```"}</MdBlock>);
+    const button = container.querySelector(".copy-btn")!;
+    await click(button);
+    expect(texts).toEqual(["ls foo_bar/"]);
+    expect(button.textContent).toBe("Copied");
+    expect(document.querySelector("textarea")).toBeNull();
+  });
+
+  it("falls back when the clipboard API refuses", async () => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText: () => Promise.reject(new Error("not allowed")) },
+    });
+    const texts = stubExecCommand();
+    const { container } = render(<MdBlock>{"```\nx\n```"}</MdBlock>);
+    await click(container.querySelector(".copy-btn")!);
+    expect(texts).toEqual(["x"]);
+  });
+
+  it("says nothing was copied when neither way works", async () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    document.execCommand = vi.fn(() => false);
+    const { container } = render(<MdBlock>{"```\nx\n```"}</MdBlock>);
+    const button = container.querySelector(".copy-btn")!;
+    await click(button);
+    expect(button.textContent).toBe("Copy");
+  });
+
+  it("puts the focus back where it was", async () => {
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    stubExecCommand();
+    const { container } = render(
+      <>
+        <textarea defaultValue="draft" />
+        <MdBlock>{"```\nx\n```"}</MdBlock>
+      </>,
+    );
+    const draft = container.querySelector("textarea")!;
+    draft.focus();
+    await click(container.querySelector(".copy-btn")!);
+    expect(document.activeElement).toBe(draft);
+  });
+
+  it("copies a tool's path or pattern from its block, as the block shows it", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { container } = render(
+      <>
+        <EventItem
+          ev={{ kind: "tool_use", toolName: "Read", content: "**Read** `/home/u/a_b.ts`" }}
+        />
+        <EventItem
+          ev={{ kind: "tool_use", toolName: "Grep", content: "**Grep** `foo_bar` in `src/`" }}
+        />
+      </>,
+    );
+    const [read, grep] = container.querySelectorAll(".event-summary-line .copy-btn");
+    await click(read);
+    expect(writeText).toHaveBeenLastCalledWith("/home/u/a_b.ts");
+    expect(read.textContent).toBe("Copied");
+    await click(grep);
+    expect(writeText).toHaveBeenLastCalledWith("foo_bar in src/");
+  });
+
+  it("offers a copy of a path a summary page kept whole", () => {
+    const { container } = render(
+      <EventItem
+        ev={{ kind: "tool_use", toolName: "Read", content: "**Read** `/a/b.ts`", bodyLength: 18 }}
+        onLoadDetails={() => {}}
+      />,
+    );
+    expect(container.querySelector(".event-summary-line .copy-btn")).not.toBeNull();
+  });
+
+  it("offers no copy of a path a summary page cut short", () => {
+    const cut = "**Read** `/" + "a".repeat(190) + "…";
+    const { container } = render(
+      <EventItem
+        ev={{ kind: "tool_use", toolName: "Read", content: cut, bodyLength: 260 }}
+        onLoadDetails={() => {}}
+      />,
+    );
+    expect(container.querySelector(".event-summary-line code")).not.toBeNull();
+    expect(container.querySelector(".event-summary-line .copy-btn")).toBeNull();
+  });
+
+  it("copies a tool's plain result", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { container, getByText } = render(
+      <EventItem
+        ev={{
+          kind: "tool_use",
+          toolName: "Bash",
+          content: "**Bash**\n```bash\nls\n```",
+          toolResult: "a_b.ts\nc.ts",
+        }}
+      />,
+    );
+    fireEvent.click(getByText(/^Result/));
+    await click(container.querySelector(".event-result .copy-btn")!);
+    expect(writeText).toHaveBeenCalledWith("a_b.ts\nc.ts");
+  });
+
+  it("copies a result that came on its own", async () => {
+    const writeText = vi.fn(() => Promise.resolve());
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    const { container, getByText } = render(
+      <EventItem ev={{ kind: "tool_result", content: "a_b.ts\r\n" }} />,
+    );
+    fireEvent.click(getByText(/^Result ·/));
+    await click(container.querySelector(".event-result .copy-btn")!);
+    expect(writeText).toHaveBeenCalledWith("a_b.ts");
   });
 });

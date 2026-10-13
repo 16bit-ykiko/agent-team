@@ -15,25 +15,36 @@ import remarkGfm from "remark-gfm";
 import { rehypeCodeHighlight } from "./highlight";
 import { prepareSource } from "./mdSource";
 import { FILE_EXT, FILE_NAME, FileOpenContext, linkFileRef, parseFileRef } from "./fileRef";
+import { codeText, copyText } from "./clipboard";
 import "highlight.js/styles/github-dark.css";
 
-function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
+export function CopyButton({ text }: { text: () => string }) {
   const [copied, setCopied] = useState(false);
-  const preRef = useRef<HTMLPreElement>(null);
   return (
-    <pre {...rest} ref={preRef}>
-      <button
-        className="copy-btn"
-        onClick={() => {
-          void navigator.clipboard.writeText(
-            preRef.current?.querySelector("code")?.textContent ?? "",
-          );
+    <button
+      className="copy-btn"
+      onClick={() => {
+        void copyText(text()).then((ok) => {
+          if (!ok) return;
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
-      </button>
+        });
+      }}
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+export function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
+  const preRef = useRef<HTMLPreElement>(null);
+  const text = () => {
+    const code = preRef.current?.querySelector("code");
+    return code ? codeText(code) : "";
+  };
+  return (
+    <pre {...rest} ref={preRef}>
+      <CopyButton text={text} />
       {children}
     </pre>
   );

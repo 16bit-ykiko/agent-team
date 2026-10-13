@@ -85,7 +85,11 @@ describe("FilesPanel", () => {
       }),
     );
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    // The tests set their own on the document, over its prototype's.
+    Reflect.deleteProperty(document, "execCommand");
+  });
 
   const open = (path: string, line?: number, endLine?: number, roots: FileRoot[] = []) =>
     render(<FilesPanel wsId="w1" target={{ path, line, endLine }} roots={roots} />);
@@ -229,9 +233,25 @@ describe("FilesPanel", () => {
     vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
     const { container, getByTitle } = open("x");
     await waitFor(() => expect(container.querySelector(".file-error")).not.toBeNull());
+    document.execCommand = vi.fn(() => false);
     fireEvent.click(getByTitle("Copy path"));
-    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 20));
     expect(getByTitle("Copy path").textContent).toBe("Copy");
+  });
+
+  it("copies the path over plain http, where the clipboard API is missing", async () => {
+    views = {};
+    vi.stubGlobal("navigator", { ...navigator, clipboard: undefined });
+    let copied = "";
+    document.execCommand = vi.fn(() => {
+      copied = (document.activeElement as HTMLTextAreaElement).value;
+      return true;
+    });
+    const { container, getByTitle } = open("x");
+    await waitFor(() => expect(container.querySelector(".file-error")).not.toBeNull());
+    fireEvent.click(getByTitle("Copy path"));
+    await waitFor(() => expect(getByTitle("Copy path").textContent).toBe("Copied"));
+    expect(copied).toBe("x");
   });
 
   it("shows paths from the folder's own name, the full path on hover", async () => {

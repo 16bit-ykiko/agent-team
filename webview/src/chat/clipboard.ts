@@ -193,3 +193,35 @@ export function copySelectionAsMarkdown(e: React.ClipboardEvent): void {
     // Native copy proceeds.
   }
 }
+
+// navigator.clipboard exists only in secure contexts (https, localhost), not
+// over the LAN's plain http, and VS Code's browser may refuse it; a hidden
+// textarea and execCommand still copy from a click there.
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return copyThroughTextarea(text);
+  }
+}
+
+function copyThroughTextarea(text: string): boolean {
+  const focused = document.activeElement;
+  const area = document.createElement("textarea");
+  area.value = text;
+  // Read-only keeps a phone's keyboard down; 12pt keeps iOS from zooming in.
+  area.readOnly = true;
+  area.style.cssText = "position: fixed; top: 0; left: 0; opacity: 0; font-size: 12pt;";
+  document.body.appendChild(area);
+  area.focus({ preventScroll: true });
+  area.setSelectionRange(0, text.length);
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    area.remove();
+    if (focused instanceof HTMLElement) focused.focus({ preventScroll: true });
+  }
+}
