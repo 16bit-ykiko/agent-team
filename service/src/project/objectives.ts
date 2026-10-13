@@ -8,8 +8,9 @@ import { DirWatcher, filesSignature } from "./watch";
 // hand) and git diffs can all read them. The id is the path: "area/name".
 //
 // What the user decides in passing is recorded here too: what is put off
-// (status "later"), what is not done at all ("dropped", with the reason, so
-// it is not reopened), priorities, and which objectives need which first.
+// (status "later"), what is not done at all ("dropped": its title and the
+// reason only, so it is not proposed again), priorities, and which
+// objectives need which first. A done objective is deleted.
 
 export const OBJECTIVE_STATUSES = ["active", "later", "done", "dropped"] as const;
 export const PRIORITIES = ["high", "normal", "low"] as const;
@@ -44,19 +45,22 @@ export interface Objective {
   priority: Priority;
   // Why it is put off or dropped, or why the priority.
   reason?: string;
-  // Where things stand now (markdown).
+  // Where things stand now (markdown), and when and at which commit of the
+  // writer's folder it was written.
   context?: string;
+  contextWritten?: number;
+  contextCommit?: string;
   // Objectives that must come first.
   dependsOn: string[];
   tasks: Task[];
   decisions: Decision[];
   // Worker sessions that worked on it.
   sessions: string[];
-  // Background, history, links (markdown).
+  // Links to design docs (markdown).
   notes?: string;
   updatedAt: number;
-  // Filed away (finished or given up), out of the board's main view. Where
-  // the file lives, not a field in it.
+  // In the archive, out of the board's main view: read and deleted, never
+  // written. Where the file lives, not a field in it.
   archived?: boolean;
 }
 
@@ -66,6 +70,35 @@ export interface BrokenObjective {
   id: string;
   error: string;
   archived?: boolean;
+}
+
+// What the tools accept, in characters: the board holds where things stand,
+// not how they got there. Text already longer still reads.
+export const LIMITS = { context: 1000, notes: 500, task: 200, decision: 300 } as const;
+
+// A board text over its limit, refused with what to do instead.
+export function checkLength(
+  what: string,
+  text: string | undefined,
+  limit: number,
+  hint = "where things stand now, not how they got there",
+): void {
+  if (text === undefined || text.length <= limit) return;
+  throw new Error(
+    `${what} is ${text.length} characters, over the ${limit} the board takes. Rewrite it shorter: ${hint}; the history keeps everything said and done.`,
+  );
+}
+
+// When a text is written, and the commit its writer's folder was at.
+export interface Stamp {
+  at: number;
+  commit?: string;
+}
+
+// A task is one line.
+export function checkTask(text: string | undefined): void {
+  if (text?.includes("\n")) throw new Error("A task is one line: say the rest in the context");
+  checkLength("The task", text, LIMITS.task);
 }
 
 export const ID_PATTERN = /^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9-]*$/;
@@ -121,6 +154,22 @@ export class ObjectiveStore {
     return out.sort((a, b) => a.id.localeCompare(b.id));
   }
 
+  // How many objective files there are and their bytes, on the board and in
+  // the archive.
+  sizes(): Record<"board" | "archive", { files: number; bytes: number }> {
+    const out = { board: { files: 0, bytes: 0 }, archive: { files: 0, bytes: 0 } };
+    for (const { file, archived } of this.files()) {
+      try {
+        const at = out[archived ? "archive" : "board"];
+        at.bytes += fs.statSync(file).size;
+        at.files++;
+      } catch {
+        // Gone since it was listed.
+      }
+    }
+    return out;
+  }
+
   // The objective with this id, active or archived.
   get(id: string): Objective | undefined {
     checkId(id);
@@ -157,24 +206,6 @@ export class ObjectiveStore {
     fs.renameSync(tmp, file);
     this.cache.delete(file);
     this.settled();
-  }
-
-  // Files an objective away, or brings it back.
-  move(id: string, archived: boolean): Objective {
-    const o = this.get(id);
-    if (!o) throw new Error(`No objective ${id}`);
-    if (!!o.archived === archived) return o;
-    const from = this.fileOf(id, !archived);
-    const moved = { ...o, archived, updatedAt: Date.now() };
-    fs.rmSync(from, { force: true });
-    this.cache.delete(from);
-    try {
-      this.write(moved);
-    } catch (e) {
-      this.write(o);
-      throw e;
-    }
-    return moved;
   }
 
   remove(id: string): void {
@@ -277,6 +308,8 @@ const KEYS = new Set([
   "priority",
   "reason",
   "context",
+  "context_written",
+  "context_commit",
   "depends_on",
   "sessions",
   "updated",
@@ -319,6 +352,11 @@ export function parse(id: string, text: string, mtimeMs = Date.now()): Objective
       return v as Record<string, unknown>;
     });
   const updated = raw.updated;
+  const written = raw.context_written;
+  if (written !== undefined && !(written instanceof Date)) {
+    throw new Error("context_written must be a date and time");
+  }
+  const status = oneOf("status", OBJECTIVE_STATUSES, "active");
 
   const taskRows = tables("tasks", TASK_KEYS);
   const taskIds = itemIds(taskRows, "t", "tasks");
@@ -328,11 +366,14 @@ export function parse(id: string, text: string, mtimeMs = Date.now()): Objective
     id,
     area: id.split("/")[0],
     title: str("title", true)!,
-    goal: str("goal", true)!,
-    status: oneOf("status", OBJECTIVE_STATUSES, "active"),
+    // A dropped objective may be only its title and the reason.
+    goal: str("goal", status !== "dropped") ?? "",
+    status,
     priority: oneOf("priority", PRIORITIES, "normal"),
     ...optional("reason", str("reason")),
     ...optional("context", str("context")),
+    ...(written instanceof Date && { contextWritten: written.getTime() }),
+    ...optional("contextCommit", str("context_commit")),
     dependsOn: strings(list("depends_on"), "depends_on"),
     tasks: taskRows.map((o, i) => {
       const field = entryField(o, `tasks[${i}]`);
@@ -401,6 +442,22 @@ function optional<K extends string>(key: K, v: string | undefined): Partial<Reco
   return v === undefined ? {} : ({ [key]: v } as Record<K, string>);
 }
 
+// A dropped objective kept as its title and the reason only, so it is not
+// proposed again.
+export function isTombstone(o: Objective): boolean {
+  return (
+    o.status === "dropped" &&
+    o.priority === "normal" &&
+    !o.goal &&
+    !o.context &&
+    !o.notes &&
+    o.dependsOn.length === 0 &&
+    o.tasks.length === 0 &&
+    o.decisions.length === 0 &&
+    o.sessions.length === 0
+  );
+}
+
 // Hand-written so the files stay pleasant to read and edit: multi-line text
 // as """ blocks, fields in a fixed order.
 export function serialize(o: Objective): string {
@@ -411,12 +468,22 @@ export function serialize(o: Objective): string {
     if (v !== undefined && v !== "") lines.push(`${key} = ${tomlString(v)}`);
   };
   put("title", o.title);
+  if (isTombstone(o)) {
+    lines.push(`status = "dropped"`);
+    put("reason", o.reason);
+    lines.push(`updated = ${new Date(o.updatedAt).toISOString()}`);
+    return lines.join("\n") + "\n";
+  }
   put("goal", o.goal);
   lines.push(`status = "${o.status}"`, `priority = "${o.priority}"`);
   put("reason", o.reason);
   lines.push(`depends_on = [${o.dependsOn.map(tomlString).join(", ")}]`);
   if (o.sessions.length) lines.push(`sessions = [${o.sessions.map(tomlString).join(", ")}]`);
   lines.push(`updated = ${new Date(o.updatedAt).toISOString()}`);
+  if (o.context && o.contextWritten !== undefined) {
+    lines.push(`context_written = ${new Date(o.contextWritten).toISOString()}`);
+  }
+  if (o.context) put("context_commit", o.contextCommit);
   put("context", o.context);
   put("notes", o.notes);
   for (const t of o.tasks) {

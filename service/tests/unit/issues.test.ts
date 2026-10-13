@@ -30,6 +30,8 @@ const MODULE: IssueModule = {
           evidence: "R",
           tags: ["部分"],
           text: 'a.cpp `-Iconfig_a`; "quoted" """ text\n\nwhere: dependency_graph.cpp:175',
+          written: Date.parse("2026-10-06T08:00:00.000Z"),
+          commit: "a75797dc1",
           objectives: ["index/hosts"],
         },
         { id: "h3r2#1", state: "decision", tags: [], text: "Edges lost.", objectives: [] },
@@ -163,6 +165,47 @@ describe("issue tools", () => {
     expect(fs.readFileSync(file, "utf-8")).toBe(before);
   });
 
+  it("date an issue's text when it is written, refuse one over the limit", async () => {
+    const { call, lead, manager, base } = await withModule();
+    const issue = () => {
+      const modules = manager.issueSets()[manager.list()[0].id] as IssueModule[];
+      return modules.flatMap((m) => m.issues).find((x) => x.id === "x#1")!;
+    };
+    await expect(
+      call(lead, "write_issues", { issues: [{ module: "paths", text: "x".repeat(1001) }] }),
+    ).rejects.toThrow("The text is 1001 characters, over the 1000 the board takes");
+    await call(lead, "write_issues", {
+      issues: [{ id: "x#1", module: "paths", text: "Bad path" }],
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    expect(await call(lead, "read_issue", { id: "x#1" })).toContain(
+      `written today (${today}, UTC)`,
+    );
+    expect(await call(lead, "read_issue", { module: "paths" })).toContain(
+      `## x#1 [open] — written today (${today}, UTC)`,
+    );
+    // Text over the limit already there is taken back as it is.
+    const long = "y".repeat(1500);
+    const file = path.join(
+      base,
+      ".agent-team",
+      "projects",
+      manager.list()[0].id,
+      "issues",
+      "paths.toml",
+    );
+    fs.writeFileSync(file, fs.readFileSync(file, "utf-8").replace("Bad path", long));
+    await call(lead, "write_issues", { issues: [{ id: "x#1", tags: ["t"], text: long }] });
+    await call(lead, "write_issues", { issues: [{ id: "x#1", text: "Bad path" }] });
+    // Its state or tags changing leave the text's date; the text changing renews it.
+    const first = issue().written!;
+    await new Promise((r) => setTimeout(r, 5));
+    await call(lead, "write_issues", { issues: [{ id: "x#1", state: "accepted" }] });
+    expect(issue().written).toBe(first);
+    await call(lead, "write_issues", { issues: [{ id: "x#1", text: "Bad path on Windows" }] });
+    expect(issue().written).toBeGreaterThan(first);
+  });
+
   it("close fixed issues by deleting them, their text in the result", async () => {
     const { call, lead } = await withModule();
     await call(lead, "write_issues", {
@@ -172,7 +215,7 @@ describe("issue tools", () => {
       /what fixed them/,
     );
     const closed = await call(lead, "close_issues", { ids: ["x#1"], fixed_by: "PR #787" });
-    expect(closed).toBe("Closed x#1, fixed by PR #787.\n\nx#1 [open] in paths\nBad path");
+    expect(closed).toBe("Closed x#1: PR #787.\n\nx#1 [open] in paths\nBad path");
     await expect(call(lead, "read_issue", { id: "x#1" })).rejects.toThrow(/No issue x#1/);
     await expect(call(lead, "close_issues", { ids: ["x#1"], fixed_by: "PR #787" })).rejects.toThrow(
       /No issue x#1/,

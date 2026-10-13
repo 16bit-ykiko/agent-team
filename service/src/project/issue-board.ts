@@ -1,8 +1,9 @@
-import { checkId, type Objective } from "./objectives";
+import { checkId, checkLength, type Objective, type Stamp } from "./objectives";
 import {
   EVIDENCE,
   GROUP_PATTERN,
   ISSUE_STATES,
+  ISSUE_TEXT_LIMIT,
   checkModuleId,
   isIssueId,
   linkedObjectives,
@@ -131,9 +132,9 @@ export class IssueBoard {
   }
 
   // One issue in full, or a module (or one of its groups) with all its
-  // issues in full.
+  // issues in full, each with how old its text is (`age`).
   // A broken file does not keep the others from being read.
-  read(id?: string, moduleId?: string, groupId?: string): string {
+  read(id?: string, moduleId?: string, groupId?: string, age = (_: Issue) => ""): string {
     const entries = this.store.list();
     const modules = entries.filter((m): m is IssueModule => !("error" in m));
     if (id) {
@@ -154,6 +155,7 @@ export class IssueBoard {
         `in ${where}`,
         ...(at.group?.notes ? [`group notes: ${at.group.notes}`] : []),
         `objectives: ${linkedObjectives(at).map(ref).join("; ") || "none"}`,
+        ...(age(at.issue) ? [`written ${age(at.issue)}`] : []),
         "",
         at.issue.text,
       ].join("\n");
@@ -164,7 +166,11 @@ export class IssueBoard {
     const out = [`# ${m.id} — ${m.title}`];
     if (m.objectives.length) out.push(`objectives: ${m.objectives.join(", ")}`);
     if (m.notes && !group) out.push("", m.notes);
-    const full = (x: Issue) => ["", `## ${x.id} [${flags(x).join(", ") || "open"}]`, x.text];
+    const full = (x: Issue) => [
+      "",
+      `## ${x.id} [${flags(x).join(", ") || "open"}]${age(x) ? ` — written ${age(x)}` : ""}`,
+      x.text,
+    ];
     if (!group) for (const x of m.issues) out.push(...full(x));
     for (const g of group ? [group] : m.groups) {
       out.push("", `# ${m.id}/${g.id} ${g.title}`);
@@ -178,7 +184,8 @@ export class IssueBoard {
       : text;
   }
 
-  write(patches: IssuePatch[]): string {
+  // `stamp`: when the texts given are written, and at which commit.
+  write(patches: IssuePatch[], stamp: Stamp = { at: Date.now() }): string {
     if (patches.length === 0) return "Nothing to write.";
     const before = new Map(this.modules().map((m) => [m.id, m]));
     const modules = new Map([...before].map(([id, m]) => [id, structuredClone(m)]));
@@ -202,6 +209,10 @@ export class IssueBoard {
           throw new Error(`evidence must be one of ${EVIDENCE.join(", ")}`);
         }
         if (p.text === "") throw new Error("text cannot be empty");
+        const written = {
+          written: stamp.at,
+          ...(stamp.commit !== undefined && { commit: stamp.commit }),
+        };
         for (const o of p.objectives ?? []) {
           checkId(o);
           if (!known.has(o)) unknown.add(o);
@@ -212,6 +223,15 @@ export class IssueBoard {
           throw new Error(`${p.id} is in more than one place; fix the files by hand`);
         }
         const at = p.id === undefined ? undefined : byId.get(p.id);
+        // Text sent back as it is is not new: neither refused nor dated anew.
+        if (p.text !== at?.issue.text) {
+          checkLength(
+            "The text",
+            p.text,
+            ISSUE_TEXT_LIMIT,
+            "what goes wrong, how common, where in the code and how to fix it, as it is now",
+          );
+        }
         if (!at) {
           if (!p.module) throw new Error("a new issue needs a module");
           if (!p.text) throw new Error("a new issue needs its text");
@@ -223,6 +243,7 @@ export class IssueBoard {
             ...(p.evidence && { evidence: p.evidence }),
             tags: unique(p.tags ?? []),
             text: p.text,
+            ...written,
             objectives: unique(p.objectives ?? []),
           };
           (group ?? m).issues.push(issue);
@@ -235,9 +256,12 @@ export class IssueBoard {
           ...at.issue,
           ...(p.state !== undefined && { state: p.state }),
           ...(p.tags !== undefined && { tags: unique(p.tags) }),
-          ...(p.text !== undefined && { text: p.text }),
           ...(p.objectives !== undefined && { objectives: unique(p.objectives) }),
         };
+        if (p.text !== undefined && p.text !== at.issue.text) {
+          delete issue.commit;
+          Object.assign(issue, { text: p.text, ...written });
+        }
         if (p.evidence === "") delete issue.evidence;
         else if (p.evidence !== undefined) issue.evidence = p.evidence;
         const target = p.module === undefined ? at.module : this.module(all, p.module);
@@ -278,7 +302,9 @@ export class IssueBoard {
   // call keeps them findable in the history.
   close(ids: string[], fixedBy: string): string {
     if (ids.length === 0) throw new Error("Give the ids of the issues to close");
-    if (!fixedBy.trim()) throw new Error("Say what fixed them (a PR, a commit)");
+    if (!fixedBy.trim()) {
+      throw new Error("Say what fixed them (a PR, a commit), or why they no longer hold");
+    }
     const modules = new Map(this.modules().map((m) => [m.id, structuredClone(m)]));
     const all = [...modules.values()];
     const found = [...new Set(ids)].map((id) => this.find(all, id));
@@ -291,7 +317,7 @@ export class IssueBoard {
     this.store.reserve(found.map((x) => x.issue.id));
     this.save(modules, touched);
     return [
-      `Closed ${found.map((x) => x.issue.id).join(", ")}, fixed by ${fixedBy.trim()}.`,
+      `Closed ${found.map((x) => x.issue.id).join(", ")}: ${fixedBy.trim()}.`,
       ...found.flatMap((at) => [
         "",
         `${at.issue.id} [${flags(at.issue).join(", ") || "open"}] in ${at.module.id}${at.group ? `/${at.group.id}` : ""}`,
@@ -363,6 +389,31 @@ export class IssueBoard {
     else m.groups[at] = g;
     this.store.write({ ...m, updatedAt: Date.now() });
     return `${at < 0 ? "Created" : "Updated"} group ${p.module}/${p.group}.`;
+  }
+
+  // Takes a deleted objective out of every link to it, an issue's, a
+  // group's or a module's; unreadable files stay as they are. Returns how
+  // many links went.
+  unlink(objectiveId: string): number {
+    let gone = 0;
+    const drop = (x: { objectives: string[] }): boolean => {
+      const kept = x.objectives.filter((o) => o !== objectiveId);
+      gone += x.objectives.length - kept.length;
+      if (kept.length === x.objectives.length) return false;
+      x.objectives = kept;
+      return true;
+    };
+    const touched: IssueModule[] = [];
+    for (const entry of this.store.list()) {
+      if ("error" in entry) continue;
+      const m = structuredClone(entry);
+      const changed = [m, ...m.issues, ...m.groups, ...m.groups.flatMap((g) => g.issues)]
+        .map(drop)
+        .some(Boolean);
+      if (changed) touched.push({ ...m, updatedAt: Date.now() });
+    }
+    if (touched.length) this.store.writeAll(touched);
+    return gone;
   }
 
   // The open issues linked to each objective, and how many are accepted.

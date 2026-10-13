@@ -62,6 +62,25 @@ describe("panel tools via createSdkMcpServer", () => {
     expect(calls).toContainEqual(["readSession", "p1", "ws-1", 3, undefined, false, false]);
   });
 
+  it("lets done through to the board, which says what to do instead", async () => {
+    const res = await handlers.get("tools/call")!(
+      {
+        method: "tools/call",
+        params: { name: "write_objective", arguments: { id: "a/x", status: "done" } },
+        jsonrpc: "2.0",
+        id: 5,
+      },
+      extra,
+    );
+    expect(res.isError).toBeFalsy();
+    expect(calls).toContainEqual([
+      "writeObjective",
+      "p1",
+      { id: "a/x", status: "done" },
+      undefined,
+    ]);
+  });
+
   it("passes write_issues its patches, and refuses a misspelt field in one", async () => {
     const call = (issues: unknown[], id: number) =>
       handlers.get("tools/call")!(
@@ -78,6 +97,7 @@ describe("panel tools via createSdkMcpServer", () => {
       "writeIssues",
       "p1",
       [{ id: "a#1", evidence: "", group: "", tags: ["低"] }],
+      undefined,
     ]);
     const before = calls.length;
     const res = await call([{ id: "a#1", evidance: "R" }], 4);

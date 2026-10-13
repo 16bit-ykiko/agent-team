@@ -360,7 +360,6 @@ describe("server restart with projects", () => {
         "close_issues",
         "project_status",
         "read_session",
-        "list_history",
         "search_history",
         "read_entry",
         "query_history",

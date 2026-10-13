@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import {
@@ -47,6 +48,47 @@ describe("objective files", () => {
     const text = serialize(o);
     expect(text).toContain('goal = """\nline one');
     expect(parse("core/modules", text)).toEqual(o);
+  });
+
+  it("keep a dropped objective with a priority given by hand whole", () => {
+    const o = objective("core/old", {
+      goal: "",
+      status: "dropped",
+      priority: "high",
+      reason: "r",
+    });
+    expect(parse("core/old", serialize(o))).toEqual(o);
+  });
+
+  it("keep a dropped objective as its title and the reason only", () => {
+    const o = objective("core/old", { goal: "", status: "dropped", reason: "replaced by Bazel" });
+    const text = serialize(o);
+    expect(text.split("\n").slice(1)).toEqual([
+      'title = "core/old"',
+      'status = "dropped"',
+      'reason = "replaced by Bazel"',
+      "updated = 2026-09-29T01:02:03.000Z",
+      "",
+    ]);
+    expect(parse("core/old", text)).toEqual(o);
+    // Only a dropped one may go without a goal.
+    expect(() => parse("a/b", 'title = "t"\nstatus = "later"\n')).toThrow("missing goal");
+  });
+
+  it("date a context with when and at which commit it was written", () => {
+    const o = objective("core/x", {
+      context: "lexer done",
+      contextWritten: Date.parse("2026-10-13T04:00:00Z"),
+      contextCommit: "6974365ab",
+    });
+    const text = serialize(o);
+    expect(text).toContain(
+      'context_written = 2026-10-13T04:00:00.000Z\ncontext_commit = "6974365ab"\ncontext = "lexer done"',
+    );
+    expect(parse("core/x", text)).toEqual(o);
+    expect(() => parse("a/b", 'title = "t"\ngoal = "g"\ncontext_written = "yesterday"\n')).toThrow(
+      "context_written must be a date",
+    );
   });
 
   it("read hand-written files with defaults and report what is wrong", () => {
@@ -200,15 +242,224 @@ describe("the lead's objective tools", () => {
     );
   });
 
-  it("delete an objective and say who still lists it", async () => {
+  it("keep what is dropped as its title and reason, and delete what is done", async () => {
+    const { create, call, objectives } = setup();
+    const { lead } = create("clice");
+    await call(lead, "write_objective", { id: "build/cmake", title: "CMake", goal: "g" });
+    await call(lead, "add_items", { objective_id: "build/cmake", tasks: ["presets"] });
+    await expect(
+      call(lead, "write_objective", { id: "build/cmake", status: "dropped" }),
+    ).rejects.toThrow("Say why build/cmake is dropped");
+    expect(
+      await call(lead, "write_objective", {
+        id: "build/cmake",
+        status: "dropped",
+        reason: "Bazel builds clice",
+      }),
+    ).toBe("Updated build/cmake [dropped, normal]. Kept as its title and the reason.");
+    expect(objectives()[0]).toMatchObject({
+      title: "CMake",
+      goal: "",
+      reason: "Bazel builds clice",
+      tasks: [],
+    });
+    await expect(
+      call(lead, "write_objective", { id: "build/cmake", status: "active" }),
+    ).rejects.toThrow("give it a goal");
+    await expect(
+      call(lead, "write_objective", { id: "build/cmake", status: "done" }),
+    ).rejects.toThrow("is deleted, not marked done: delete_objective");
+    // Nothing is added to a dropped one.
+    await expect(
+      call(lead, "add_items", { objective_id: "build/cmake", tasks: ["t"] }),
+    ).rejects.toThrow("build/cmake is dropped: make it active first");
+    // The reason of a dropped one is the drop's: a priority does not clear it.
+    await call(lead, "write_objective", { id: "build/cmake", priority: "low" });
+    expect(objectives()[0].reason).toBe("Bazel builds clice");
+    // Dropped from the start: no goal to give.
+    await call(lead, "write_objective", {
+      id: "build/make",
+      title: "Make",
+      status: "dropped",
+      reason: "never",
+    });
+    expect(await call(lead, "read_objective", { id: "build/make" })).toBe(
+      "build/make — Make\nstatus: dropped — never",
+    );
+  });
+
+  it("refuse board text over its limit, and a task over one line", async () => {
+    const { create, call } = setup();
+    const { lead } = create("clice");
+    await call(lead, "write_objective", { id: "a/x", title: "x", goal: "g" });
+    await expect(
+      call(lead, "write_objective", { id: "a/x", context: "x".repeat(1001) }),
+    ).rejects.toThrow(
+      "The context is 1001 characters, over the 1000 the board takes. Rewrite it shorter: where things stand now, not how they got there; the history keeps everything said and done.",
+    );
+    await expect(
+      call(lead, "write_objective", { id: "a/x", notes: "x".repeat(501) }),
+    ).rejects.toThrow("links to design docs");
+    await expect(
+      call(lead, "add_items", { objective_id: "a/x", tasks: ["one\ntwo"] }),
+    ).rejects.toThrow("A task is one line");
+    await expect(
+      call(lead, "add_items", { objective_id: "a/x", tasks: ["x".repeat(201)] }),
+    ).rejects.toThrow("The task is 201 characters");
+    await expect(
+      call(lead, "add_items", { objective_id: "a/x", decisions: ["x".repeat(301)] }),
+    ).rejects.toThrow("A question is 301 characters");
+    await call(lead, "add_items", { objective_id: "a/x", tasks: ["one"], decisions: ["q?"] });
+    await expect(
+      call(lead, "update_item", { objective_id: "a/x", item_id: "d1", outcome: "y".repeat(301) }),
+    ).rejects.toThrow("The outcome is 301 characters");
+    // Text already longer, written by hand, still reads.
+    expect(await call(lead, "read_objective", { id: "a/x" })).toContain("- t1 [todo] one");
+  });
+
+  it("remove a task or a decision that no longer matters", async () => {
+    const { create, call, objectives } = setup();
+    const { lead } = create("clice");
+    await call(lead, "write_objective", { id: "a/x", title: "x", goal: "g" });
+    await call(lead, "add_items", {
+      objective_id: "a/x",
+      tasks: ["one", "two"],
+      decisions: ["q?"],
+    });
+    expect(
+      await call(lead, "update_item", { objective_id: "a/x", item_id: "t1", remove: true }),
+    ).toBe("Removed a/x t1.");
+    await call(lead, "update_item", { objective_id: "a/x", item_id: "d1", remove: true });
+    expect(objectives()[0].tasks.map((t) => t.id)).toEqual(["t2"]);
+    expect(objectives()[0].decisions).toEqual([]);
+    await expect(
+      call(lead, "update_item", { objective_id: "a/x", item_id: "d1", remove: true }),
+    ).rejects.toThrow("No item d1 in a/x");
+  });
+
+  it("say how old a context is: when it was written, at which commit, and how many came since", async () => {
+    const { create, call, root, objectives } = setup();
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-C", root, "-c", "user.email=a@b", "-c", "user.name=a", ...args], {
+        stdio: "ignore",
+      });
+    git("init", "-q", "-b", "main");
+    git("commit", "-q", "--allow-empty", "-m", "one");
+    const head = () =>
+      execFileSync("git", ["-C", root, "rev-parse", "--short=9", "HEAD"], {
+        encoding: "utf-8",
+      }).trim();
+    const { lead } = create("clice");
+    await call(lead, "write_objective", { id: "a/x", title: "x", goal: "g", context: "lexer" });
+    const at = head();
+    const today = new Date().toISOString().slice(0, 10);
+    expect(await call(lead, "read_objective", { id: "a/x" })).toContain(
+      `context (written today (${today}, UTC) at ${at}, 0 commits since):\nlexer`,
+    );
+    git("commit", "-q", "--allow-empty", "-m", "two");
+    expect(await call(lead, "read_objective", { id: "a/x" })).toContain(
+      `at ${at}, 1 commit since):`,
+    );
+    // Written on a branch HEAD does not have: its commit, no count.
+    git("switch", "-q", "-c", "side");
+    git("commit", "-q", "--allow-empty", "-m", "side");
+    await call(lead, "write_objective", { id: "a/x", context: "on a branch" });
+    const side = head();
+    git("switch", "-q", "main");
+    expect(await call(lead, "read_objective", { id: "a/x" })).toContain(
+      `at ${side}):\non a branch`,
+    );
+    // Clearing the context clears its date.
+    await call(lead, "write_objective", { id: "a/x", context: "" });
+    expect(objectives()[0].contextWritten).toBeUndefined();
+    expect(objectives()[0].contextCommit).toBeUndefined();
+  });
+
+  it("read an archived objective, refuse to write it, and delete it", async () => {
+    const { create, call, objectives, base } = setup();
+    const { project, lead } = create("clice");
+    const dir = path.join(
+      base,
+      ".agent-team",
+      "projects",
+      project.id,
+      "objectives",
+      "_archive",
+      "a",
+    );
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "old.toml"), 'title = "old"\ngoal = "g"\nstatus = "done"\n');
+    expect(objectives()[0]).toMatchObject({ id: "a/old", archived: true });
+    expect(await call(lead, "list_objectives", { archived: true })).toContain("a/old [done");
+    expect(await call(lead, "read_objective", { id: "a/old" })).toContain(
+      "status: done (archived)",
+    );
+    await expect(call(lead, "write_objective", { id: "a/old", context: "x" })).rejects.toThrow(
+      "a/old is in the archive",
+    );
+    for (const [tool, args] of [
+      ["add_items", { objective_id: "a/old", tasks: ["x"] }],
+      ["update_item", { objective_id: "a/old", item_id: "t1", remove: true }],
+      ["start_session", { title: "w", cwd: "wt", task: "t", objective_id: "a/old" }],
+    ] as const) {
+      await expect(call(lead, tool, args), tool).rejects.toThrow(/in the archive|No item/);
+    }
+    const file = path.join(dir, "old.toml");
+    expect(fs.readFileSync(file, "utf-8")).toBe('title = "old"\ngoal = "g"\nstatus = "done"\n');
+    // Deleting what an archived one depends on leaves the archive as it is.
+    fs.writeFileSync(file, 'title = "old"\ngoal = "g"\nstatus = "done"\ndepends_on = ["a/x"]\n');
+    await call(lead, "write_objective", { id: "a/x", title: "x", goal: "g" });
+    expect(await call(lead, "delete_objective", { id: "a/x" })).toBe("Deleted a/x.");
+    expect(fs.readFileSync(file, "utf-8")).toContain('depends_on = ["a/x"]');
+    await call(lead, "delete_objective", { id: "a/old" });
+    expect(objectives()).toEqual([]);
+  });
+
+  it("date a context only when its text changes, by the calendar day", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-12T23:30:00Z"));
+      const { create, call, objectives } = setup();
+      const { lead } = create("clice");
+      await call(lead, "write_objective", { id: "a/x", title: "x", goal: "g", context: "A" });
+      const first = objectives()[0].contextWritten;
+      vi.setSystemTime(new Date("2026-10-13T00:10:00Z"));
+      expect(await call(lead, "read_objective", { id: "a/x" })).toContain(
+        "context (written 1 day ago (2026-10-12, UTC)):",
+      );
+      await call(lead, "write_objective", { id: "a/x", context: "A", priority: "high" });
+      expect(objectives()[0].contextWritten).toBe(first);
+      await call(lead, "write_objective", { id: "a/x", context: "B" });
+      expect(objectives()[0].contextWritten).toBe(Date.parse("2026-10-13T00:10:00Z"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not bring back a project deleted while a write waited for git", async () => {
+    const { create, call, manager, base } = setup();
+    const { project, lead } = create("clice");
+    const dir = path.join(base, ".agent-team", "projects", project.id);
+    const write = call(lead, "write_objective", { id: "a/x", title: "x", goal: "g", context: "c" });
+    manager.delete(project.id);
+    await expect(write).rejects.toThrow(`No project ${project.id}`);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("delete an objective and take it out of what depended on it", async () => {
     const { create, call, objectives } = setup();
     const { lead } = create("clice");
     await call(lead, "write_objective", { id: "a/x", title: "x", goal: "g" });
     await call(lead, "write_objective", { id: "a/y", title: "y", goal: "g", depends_on: ["a/x"] });
+    await call(lead, "write_issue_group", { module: "m", title: "M", objectives: ["a/x"] });
+    await call(lead, "write_issues", {
+      issues: [{ id: "i#1", module: "m", text: "t", objectives: ["a/x", "a/y"] }],
+    });
     expect(await call(lead, "delete_objective", { id: "a/x" })).toBe(
-      "Deleted a/x. Still listed as a prerequisite by a/y.",
+      "Deleted a/x. Taken out of the depends_on of a/y. Taken out of 2 issue links.",
     );
-    expect(objectives().map((o) => o.id)).toEqual(["a/y"]);
+    expect(objectives().map((o) => [o.id, o.dependsOn])).toEqual([["a/y", []]]);
+    expect(await call(lead, "read_issue", { id: "i#1" })).toContain("objectives: a/y (active) y");
   });
 
   it("broadcast the board when a file is edited by hand", async () => {

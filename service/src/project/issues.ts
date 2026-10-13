@@ -25,8 +25,11 @@ export interface Issue {
   // agent's probe not checked here.
   evidence?: Evidence;
   tags: string[];
-  // What goes wrong, how common, where in the code (markdown).
+  // What goes wrong, how common, where in the code (markdown), and when and
+  // at which commit of the writer's folder it was written.
   text: string;
+  written?: number;
+  commit?: string;
   objectives: string[];
 }
 
@@ -58,6 +61,9 @@ export interface BrokenModule {
 }
 
 export type ModuleEntry = IssueModule | BrokenModule;
+
+// Characters of an issue's text the tools accept.
+export const ISSUE_TEXT_LIMIT = 1000;
 
 export const MODULE_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 export const GROUP_PATTERN = /^[a-z0-9][a-z0-9.-]*$/;
@@ -121,6 +127,21 @@ export class IssueStore {
     }
     for (const file of this.cache.keys()) if (!present.has(file)) this.cache.delete(file);
     return out.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  // How many module files there are and their bytes.
+  size(): { files: number; bytes: number } {
+    const out = { files: 0, bytes: 0 };
+    for (const { file, dir } of this.files()) {
+      if (dir) continue;
+      try {
+        out.bytes += fs.statSync(file).size;
+        out.files++;
+      } catch {
+        // Gone since it was listed.
+      }
+    }
+    return out;
   }
 
   get(id: string): IssueModule | undefined {
@@ -263,7 +284,16 @@ export class IssueStore {
 
 const MODULE_KEYS = new Set(["title", "notes", "objectives", "updated", "issues", "groups"]);
 const GROUP_KEYS = new Set(["id", "title", "notes", "objectives", "issues"]);
-const ISSUE_KEYS = new Set(["id", "state", "evidence", "tags", "objectives", "text"]);
+const ISSUE_KEYS = new Set([
+  "id",
+  "state",
+  "evidence",
+  "tags",
+  "objectives",
+  "written",
+  "commit",
+  "text",
+]);
 
 type Raw = Record<string, unknown>;
 
@@ -310,12 +340,19 @@ function parseIssue(raw: Raw, where: string): Issue {
   if (evidence !== undefined && !EVIDENCE.includes(evidence as Evidence)) {
     throw new Error(`${where}evidence must be one of ${EVIDENCE.join(", ")}`);
   }
+  const written = raw.written;
+  if (written !== undefined && !(written instanceof Date)) {
+    throw new Error(`${where}written must be a date and time`);
+  }
+  const commit = f.str("commit");
   return {
     id,
     state: state as IssueState,
     ...(evidence !== undefined && { evidence: evidence as Evidence }),
     tags: f.strings("tags"),
     text: f.str("text", true)!,
+    ...(written instanceof Date && { written: written.getTime() }),
+    ...(commit !== undefined && { commit }),
     objectives: f.strings("objectives"),
   };
 }
@@ -377,6 +414,8 @@ export function serializeModule(m: IssueModule): string {
     if (x.evidence) lines.push(`evidence = "${x.evidence}"`);
     list("tags", x.tags);
     list("objectives", x.objectives);
+    if (x.written !== undefined) lines.push(`written = ${new Date(x.written).toISOString()}`);
+    if (x.commit) lines.push(`commit = ${tomlString(x.commit)}`);
     lines.push(`text = ${tomlString(x.text)}`);
   };
   for (const x of m.issues) issue("[[issues]]", x);

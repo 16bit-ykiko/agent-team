@@ -1,8 +1,9 @@
+import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { AGENT_PRESETS, MODEL_OPTIONS } from "../config/presets";
 import { resolveWorkspacePath } from "../repo/dirs";
-import { gitStatus, gitWorktrees, repositoryRoot } from "../repo/git";
+import { gitCommitsSince, gitHead, gitStatus, gitWorktrees, repositoryRoot } from "../repo/git";
 import type { EntryInfo, EntryKind, SessionRow, SqlValue } from "../workspace/history-index";
 import type { HistoryService } from "../workspace/history-service";
 import {
@@ -14,19 +15,25 @@ import {
 } from "../workspace/workspace";
 import { ProjectStore, type Project } from "./store";
 import {
+  LIMITS,
   OBJECTIVE_STATUSES,
   ObjectiveStore,
   checkId,
+  checkLength,
+  checkTask,
   dependencies,
   cycleThrough,
+  isTombstone,
   type BrokenObjective,
   type Objective,
+  type Stamp,
 } from "./objectives";
-import { IssueStore, type ModuleEntry } from "./issues";
+import { IssueStore, locate, type IssueModule, type ModuleEntry } from "./issues";
 import { IssueBoard } from "./issue-board";
 import {
   leadToolset,
   workerToolset,
+  type FinishPatch,
   type ItemPatch,
   type ObjectivePatch,
   type PanelApi,
@@ -43,8 +50,12 @@ const OUTPUT_CAP = 60_000;
 const CELL_CAP = 1000;
 const SQL_ROWS = 200;
 const ENTRIES_SHOWN = 60;
-// Open issues read_objective lists.
+// Open issues read_objective lists, and current_task.
 const ISSUES_SHOWN = 30;
+const TASK_ISSUES_SHOWN = 10;
+// Commits whose distance from HEAD one read counts; past them a text shows
+// its commit only.
+const AGES_COUNTED = 40;
 
 // A long-lived lead has the whole project in its context.
 export const LEAD_MODEL = "claude-opus-5-5";
@@ -307,27 +318,29 @@ export class ProjectManager {
     );
   }
 
-  // Applies `change` to every objective `match` picks, each read fresh from
-  // disk right before it is written; one that fails is logged and skipped.
+  // Applies `change` to every objective on the board `match` picks, each
+  // read fresh from disk right before it is written; one that fails is
+  // logged and skipped. Returns the ids written.
   private rewrite(
     projectId: string,
     match: (o: Objective) => boolean,
     change: (o: Objective) => Objective,
-  ): void {
+  ): string[] {
     const board = this.board(projectId);
-    let touched = false;
+    const written: string[] = [];
     for (const listed of this.objectives(projectId)) {
-      if (!match(listed)) continue;
+      if (listed.archived || !match(listed)) continue;
       try {
         const fresh = board.get(listed.id);
-        if (!fresh || !match(fresh)) continue;
+        if (!fresh || fresh.archived || !match(fresh)) continue;
         board.write({ ...change(fresh), updatedAt: Date.now() });
-        touched = true;
+        written.push(fresh.id);
       } catch (e) {
         console.error(`[projects] ${listed.id}: not updated`, e);
       }
     }
-    if (touched) this.changed(projectId);
+    if (written.length) this.changed(projectId);
+    return written;
   }
 
   // The project's objectives, watched so hand edits reach the board too.
@@ -335,6 +348,9 @@ export class ProjectManager {
     let board = this.boards.get(id);
     if (!board) {
       if (this.closed) throw new Error("The server is shutting down");
+      // A tool that awaited while its project was deleted must not bring
+      // the project's folder back.
+      this.require(id);
       board = new ObjectiveStore(this.store.objectivesDir(id));
       board.watch(() => this.changed(id));
       this.boards.set(id, board);
@@ -348,6 +364,7 @@ export class ProjectManager {
     let issues = this.issueStores.get(id);
     if (!issues) {
       if (this.closed) throw new Error("The server is shutting down");
+      this.require(id);
       issues = new IssueStore(this.store.issuesDir(id));
       issues.watch(() => this.issuesChanged(id));
       this.issueStores.set(id, issues);
@@ -358,6 +375,39 @@ export class ProjectManager {
   private issueBoard(id: string): IssueBoard {
     this.require(id);
     return new IssueBoard(this.issues(id), () => this.objectives(id));
+  }
+
+  // When a text is written, and the commit of its writer's folder: a
+  // worker's, or the repository for the lead.
+  private async stamp(projectId: string, sessionId?: string): Promise<Stamp> {
+    const root = this.require(projectId).root;
+    const commit = await gitHead((sessionId && this.host.workspace(sessionId)?.cwd) || root);
+    return { at: Date.now(), ...(commit && { commit }) };
+  }
+
+  // How old texts are, "" for one that does not say: how long ago it was
+  // written, and how many commits the repository's checkout has had since
+  // its commit (`commits`: the ones to be shown).
+  private async ages(
+    projectId: string,
+    commits: Array<string | undefined>,
+  ): Promise<(at?: number, commit?: string) => string> {
+    const root = this.require(projectId).root;
+    const since = new Map<string, number | undefined>();
+    const wanted = [...new Set(commits.filter((c): c is string => !!c))].slice(0, AGES_COUNTED);
+    await Promise.all(wanted.map(async (c) => since.set(c, await gitCommitsSince(root, c))));
+    const day = (t: number) => Math.floor(t / 86_400_000);
+    const today = day(Date.now());
+    return (at, commit) => {
+      if (at === undefined) return "";
+      const days = today - day(at);
+      const ago = days <= 0 ? "today" : days === 1 ? "1 day ago" : `${days} days ago`;
+      const when = `${ago} (${new Date(at).toISOString().slice(0, 10)}, UTC)`;
+      if (!commit) return when;
+      const n = since.get(commit);
+      if (n === undefined) return `${when} at ${commit}`;
+      return `${when} at ${commit}, ${n} commit${n === 1 ? "" : "s"} since`;
+    };
   }
 
   // The clients hear of it even when a write failed halfway.
@@ -388,7 +438,9 @@ export class ProjectManager {
     return o;
   }
 
+  // The archive is read and deleted, never written.
   private saveObjective(projectId: string, o: Objective): void {
+    if (o.archived) throw new Error(`${o.id} is in the archive: read-only`);
     this.board(projectId).write({ ...o, updatedAt: Date.now() });
     this.changed(projectId);
   }
@@ -400,7 +452,7 @@ export class ProjectManager {
     if (!link || !project) return null;
     return link.role === "lead"
       ? leadToolset(this.api, project, this.store.notesDir(project.id), claudeModels())
-      : workerToolset(this.api, workspace.id, project);
+      : workerToolset(this.api, workspace.id, project, this.store.notesDir(project.id));
   }
 
   // A worker's turn ended or its agent went idle: the check waits until it
@@ -712,7 +764,24 @@ export class ProjectManager {
     }
     out.push("", "## Active objectives", this.listObjectives(projectId, { status: "active" }));
     out.push("", "## Issues", this.issueBoard(projectId).summary());
+    out.push("", "## Size", await this.size(projectId));
     return out.join("\n");
+  }
+
+  // How much the board and the notes hold: what every agent reading them
+  // reads.
+  private async size(projectId: string): Promise<string> {
+    const { board, archive } = this.board(projectId).sizes();
+    const issues = this.issues(projectId).size();
+    const notes = await folderSize(this.store.notesDir(projectId));
+    const kb = (n: number) => `${Math.ceil(n / 1024)} KB`;
+    const files = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+    return [
+      `- objectives: ${files(board.files, "file")}, ${kb(board.bytes)}` +
+        (archive.files ? `; archive: ${files(archive.files, "file")}, ${kb(archive.bytes)}` : ""),
+      `- issues: ${files(issues.files, "module")}, ${kb(issues.bytes)}`,
+      `- notes: ${files(notes.files, "file")}, ${kb(notes.bytes)}`,
+    ].join("\n");
   }
 
   private startSession(projectId: string, a: StartSessionArgs): string {
@@ -730,6 +799,10 @@ export class ProjectManager {
       throw new Error(`Unknown model ${a.model}; one of: ${models.join(", ")}`);
     }
     const objective = a.objectiveId ? this.objective(projectId, a.objectiveId) : undefined;
+    if (objective?.archived) throw new Error(`${objective.id} is in the archive: read-only`);
+    if (objective?.status === "dropped") {
+      throw new Error(`${objective.id} is dropped: make it active first`);
+    }
     if (a.taskId && !objective) throw new Error("task_id needs objective_id");
     if (a.taskId && !objective!.tasks.some((t) => t.id === a.taskId)) {
       throw new Error(`No task ${a.taskId} in ${objective!.id}`);
@@ -808,23 +881,6 @@ export class ProjectManager {
       .filter((w) => w.isArchived && (!w.projectLink || w.projectLink.projectId === projectId))
       .filter((w) => everywhere || inside(w.cwd))
       .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
-  }
-
-  private async listHistory(
-    projectId: string,
-    everywhere: boolean,
-    limit: number,
-  ): Promise<string> {
-    const all = await this.history(projectId, everywhere);
-    if (all.length === 0) return "(no earlier sessions)";
-    const day = (t: number) => new Date(t).toISOString().slice(0, 10);
-    const lines = all
-      .slice(0, limit)
-      .map(
-        (w) => `- ${w.id} "${w.name}" in ${w.cwd} · ${day(w.createdAt)} → ${day(w.lastActivityAt)}`,
-      );
-    const more = all.length > limit ? [`(${all.length - limit} older not shown)`] : [];
-    return [...lines, ...more].join("\n");
   }
 
   // What the history tools reach: the project's sessions, its lead's
@@ -1112,8 +1168,27 @@ export class ProjectManager {
     return out.join("\n");
   }
 
-  private readObjective(projectId: string, id: string): string {
+  private async readObjective(projectId: string, id: string): Promise<string> {
+    const age = await this.ages(projectId, [this.objective(projectId, id).contextCommit]);
+    return this.describeObjective(projectId, id, age, false);
+  }
+
+  // One objective in full, read in one go; `forTask` (a worker's
+  // current_task) leaves out what is not its work: who needs it, its
+  // sessions, more than a few issues.
+  private describeObjective(
+    projectId: string,
+    id: string,
+    age: (at?: number, commit?: string) => string,
+    forTask: boolean,
+  ): string {
     const o = this.objective(projectId, id);
+    if (isTombstone(o)) {
+      return [
+        `${o.id} — ${o.title}`,
+        `status: dropped${o.archived ? " (archived)" : ""} — ${o.reason ?? ""}`,
+      ].join("\n");
+    }
     const objectives = this.objectives(projectId);
     const byId = new Map(objectives.map((x) => [x.id, x]));
     const info = dependencies(objectives).get(o.id)!;
@@ -1127,20 +1202,28 @@ export class ProjectManager {
       ];
       return `${x} (${flags.filter(Boolean).join(", ")})`;
     };
-    const session = (sid: string) => {
+    const live = o.sessions.flatMap((sid) => {
       const w = this.host.workspace(sid);
-      return w ? `${sid} "${w.name}" (${sessionState(w)})` : `${sid} (deleted)`;
-    };
+      return w && !w.isArchived ? [`${sid} "${w.name}" (${sessionState(w)})`] : [];
+    });
+    const gone = o.sessions.length - live.length;
     const out = [
       `${o.id} — ${o.title}`,
       `status: ${o.status}${o.archived ? " (archived)" : ""}, priority: ${o.priority}${o.reason ? ` — ${o.reason}` : ""}`,
-      `goal: ${o.goal}`,
-      `depends on: ${o.dependsOn.map(ref).join(", ") || "nothing"}`,
-      `needed by: ${info.unblocks.join(", ") || "nothing"}`,
-      `sessions: ${o.sessions.map(session).join(", ") || "none"}`,
-      `updated: ${new Date(o.updatedAt).toISOString()}`,
     ];
-    if (o.context) out.push("", "context:", o.context);
+    if (o.goal) out.push(`goal: ${o.goal}`);
+    out.push(`depends on: ${o.dependsOn.map(ref).join(", ") || "nothing"}`);
+    if (!forTask) {
+      out.push(
+        `needed by: ${info.unblocks.join(", ") || "nothing"}`,
+        `sessions: ${[...live, ...(gone ? [`${gone} archived or deleted`] : [])].join(", ") || "none"}`,
+      );
+    }
+    out.push(`updated: ${new Date(o.updatedAt).toISOString()}`);
+    if (o.context) {
+      const written = age(o.contextWritten, o.contextCommit);
+      out.push("", `context (${written ? `written ${written}` : "undated"}):`, o.context);
+    }
     out.push("", "tasks:");
     for (const t of o.tasks) {
       out.push(`- ${t.id} [${t.state}] ${t.text}${t.session ? ` (session ${t.session})` : ""}`);
@@ -1157,33 +1240,60 @@ export class ProjectManager {
     if (o.decisions.length === 0) out.push("(none)");
     const issues = this.issueBoard(projectId).linked().get(o.id);
     if (issues) {
+      const shown = forTask ? TASK_ISSUES_SHOWN : ISSUES_SHOWN;
       out.push("", "issues:");
-      for (const { issue: x } of issues.open.slice(0, ISSUES_SHOWN)) {
+      for (const { issue: x } of issues.open.slice(0, shown)) {
         const flags = [x.state !== "open" && x.state, x.evidence].filter(Boolean).join(", ");
         out.push(`- ${x.id}${flags ? ` [${flags}]` : ""} ${oneLine(x.text, 140)}`);
       }
-      const more = issues.open.length - ISSUES_SHOWN;
+      const more = issues.open.length - shown;
       if (more > 0) out.push(`(${more} more: list_issues with objective ${o.id})`);
       if (issues.accepted) out.push(`(${issues.accepted} accepted: list_issues with states)`);
     }
-    if (o.notes) out.push("", "notes:", o.notes);
+    if (o.notes) out.push("", "links:", o.notes);
     return out.join("\n");
   }
 
   // A worker's new objective names its session, as start_session's would.
-  private writeObjective(projectId: string, patch: ObjectivePatch, sessionId?: string): string {
+  // Done is not a status to write: a done objective is deleted. Dropped
+  // shrinks it to its title and the reason.
+  private async writeObjective(
+    projectId: string,
+    patch: ObjectivePatch,
+    sessionId?: string,
+  ): Promise<string> {
     checkId(patch.id);
+    if (patch.status === "done") {
+      throw new Error(
+        sessionId
+          ? "An objective whose work is done is deleted, by the lead: report your part with finish_task"
+          : "An objective whose work is done is deleted, not marked done: delete_objective; the history keeps it",
+      );
+    }
+    // Text sent back as it is is not new: neither refused nor dated anew.
+    const before = this.board(projectId).get(patch.id);
+    if (patch.context !== before?.context)
+      checkLength("The context", patch.context, LIMITS.context);
+    if (patch.notes !== before?.notes) {
+      checkLength("notes", patch.notes, LIMITS.notes, "links to design docs, not their content");
+    }
+    const stamp =
+      patch.context && patch.context !== before?.context
+        ? await this.stamp(projectId, sessionId)
+        : undefined;
     const board = this.board(projectId);
     const current = board.get(patch.id);
-    if (current?.archived) throw new Error(`${patch.id} is archived; restore_objective it first`);
-    if (!current && (!patch.title || !patch.goal)) {
+    if (current?.archived) {
+      throw new Error(`${patch.id} is in the archive: read-only`);
+    }
+    if (!current && (!patch.title || (!patch.goal && patch.status !== "dropped"))) {
       throw new Error(`${patch.id} does not exist yet: give it a title and a goal`);
     }
     if (patch.title === "" || patch.goal === "") throw new Error("title and goal cannot be empty");
     const defined = Object.fromEntries(
       Object.entries(patch).filter(([, v]) => v !== undefined),
     ) as ObjectivePatch;
-    const next: Objective = {
+    let next: Objective = {
       ...(current ?? {
         id: patch.id,
         area: patch.id.split("/")[0],
@@ -1199,14 +1309,43 @@ export class ProjectManager {
       }),
       ...defined,
     };
-    // A reason explains the status or priority it was given with.
+    if (stamp && next.context !== current?.context) {
+      next.contextWritten = stamp.at;
+      if (stamp.commit) next.contextCommit = stamp.commit;
+      else delete next.contextCommit;
+    }
+    // A reason explains the status or priority it was given with; a
+    // dropped one's, the drop.
     const moved =
       current &&
       ((patch.status && patch.status !== current.status) ||
-        (patch.priority && patch.priority !== current.priority));
+        (patch.priority && patch.priority !== current.priority && next.status !== "dropped"));
     if (moved && patch.reason === undefined) delete next.reason;
     for (const key of ["reason", "context", "notes"] as const)
       if (next[key] === "") delete next[key];
+    if (!next.context) {
+      delete next.contextWritten;
+      delete next.contextCommit;
+    }
+    if (next.status === "dropped") {
+      if (!next.reason) throw new Error(`Say why ${next.id} is dropped (reason)`);
+      next = {
+        id: next.id,
+        area: next.area,
+        title: next.title,
+        goal: "",
+        status: "dropped",
+        priority: "normal",
+        reason: next.reason,
+        dependsOn: [],
+        tasks: [],
+        decisions: [],
+        sessions: [],
+        updatedAt: next.updatedAt,
+      };
+    } else if (!next.goal) {
+      throw new Error(`${next.id} was dropped and kept only its title: give it a goal`);
+    }
     next.dependsOn = [...new Set(next.dependsOn)].filter((d) => d !== next.id);
     for (const d of next.dependsOn) checkId(d);
     const others = this.objectives(projectId).filter((o) => o.id !== next.id);
@@ -1220,7 +1359,8 @@ export class ProjectManager {
         ? ` Depends on: ${next.dependsOn.join(", ") || "nothing"}.`
         : "";
     const warn = missing.length ? ` Not objectives (yet): ${missing.join(", ")}.` : "";
-    return `${current ? "Updated" : "Created"} ${next.id} [${next.status}, ${next.priority}].${deps}${warn}`;
+    const kept = next.status === "dropped" ? " Kept as its title and the reason." : "";
+    return `${current ? "Updated" : "Created"} ${next.id} [${next.status}, ${next.priority}].${kept}${deps}${warn}`;
   }
 
   // A worker that takes up a task nobody carries out is its session.
@@ -1232,9 +1372,25 @@ export class ProjectManager {
     sessionId?: string,
   ): string {
     const o = this.objective(projectId, oid);
+    // Clearing out what a dropped one still holds is fine; adding to it not.
+    if (o.status === "dropped" && !patch.remove) {
+      throw new Error(`${o.id} is dropped: make it active first`);
+    }
+    if (patch.remove) {
+      if (![...o.tasks, ...o.decisions].some((x) => x.id === itemId)) {
+        throw new Error(`No item ${itemId} in ${o.id}`);
+      }
+      this.saveObjective(projectId, {
+        ...o,
+        tasks: o.tasks.filter((t) => t.id !== itemId),
+        decisions: o.decisions.filter((d) => d.id !== itemId),
+      });
+      return `Removed ${o.id} ${itemId}.`;
+    }
     if (o.tasks.some((t) => t.id === itemId)) {
       if (patch.outcome !== undefined)
         throw new Error(`${itemId} is a task; outcome is for decisions`);
+      if (patch.text !== o.tasks.find((t) => t.id === itemId)!.text) checkTask(patch.text);
       this.saveObjective(projectId, {
         ...o,
         tasks: o.tasks.map((t) =>
@@ -1252,6 +1408,16 @@ export class ProjectManager {
     }
     if (o.decisions.some((d) => d.id === itemId)) {
       if (patch.state) throw new Error(`${itemId} is a decision; settle it with an outcome`);
+      const d = o.decisions.find((x) => x.id === itemId)!;
+      if (patch.text !== d.question) {
+        checkLength("The question", patch.text, LIMITS.decision, "the question alone");
+      }
+      checkLength(
+        "The outcome",
+        patch.outcome === d.outcome ? undefined : patch.outcome,
+        LIMITS.decision,
+        "what was decided, not the discussion",
+      );
       this.saveObjective(projectId, {
         ...o,
         decisions: o.decisions.map((d) => {
@@ -1270,7 +1436,7 @@ export class ProjectManager {
   // What a worker session is on, for when its own context no longer holds
   // it: the task as the lead gave it, the lead's later messages, and its
   // objectives on the board as they are now.
-  private currentTask(workspaceId: string, objectiveId?: string): string {
+  private async currentTask(workspaceId: string, objectiveId?: string): Promise<string> {
     const w = this.host.workspace(workspaceId);
     const projectId = w?.projectLink?.projectId;
     if (!w || !projectId) throw new Error("This session belongs to no project");
@@ -1289,21 +1455,82 @@ export class ProjectManager {
     for (const m of later.slice(-5)) {
       out.push("", `Later from the lead (${when(m.timestamp)}):\n\n${cap(m.content, 2000)}`);
     }
-    const mine = this.objectives(projectId).filter(
-      (o) => o.sessions.includes(w.id) || o.tasks.some((t) => t.session === w.id),
+    const age = await this.ages(
+      projectId,
+      this.objectivesOf(projectId, w.id).map((o) => o.contextCommit),
     );
-    for (const o of mine) out.push("", "---", "", this.readObjective(projectId, o.id));
+    const mine = this.objectivesOf(projectId, w.id);
+    for (const o of mine)
+      out.push("", "---", "", this.describeObjective(projectId, o.id, age, true));
     if (mine.length === 0) out.push("", "(no objective on the board names this session)");
     return out.join("\n");
   }
 
-  // A worker's report to its lead. Finishing moves the tasks it was doing to
-  // review.
-  private workerReport(workspaceId: string, text: string, final: boolean): string {
+  // The objective a worker's finished context goes to: the one named, or
+  // the one it works on.
+  private contextTarget(projectId: string, sessionId: string, named?: string): Objective {
+    let id = named;
+    if (!id) {
+      const mine = this.objectivesOf(projectId, sessionId).filter((o) => !o.archived);
+      if (mine.length !== 1) {
+        throw new Error(
+          mine.length
+            ? `you work on ${mine.map((o) => o.id).join(", ")}; objective_id says which`
+            : "no objective on the board names this session",
+        );
+      }
+      id = mine[0].id;
+    }
+    const o = this.objective(projectId, id);
+    if (o.archived || o.status === "dropped") {
+      throw new Error(`${o.id} is ${o.archived ? "in the archive" : "dropped"}`);
+    }
+    return o;
+  }
+
+  // The objectives a worker session works on.
+  private objectivesOf(projectId: string, sessionId: string): Objective[] {
+    return this.objectives(projectId).filter(
+      (o) => o.sessions.includes(sessionId) || o.tasks.some((t) => t.session === sessionId),
+    );
+  }
+
+  // A worker's report to its lead. Finishing writes its objective's new
+  // context first (a refused one sends nothing) and moves the tasks it was
+  // doing to review.
+  private async workerReport(
+    workspaceId: string,
+    text: string,
+    final: boolean,
+    finish: FinishPatch = {},
+  ): Promise<string> {
     const w = this.host.workspace(workspaceId);
     const projectId = w?.projectLink?.role === "worker" ? w.projectLink.projectId : undefined;
     const lead = projectId ? this.leadOf(projectId) : undefined;
     if (!w || !projectId || !lead) throw new Error("This session has no project lead");
+    // A context too long is refused before anything is sent, to be written
+    // shorter; one with nowhere to go does not hold the report back.
+    let unwritten = "";
+    const notWritten = (e: unknown) =>
+      ` The context was not written: ${e instanceof Error ? e.message : String(e)}.`;
+    if (final && finish.context) {
+      let target: Objective | undefined;
+      try {
+        target = this.contextTarget(projectId, w.id, finish.objectiveId);
+      } catch (e) {
+        unwritten = notWritten(e);
+      }
+      if (target && finish.context !== target.context) {
+        checkLength("The context", finish.context, LIMITS.context);
+      }
+      if (target) {
+        try {
+          await this.writeObjective(projectId, { id: target.id, context: finish.context }, w.id);
+        } catch (e) {
+          unwritten = notWritten(e);
+        }
+      }
+    }
     if (final) this.markAnswered(w);
     const body = `${final ? "Finished" : "Progress"}:\n\n${text}`;
     this.deliver(
@@ -1324,7 +1551,7 @@ export class ProjectManager {
         }),
       );
     }
-    return final ? "Reported to the lead." : "Sent to the lead.";
+    return final ? `Reported to the lead.${unwritten}` : "Sent to the lead.";
   }
 
   private api: PanelApi = {
@@ -1332,7 +1559,6 @@ export class ProjectManager {
     startSession: (pid, a) => this.startSession(pid, a),
     readSession: (pid, sid, count, around, tools, start) =>
       this.readSession(pid, sid, count, around, tools, start),
-    listHistory: (pid, everywhere, limit) => this.listHistory(pid, everywhere, limit),
     searchHistory: (pid, a) => this.searchHistory(pid, a),
     readEntry: (pid, entry, from, count, fromChar) =>
       this.readEntry(pid, entry, from, count, fromChar),
@@ -1377,7 +1603,11 @@ export class ProjectManager {
     },
     addItems: (pid, oid, tasks, decisions) => {
       this.require(pid);
+      for (const t of tasks) checkTask(t);
+      for (const d of decisions)
+        checkLength("A question", d, LIMITS.decision, "the question alone");
       const o = this.objective(pid, oid);
+      if (o.status === "dropped") throw new Error(`${o.id} is dropped: make it active first`);
       const next = (prefix: string, ids: string[]) => {
         const n = Math.max(0, ...ids.map((x) => Number(x.slice(1)) || 0));
         return (i: number) => `${prefix}${n + i + 1}`;
@@ -1406,20 +1636,56 @@ export class ProjectManager {
       this.require(pid);
       return this.updateItem(pid, oid, itemId, patch, sid);
     },
+    // What depended on it no longer does: done or a mistake, it is not
+    // waited for.
     deleteObjective: (pid, id) => {
       this.require(pid);
       const o = this.objective(pid, id);
-      const dependents = this.objectives(pid).filter((x) => x.dependsOn.includes(o.id));
       this.board(pid).remove(o.id);
+      const dependents = this.rewrite(
+        pid,
+        (x) => x.dependsOn.includes(o.id),
+        (x) => ({ ...x, dependsOn: x.dependsOn.filter((d) => d !== o.id) }),
+      );
       this.changed(pid);
-      const left = dependents.length
-        ? ` Still listed as a prerequisite by ${dependents.map((x) => x.id).join(", ")}.`
-        : "";
-      return `Deleted ${o.id}.${left}`;
+      let links = 0;
+      try {
+        this.changingIssues(pid, (b) => String((links = b.unlink(o.id))));
+      } catch (e) {
+        console.error(`[projects] issues still link ${o.id}`, e);
+      }
+      return [
+        `Deleted ${o.id}.`,
+        ...(dependents.length ? [`Taken out of the depends_on of ${dependents.join(", ")}.`] : []),
+        ...(links ? [`Taken out of ${links} issue link${links === 1 ? "" : "s"}.`] : []),
+      ].join(" ");
     },
     listIssues: (pid, filter) => this.issueBoard(pid).list(filter),
-    readIssue: (pid, t) => this.issueBoard(pid).read(t.id, t.module, t.group),
-    writeIssues: (pid, patches) => this.changingIssues(pid, (b) => b.write(patches)),
+    readIssue: async (pid, t) => {
+      // The commits of the issues the read shows, counted first.
+      const modules = this.issues(pid)
+        .list()
+        .filter((m): m is IssueModule => !("error" in m));
+      const shown = t.id
+        ? [locate(modules).byId.get(t.id)?.issue]
+        : modules
+            .filter((m) => m.id === t.module)
+            .flatMap((m) =>
+              t.group === undefined
+                ? [...m.issues, ...m.groups.flatMap((g) => g.issues)]
+                : (m.groups.find((g) => g.id === t.group)?.issues ?? []),
+            );
+      const age = await this.ages(
+        pid,
+        shown.map((x) => x?.commit),
+      );
+      return this.issueBoard(pid).read(t.id, t.module, t.group, (x) => age(x.written, x.commit));
+    },
+    writeIssues: async (pid, patches, sid) => {
+      this.require(pid);
+      const stamp = await this.stamp(pid, sid);
+      return this.changingIssues(pid, (b) => b.write(patches, stamp));
+    },
     writeIssueGroup: (pid, patch) => this.changingIssues(pid, (b) => b.writeGroup(patch)),
     closeIssues: (pid, ids, fixedBy) => this.changingIssues(pid, (b) => b.close(ids, fixedBy)),
     listProjects: (pid) => {
@@ -1427,26 +1693,7 @@ export class ProjectManager {
       return this.listProjects(pid);
     },
     messageProject: (pid, target, text) => this.messageProject(pid, target, text),
-    workerReport: (wsId, text, final) => this.workerReport(wsId, text, final),
-    archiveObjective: (pid, id) => {
-      this.require(pid);
-      const o = this.objective(pid, id);
-      if (o.archived) return `${o.id} is already archived.`;
-      if (o.status !== "done" && o.status !== "dropped") {
-        throw new Error(`${o.id} is ${o.status}; only done or dropped objectives are archived`);
-      }
-      this.board(pid).move(o.id, true);
-      this.changed(pid);
-      return `Archived ${o.id}.`;
-    },
-    restoreObjective: (pid, id) => {
-      this.require(pid);
-      const o = this.objective(pid, id);
-      if (!o.archived) return `${o.id} is not archived.`;
-      this.board(pid).move(o.id, false);
-      this.changed(pid);
-      return `Restored ${o.id} [${o.status}].`;
-    },
+    workerReport: (wsId, text, final, finish) => this.workerReport(wsId, text, final, finish),
   };
 }
 
@@ -1522,6 +1769,34 @@ function sessionState(w: Workspace): "archived" | "working" | "waiting to start"
   if (w.isArchived) return "archived";
   if ([...w.agents.values()].some((a) => a.session.isRunning)) return "working";
   return w.messages.some((m) => m.status === "queued") ? "waiting to start" : "idle";
+}
+
+// Files under a folder and their bytes; dot files (an editor's) left out.
+async function folderSize(dir: string): Promise<{ files: number; bytes: number }> {
+  const out = { files: 0, bytes: 0 };
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (e.name.startsWith(".")) continue;
+    const at = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      const sub = await folderSize(at);
+      out.files += sub.files;
+      out.bytes += sub.bytes;
+    } else if (e.isFile()) {
+      try {
+        out.bytes += (await fs.promises.stat(at)).size;
+        out.files++;
+      } catch {
+        // Gone since it was listed.
+      }
+    }
+  }
+  return out;
 }
 
 function oneLine(s: string, max: number): string {

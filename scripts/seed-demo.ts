@@ -1,9 +1,9 @@
 // Fills a dev instance's base dir (its AGENT_TEAM_BASE_DIR) with a demo to
 // try the UI on: a clone of this repository with worktrees, a project with
 // its lead and worker sessions (history with tools, cards, delivered messages
-// and file references), an objectives board with dependencies and an
-// archive, and an archived workspace from before projects (the lead's
-// history). No session is started: the
+// and file references), an objectives board with dependencies, and an
+// archived workspace from before projects (the lead's history). No session
+// is started: the
 // agents are idle until someone writes to them, and then they work in the
 // clone, which has no remote.
 //
@@ -326,10 +326,10 @@ function seed(): void {
         "2. **wake-up time** — CLI 把唤醒时间向上取整到整分钟，结果面板比实际早 30–90 秒。" +
           "见 `service/src/session/claude.ts:1461` 的 `noteSchedule`。",
         "",
-        "看板上记为 `ui/mobile-panels`（依赖 `ui/side-panels`）和 `session/wake-time`。",
+        "看板上记为 `ui/mobile-panels` 和 `session/wake-time`。",
       ].join("\n"),
       [
-        thinking("两个互不相关的改动，可以并行；移动端依赖已经完成的面板框架。", 1),
+        thinking("两个互不相关的改动，可以并行。", 1),
         read("webview/src/panels/SidePanel.tsx", "export function SidePanel({ … }) {\n  …\n}", 2),
         ...explore(
           "Find where the wake-up time is computed",
@@ -372,16 +372,9 @@ function seed(): void {
     reply(
       leadAgent,
       39,
-      "收到。已在看板把 `session/wake-time` 标为 done 并归档。改动在 worktree `fix/wake-time`，可以直接看 " +
+      "收到。`session/wake-time` 做完了，已从看板删掉。改动在 worktree `fix/wake-time`，可以直接看 " +
         "[claude.ts](service/src/session/claude.ts:1461) 的 diff。",
-      [
-        panelTool(
-          "archive_objective",
-          { id: "session/wake-time" },
-          "Archived session/wake-time.",
-          1,
-        ),
-      ],
+      [panelTool("delete_objective", { id: "session/wake-time" }, "Deleted session/wake-time.", 1)],
       52_900,
     ),
     user(
@@ -567,24 +560,12 @@ function seed(): void {
   });
   for (const o of [
     objective({
-      id: "ui/side-panels",
-      title: "Side panels beside the chat",
-      goal: "Agents, background tasks and files in panels that float or pin, instead of the header.",
-      status: "done",
-      tasks: [
-        { id: "rail", text: "Rail of panels, pin or float, width saved", state: "done" },
-        { id: "agents", text: "Agents panel", state: "done" },
-        { id: "tasks", text: "Background tasks panel with per-task stop", state: "done" },
-        { id: "files", text: "Files panel, references in replies open it", state: "done" },
-      ],
-    }),
-    objective({
       id: "ui/mobile-panels",
       title: "Panels on phones",
       goal: "The panels as full-screen sheets that are comfortable to use by touch.",
       priority: "high",
-      dependsOn: ["ui/side-panels"],
       context: "Sheet header done (44px); the Files toolbar is next.",
+      contextWritten: ago(12),
       tasks: [
         {
           id: "header",
@@ -608,35 +589,10 @@ function seed(): void {
       title: "Panels that use a big screen",
       goal: "On a wide or full-screen window a panel can take most of the room, e.g. to read code.",
       priority: "high",
-      dependsOn: ["ui/side-panels"],
       tasks: [
         { id: "default", text: "Default width grows with the window", state: "todo" },
         { id: "max", text: "Maximise a panel over the chat", state: "todo" },
       ],
-    }),
-    objective({
-      id: "session/wake-time",
-      title: "Wake-ups at the CLI's time",
-      goal: "The Tasks panel shows when a wake-up really fires.",
-      status: "done",
-      tasks: [
-        {
-          id: "parse",
-          text: "Read the delay from the tool result",
-          state: "done",
-          session: wake.id,
-        },
-      ],
-      sessions: [wake.id],
-      archived: true,
-    }),
-    objective({
-      id: "ui/file-routes",
-      title: "File routes that cannot crash the server",
-      goal: "No file the panel opens can take the process down or block it.",
-      status: "done",
-      sessions: [routes.id],
-      archived: true,
     }),
     objective({
       id: "ui/file-search",
@@ -644,7 +600,6 @@ function seed(): void {
       goal: "Find a file by name without walking folders.",
       status: "later",
       reason: "After the mobile work; ripgrep --files is fast enough, no index.",
-      dependsOn: ["ui/side-panels"],
     }),
     objective({
       id: "infra/deploy-preview",
@@ -657,7 +612,7 @@ function seed(): void {
     objective({
       id: "infra/windows",
       title: "Native Windows server",
-      goal: "Run the server on Windows without WSL.",
+      goal: "",
       status: "dropped",
       reason: "WSL works well; not worth two code paths.",
     }),

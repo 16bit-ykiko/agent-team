@@ -2101,7 +2101,7 @@ describe("panel tools a subagent may not call", () => {
   });
 
   it("refuses a worker's reports to its subagents and lets the worker itself through", async () => {
-    const [matcher] = options(workerToolset(api, "ws-1", project)).hooks!.PreToolUse!;
+    const [matcher] = options(workerToolset(api, "ws-1", project, "/notes")).hooks!.PreToolUse!;
     expect(matcher.matcher).toBe("mcp__panel__report_progress|mcp__panel__finish_task");
     const hook = (input: HookInput) =>
       matcher.hooks[0](input, "toolu_1", { signal: new AbortController().signal });

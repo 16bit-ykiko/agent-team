@@ -95,6 +95,22 @@ export async function gitWorktrees(root: string): Promise<string[]> {
   return paths.length ? paths : [root];
 }
 
+// The commit a folder is at, abbreviated; undefined outside git.
+export async function gitHead(cwd: string): Promise<string | undefined> {
+  const out = await run("git", ["rev-parse", "--short=9", "HEAD"], cwd, 4000);
+  return out?.trim() || undefined;
+}
+
+// How many commits HEAD has that `commit` does not; undefined when the
+// commit is not in HEAD's history (another branch's, rewritten, unknown).
+export async function gitCommitsSince(cwd: string, commit: string): Promise<number | undefined> {
+  if ((await run("git", ["merge-base", "--is-ancestor", commit, "HEAD"], cwd, 5000)) === null) {
+    return undefined;
+  }
+  const out = await run("git", ["rev-list", "--count", `${commit}..HEAD`], cwd, 5000);
+  return out === null ? undefined : Number(out.trim());
+}
+
 export function gitBranch(cwd: string): Promise<string | null> {
   return gitStatus(cwd).then((s) => s?.branch ?? null);
 }

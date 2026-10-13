@@ -102,20 +102,6 @@ describe("a folder's project", () => {
 });
 
 describe("the lead's history tools", () => {
-  it("list the archived sessions in the repository's folders, or everywhere", async () => {
-    const { create, call, root, base, old } = setup();
-    const { lead } = create("clice");
-    const inRepo = old("parser work", root, [msg("m1", "fix the parser", 1000)]);
-    old("sub", path.join(root, "wt"), [msg("m2", "worktree", 2000)]);
-    old("elsewhere", path.join(base, "other"), [msg("m3", "unrelated", 3000)]);
-
-    const listed = await call(lead, "list_history");
-    expect(listed).toContain(`${inRepo.id} "parser work" in ${root}`);
-    expect(listed).toContain('"sub"');
-    expect(listed).not.toContain("elsewhere");
-    expect(await call(lead, "list_history", { everywhere: true })).toContain('"elsewhere"');
-  });
-
   it("search unloaded histories, and read a hit in its context", async () => {
     const { create, call, root, old } = setup();
     const { lead } = create("clice");
@@ -393,7 +379,6 @@ describe("the lead's history tools", () => {
     await expect(call(a.lead, "read_session", { session_id: theirs.id })).rejects.toThrow(
       "in this project or its history",
     );
-    expect(await call(a.lead, "list_history", { everywhere: true })).not.toContain(theirs.id);
     saveAll();
     const query = { query: "zebra", everywhere: true };
     expect(await call(a.lead, "search_history", query)).toContain("nothing matches");

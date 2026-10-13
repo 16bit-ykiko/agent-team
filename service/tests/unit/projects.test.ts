@@ -6,6 +6,7 @@ import { z } from "zod";
 import { ProjectStore } from "../../src/project/store";
 import { leadToolset, workerToolset, type PanelApi } from "../../src/project/tools";
 import { SETTLE_MS, START_SPACING_MS, awaitsUser } from "../../src/project/manager";
+import { MCP_TEXT_LIMIT } from "../../src/session/claude";
 import { Workspace } from "../../src/workspace/workspace";
 import { historyOf, saveIndex, saveWorkspace, loadAll } from "../../src/workspace/state";
 import { summarizeMessages } from "../../src/workspace/summary";
@@ -44,7 +45,6 @@ describe("panel tool arguments", () => {
     projectStatus: (...a) => Promise.resolve(record("projectStatus")(...a)),
     startSession: record("startSession"),
     readSession: (...a) => Promise.resolve(record("readSession")(...a)),
-    listHistory: (...a) => Promise.resolve(record("listHistory")(...a)),
     searchHistory: (...a) => Promise.resolve(record("searchHistory")(...a)),
     readEntry: (...a) => Promise.resolve(record("readEntry")(...a)),
     queryHistory: (...a) => Promise.resolve(record("queryHistory")(...a)),
@@ -52,22 +52,20 @@ describe("panel tool arguments", () => {
     stopSession: record("stopSession"),
     archiveSession: record("archiveSession"),
     listObjectives: record("listObjectives"),
-    readObjective: record("readObjective"),
-    writeObjective: record("writeObjective"),
+    readObjective: (...a) => Promise.resolve(record("readObjective")(...a)),
+    writeObjective: (...a) => Promise.resolve(record("writeObjective")(...a)),
     addItems: record("addItems"),
     updateItem: record("updateItem"),
     deleteObjective: record("deleteObjective"),
-    archiveObjective: record("archiveObjective"),
-    restoreObjective: record("restoreObjective"),
     listIssues: record("listIssues"),
-    readIssue: record("readIssue"),
-    writeIssues: record("writeIssues"),
+    readIssue: (...a) => Promise.resolve(record("readIssue")(...a)),
+    writeIssues: (...a) => Promise.resolve(record("writeIssues")(...a)),
     writeIssueGroup: record("writeIssueGroup"),
     closeIssues: record("closeIssues"),
     listProjects: record("listProjects"),
     messageProject: record("messageProject"),
-    workerReport: record("workerReport"),
-    currentTask: record("currentTask"),
+    workerReport: (...a) => Promise.resolve(record("workerReport")(...a)),
+    currentTask: (...a) => Promise.resolve(record("currentTask")(...a)),
   };
   const byName = (tools: ReturnType<typeof leadToolset>) =>
     Object.fromEntries(tools.tools.map((t) => [t.name, t]));
@@ -153,19 +151,21 @@ describe("panel tool arguments", () => {
   });
 
   it("route a worker's reports to its own workspace", async () => {
-    const t = byName(workerToolset(api, "ws-w", project));
+    const t = byName(workerToolset(api, "ws-w", project, "/notes"));
     await t.report_progress.handler({ text: "tests pass" });
     // There is no blocked report: a decision goes to the user in the worker's own session.
     await t.finish_task.handler({ summary: "merged", blocked: true });
+    await t.finish_task.handler({ summary: "done", context: "merged", objective_id: "a/x" });
     expect(calls).toEqual([
       ["workerReport", "ws-w", "tests pass", false],
-      ["workerReport", "ws-w", "merged", true],
+      ["workerReport", "ws-w", "merged", true, {}],
+      ["workerReport", "ws-w", "done", true, { context: "merged", objectiveId: "a/x" }],
     ]);
-    expect(Object.keys(t.finish_task.shape)).toEqual(["summary"]);
+    expect(Object.keys(t.finish_task.shape)).toEqual(["summary", "context", "objective_id"]);
   });
 
   it("give a worker the board to keep, as its own session, but not to delete or archive", async () => {
-    const t = byName(workerToolset(api, "ws-w", project));
+    const t = byName(workerToolset(api, "ws-w", project, "/notes"));
     expect(Object.keys(t)).toEqual([
       "report_progress",
       "finish_task",
@@ -181,7 +181,6 @@ describe("panel tool arguments", () => {
       "close_issues",
       "project_status",
       "read_session",
-      "list_history",
       "search_history",
       "read_entry",
       "query_history",
@@ -199,7 +198,7 @@ describe("panel tool arguments", () => {
   });
 
   it("let a worker read the project's sessions and history as the lead does, but act on none", async () => {
-    const t = byName(workerToolset(api, "ws-w", project));
+    const t = byName(workerToolset(api, "ws-w", project, "/notes"));
     const lead = byName(leadToolset(api, project, "/notes", ["m"]));
     for (const name of ["read_session", "search_history", "query_history", "project_status"]) {
       expect(t[name].description).toBe(lead[name].description);
@@ -219,14 +218,37 @@ describe("panel tool arguments", () => {
     ]) {
       expect(t[name], name).toBeUndefined();
     }
-    expect(workerToolset(api, "ws-w", project).instructions).toContain("search_history finds it");
+    expect(workerToolset(api, "ws-w", project, "/notes").instructions).toContain(
+      "search_history finds it",
+    );
   });
 
   it("tell the lead and its workers to write to the user in Chinese, and the lead to reuse worktrees", () => {
+    const set = leadToolset(api, project, "/notes", ["claude-opus-5-5"]);
+    const worker = workerToolset(api, "ws-w", project, "/notes").instructions;
+    for (const text of [set.instructions, worker]) {
+      expect(text).toContain("Write to the user in 简体中文");
+    }
+    expect(byName(set).start_session.description).toContain("at most four worktrees, reused");
+  });
+
+  it("tell the lead and its workers to delete what is done or replaced, in a few thousand characters", () => {
     const lead = leadToolset(api, project, "/notes", ["claude-opus-5-5"]).instructions;
-    const worker = workerToolset(api, "ws-w", project).instructions;
-    for (const text of [lead, worker]) expect(text).toContain("Write to the user in 简体中文");
-    expect(lead).toContain("reuse rather than make one per session");
+    const worker = workerToolset(api, "ws-w", project, "/notes").instructions;
+    for (const text of [lead, worker]) {
+      expect(text).toContain("Delete what is done or obsolete");
+      expect(text).not.toContain("as you go");
+    }
+    expect(worker).toContain("When your work replaces something");
+    expect(lead).toContain("check the board keeps nothing about the old one");
+    expect(lead.length).toBeLessThan(5000);
+    expect(worker.length).toBeLessThan(3700);
+    // Nothing the CLI would cut.
+    const tools = [
+      ...leadToolset(api, project, "/notes", ["m"]).tools,
+      ...workerToolset(api, "ws-w", project, "/notes").tools,
+    ];
+    for (const t of tools) expect(t.description.length, t.name).toBeLessThan(MCP_TEXT_LIMIT);
   });
 
   it("turn a thrown error into a rejection", async () => {
@@ -369,6 +391,122 @@ describe("ProjectManager", () => {
     expect(objectives()[0].tasks[0].state).toBe("review");
   });
 
+  it("writes the objective's context with the finished report, and sends nothing when it is refused", async () => {
+    const { create, call, workspaces, objectives, session } = setup();
+    const { lead } = create("clice");
+    await withTask(call, lead);
+    await call(lead, "start_session", {
+      title: "modules",
+      cwd: "wt",
+      task: "t",
+      objective_id: "core/modules",
+      task_id: "t1",
+    });
+    const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
+    session(lead).isRunning = true;
+    await expect(
+      call(worker, "finish_task", { summary: "done", context: "x".repeat(1001) }),
+    ).rejects.toThrow("The context is 1001 characters");
+    expect(lead.messages.some((m) => m.from?.role === "worker")).toBe(false);
+    expect(objectives()[0].tasks[0].state).toBe("doing");
+    await call(worker, "finish_task", { summary: "done", context: "Modules scan; docs left." });
+    expect(objectives()[0]).toMatchObject({ context: "Modules scan; docs left." });
+    expect(objectives()[0].tasks[0].state).toBe("review");
+    expect(objectives()[0].contextWritten).toBeGreaterThan(0);
+  });
+
+  it("still reports when the context has nowhere to go, and says so", async () => {
+    const { create, call, workspaces, objectives } = setup();
+    const { lead } = create("clice");
+    await withTask(call, lead);
+    await call(lead, "start_session", {
+      title: "modules",
+      cwd: "wt",
+      task: "t",
+      objective_id: "core/modules",
+      task_id: "t1",
+    });
+    const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
+    const reports = () => lead.messages.filter((m) => m.from?.role === "worker").length;
+    // An empty context is none.
+    expect(await call(worker, "finish_task", { summary: "a", context: "" })).toBe(
+      "Reported to the lead.",
+    );
+    await call(lead, "write_objective", { id: "core/modules", status: "dropped", reason: "r" });
+    expect(await call(worker, "finish_task", { summary: "b", context: "c" })).toBe(
+      "Reported to the lead. The context was not written: no objective on the board names this session.",
+    );
+    expect(
+      await call(worker, "finish_task", {
+        summary: "c",
+        context: "c",
+        objective_id: "core/modules",
+      }),
+    ).toBe("Reported to the lead. The context was not written: core/modules is dropped.");
+    expect(reports()).toBe(3);
+    expect(objectives()[0]).toMatchObject({ status: "dropped", reason: "r" });
+  });
+
+  it("takes back a context over the limit that is already there", async () => {
+    const { create, call, workspaces, objectives, base } = setup();
+    const { project, lead } = create("clice");
+    await withTask(call, lead);
+    await call(lead, "start_session", {
+      title: "modules",
+      cwd: "wt",
+      task: "t",
+      objective_id: "core/modules",
+      task_id: "t1",
+    });
+    const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
+    const long = "x".repeat(1500);
+    const file = path.join(
+      base,
+      ".agent-team",
+      "projects",
+      project.id,
+      "objectives",
+      "core",
+      "modules.toml",
+    );
+    // By hand, before the limit: above the tasks.
+    fs.writeFileSync(
+      file,
+      fs.readFileSync(file, "utf-8").replace("\n[[tasks]]", `context = "${long}"\n\n[[tasks]]`),
+    );
+    expect(objectives()[0].context).toBe(long);
+    expect(await call(worker, "finish_task", { summary: "s", context: long })).toBe(
+      "Reported to the lead.",
+    );
+  });
+
+  it("gives a worker its task and objectives without who else worked there or needs them", async () => {
+    const { create, call, workspaces } = setup();
+    const { lead } = create("clice");
+    await withTask(call, lead);
+    await call(lead, "write_objective", {
+      id: "core/docs",
+      title: "Docs",
+      goal: "g",
+      depends_on: ["core/modules"],
+    });
+    await call(lead, "start_session", {
+      title: "modules",
+      cwd: "wt",
+      task: "t",
+      objective_id: "core/modules",
+      task_id: "t1",
+    });
+    const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
+    const now = await call(worker, "current_task");
+    expect(now).toContain("core/modules — Modules");
+    expect(now).not.toContain("needed by:");
+    expect(now).not.toContain("sessions:");
+    const full = await call(lead, "read_objective", { id: "core/modules" });
+    expect(full).toContain("needed by: core/docs");
+    expect(full).toContain(`sessions: ${worker.id} "modules"`);
+  });
+
   it("lets a worker keep the board: its new objective and the task it takes up name it", async () => {
     const { create, call, workers, objectives } = setup();
     const { lead } = create("clice");
@@ -408,6 +546,9 @@ describe("ProjectManager", () => {
     const { lead } = create("clice");
     await call(lead, "start_session", { title: "w", cwd: used, task: "t" });
     const status = await call(lead, "project_status");
+    expect(status).toMatch(
+      /## Size\n- objectives: 0 files, 0 KB\n- issues: 0 modules, 0 KB\n- notes: \d+ files?, \d+ KB/,
+    );
     const line = (dir: string) => status.split("\n").find((l) => l.startsWith(`- ${dir} `))!;
     expect(line(used)).toMatch(new RegExp(`; in use by ${workers()[0].id} \\(`));
     expect(line(free)).toMatch(/; free$/);
@@ -601,7 +742,7 @@ describe("project edge cases", () => {
     const [agent] = lead.agents.values();
     agent.info.model = "claude-fable-5-1";
     const start = manager.toolsFor(lead)!.tools.find((t) => t.name === "start_session")!;
-    expect((start.shape.model as z.ZodString).description).toContain("defaults to claude-opus-5-5");
+    expect((start.shape.model as z.ZodString).description).toContain("Default claude-opus-5-5");
     expect(await start.handler({ title: "w", cwd: "wt", task: "t" })).toContain(
       "on claude-opus-5-5",
     );
