@@ -268,6 +268,11 @@ export const BoardPage = memo(function BoardPage({
   useEffect(() => {
     if (selectedIssue && !currentIssue) setSelectedIssue(null);
   }, [selectedIssue, currentIssue]);
+  // So is the archive once its last objective is deleted: its filter goes
+  // with it.
+  useEffect(() => {
+    if (filter.archive && archivedCount === 0) setFilter((f) => ({ ...f, archive: false }));
+  }, [filter.archive, archivedCount]);
 
   // Focus moves into the page and goes back where it was on close.
   useEffect(() => {
@@ -500,16 +505,18 @@ export const BoardPage = memo(function BoardPage({
                       onClick={() => toggleStatus(s)}
                     />
                   ))}
-                  <FilterChip
-                    className="bp-archive-toggle"
-                    label="Archive"
-                    count={archivedCount}
-                    pressed={filter.archive}
-                    onClick={() => {
-                      setSelected(null);
-                      setFilter((f) => ({ ...f, archive: !f.archive }));
-                    }}
-                  />
+                  {archivedCount > 0 && (
+                    <FilterChip
+                      className="bp-archive-toggle"
+                      label="Archive"
+                      count={archivedCount}
+                      pressed={filter.archive}
+                      onClick={() => {
+                        setSelected(null);
+                        setFilter((f) => ({ ...f, archive: !f.archive }));
+                      }}
+                    />
+                  )}
                 </div>
               </div>
               {onArchive && (
@@ -539,7 +546,7 @@ export const BoardPage = memo(function BoardPage({
               ) : shown.length === 0 ? (
                 <div className="bp-empty">
                   {filter.archive && !filter.search && !filter.area
-                    ? "Nothing archived yet. Finished and dropped objectives land here when the lead files them away."
+                    ? "Nothing archived."
                     : "Nothing matches."}
                 </div>
               ) : view === "list" || filter.archive ? (
@@ -671,9 +678,11 @@ function ObjectiveCard({
       <span className="bp-card-title">
         <InlineMd>{o.title}</InlineMd>
       </span>
-      <span className="bp-card-goal">
-        <InlineMd>{o.goal}</InlineMd>
-      </span>
+      {o.goal && (
+        <span className="bp-card-goal">
+          <InlineMd>{o.goal}</InlineMd>
+        </span>
+      )}
       {o.reason && o.status !== "active" && <span className="bp-card-reason">{o.reason}</span>}
       <span className="bp-card-foot">
         {total > 0 && (
@@ -889,6 +898,9 @@ function ObjectiveDetail({
   const { done, total } = progress(o);
   const open = o.decisions.filter((d) => !d.outcome);
   const settled = o.decisions.filter((d) => d.outcome);
+  // Dropped and kept as its title and the reason only.
+  const kept =
+    o.status === "dropped" && !o.goal && o.tasks.length === 0 && o.dependsOn.length === 0;
   const ref = (id: string) => {
     const target = byId.get(id);
     if (!target) {
@@ -904,7 +916,7 @@ function ObjectiveDetail({
         key={id}
         className={`bp-ref st-${target.status}${rel.blockedBy.includes(id) ? " blocking" : ""}`}
         onClick={() => onSelect(id)}
-        title={`${STATUS_LABEL[target.status]}${note}: ${target.goal}`}
+        title={`${STATUS_LABEL[target.status]}${note}: ${target.goal || target.reason || ""}`}
       >
         {/* A button holds no links of its own. */}
         <NoLinks>
@@ -968,19 +980,23 @@ function ObjectiveDetail({
         </p>
       )}
 
-      <DetailSection title="Goal">
-        <p className="bp-goal">
-          <InlineMd>{o.goal}</InlineMd>
-        </p>
-      </DetailSection>
+      {o.goal && (
+        <DetailSection title="Goal">
+          <p className="bp-goal">
+            <InlineMd>{o.goal}</InlineMd>
+          </p>
+        </DetailSection>
+      )}
 
-      <DetailSection title="Depends on">
-        {o.dependsOn.length ? (
-          <div className="bp-refs">{o.dependsOn.map(ref)}</div>
-        ) : (
-          <p className="bp-none">Nothing: it can start any time.</p>
-        )}
-      </DetailSection>
+      {!kept && (
+        <DetailSection title="Depends on">
+          {o.dependsOn.length ? (
+            <div className="bp-refs">{o.dependsOn.map(ref)}</div>
+          ) : (
+            <p className="bp-none">Nothing: it can start any time.</p>
+          )}
+        </DetailSection>
+      )}
       {rel.unblocks.length > 0 && (
         <DetailSection title="Needed by">
           <div className="bp-refs">{rel.unblocks.map(ref)}</div>
@@ -992,28 +1008,36 @@ function ObjectiveDetail({
           <div className="message-content bp-md">
             <MdBlock>{o.context}</MdBlock>
           </div>
+          {o.contextWritten !== undefined && (
+            <p className="bp-updated bp-written">
+              written {formatRelative(o.contextWritten)}
+              {o.contextCommit && ` at ${o.contextCommit}`}
+            </p>
+          )}
         </DetailSection>
       )}
 
-      <DetailSection title={total ? `Tasks · ${done}/${total}` : "Tasks"}>
-        {o.tasks.length ? (
-          <ul className="bp-tasks">
-            {o.tasks.map((t) => (
-              <li key={t.id} className={`task-${t.state}`}>
-                <span className="bp-task-mark" title={t.state}>
-                  {TASK_MARK[t.state]}
-                </span>
-                <span className="bp-task-text">
-                  <InlineMd>{t.text}</InlineMd>
-                </span>
-                {t.session && session(t.session)}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="bp-none">No tasks yet.</p>
-        )}
-      </DetailSection>
+      {!kept && (
+        <DetailSection title={total ? `Tasks · ${done}/${total}` : "Tasks"}>
+          {o.tasks.length ? (
+            <ul className="bp-tasks">
+              {o.tasks.map((t) => (
+                <li key={t.id} className={`task-${t.state}`}>
+                  <span className="bp-task-mark" title={t.state}>
+                    {TASK_MARK[t.state]}
+                  </span>
+                  <span className="bp-task-text">
+                    <InlineMd>{t.text}</InlineMd>
+                  </span>
+                  {t.session && session(t.session)}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="bp-none">No tasks yet.</p>
+          )}
+        </DetailSection>
+      )}
 
       {open.length > 0 && (
         <DetailSection title={`To decide · ${open.length}`}>

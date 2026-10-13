@@ -3639,6 +3639,9 @@ button.action-target:hover {
   font-size: var(--fs-meta);
   color: var(--text-muted);
 }
+.bp-written {
+  margin: 6px 0 0;
+}
 .bp-reason {
   margin: 14px 0 0;
   padding: 8px 12px;

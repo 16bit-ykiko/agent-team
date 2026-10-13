@@ -165,14 +165,18 @@ export interface Objective {
   status: ObjectiveStatus;
   priority: Priority;
   reason?: string;
+  // Where it stands, and when and at which commit that was written.
   context?: string;
+  contextWritten?: number;
+  contextCommit?: string;
   dependsOn: string[];
   tasks: ObjectiveTask[];
   decisions: ObjectiveDecision[];
   sessions: string[];
+  // Links to design docs.
   notes?: string;
   updatedAt: number;
-  // Filed away: finished or given up, out of the board's main view.
+  // In the archive, out of the board's main view.
   archived?: boolean;
 }
 
@@ -192,7 +196,10 @@ export interface Issue {
   state: IssueState;
   evidence?: Evidence;
   tags: string[];
+  // When its text was written, and at which commit.
   text: string;
+  written?: number;
+  commit?: string;
   objectives: string[];
 }
 

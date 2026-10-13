@@ -65,6 +65,8 @@ const issues: IssueModules = [
             evidence: "R",
             tags: ["部分"],
             text: "Header picks a.cpp as its host.\n\nwhere: `dependency_graph.cpp:175`",
+            written: Date.now() - 2 * 86_400_000,
+            commit: "a75797dc1",
             objectives: [],
           },
           {
@@ -182,6 +184,7 @@ describe("the issues view", () => {
     fireEvent.click(container.querySelector('[data-issue="09-23#12"]')!);
     const detail = within(screen.getByRole("complementary", { name: "Issue 09-23#12" }));
     expect(detail.getByText("R · Reproduced by a script")).toBeTruthy();
+    expect(detail.getByText("written 2d ago at a75797dc1")).toBeTruthy();
     expect(container.querySelector(".bi-where")!.textContent).toBe(
       "宿主选择与依赖图（hosting.cpp、dependency_graph.cpp） › Host chains",
     );
@@ -189,11 +192,26 @@ describe("the issues view", () => {
       "where: dependency_graph.cpp:175",
     );
     // Linked through its group.
+    expect(detail.getByRole("button", { name: "Hosts" }).title).toBe("goal of index/hosts");
     fireEvent.click(detail.getByRole("button", { name: "Hosts" }));
     expect(screen.getByRole("complementary", { name: "Hosts" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Objectives" }).getAttribute("aria-pressed")).toBe(
       "true",
     );
+  });
+
+  it("shows a dropped objective's reason where its goal would be", () => {
+    const dropped: Project = {
+      ...project,
+      objectives: [
+        o("index/hosts", { title: "Hosts", goal: "", status: "dropped", reason: "one host" }),
+      ],
+    };
+    const { toIssues, container } = page(dropped);
+    toIssues();
+    fireEvent.click(container.querySelector('[data-issue="09-23#12"]')!);
+    const detail = within(screen.getByRole("complementary", { name: "Issue 09-23#12" }));
+    expect(detail.getByRole("button", { name: "Hosts" }).title).toBe("one host");
   });
 
   it("steps back with Escape: the search, then the issue, then the page", () => {

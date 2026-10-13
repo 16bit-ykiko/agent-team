@@ -236,6 +236,72 @@ describe("broken files and counts", () => {
   });
 });
 
+describe("what is left of dropped and done work", () => {
+  it("shows no archive filter when nothing is archived", () => {
+    const { queryByRole } = page(project([o("index/format")]));
+    expect(queryByRole("button", { name: /^Archive\b/ })).toBeNull();
+  });
+
+  it("shows a dropped objective kept as its title and the reason, and nothing it no longer has", () => {
+    const { container } = page(
+      project([
+        o("build/cmake", {
+          title: "CMake build",
+          goal: "",
+          status: "dropped",
+          reason: "Bazel builds clice",
+        }),
+      ]),
+    );
+    fireEvent.click(within(container).getByRole("button", { name: /^Dropped/ }));
+    const c = card(container, "build/cmake");
+    expect(c.querySelector(".bp-card-goal")).toBeNull();
+    expect(within(c as HTMLElement).getByText("Bazel builds clice")).toBeTruthy();
+    fireEvent.click(c);
+    const titles = [...container.querySelectorAll(".bp-detail .bp-section-title")].map(
+      (e) => e.textContent,
+    );
+    expect(titles).toEqual([]);
+    expect(container.querySelector(".bp-detail .bp-reason")!.textContent).toBe(
+      "Bazel builds clice",
+    );
+  });
+
+  it("shows what a dropped objective still holds", () => {
+    const { container } = page(
+      project([
+        o("build/cmake", {
+          goal: "",
+          status: "dropped",
+          reason: "Bazel",
+          tasks: [{ id: "t1", text: "presets", state: "todo" }],
+        }),
+      ]),
+    );
+    fireEvent.click(within(container).getByRole("button", { name: /^Dropped/ }));
+    fireEvent.click(card(container, "build/cmake"));
+    expect(
+      within(container.querySelector(".bp-detail") as HTMLElement).getByText("presets"),
+    ).toBeTruthy();
+  });
+
+  it("says when and at which commit where it stands was written", () => {
+    const { container } = page(
+      project([
+        o("index/format", {
+          context: "v2 reads, v1 still writes.",
+          contextWritten: Date.now() - 3 * 86_400_000,
+          contextCommit: "6974365ab",
+        }),
+      ]),
+    );
+    fireEvent.click(card(container, "index/format"));
+    expect(container.querySelector(".bp-detail .bp-written")!.textContent).toBe(
+      "written 3d ago at 6974365ab",
+    );
+  });
+});
+
 describe("the archive", () => {
   const objs = [
     o("foundation/paths", { status: "done", archived: true }),
@@ -264,5 +330,24 @@ describe("the archive", () => {
     ).toBeTruthy();
     fireEvent.click(card(container, "infra/mingw"));
     expect(container.querySelector(".bp-detail")!.textContent).toContain("Archived");
+  });
+
+  it("goes back to the board once the last archived objective is deleted", () => {
+    const { container, getByRole, queryByRole, rerender, onClose, onOpenSession, onAskLead } = page(
+      project(objs),
+    );
+    fireEvent.click(getByRole("button", { name: /^Archive/ }));
+    rerender(
+      <BoardPage
+        project={project([objs[2]])}
+        sessions={sessions}
+        {...{ onClose, onOpenSession, onAskLead, onRename: vi.fn(), onDelete: vi.fn() }}
+      />,
+    );
+    expect(queryByRole("button", { name: /^Archive/ })).toBeNull();
+    expect(getByRole("button", { name: /^Active/ })).toHaveProperty("disabled", false);
+    expect([...container.querySelectorAll(".bp-card .bp-id")].map((e) => e.textContent)).toEqual([
+      "index/format",
+    ]);
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { Evidence, IssueModule, IssueState, Objective } from "../state/useServer";
 import { InlineMd, MdBlock, NoLinks } from "../chat/markdown";
 import { Icon } from "../panels/Icon";
+import { formatRelative } from "../format";
 import {
   issueMatches,
   issueSummary,
@@ -277,6 +278,12 @@ export function IssueDetail({
             {t}
           </span>
         ))}
+        {x.written !== undefined && (
+          <span className="bp-updated">
+            written {formatRelative(x.written)}
+            {x.commit && ` at ${x.commit}`}
+          </span>
+        )}
       </div>
       <p className="bi-where" title={e.module.id}>
         {e.module.title}
@@ -308,7 +315,7 @@ export function IssueDetail({
                 <button
                   key={id}
                   className={`bp-ref st-${o.status}`}
-                  title={o.goal}
+                  title={o.goal || o.reason}
                   onClick={() => onSelectObjective(id)}
                 >
                   {/* A button holds no links of its own. */}
