@@ -1638,9 +1638,12 @@ export class ProjectManager {
     },
     // What depended on it no longer does: done or a mistake, it is not
     // waited for.
+    // What it said goes back in the result, so the call keeps it findable in
+    // the history.
     deleteObjective: (pid, id) => {
       this.require(pid);
       const o = this.objective(pid, id);
+      const said = this.describeObjective(pid, o.id, () => "", false);
       this.board(pid).remove(o.id);
       const dependents = this.rewrite(
         pid,
@@ -1654,11 +1657,15 @@ export class ProjectManager {
       } catch (e) {
         console.error(`[projects] issues still link ${o.id}`, e);
       }
-      return [
-        `Deleted ${o.id}.`,
-        ...(dependents.length ? [`Taken out of the depends_on of ${dependents.join(", ")}.`] : []),
-        ...(links ? [`Taken out of ${links} issue link${links === 1 ? "" : "s"}.`] : []),
-      ].join(" ");
+      return (
+        [
+          `Deleted ${o.id}.`,
+          ...(dependents.length
+            ? [`Taken out of the depends_on of ${dependents.join(", ")}.`]
+            : []),
+          ...(links ? [`Taken out of ${links} issue link${links === 1 ? "" : "s"}.`] : []),
+        ].join(" ") + `\n\n${said}`
+      );
     },
     listIssues: (pid, filter) => this.issueBoard(pid).list(filter),
     readIssue: async (pid, t) => {
@@ -1714,7 +1721,10 @@ export function awaitsUser(w: Workspace): boolean {
     if (from.from && from.id !== task.id) return false;
     const last = replies[replies.length - 1];
     if (stopped || last?.status !== "done" || last.content.endsWith(INTERRUPTED)) return false;
-    return !replies.some((m) => m.events?.some((e) => e.toolName === "mcp__panel__finish_task"));
+    // A refused finish_task (a context too long, say) reported nothing.
+    return !replies.some((m) =>
+      m.events?.some((e) => e.toolName === "mcp__panel__finish_task" && !e.toolResultIsError),
+    );
   });
 }
 

@@ -409,7 +409,7 @@ describe("the lead's objective tools", () => {
     // Deleting what an archived one depends on leaves the archive as it is.
     fs.writeFileSync(file, 'title = "old"\ngoal = "g"\nstatus = "done"\ndepends_on = ["a/x"]\n');
     await call(lead, "write_objective", { id: "a/x", title: "x", goal: "g" });
-    expect(await call(lead, "delete_objective", { id: "a/x" })).toBe("Deleted a/x.");
+    expect(await call(lead, "delete_objective", { id: "a/x" })).toMatch(/^Deleted a\/x\.\n\n/);
     expect(fs.readFileSync(file, "utf-8")).toContain('depends_on = ["a/x"]');
     await call(lead, "delete_objective", { id: "a/old" });
     expect(objectives()).toEqual([]);
@@ -455,8 +455,9 @@ describe("the lead's objective tools", () => {
     await call(lead, "write_issues", {
       issues: [{ id: "i#1", module: "m", text: "t", objectives: ["a/x", "a/y"] }],
     });
-    expect(await call(lead, "delete_objective", { id: "a/x" })).toBe(
-      "Deleted a/x. Taken out of the depends_on of a/y. Taken out of 2 issue links.",
+    // What it said comes back, so the history keeps it.
+    expect(await call(lead, "delete_objective", { id: "a/x" })).toMatch(
+      /^Deleted a\/x\. Taken out of the depends_on of a\/y\. Taken out of 2 issue links\.\n\na\/x — x\n/,
     );
     expect(objectives().map((o) => [o.id, o.dependsOn])).toEqual([["a/y", []]]);
     expect(await call(lead, "read_issue", { id: "i#1" })).toContain("objectives: a/y (active) y");

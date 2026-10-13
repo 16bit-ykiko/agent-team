@@ -102,6 +102,26 @@ describe("a folder's project", () => {
 });
 
 describe("the lead's history tools", () => {
+  it("reach the archived sessions in the repository's folders, everywhere only when asked", async () => {
+    const { create, call, root, base, old } = setup();
+    const { lead } = create("clice");
+    old("parser work", root, [msg("m1", "zebra in the repo", 1000)]);
+    old("sub", path.join(root, "wt"), [msg("m2", "zebra in a worktree", 2000)]);
+    old("elsewhere", path.join(base, "other"), [msg("m3", "zebra elsewhere", 3000)]);
+    const here = await call(lead, "search_history", { query: "zebra" });
+    expect(here).toContain("zebra in the repo");
+    expect(here).toContain("zebra in a worktree");
+    expect(here).not.toContain("zebra elsewhere");
+    expect(await call(lead, "search_history", { query: "zebra", everywhere: true })).toContain(
+      "zebra elsewhere",
+    );
+    // query_history lists them.
+    const listed = await call(lead, "query_history", {
+      sql: "select name from sessions where archived_at is not null order by name",
+    });
+    for (const name of ["elsewhere", "parser work", "sub"]) expect(listed).toContain(name);
+  });
+
   it("search unloaded histories, and read a hit in its context", async () => {
     const { create, call, root, old } = setup();
     const { lead } = create("clice");

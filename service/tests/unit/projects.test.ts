@@ -229,20 +229,36 @@ describe("panel tool arguments", () => {
     for (const text of [set.instructions, worker]) {
       expect(text).toContain("Write to the user in 简体中文");
     }
-    expect(byName(set).start_session.description).toContain("at most four worktrees, reused");
+    expect(byName(set).start_session.description).toContain("a worktree, reused");
   });
 
   it("tell the lead and its workers to delete what is done or replaced, in a few thousand characters", () => {
     const lead = leadToolset(api, project, "/notes", ["claude-opus-5-5"]).instructions;
     const worker = workerToolset(api, "ws-w", project, "/notes").instructions;
     for (const text of [lead, worker]) {
-      expect(text).toContain("Delete what is done or obsolete");
+      expect(text).toContain("Delete what is obsolete");
+      expect(text).toContain("done work goes with its objective, which the lead deletes");
       expect(text).not.toContain("as you go");
     }
     expect(worker).toContain("When your work replaces something");
+    expect(worker).toContain("objectives (name those in finish_task: the lead deletes them)");
+    expect(worker).toContain("your own tasks stay");
+    const w = byName(workerToolset(api, "ws-w", project, "/notes"));
+    expect(w.finish_task.description).toContain("once per task");
+    // A list given replaces the one there; the descriptions say so.
+    const issue = (w.write_issues.shape.issues as z.ZodArray<z.ZodObject<z.ZodRawShape>>).element
+      .shape;
+    for (const field of [
+      w.write_objective.shape.depends_on,
+      w.write_issue_group.shape.objectives,
+      issue.tags,
+      issue.objectives,
+    ] as z.ZodType[]) {
+      expect(field.description).toBe("The whole list");
+    }
     expect(lead).toContain("check the board keeps nothing about the old one");
     expect(lead.length).toBeLessThan(5000);
-    expect(worker.length).toBeLessThan(3700);
+    expect(worker.length).toBeLessThan(3800);
     // Nothing the CLI would cut.
     const tools = [
       ...leadToolset(api, project, "/notes", ["m"]).tools,
@@ -1193,6 +1209,31 @@ describe("a worker that goes idle without reporting", () => {
     [`No report on your message "${message}" (${how}).`, reply && `Its last reply:\n\n${reply}`]
       .filter(Boolean)
       .join("\n\n");
+
+  it("takes a refused finish_task for no report: the worker still waits for the user", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, session } = await started();
+      session(w).emit("event", {
+        kind: "tool_use",
+        toolName: "mcp__panel__finish_task",
+        toolUseId: "f1",
+        content: "**finish_task**",
+      });
+      session(w).emit("event", {
+        kind: "tool_result",
+        toolUseId: "f1",
+        content: "The context is 1200 characters, over the 1000 the board takes.",
+        isError: true,
+      });
+      session(w).emit("event", { kind: "text_delta", content: "Shall I shorten it?" });
+      session(w).isRunning = false;
+      session(w).emit("event", { kind: "result", content: "" });
+      expect(awaitsUser(w)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("leaves a task that ends in a question to the user, across a restart too", async () => {
     vi.useFakeTimers();
