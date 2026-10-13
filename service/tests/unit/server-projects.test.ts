@@ -23,7 +23,7 @@ vi.mock("../../src/server/quota", () => ({
 import { Server } from "../../src/server/server";
 import { ProjectManager } from "../../src/project/manager";
 import { closeHistory, historyOf, saveIndex, saveWorkspace } from "../../src/workspace/state";
-import { ClaudeSession } from "../../src/session/claude";
+import { ClaudeSession, MCP_TEXT_LIMIT } from "../../src/session/claude";
 
 interface FakeTool {
   name: string;
@@ -34,6 +34,7 @@ interface Launch {
   model?: string;
   effort?: string;
   panel?: { instructions: string; tools: FakeTool[] };
+  env?: Record<string, string | undefined>;
   prompts: string[];
   emit: (frame: unknown) => void;
 }
@@ -65,6 +66,7 @@ beforeEach(() => {
         model: options.model as string | undefined,
         effort: options.effort as string | undefined,
         panel: servers?.panel,
+        env: options.env as Launch["env"],
         prompts: [],
         emit: (frame) => {
           frames.push(frame);
@@ -330,6 +332,9 @@ describe("server restart with projects", () => {
       const lead = launches[0].panel;
       expect(lead, "lead launched without the panel MCP server after restart").toBeDefined();
       expect(lead!.instructions).toContain('project "demo"');
+      // Past the 2048 characters the CLI would cut them at.
+      expect(lead!.instructions.length).toBeGreaterThan(2048);
+      expect(launches[0].env?.CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH).toBe(String(MCP_TEXT_LIMIT));
       const tools = Object.fromEntries(lead!.tools.map((t) => [t.name, t]));
       expect(Object.keys(tools)).toEqual(expect.arrayContaining(["message_session"]));
 

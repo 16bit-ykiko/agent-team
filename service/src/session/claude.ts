@@ -1769,11 +1769,22 @@ export class ClaudeSession extends EventEmitter {
     if (this.config.providerEnv) {
       opts.env = { ...process.env, ...this.config.providerEnv };
     }
+    if (this.panelTools) {
+      // The CLI cuts an MCP server's instructions, and each tool's
+      // description, at this many characters (2048 unless set).
+      opts.env = {
+        ...(opts.env ?? process.env),
+        CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH: String(MCP_TEXT_LIMIT),
+      };
+    }
     if (this.panelTools && sdk.createSdkMcpServer && sdk.tool) {
       const { createSdkMcpServer, tool } = sdk;
       opts.mcpServers = {
         panel: createSdkMcpServer({
           name: "panel",
+          // Not in the system prompt: the CLI fixes that at a conversation's
+          // first request, while it announces a server's changed, added or
+          // removed instructions as the conversation goes.
           instructions: this.panelTools.instructions,
           // Always in the prompt: deferred behind tool search, a lead would
           // not know it can start sessions.
@@ -1821,6 +1832,9 @@ export class ClaudeSession extends EventEmitter {
     return opts;
   }
 }
+
+// What the panel's instructions and tool descriptions may take.
+export const MCP_TEXT_LIMIT = 8192;
 
 type SdkModule = {
   query: typeof import("@anthropic-ai/claude-agent-sdk").query;
