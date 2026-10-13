@@ -12,7 +12,9 @@ function mockSelection(html: string | null) {
     if (html === null) return { isCollapsed: true } as unknown as Selection;
     return {
       isCollapsed: false,
+      rangeCount: 1,
       getRangeAt: () => ({
+        commonAncestorContainer: document.body,
         cloneContents: () => {
           const div = document.createElement("div");
           div.innerHTML = html;

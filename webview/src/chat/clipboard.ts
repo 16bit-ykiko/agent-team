@@ -1,12 +1,18 @@
 import TurndownService from "turndown";
 
 const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
+// Text copies as it reads: a path keeps its underscores and backslashes.
+turndown.escape = (text) => text;
 turndown.addRule("fencedCodeBlock", {
   filter: (node) => node.nodeName === "PRE" && !!node.querySelector("code"),
   replacement: (_content, node) => {
     const code = node.querySelector("code")!;
     const lang = [...code.classList].find((c) => c.startsWith("language-"))?.slice(9) ?? "";
-    return `\n\`\`\`${lang}\n${code.textContent}\n\`\`\`\n`;
+    const text = codeText(code);
+    // Longer than any run of backticks in the code, so its own ``` stay inside.
+    const longest = (text.match(/`+/g) ?? []).reduce((n, run) => Math.max(n, run.length), 0);
+    const fence = "`".repeat(Math.max(3, longest + 1));
+    return `\n${fence}${lang}\n${text}\n${fence}\n`;
   },
 });
 
@@ -38,13 +44,44 @@ export function selectionToMarkdown(html: string | null): string | null {
   }
 }
 
-function getSelectionHtml(): string | null {
+// A code block's text without the line break that ends it, which pasted
+// into a terminal would run the command.
+export function codeText(code: Element): string {
+  return (code.textContent ?? "").replace(/\r?\n$/, "");
+}
+
+// Drawn with user-select: none; Chrome still puts them in a selection's range.
+const UNSELECTABLE = ".copy-btn, .step-header, .subagent-header";
+
+function codeAround(node: Node): Element | null {
+  return (node instanceof Element ? node : node.parentElement)?.closest("pre, code") ?? null;
+}
+
+// The selection as markdown, or as plain text when it is all one piece of
+// code: part of a path, a few lines of a block, or the whole of either.
+function selectionText(): string | null {
   const sel = window.getSelection();
-  if (!sel || sel.isCollapsed) return null;
-  const frag = sel.getRangeAt(0).cloneContents();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+  // Firefox splits a selection around what cannot be selected (a Copy button).
+  const ranges = Array.from({ length: sel.rangeCount }, (_, i) => sel.getRangeAt(i));
+  // A range per table cell (Firefox): the browser copies them as rows.
+  if (ranges.length > 1 && ranges.some((range) => range.startContainer.nodeName === "TR")) {
+    return null;
+  }
   const div = document.createElement("div");
-  div.appendChild(frag);
-  return div.innerHTML;
+  for (const range of ranges) div.appendChild(range.cloneContents());
+  for (const el of div.querySelectorAll(UNSELECTABLE)) el.remove();
+  const around = ranges.map((range) => codeAround(range.commonAncestorContainer));
+  if (around[0] && around.every((code) => code === around[0])) return codeText(div);
+  // A triple click takes the start of the next block along, an empty clone.
+  // A link's code holds the code it was written with.
+  const codes = [...div.querySelectorAll("code")].filter(
+    (code) => code.textContent?.trim() && !code.querySelector("code"),
+  );
+  if (codes.length === 1 && codes[0].textContent?.trim() === div.textContent?.trim()) {
+    return codeText(codes[0]);
+  }
+  return selectionToMarkdown(div.innerHTML);
 }
 
 // Image files from a paste event's DataTransfer (Ctrl+V a screenshot).
@@ -147,10 +184,10 @@ async function pasteFromClipboard(
 // native copy instead of producing an empty clipboard — preventDefault only
 // runs after the clipboard has been written successfully.
 export function copySelectionAsMarkdown(e: React.ClipboardEvent): void {
-  const md = selectionToMarkdown(getSelectionHtml());
-  if (md === null) return;
+  const text = selectionText();
+  if (!text) return;
   try {
-    e.clipboardData.setData("text/plain", md);
+    e.clipboardData.setData("text/plain", text);
     e.preventDefault();
   } catch {
     // Native copy proceeds.

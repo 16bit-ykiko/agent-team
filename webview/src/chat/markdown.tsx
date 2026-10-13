@@ -214,13 +214,24 @@ function FileRefCode({
   children: ReactNode;
 }) {
   const openFile = useContext(FileOpenContext)!;
+  // A drag selecting the path to copy it ends in a click on it; a click,
+  // on a selected path too, does not move.
+  const pressedAt = useRef<{ x: number; y: number } | null>(null);
   return (
     <code
       className={className ? `${className} file-ref` : "file-ref"}
       title={title}
       role="button"
       tabIndex={0}
-      onClick={() => openFile(target)}
+      onMouseDown={(e) => {
+        pressedAt.current = { x: e.clientX, y: e.clientY };
+      }}
+      onClick={(e) => {
+        const from = pressedAt.current;
+        const dragged = !!from && Math.hypot(e.clientX - from.x, e.clientY - from.y) > 3;
+        if (dragged && !(window.getSelection()?.isCollapsed ?? true)) return;
+        openFile(target);
+      }}
       onKeyDown={(e) => {
         if (e.key !== "Enter" && e.key !== " ") return;
         e.preventDefault();
