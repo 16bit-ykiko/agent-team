@@ -48,6 +48,7 @@ npm run capture -- codex bash
 npm run summarize -- service/tests/snap/codex/bash.jsonl   # one line per entry
 ```
 
+- `api: "usage-limit"` in a Claude fixture points the CLI (`ANTHROPIC_BASE_URL`) at a local stand-in that refuses every request as the five-hour limit does: a limit recorded without spending any quota. Never hit a real limit on purpose.
 - Uses the user's own logins; default models `claude-sonnet-5` / `gpt-6-astra` (`model:` in the fixture overrides, e.g. a bad model for a failure recording).
 - Recording cwd is `/tmp/sdk-capture`; `files` are written there first. Strings are trimmed to 400 chars and base64 payloads replaced, so recordings are safe to commit — still read the transcript before committing.
 - Prompts must force the exact behaviour ("foreground", "run_in_background set to true", "do not poll", "each as its own command").

@@ -900,10 +900,38 @@ describe("rate-limit retries", () => {
     const w = h.workers()[0];
     const [agentId] = w.agents.keys();
     const s = h.session(w);
+    // As a limit goes: the server pauses on the session's signal, then the
+    // error and the turn's result (snap fixture claude/usage-limit).
     w.pauseAgent(agentId, Date.now() + 3600_000, true);
-    s.isRunning = false;
     s.emit("event", { kind: "error", content: "Usage limit reached" });
+    h.endTurn(w);
     return { ...h, lead, w, agentId, s };
+  };
+  const CARRY_ON = "[From the panel] A usage limit cut your turn off. Carry on where you left off.";
+  // A worker whose turn the CLI started (after its task was done) the
+  // limit cut: no prompt of ours to send again.
+  const cutWakeUp = async () => {
+    const h = setup();
+    const { lead } = h.create("a");
+    await h.call(lead, "start_session", { title: "w", cwd: "wt", task: "build it" });
+    const w = h.workers()[0];
+    const [agentId] = w.agents.keys();
+    const s = h.session(w);
+    h.endTurn(w);
+    wakeUp(s);
+    w.pauseAgent(agentId, Date.now() + 3600_000, true);
+    s.emit("event", { kind: "error", content: "Usage limit reached" });
+    h.endTurn(w);
+    return { ...h, w, agentId, s };
+  };
+  // A wake-up or a task's report starting a turn while they wait.
+  const wakeUp = (s: { isRunning: boolean; emit(e: string, v: unknown): void }) => {
+    s.isRunning = true;
+    s.emit("event", {
+      kind: "notice",
+      level: "wakeup",
+      content: "A background task reported back — resumed to handle its result.",
+    });
   };
 
   it("are dropped by a stop, the lead's or the user's, a cleared context and an archive", async () => {
@@ -919,7 +947,7 @@ describe("rate-limit retries", () => {
     }
   });
 
-  it("never re-send a prompt already answered when a turn the CLI started hits the limit", async () => {
+  it("tell the agent to carry on, never re-send a prompt already answered, when a turn the CLI started hits the limit", async () => {
     const { w, s, call, endTurn } = await limited();
     const [agentId] = w.agents.keys();
     expect(w.retryLast(agentId)).toBe(true);
@@ -929,8 +957,60 @@ describe("rate-limit retries", () => {
     s.emit("event", { kind: "text_delta", content: "checking the build" });
     w.pauseAgent(agentId, Date.now() + 3600_000, true);
     s.emit("event", { kind: "error", content: "Usage limit reached" });
+    endTurn(w);
+    expect(w.retryLast(agentId)).toBe(true);
+    expect(s.sent.slice(2)).toEqual([CARRY_ON]);
+    expect(w.messages.filter((m) => m.kind === "system").pop()?.content).toContain(
+      "was told to carry on where the usage limit cut it off",
+    );
+  });
+
+  it("give way to the user's message when all they would do is tell the agent to carry on", async () => {
+    const { w, agentId, s } = await cutWakeUp();
+    await w.sendMessage("never mind, do Y");
+    expect(s.sent.slice(1)).toEqual(["never mind, do Y"]);
     expect(w.retryLast(agentId)).toBe(false);
-    expect(s.sent).toHaveLength(2);
+  });
+
+  it("give way to the user's message that came while the turn that ended them ran", async () => {
+    const { w, s, endTurn } = await limited();
+    wakeUp(s);
+    s.emit("event", { kind: "text_delta", content: "the build passed" });
+    await w.sendMessage("do Y");
+    endTurn(w);
+    await tick();
+    expect(s.sent.slice(1)).toEqual(["do Y"]);
+  });
+
+  it("stay a carry-on when the carry-on is cut off too", async () => {
+    const { w, agentId, s, endTurn } = await cutWakeUp();
+    expect(w.retryLast(agentId)).toBe(true);
+    w.pauseAgent(agentId, Date.now() + 3600_000, true);
+    s.emit("event", { kind: "error", content: "Usage limit reached" });
+    endTurn(w);
+    // So the user's message still goes in its place.
+    await w.sendMessage("do Y");
+    expect(s.sent).toEqual(["[From the project lead]\n\nbuild it", CARRY_ON, "do Y"]);
+  });
+
+  it("tell the agent to carry on after a restart too", async () => {
+    const { w, agentId, restart, session } = await cutWakeUp();
+    const back = restart(w);
+    expect(back.retryLast(agentId)).toBe(true);
+    expect(session(back).sent).toEqual([CARRY_ON]);
+  });
+
+  it("are dropped by the user's Stop on a turn the CLI started", async () => {
+    const { w, agentId, s } = await limited();
+    wakeUp(s);
+    w.pauseAgent(agentId, Date.now() - 1, true);
+    (s as unknown as { interrupt(): Promise<boolean> }).interrupt = () => Promise.resolve(true);
+    await w.interruptAgent(agentId);
+    s.isRunning = false;
+    s.emit("event", { kind: "result", content: "", interrupted: true });
+    await tick();
+    expect(s.sent).toHaveLength(1);
+    expect(w.retryLast(agentId)).toBe(false);
   });
 
   it("go ahead of what comes in meanwhile: the lead's message waits, the user's is the cue to retry now", async () => {
@@ -961,20 +1041,60 @@ describe("rate-limit retries", () => {
     }
   });
 
-  it("keep their prompt through a turn the CLI starts itself while they wait", async () => {
+  it("keep their prompt and their time through a turn the CLI starts that the limit refuses too", async () => {
     const { w, agentId, s, endTurn } = await limited();
-    s.isRunning = true;
-    s.emit("event", {
-      kind: "notice",
-      level: "wakeup",
-      content: "A background task reported back — resumed to handle its result.",
-    });
+    wakeUp(s);
+    s.emit("event", { kind: "error", content: "Usage limit reached" });
     endTurn(w);
+    await tick();
+    expect(s.sent).toHaveLength(1);
     expect(w.retryLast(agentId)).toBe(true);
-    expect(s.sent).toEqual([
-      "[From the project lead]\n\nbuild it",
-      "[From the project lead]\n\nbuild it",
-    ]);
+    expect(s.sent.slice(1)).toEqual(["[From the project lead]\n\nbuild it"]);
+  });
+
+  it("wait on through a turn the CLI starts that ends without an answer of the model's", async () => {
+    const { w, agentId, s, endTurn } = await limited();
+    // An overloaded API: a notice, a retry banner and nothing from the model.
+    wakeUp(s);
+    s.emit("event", { kind: "retry", content: "API retry 1/10 in 5s" });
+    endTurn(w);
+    await tick();
+    expect(s.sent).toHaveLength(1);
+    expect(w.retryLast(agentId)).toBe(true);
+    expect(s.sent.slice(1)).toEqual(["[From the project lead]\n\nbuild it"]);
+  });
+
+  it("go right after a turn the CLI starts that the limit lets through, as a carry-on", async () => {
+    const { w, agentId, s, endTurn } = await limited();
+    wakeUp(s);
+    s.emit("event", { kind: "text_delta", content: "the build passed" });
+    endTurn(w);
+    await tick();
+    // That turn saw "build it": sending it again would do it twice.
+    expect(s.sent.slice(1)).toEqual([CARRY_ON]);
+    expect(w.retryLast(agentId)).toBe(false);
+  });
+
+  it("outlast a turn the CLI started that runs when they fall due", async () => {
+    const { w, agentId, s } = await limited();
+    wakeUp(s);
+    w.pauseAgent(agentId, Date.now() - 1, true);
+    expect(w.retryLast(agentId)).toBe(false);
+    s.emit("event", { kind: "error", content: "[Claude error] connection reset" });
+    s.isRunning = false;
+    await tick();
+    expect(s.sent.slice(1)).toEqual(["[From the project lead]\n\nbuild it"]);
+  });
+
+  it("outlast a turn the CLI started that fails after the model saw their prompt, as a carry-on", async () => {
+    const { w, agentId, s } = await limited();
+    wakeUp(s);
+    s.emit("event", { kind: "tool_use", content: "**Bash**", toolName: "Bash", toolUseId: "t1" });
+    w.pauseAgent(agentId, Date.now() - 1, true);
+    s.emit("event", { kind: "error", content: "[Claude error] connection reset" });
+    s.isRunning = false;
+    await tick();
+    expect(s.sent.slice(1)).toEqual([CARRY_ON]);
   });
 
   it("are not used up by the user writing while a turn still runs", async () => {

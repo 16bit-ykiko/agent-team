@@ -9,6 +9,7 @@
 // a pause between them. Never loop this.
 import { execSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -303,6 +304,41 @@ async function codexDriver(tape: Tape, model: string): Promise<Driver> {
   };
 }
 
+// --- local API stand-in ------------------------------------------------------
+
+// Refuses every request as the five-hour limit does: a 429 with the unified
+// rate-limit headers of a claude.ai subscription, resetting in half an hour.
+async function usageLimitApi(): Promise<{ url: string; close(): void }> {
+  const resetsAt = Math.ceil(Date.now() / 600_000) * 600 + 1800;
+  const server = http.createServer((req, res) => {
+    console.log(`api: ${req.method} ${req.url}`);
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(429, {
+        "content-type": "application/json",
+        "request-id": `req_capture_${Date.now()}`,
+        "x-should-retry": "false",
+        "anthropic-ratelimit-unified-status": "rejected",
+        "anthropic-ratelimit-unified-reset": String(resetsAt),
+        "anthropic-ratelimit-unified-representative-claim": "five_hour",
+        "anthropic-ratelimit-unified-5h-utilization": "1.0",
+        "anthropic-ratelimit-unified-5h-reset": String(resetsAt),
+        "anthropic-ratelimit-unified-overage-status": "rejected",
+        "anthropic-ratelimit-unified-overage-disabled-reason": "org_level_disabled",
+      });
+      res.end(
+        JSON.stringify({
+          type: "error",
+          error: { type: "rate_limit_error", message: "Rate limited" },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as { port: number };
+  return { url: `http://127.0.0.1:${port}`, close: () => server.close() };
+}
+
 // --- run --------------------------------------------------------------------
 
 function materialize(files: Fixture["files"]): void {
@@ -321,9 +357,13 @@ async function record(backend: Backend, name: string): Promise<void> {
   const model = fixture.model ?? DEFAULT_MODEL[backend];
   materialize(fixture.files);
   const tape = new Tape();
+  const api = fixture.api === "usage-limit" ? await usageLimitApi() : undefined;
+  const options = api
+    ? { ...fixture.options, env: { ...process.env, ANTHROPIC_BASE_URL: api.url } }
+    : fixture.options;
   const driver =
     backend === "claude"
-      ? await claudeDriver(tape, model, fixture.options)
+      ? await claudeDriver(tape, model, options)
       : await codexDriver(tape, model);
   const run = async (step: Step) => {
     switch (step.op) {
@@ -359,6 +399,7 @@ async function record(backend: Backend, name: string): Promise<void> {
     failure ??= e instanceof Error ? e : new Error(JSON.stringify(e));
     tape.add({ error: failure.message });
   }
+  api?.close();
   const header: Header = {
     backend,
     fixture: name,

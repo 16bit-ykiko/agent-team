@@ -26,6 +26,8 @@ export interface Replay {
   messages: Message[];
   events: StreamEvent[];
   states: string[];
+  // What the sessions reported as usage limits (the server's rateLimit).
+  limits: { rateLimitType?: string; resetsAt?: number }[];
   // Every session handle the workspace created, in order (a restart adds one).
   sessions: { sessionId: string | null; usage: UsageStats }[];
 }
@@ -37,6 +39,10 @@ export interface Fixture {
   options?: Record<string, unknown>;
   // Files materialised in the recording cwd (skills, images).
   files?: Record<string, string | { base64: string }>;
+  // Claude: the CLI's API calls go to a local stand-in instead of Anthropic.
+  // "usage-limit" refuses each one as the five-hour limit does, so a limit
+  // is recorded without spending the account's.
+  api?: "usage-limit";
   steps: Step[];
   verify?: (replay: Replay) => void;
 }

@@ -675,6 +675,20 @@ describe("rate limits on the server", () => {
     result: text,
     session_id: "s",
   });
+  // The API-error message the CLI ends each refused turn with (snap
+  // fixture claude/usage-limit).
+  const refused = {
+    type: "assistant",
+    message: { content: [{ type: "text", text: "You've hit your session limit · resets 1:50am" }] },
+    parent_tool_use_id: null,
+    error: "rate_limit",
+    session_id: "s",
+  };
+  const paused = (frames: Array<Record<string, unknown>>) =>
+    frames
+      .filter((f) => f.type === "new_message")
+      .map((f) => (f.message as Message).content)
+      .filter((c) => c.includes("hit the 5-hour limit"));
 
   it("lets the retry the user's message started run through a weekly-limit failover", async () => {
     const { base, web } = seed();
@@ -685,6 +699,7 @@ describe("rate limits on the server", () => {
       send({ type: "send_message", workspaceId: "ws-live", content: "P" });
       await until(() => launches[0]?.prompts.length === 1, "the turn");
       launches[0].emit(limit("seven_day"));
+      launches[0].emit(refused);
       launches[0].emit({ ...result("limit"), is_error: true });
       await wait(100);
       send({ type: "send_message", workspaceId: "ws-live", content: "U" });
@@ -700,7 +715,7 @@ describe("rate limits on the server", () => {
     fs.rmSync(base, { recursive: true, force: true });
   });
 
-  it("retries nothing after a limit on a turn the CLI started itself", async () => {
+  it("tells the agent to carry on after a limit on a turn the CLI started itself", async () => {
     const { base, web } = seed();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { frames, send, stop } = await start(base, web);
@@ -710,22 +725,10 @@ describe("rate limits on the server", () => {
       const q = launches[0];
       q.emit(result("done"));
       q.emit(limit("five_hour"));
-      q.emit({
-        type: "assistant",
-        message: { content: [{ type: "text", text: "limit" }] },
-        parent_tool_use_id: null,
-        session_id: "s",
-      });
+      q.emit(refused);
       q.emit({ ...result("limit"), is_error: true });
-      await until(
-        () =>
-          frames.some(
-            (f) =>
-              f.type === "new_message" &&
-              (f.message as Message).content.includes("hit the 5-hour limit"),
-          ),
-        "the pause",
-      );
+      await until(() => paused(frames).length > 0, "the pause");
+      expect(paused(frames)[0]).toContain("it will be told to carry on at");
     } finally {
       stop();
       log.mockRestore();
@@ -733,6 +736,120 @@ describe("rate limits on the server", () => {
     const saved = readState(base, "ws-live").agents[0];
     expect(saved.pausedUntil).toBeDefined();
     expect(saved.lastPrompt).toBeUndefined();
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("reports a wake-up the limit refuses while the retry waits, and keeps that retry", async () => {
+    const { base, web } = seed();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { frames, send, stop } = await start(base, web);
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    try {
+      send({ type: "send_message", workspaceId: "ws-live", content: "P" });
+      await until(() => launches[0]?.prompts.length === 1, "the turn");
+      const q = launches[0];
+      q.emit({
+        type: "rate_limit_event",
+        rate_limit_info: { status: "rejected", rateLimitType: "five_hour", resetsAt },
+        session_id: "s",
+      });
+      q.emit(refused);
+      q.emit({ ...result("limit"), is_error: true });
+      await until(() => paused(frames).length > 0, "the pause");
+      // A wake-up: the CLI sends no rate_limit_event again, only the refusal.
+      // The retry it waits for stands, start slot and all.
+      const slots = vi.spyOn(ProjectManager.prototype, "takeStartSlot");
+      q.emit(refused);
+      q.emit({ ...result("limit"), is_error: true });
+      await wait(100);
+      expect(paused(frames)).toHaveLength(1);
+      expect(slots).not.toHaveBeenCalled();
+      slots.mockRestore();
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    const saved = readState(base, "ws-live");
+    const replies = saved.messages!.filter((m) => m.kind === "agent");
+    expect(replies.map((m) => m.status)).toEqual(["error", "error"]);
+    expect(replies[1].events?.find((e) => e.kind === "error")?.content).toContain(
+      "Usage limit reached (five-hour)",
+    );
+    expect(saved.agents[0]).toMatchObject({
+      pausedUntil: resetsAt * 1000 + 60_000,
+      lastPrompt: "P",
+    });
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("pauses for no 429 while no usage limit stands", async () => {
+    const { base, web } = seed();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { frames, send, stop } = await start(base, web);
+    try {
+      send({ type: "send_message", workspaceId: "ws-live", content: "P" });
+      await until(() => launches[0]?.prompts.length === 1, "the turn");
+      const busy = "API Error: Server is temporarily limiting requests (not your usage limit)";
+      launches[0].emit({ ...refused, message: { content: [{ type: "text", text: busy }] } });
+      launches[0].emit({ ...result(busy), is_error: true });
+      await wait(100);
+      expect(paused(frames)).toEqual([]);
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    const saved = readState(base, "ws-live");
+    expect(saved.agents[0].pausedUntil).toBeUndefined();
+    const reply = saved.messages!.find((m) => m.kind === "agent");
+    expect(reply?.events?.find((e) => e.kind === "error")?.content).toContain(
+      "not your usage limit",
+    );
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("waits half an hour, not a minute, when a refusal names a reset already past", async () => {
+    const { base, web } = seed();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { send, stop } = await start(base, web);
+    const before = Date.now();
+    try {
+      send({ type: "send_message", workspaceId: "ws-live", content: "P" });
+      await until(() => launches[0]?.prompts.length === 1, "the turn");
+      launches[0].emit({
+        type: "rate_limit_event",
+        rate_limit_info: {
+          status: "rejected",
+          rateLimitType: "five_hour",
+          resetsAt: Math.floor(before / 1000) - 600,
+        },
+        session_id: "s",
+      });
+      launches[0].emit(refused);
+      launches[0].emit({ ...result("limit"), is_error: true });
+      await wait(100);
+    } finally {
+      stop();
+      log.mockRestore();
+    }
+    const retryAt = readState(base, "ws-live").agents[0].pausedUntil!;
+    expect(retryAt - before).toBeGreaterThanOrEqual(30 * 60_000);
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("saves the workspace once its retry has gone", async () => {
+    const { base, web } = seed({ livePaused: -1000 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { stop } = await start(base, web);
+    try {
+      await until(() => launches.length === 1, "the retry");
+      await until(
+        () => readState(base, "ws-live").agents[0].pausedUntil === undefined,
+        "the saved state",
+      );
+    } finally {
+      stop();
+      log.mockRestore();
+    }
     fs.rmSync(base, { recursive: true, force: true });
   });
 });

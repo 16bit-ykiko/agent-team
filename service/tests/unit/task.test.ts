@@ -355,7 +355,8 @@ describe("rate-limit retry mechanics", () => {
     // Paused: the queued message must NOT dispatch.
     expect(session.sent).toEqual([]);
 
-    // Recovery path: retryLast clears the pause; with no lastPrompt it
+    // Recovery path: retryLast clears the pause; with no prompt of ours to
+    // send again and a message waiting, that message resumes the agent: it
     // returns false and the caller falls back to dequeueNext.
     expect(ws.retryLast(agentId)).toBe(false);
     ws.dequeueNext(agentId);

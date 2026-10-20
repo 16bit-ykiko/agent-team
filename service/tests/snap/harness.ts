@@ -164,6 +164,7 @@ export async function replay(backend: Backend, rec: Recording): Promise<Replay> 
   const { ws, host } = makeWorkspace(model);
   const events: StreamEvent[] = [];
   const states: string[] = [];
+  const limits: Replay["limits"] = [];
   const seen = new Set<HostSessionHandle>();
   const attach = () => {
     for (const s of host.created) {
@@ -171,6 +172,7 @@ export async function replay(backend: Backend, rec: Recording): Promise<Replay> 
       seen.add(s);
       s.on("event", (e: StreamEvent) => events.push(JSON.parse(JSON.stringify(e)) as StreamEvent));
       s.on("runState", (st: string) => states.push(st));
+      s.on("rateLimit", (info: Replay["limits"][number]) => limits.push(info));
     }
   };
 
@@ -277,7 +279,7 @@ export async function replay(backend: Backend, rec: Recording): Promise<Replay> 
     ClaudeSession.sdk = null;
     CodexSession.hooks = null;
   }
-  return { messages: ws.messages, events, states, sessions: host.created };
+  return { messages: ws.messages, events, states, limits, sessions: host.created };
 }
 
 // --- transcript -------------------------------------------------------------

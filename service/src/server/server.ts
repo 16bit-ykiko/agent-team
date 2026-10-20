@@ -1142,7 +1142,8 @@ systemctl --user restart agent-team-server
 
   // Rate-limit recovery policy:
   //  - five_hour: hold the agent's queue and auto-retry the failed prompt
-  //    shortly after the window resets ("wait it out")
+  //    shortly after the window resets ("wait it out"); a turn the CLI
+  //    started is no prompt of ours, the agent is told to carry on instead
   //  - weekly-type limits (seven_day / fable pools): fail over the DEFAULT
   //    account to another credential and retry immediately — agents pinned to
   //    an explicit account are left alone (switching under them would be
@@ -1166,6 +1167,7 @@ systemctl --user restart agent-team-server
             return;
           }
           if (!w.retryLast(agentId)) w.dequeueNext(agentId);
+          this.persistWorkspace(wsId);
           this.projects.workerIdle(w);
         },
         this.projects.takeStartSlot(Math.max(delay, 1000)),
@@ -1186,13 +1188,23 @@ systemctl --user restart agent-team-server
     if (!entry.currentMsg && !entry.retryPending) entry.lastPrompt = undefined;
 
     if (!info.rateLimitType || info.rateLimitType === "five_hour") {
-      const resetMs = info.resetsAt ? info.resetsAt * 1000 : Date.now() + 30 * 60_000;
-      // Retry one minute after the reset; never sooner than 1 min or later
-      // than 6 h from now (clock skew / bogus resets).
-      const delay = Math.min(Math.max(resetMs - Date.now() + 60_000, 60_000), 6 * 3600_000);
-      ws.pauseAgent(agentId, Date.now() + delay, true);
-      const at = new Date(Date.now() + delay).toLocaleTimeString();
-      ws.postSystemMessage(`⏳ **${agentName}** hit the 5-hour limit — auto-retrying at ${at}.`);
+      // A wake-up or a task's report the same limit refused while the
+      // retry waits: that retry stands, its time and start slot too.
+      const now = Date.now();
+      if (entry.retryPending && (entry.pausedUntil ?? 0) > now) return;
+      // Retry one minute after the reset; a reset already past (clock skew,
+      // a limit lifting late) or none named, in half an hour. Never sooner
+      // than 1 min or later than 6 h from now.
+      const reset = info.resetsAt ? info.resetsAt * 1000 + 60_000 : 0;
+      const retryAt = reset > now ? reset : now + 31 * 60_000;
+      const delay = Math.min(Math.max(retryAt - now, 60_000), 6 * 3600_000);
+      ws.pauseAgent(agentId, now + delay, true);
+      const at = new Date(now + delay).toLocaleTimeString();
+      ws.postSystemMessage(
+        entry.lastPrompt
+          ? `⏳ **${agentName}** hit the 5-hour limit — auto-retrying at ${at}.`
+          : `⏳ **${agentName}** hit the 5-hour limit — it will be told to carry on at ${at}.`,
+      );
       this.persistWorkspace(wsId);
       this.scheduleRetry(wsId, agentId, delay);
       return;

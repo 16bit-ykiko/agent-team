@@ -291,7 +291,8 @@ export class ClaudeSession extends EventEmitter {
   // assistant blocks with parent_tool_use_id as soon as the Task tool runs).
   // Park those until the task registers, instead of dropping them.
   private pendingNested = new Map<string, StreamEvent[]>();
-  private lastRateLimitStatus: string | null = null;
+  // The usage limit standing, from the CLI's last rate_limit_event.
+  private rejection: Record<string, unknown> | null = null;
   private activity: string | null = null;
   private unhandledSeen = new Set<string>();
   // Last prompt we pushed, to tell a CLI-originated user turn (scheduled
@@ -479,10 +480,6 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private pushMessage(message: string): void {
-    // Rate-limit dedupe is per turn: a fresh user message must be able to
-    // report its own rejection even when the previous turn was rejected too
-    // (a session-lifetime dedupe swallowed the second turn's error entirely).
-    this.lastRateLimitStatus = null;
     this.lastPushed = message;
     this.expectingTurn = true;
     const userMsg: SDKUserMessage = {
@@ -581,10 +578,19 @@ export class ClaudeSession extends EventEmitter {
   }
 
   private handleRateLimitInfo(info: Record<string, unknown>): void {
-    const status = info.status as string;
-    if (status === this.lastRateLimitStatus) return;
-    this.lastRateLimitStatus = status;
-    if (status !== "rejected") return;
+    this.rejection = info.status === "rejected" ? info : null;
+  }
+
+  // A turn the API refused with a 429: the CLI ends it with an API-error
+  // message, one per refused turn (snap fixture claude/usage-limit). Its
+  // rate_limit_event comes first but not on every turn, so it only tells
+  // whether a usage limit stands; any other 429 (load, throttling) is a
+  // plain error.
+  private refused(text: string, info = this.rejection): void {
+    if (!info) {
+      this.emit("event", { kind: "error", content: text || "The API refused the request (429)." });
+      return;
+    }
     this.emit("rateLimit", {
       rateLimitType: info.rateLimitType as string | undefined,
       resetsAt: info.resetsAt as number | undefined,
@@ -593,17 +599,14 @@ export class ClaudeSession extends EventEmitter {
     const label = kind.replace(/_/g, "-");
     const resetsAt = info.resetsAt as number | undefined;
     const resetStr = resetsAt ? ` Resets at ${new Date(resetsAt * 1000).toLocaleString()}.` : "";
-    this.emit("event", {
-      kind: "error",
-      content: `Usage limit reached (${label}).${resetStr}`,
-    });
+    this.emit("event", { kind: "error", content: `Usage limit reached (${label}).${resetStr}` });
   }
 
   // Debug-only (gated behind AGENT_TEAM_DEBUG on the server): inject the
   // exact rejection the SDK would emit, to exercise the recovery pipeline
   // end-to-end without burning a real quota window.
   simulateRateLimit(info: { rateLimitType?: string; resetsAt?: number }): void {
-    this.handleRateLimitInfo({ status: "rejected", ...info });
+    this.refused("", { status: "rejected", ...info });
   }
 
   // Stop a running subagent task. The SDK emits a task_notification with
@@ -680,6 +683,7 @@ export class ClaudeSession extends EventEmitter {
     this.processing = false;
     this.restartPending = false;
     this.interruptRequested = false;
+    this.rejection = null;
     for (const taskId of this.taskInfo.keys()) this.closedTasks.add(taskId);
     for (const taskId of this.agentTaskIds) {
       this.closedTasks.add(taskId);
@@ -863,8 +867,8 @@ export class ClaudeSession extends EventEmitter {
         break;
 
       // Subscription rate-limit info (claude.ai plans). The CLI emits these
-      // routinely with status "allowed"; a "rejected" means the turn is dead
-      // — without surfacing it the user just sees an empty reply.
+      // routinely with status "allowed"; a "rejected" one says a usage limit
+      // stands, which the refused turn's API-error message reports (refused).
       case "rate_limit_event": {
         const info = (msg as unknown as Record<string, unknown>).rate_limit_info as
           Record<string, unknown> | undefined;
@@ -1291,6 +1295,14 @@ export class ClaudeSession extends EventEmitter {
         else this.parkNested(parentToolUseId, ev);
       }
       return;
+    }
+
+    if ((msg as { error?: string }).error === "rate_limit") {
+      const text = content
+        .map((b) => (b.type === "text" ? b.text : ""))
+        .join("")
+        .trim();
+      this.refused(text);
     }
 
     this.stepCounter++;

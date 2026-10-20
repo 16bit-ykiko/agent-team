@@ -178,7 +178,7 @@ export interface AgentEntry {
   // While set (epoch ms), the queue holds and dequeueNext is a no-op.
   pausedUntil?: number;
   // The pause ends in a retry of lastPrompt (a rate limit), not just in the
-  // queue moving on (spaced starts).
+  // queue moving on (spaced starts); with no lastPrompt, in a carry-on.
   retryPending?: boolean;
   // Transient "doing X right now" label from the session (see setActivity).
   activity?: string | null;
@@ -761,14 +761,23 @@ export class Workspace {
             entry.currentMsg.events,
             Object.keys(patch).length ? patch : undefined,
           );
+          // A turn the model answered while a retry waits (a wake-up, a
+          // task's report): the limit is over. That turn saw the cut prompt,
+          // so the retry carries on rather than sending it again, and now.
+          if (entry.retryPending && answered(entry.currentMsg)) {
+            entry.lastPrompt = undefined;
+            entry.pausedUntil = Date.now();
+          }
         }
         entry.currentMsg = null;
         this.cb?.onAgentIdle?.(this.id, agentId);
-        setTimeout(() => this.dequeueNext(agentId), 0);
+        setTimeout(() => this.afterTurn(agentId), 0);
       } else if (event.kind === "error") {
         // The error is an event (rendered as a red banner where it
         // happened); appending it to the text as well showed it twice.
         const msg = this.ensureAgentMsg(entry);
+        // The model saw the prompt a waiting retry would send: it carries on.
+        if (entry.retryPending && answered(msg)) entry.lastPrompt = undefined;
         msg.status = "error";
         event.contentOffset = msg.content.length;
         msg.events!.push(event);
@@ -776,7 +785,7 @@ export class Workspace {
         this.finished(msg.id, "error", msg.content, msg.events);
         entry.currentMsg = null;
         this.cb?.onAgentIdle?.(this.id, agentId);
-        setTimeout(() => this.dequeueNext(agentId), 0);
+        setTimeout(() => this.afterTurn(agentId), 0);
       } else if (event.kind === "subagent_progress" || event.kind === "subagent_done") {
         const msg = this.ensureAgentMsg(entry);
         this.handleSubagentOnMsg(msg, event);
@@ -1200,7 +1209,9 @@ export class Workspace {
 
     // A busy agent queues the message instead of rejecting it; the queue
     // drains in order whenever the agent becomes idle. A pending rate-limit
-    // retry goes first: the user writing is the cue to try now.
+    // retry goes first: the user writing is the cue to try now. A carry-on
+    // would only hold their message up: it goes in its place.
+    if (!agent.lastPrompt) this.dropRetry(agent);
     const retried = agent.retryPending && !agent.session.isRunning && this.retryLast(agent.info.id);
     const busy = retried || agent.session.isRunning;
     const userMsg: Message = {
@@ -1278,6 +1289,16 @@ export class Workspace {
     }
   }
 
+  // A turn ended. A retry that fell due while it ran goes now, through the
+  // process already up: the start slots space new ones (the server's timer).
+  private afterTurn(agentId: string): void {
+    const entry = this.agents.get(agentId);
+    if (entry?.retryPending && Date.now() >= (entry.pausedUntil ?? 0) && this.retryLast(agentId)) {
+      return;
+    }
+    this.dequeueNext(agentId);
+  }
+
   // Runs whenever an agent becomes idle: promote the oldest queued message
   // for that agent and dispatch its stored prompt.
   dequeueNext(agentId: string): void {
@@ -1322,16 +1343,30 @@ export class Workspace {
     entry.pausedUntil = undefined;
   }
 
-  // Re-dispatch the last prompt (rate-limit recovery), if a retry is still
-  // pending: a stop or an archive drops it. Lifts the pause, so the queue
-  // moves on even when there is nothing to retry.
+  // Rate-limit recovery, if a retry is still pending (a stop or an archive
+  // drops it): re-dispatch the last prompt, or tell the agent to carry on
+  // when the turn cut was one the CLI started. A turn running now keeps it
+  // pending; it goes when that turn ends.
   retryLast(agentId: string): boolean {
     const entry = this.agents.get(agentId);
-    if (!entry?.retryPending) return false;
+    if (!entry?.retryPending || entry.session.isRunning) return false;
     entry.pausedUntil = undefined;
     entry.retryPending = false;
-    if (entry.session.isRunning || !entry.lastPrompt) return false;
-    void this.dispatchPrompt(entry, entry.lastPrompt);
+    if (entry.lastPrompt) {
+      void this.dispatchPrompt(entry, entry.lastPrompt);
+      return true;
+    }
+    // A message waiting for the agent resumes it as well as a carry-on.
+    if (this.messages.some((m) => m.status === "queued" && m.queuedFor === agentId)) return false;
+    this.pushSystemMessage(
+      `↻ **${entry.info.name}** was told to carry on where the usage limit cut it off.`,
+    );
+    void this.dispatchPrompt(
+      entry,
+      "[From the panel] A usage limit cut your turn off. Carry on where you left off.",
+    );
+    // Cut off again, it is told to carry on again, not as a prompt of ours.
+    entry.lastPrompt = undefined;
     return true;
   }
 
@@ -1366,6 +1401,7 @@ export class Workspace {
     };
 
     const prompt = `[Forwarded message from ${author.name}]:\n\n${original.content}`;
+    if (!agent.lastPrompt) this.dropRetry(agent);
     const retried = agent.retryPending && !agent.session.isRunning && this.retryLast(agent.info.id);
     const busy = retried || agent.session.isRunning;
     const userMsg: Message = {
@@ -1422,6 +1458,7 @@ export class Workspace {
   async interruptAgent(agentId: string): Promise<void> {
     const entry = this.agents.get(agentId);
     if (!entry) return;
+    this.dropRetry(entry);
     const session = entry.session;
     if (!session.interrupt || session.interruptPending) {
       this.abortAgent(agentId);
@@ -1648,6 +1685,13 @@ export class Workspace {
 
     return ws;
   }
+}
+
+// The model answered in the reply: text, thinking or a tool call, not just
+// the notices and retry banners of a turn the API refused.
+function answered(msg: Message): boolean {
+  const output = ["thinking", "tool_use", "subagent_start"];
+  return !!msg.content.trim() || !!msg.events?.some((e) => output.includes(e.kind));
 }
 
 function lastThinking(events: StreamEvent[]): StreamEvent | undefined {

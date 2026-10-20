@@ -390,66 +390,97 @@ describe("subagent lifecycle", () => {
 });
 
 describe("rate limit surfacing", () => {
+  // As the CLI sends them (snap fixture claude/usage-limit): the limit's
+  // state when it changes, and the API-error message ending each refused turn.
   const rateLimitEvent = (info: Record<string, unknown>) => ({
     type: "rate_limit_event",
     rate_limit_info: info,
     session_id: "sess-1",
   });
-
-  it("emits an error when the subscription limit rejects the turn", () => {
-    const { events, dispatch } = makeSession();
-    dispatch(
-      rateLimitEvent({ status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000 }),
-    );
-
-    expect(events).toHaveLength(1);
-    expect(events[0].kind).toBe("error");
-    expect(events[0].content).toContain("five-hour");
-    expect(events[0].content).toContain("Resets at");
+  const refusal = (text = "You've hit your session limit · resets 1:50am (Asia/Shanghai)") => ({
+    type: "assistant",
+    message: { content: [{ type: "text", text }] },
+    parent_tool_use_id: null,
+    error: "rate_limit",
+    session_id: "sess-1",
   });
+  const refusedResult = {
+    type: "result",
+    subtype: "success",
+    is_error: true,
+    result: "You've hit your session limit",
+    session_id: "sess-1",
+  };
+  const fiveHour = { status: "rejected", rateLimitType: "five_hour", resetsAt: 1_800_000_000 };
 
-  it("reports again on a new turn even if the previous turn was also rejected", () => {
+  function watch() {
     const session = new ClaudeSession({ cwd: "/tmp" });
-    const events: StreamEvent[] = [];
-    session.on("event", (e: StreamEvent) => events.push(e));
     const priv = session as unknown as {
       handleSDKMessage(m: unknown): void;
       inputController: unknown;
       pushMessage(m: string): void;
     };
     priv.inputController = { push() {}, end() {} };
-
-    const rejected = {
-      type: "rate_limit_event",
-      rate_limit_info: { status: "rejected", rateLimitType: "five_hour" },
-      session_id: "s",
+    const errors: string[] = [];
+    const signals: Array<{ rateLimitType?: string; resetsAt?: number }> = [];
+    session.on("event", (e: StreamEvent) => {
+      if (e.kind === "error") errors.push(e.content);
+    });
+    session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) =>
+      signals.push(info),
+    );
+    return {
+      errors,
+      signals,
+      dispatch: (m: unknown) => priv.handleSDKMessage(m),
+      push: (m: string) => priv.pushMessage(m),
     };
-    priv.pushMessage("first");
-    priv.handleSDKMessage(rejected);
-    priv.handleSDKMessage(rejected); // same turn — deduped
-    expect(events.filter((e) => e.kind === "error")).toHaveLength(1);
+  }
 
-    // User sends another message while still limited: its rejection must
-    // surface too (this exact case rendered as an empty bubble in prod).
-    priv.pushMessage("second");
-    priv.handleSDKMessage(rejected);
-    expect(events.filter((e) => e.kind === "error")).toHaveLength(2);
+  it("reports a turn the usage limit refuses: an error, and the limit with its type and reset", () => {
+    const { errors, signals, dispatch, push } = watch();
+    push("first");
+    dispatch(rateLimitEvent(fiveHour));
+    // The limit's state ends no turn by itself.
+    expect(errors).toEqual([]);
+    dispatch(refusal());
+    expect(errors).toEqual([expect.stringContaining("Usage limit reached (five-hour). Resets at")]);
+    expect(signals).toEqual([{ rateLimitType: "five_hour", resetsAt: 1_800_000_000 }]);
   });
 
-  it("stays silent for allowed statuses and dedupes repeats", () => {
+  it("reports each refused turn, one the CLI sends no rate_limit_event for too", () => {
+    const { errors, signals, dispatch, push } = watch();
+    push("first");
+    dispatch(rateLimitEvent(fiveHour));
+    dispatch(refusal());
+    dispatch(refusedResult);
+    // A wake-up while the limit stands: only its refusal.
+    dispatch(refusal());
+    dispatch(refusedResult);
+    expect(errors).toHaveLength(2);
+    expect(signals).toHaveLength(2);
+    expect(signals[1]).toEqual({ rateLimitType: "five_hour", resetsAt: 1_800_000_000 });
+  });
+
+  it("takes a 429 with no usage limit standing for a plain error", () => {
+    const { errors, signals, dispatch, push } = watch();
+    // The CLI marks any 429 a rate_limit: throttling, load.
+    const busy = "API Error: Server is temporarily limiting requests (not your usage limit)";
+    push("first");
+    dispatch(refusal(busy));
+    // A limit that has lifted stands no more.
+    dispatch(rateLimitEvent(fiveHour));
+    dispatch(rateLimitEvent({ status: "allowed", rateLimitType: "five_hour" }));
+    dispatch(refusal(busy));
+    expect(errors).toEqual([busy, busy]);
+    expect(signals).toEqual([]);
+  });
+
+  it("stays silent for allowed statuses", () => {
     const { events, dispatch } = makeSession();
     dispatch(rateLimitEvent({ status: "allowed", rateLimitType: "five_hour" }));
     dispatch(rateLimitEvent({ status: "allowed_warning", rateLimitType: "five_hour" }));
     expect(events).toHaveLength(0);
-
-    dispatch(rateLimitEvent({ status: "rejected", rateLimitType: "five_hour" }));
-    dispatch(rateLimitEvent({ status: "rejected", rateLimitType: "five_hour" }));
-    expect(events.filter((e) => e.kind === "error")).toHaveLength(1);
-
-    // Back to allowed, then rejected again → a fresh error.
-    dispatch(rateLimitEvent({ status: "allowed", rateLimitType: "five_hour" }));
-    dispatch(rateLimitEvent({ status: "rejected", rateLimitType: "five_hour" }));
-    expect(events.filter((e) => e.kind === "error")).toHaveLength(2);
   });
 
   it("joins the errors array on result errors instead of 'Unknown error'", () => {
@@ -481,66 +512,6 @@ describe("setProviderEnv", () => {
     expect(session.config.providerEnv?.CLAUDE_CODE_OAUTH_TOKEN).toBe("sk-ant-oat01-x");
     session.setProviderEnv(undefined);
     expect(session.config.providerEnv).toBeUndefined();
-  });
-});
-
-describe("rateLimit recovery signal", () => {
-  it("emits rateLimit with type and reset on rejection, once per status flip", () => {
-    const session = new ClaudeSession({ cwd: "/tmp" });
-    const signals: Array<{ rateLimitType?: string; resetsAt?: number }> = [];
-    session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) =>
-      signals.push(info),
-    );
-    const dispatch = (msg: unknown) =>
-      (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage(msg);
-
-    dispatch({
-      type: "rate_limit_event",
-      rate_limit_info: { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000 },
-      session_id: "s",
-    });
-    dispatch({
-      type: "rate_limit_event",
-      rate_limit_info: { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000 },
-      session_id: "s",
-    });
-
-    expect(signals).toHaveLength(1);
-    expect(signals[0].rateLimitType).toBe("seven_day");
-    expect(signals[0].resetsAt).toBe(1_800_000_000);
-  });
-
-  it("resets dedup after a new turn so retry rate limits surface", () => {
-    const session = new ClaudeSession({ cwd: "/tmp" });
-    const errors: StreamEvent[] = [];
-    session.on("event", (e: StreamEvent) => {
-      if (e.kind === "error") errors.push(e);
-    });
-    const dispatch = (msg: unknown) =>
-      (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage(msg);
-
-    // Inject a stub inputController so pushMessage doesn't NPE.
-    const inner = session as unknown as Record<string, unknown>;
-    inner.inputController = { push: () => {}, end: () => {} };
-
-    // First turn: rate limit fires.
-    dispatch({
-      type: "rate_limit_event",
-      rate_limit_info: { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000 },
-      session_id: "s",
-    });
-    expect(errors).toHaveLength(1);
-
-    // Simulate retry: pushMessage resets lastRateLimitStatus.
-    (session as unknown as { pushMessage(m: string): void }).pushMessage("retry");
-
-    // Second turn hits the same rate limit — must NOT be swallowed.
-    dispatch({
-      type: "rate_limit_event",
-      rate_limit_info: { status: "rejected", rateLimitType: "seven_day", resetsAt: 1_800_000_000 },
-      session_id: "s",
-    });
-    expect(errors).toHaveLength(2);
   });
 });
 
