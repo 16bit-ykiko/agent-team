@@ -506,6 +506,10 @@ export class CursorSession extends EventEmitter {
   // arrive one level deep in tool-call-delta updates (cursor/subagent).
   private startTask(callId: string, args: Obj): void {
     const description = text(args.description);
+    // A custom subagent by its name, a built-in one by its kind (explore,
+    // shell, browser_use, ...).
+    const type = obj(args.subagentType);
+    const kind = text(type.kind);
     this.tasks.set(callId, {
       startedAt: Date.now(),
       text: "",
@@ -521,7 +525,7 @@ export class CursorSession extends EventEmitter {
         taskId: callId,
         description,
         prompt: text(args.prompt) || undefined,
-        agentType: text(obj(args.subagentType).name) || "subagent",
+        agentType: text(type.name) || (kind && kind !== "unspecified" ? kind : "subagent"),
         taskType: "local_agent",
         status: "running",
         events: [],

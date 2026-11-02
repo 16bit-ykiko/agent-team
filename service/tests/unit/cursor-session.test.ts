@@ -319,6 +319,31 @@ describe("cursor session lifecycle", () => {
     expect(events).toEqual([]);
   });
 
+  it("labels a subagent's card with its custom name or its built-in kind", async () => {
+    const { session, events } = makeSession();
+    const sent = session.send("x");
+    await tick();
+    const { onDelta } = fake.sends[0].options;
+    const task = (callId: string, subagentType: object) =>
+      onDelta!({
+        update: {
+          type: "tool-call-started",
+          callId,
+          modelCallId: "m",
+          toolCall: { type: "task", args: { description: "d", prompt: "p", subagentType } },
+        } as never,
+      });
+    await task("c1", { kind: "explore" });
+    await task("c2", { kind: "custom", name: "reviewer" });
+    await task("c3", { kind: "unspecified" });
+    fake.runs[0].finish({ status: "finished" });
+    await sent;
+    const cards = events
+      .filter((e) => e.kind === "subagent_start")
+      .map((e) => e.subagent!.agentType);
+    expect(cards).toEqual(["explore", "reviewer", "subagent"]);
+  });
+
   it("keeps a thought that Stop cut short", async () => {
     const { session, events } = makeSession();
     const sent = session.send("x");
