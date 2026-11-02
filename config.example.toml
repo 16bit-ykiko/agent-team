@@ -38,6 +38,11 @@ type = "local"
 # [accounts.work]
 # oauth_token = "sk-ant-oat01-..."
 
+# Cursor (optional): the key the cursor/ models run on, a user API key
+# (cursor.com/dashboard/api) or a service account key; runs bill to its plan.
+# [cursor]
+# api_key = "key_..."
+
 # External LLM providers (optional)
 # The provider name must be a prefix of the model ID you want to route.
 # [providers.deepseek]

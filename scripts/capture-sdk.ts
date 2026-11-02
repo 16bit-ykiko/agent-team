@@ -2,7 +2,7 @@
 // (service/tests/snap/<backend>/<name>.ts) and writes the raw SDK frames,
 // interleaved with step markers, to <name>.jsonl next to it.
 //
-// Usage: npm run capture -- <claude|codex> <name...>
+// Usage: npm run capture -- <claude|codex|cursor> <name...>
 //
 // Every run is a real session on the user's account. Bursts of sessions
 // risk an account ban: at most a few fixtures per run, one at a time, with
@@ -10,6 +10,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -479,6 +480,168 @@ function codexDriver(tape: Tape, model: string, fixture: Fixture, api?: { url: s
   };
 }
 
+// --- cursor -----------------------------------------------------------------
+
+// Frames are tagged by where they came from: `delta` (onDelta), `step`
+// (onStep), `message` (run.stream()), `status` (onDidChangeStatus), `result`
+// (run.wait()), `tool` (a custom tool's execute), `thrown` (an SDK call that
+// threw: create, resume, send, stream, wait, cancel).
+async function cursorDriver(
+  tape: Tape,
+  model: string,
+  extra: Record<string, unknown> = {},
+): Promise<Driver> {
+  const { Agent, Cursor } = await import("@cursor/sdk");
+  const { AGENT_DEFAULTS } = await import("../service/src/session/cursor.ts");
+  const { cursorModel } = await import("../service/src/config/presets.ts");
+  type SDKAgent = import("@cursor/sdk").SDKAgent;
+  type Run = import("@cursor/sdk").Run;
+  type SDKCustomTool = import("@cursor/sdk").SDKCustomTool;
+  const apiKey = fs.readFileSync(path.join(os.homedir(), ".cursor", "api_key.txt"), "utf8").trim();
+  // The SDK runs in this process: fetch and https only use the proxy when
+  // told to, and its HTTP/2 agent stream never does.
+  http.setGlobalProxyFromEnv();
+  if (process.env.HTTPS_PROXY || process.env.https_proxy) {
+    Cursor.configure({ local: { useHttp1ForAgent: true } });
+  }
+  const pkg = JSON.parse(
+    fs.readFileSync(path.join(ROOT, "node_modules", "@cursor", "sdk", "package.json"), "utf8"),
+  ) as { version: string };
+  const { local: extraLocal, ...extraRest } = extra as {
+    local?: { customTools?: Record<string, SDKCustomTool> };
+  };
+  const customTools = Object.fromEntries(
+    Object.entries(extraLocal?.customTools ?? {}).map(([name, t]) => [
+      name,
+      {
+        ...t,
+        execute: async (args: Parameters<SDKCustomTool["execute"]>[0], ctx) => {
+          const result = await t.execute(args, ctx);
+          tape.frame({ tool: { name, args, context: ctx, result } });
+          return result;
+        },
+      } satisfies SDKCustomTool,
+    ]),
+  );
+  const options = {
+    ...AGENT_DEFAULTS,
+    ...extraRest,
+    apiKey,
+    model: { id: model.replace(/^cursor\//, "") },
+    local: { ...AGENT_DEFAULTS.local, ...extraLocal, cwd: RECORD_CWD, customTools },
+  };
+  const seen: string[] = [];
+  const frame = (f: Record<string, unknown>) => {
+    seen.push(JSON.stringify(f));
+    tape.frame(f);
+  };
+  const thrown = (where: string, e: unknown) => {
+    const err = e as { name?: string; code?: string; status?: number; isRetryable?: boolean };
+    frame({
+      thrown: {
+        where,
+        name: err?.name,
+        code: err?.code,
+        status: err?.status,
+        isRetryable: err?.isRetryable,
+        message: e instanceof Error ? e.message : String(e),
+      },
+    });
+  };
+  let agentId: string | null = null;
+  let agent: SDKAgent | null = null;
+  let run: Run | null = null;
+  let finished: Promise<void> = Promise.resolve();
+
+  const open = async (): Promise<SDKAgent | null> => {
+    if (agent) return agent;
+    try {
+      agent = agentId ? await Agent.resume(agentId, options) : await Agent.create(options);
+      frame({ [agentId ? "resumed" : "created"]: { agentId: agent.agentId } });
+      agentId = agent.agentId;
+      return agent;
+    } catch (e) {
+      thrown(agentId ? "resume" : "create", e);
+      return null;
+    }
+  };
+
+  return {
+    async send(text) {
+      const a = await open();
+      if (!a) return;
+      let r: Run;
+      try {
+        // As CursorSession sends: the model's parameters and force.
+        r = await a.send(text, {
+          model: cursorModel(model, undefined, undefined),
+          local: { force: true },
+          onDelta: ({ update }) => frame({ delta: update }),
+          onStep: ({ step }) => frame({ step }),
+        });
+      } catch (e) {
+        thrown("send", e);
+        return;
+      }
+      run = r;
+      frame({ run: { id: r.id, requestId: r.requestId, status: r.status } });
+      r.onDidChangeStatus((status) => frame({ status }));
+      finished = (async () => {
+        try {
+          for await (const message of r.stream()) frame({ message });
+        } catch (e) {
+          thrown("stream", e);
+        }
+        try {
+          frame({ result: await r.wait() });
+        } catch (e) {
+          thrown("wait", e);
+        }
+        tape.add({ close: true });
+      })();
+    },
+    async wait(until) {
+      if (typeof until === "number") return sleep(until);
+      if (typeof until === "object") {
+        const deadline = Date.now() + STEP_DEADLINE_MS;
+        while (Date.now() < deadline) {
+          if (seen.some((f) => f.includes(until.frame))) return;
+          await sleep(200);
+        }
+        throw new Error(`wait(${JSON.stringify(until)}) timed out`);
+      }
+      await finished;
+    },
+    // A server restart: the handle goes, the agent is resumed by id.
+    async end() {
+      await finished;
+      agent?.close();
+      agent = null;
+    },
+    async abort() {
+      await run?.cancel();
+      await finished;
+      agent?.close();
+      agent = null;
+    },
+    async interrupt() {
+      if (!run) return tape.add({ control: { op: "interrupt", error: "no run" } });
+      try {
+        await run.cancel();
+        tape.add({ control: { op: "interrupt", response: "ok" } });
+      } catch (e) {
+        thrown("cancel", e);
+        tape.add({
+          control: { op: "interrupt", error: e instanceof Error ? e.message : String(e) },
+        });
+      }
+    },
+    stopTask: () => Promise.reject(new Error("cursor has no background tasks to stop")),
+    compact: () => Promise.reject(new Error("cursor compaction is not recorded")),
+    cli: () => `@cursor/sdk ${pkg.version}`,
+  };
+}
+
 // --- local API stand-in ------------------------------------------------------
 
 // Refuses every request as the five-hour limit does: a 429 with the unified
@@ -584,7 +747,9 @@ async function record(backend: Backend, name: string): Promise<void> {
             ? { ...fixture.options, env: { ...process.env, ANTHROPIC_BASE_URL: api.url } }
             : fixture.options,
         )
-      : codexDriver(tape, model, fixture, api);
+      : backend === "cursor"
+        ? await cursorDriver(tape, model, fixture.options)
+        : codexDriver(tape, model, fixture, api);
   const run = async (step: Step) => {
     switch (step.op) {
       case "send":
@@ -640,8 +805,8 @@ async function record(backend: Backend, name: string): Promise<void> {
 }
 
 const [backend, ...names] = process.argv.slice(2);
-if ((backend !== "claude" && backend !== "codex") || names.length === 0) {
-  console.error("usage: npm run capture -- <claude|codex> <name...>");
+if (!["claude", "codex", "cursor"].includes(backend) || names.length === 0) {
+  console.error("usage: npm run capture -- <claude|codex|cursor> <name...>");
   process.exit(2);
 }
 if (names.length > MAX_PER_RUN) {
@@ -653,6 +818,6 @@ for (const [i, name] of names.entries()) {
     console.log(`pausing ${PAUSE_MS / 1000}s before ${name}`);
     await sleep(PAUSE_MS);
   }
-  await record(backend, name);
+  await record(backend as Backend, name);
 }
 process.exit(0);

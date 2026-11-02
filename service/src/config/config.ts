@@ -38,6 +38,12 @@ export interface ProviderConfig {
   base_url: string;
 }
 
+// The Cursor API key the cursor/ models run on (a user or service account
+// key, billed to its plan).
+export interface CursorConfig {
+  api_key: string;
+}
+
 export interface AppConfig {
   server: ServerConfig;
   workspace: WorkspaceConfig;
@@ -45,6 +51,7 @@ export interface AppConfig {
   accounts: Record<string, AccountConfig>;
   hosts: Record<string, HostConfig>;
   providers: Record<string, ProviderConfig>;
+  cursor: CursorConfig | null;
 }
 
 export function loadConfig(baseDir: string): AppConfig {
@@ -125,7 +132,13 @@ export function loadConfig(baseDir: string): AppConfig {
     }
   }
 
-  return { server, workspace, auth, hosts, providers, accounts };
+  const rawCursor = parsed.cursor as Record<string, unknown> | undefined;
+  const cursor =
+    typeof rawCursor?.api_key === "string" && rawCursor.api_key
+      ? { api_key: rawCursor.api_key }
+      : null;
+
+  return { server, workspace, auth, hosts, providers, accounts, cursor };
 }
 
 // Which account a session should run on: an explicit per-agent account wins,

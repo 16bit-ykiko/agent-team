@@ -1,0 +1,54 @@
+{"header":{"backend":"cursor","fixture":"shell","description":"a foreground shell command is one tool call; its output comes with the completed call","model":"cursor/composer-2.5","cli":"@cursor/sdk 1.2.0","recordedAt":"2026-11-02T12:01:46.648Z"}}
+{"t":731,"step":{"i":0,"op":"send","text":"Run this exact shell command once, in the foreground, as a single command: `echo start; sleep 3; echo end`. Then reply with the single word finished."}}
+{"t":11455,"frame":{"created":{"agentId":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b"}}}
+{"t":29944,"frame":{"run":{"id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","requestId":"4b5eb0a4-a860-4302-84ff-faee953b55dd","status":"running"}}}
+{"t":29946,"frame":{"message":{"type":"status","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","status":"RUNNING"}}}
+{"t":29946,"step":{"i":1,"op":"wait","for":"result"}}
+{"t":33588,"frame":{"delta":{"type":"thinking-delta","text":"Running"}}}
+{"t":33588,"frame":{"message":{"type":"thinking","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","text":"Running"}}}
+{"t":33589,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":33614,"frame":{"delta":{"type":"thinking-delta","text":" the requested shell"}}}
+{"t":33614,"frame":{"message":{"type":"thinking","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","text":" the requested shell"}}}
+{"t":33614,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":33629,"frame":{"delta":{"type":"thinking-delta","text":" command in the foreground"}}}
+{"t":33629,"frame":{"message":{"type":"thinking","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","text":" command in the foreground"}}}
+{"t":33629,"frame":{"delta":{"type":"token-delta","tokens":7}}}
+{"t":33679,"frame":{"delta":{"type":"thinking-delta","text":"."}}}
+{"t":33679,"frame":{"message":{"type":"thinking","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","text":"."}}}
+{"t":33679,"frame":{"step":{"type":"thinkingMessage","message":{"text":"Running the requested shell command in the foreground.","thinkingDurationMs":83}}}}
+{"t":33679,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":83}}}
+{"t":33679,"frame":{"message":{"type":"thinking","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","text":"","thinking_duration_ms":83}}}
+{"t":33679,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":33679,"frame":{"delta":{"type":"token-delta","tokens":8}}}
+{"t":33680,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":33680,"frame":{"delta":{"type":"token-delta","tokens":10}}}
+{"t":33680,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":33680,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":33681,"frame":{"delta":{"type":"tool-call-started","callId":"tool_0e7798ef-66f0-49e5-a67a-8b1dd52bffd","toolCall":{"type":"shell","args":{"command":"echo start; sleep 3; echo end","timeout":10000}},"modelCallId":"4b5eb0a4-a860-4302-84ff-faee953b55dd-0-q0vr"}}}
+{"t":33681,"frame":{"message":{"type":"tool_call","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","call_id":"tool_0e7798ef-66f0-49e5-a67a-8b1dd52bffd","name":"shell","status":"running","args":{"command":"echo start; sleep 3; echo end","timeout":10000}}}}
+{"t":33690,"frame":{"delta":{"type":"tool-requests-listed","callCount":1}}}
+{"t":37065,"frame":{"step":{"type":"toolCall","message":{"type":"shell","args":{"command":"echo start; sleep 3; echo end","timeout":10000},"result":{"status":"success","value":{"exitCode":0,"signal":"","stdout":"start\nend\n","stderr":"","executionTime":3387}}}}}}
+{"t":37065,"frame":{"delta":{"type":"tool-call-completed","callId":"tool_0e7798ef-66f0-49e5-a67a-8b1dd52bffd","toolCall":{"type":"shell","args":{"command":"echo start; sleep 3; echo end","timeout":10000},"result":{"status":"success","value":{"exitCode":0,"signal":"","stdout":"start\nend\n","stderr":"","executionTime":3387}}},"modelCallId":"4b5eb0a4-a860-4302-84ff-faee953b55dd-0-q0vr"}}}
+{"t":37065,"frame":{"message":{"type":"tool_call","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","call_id":"tool_0e7798ef-66f0-49e5-a67a-8b1dd52bffd","name":"shell","status":"completed","args":{"command":"echo start; sleep 3; echo end","timeout":10000},"result":{"status":"success","value":{"exitCode":0,"signal":"","stdout":"start\nend\n","stderr":"","executionTime":3387}}}}}
+{"t":37077,"frame":{"delta":{"type":"token-delta","tokens":35}}}
+{"t":37972,"frame":{"delta":{"type":"thinking-delta","text":"The"}}}
+{"t":37972,"frame":{"message":{"type":"thinking","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","text":"The"}}}
+{"t":37973,"frame":{"delta":{"type":"thinking-delta","text":" command completed successfully"}}}
+{"t":37973,"frame":{"message":{"type":"thinking","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","text":" command completed successfully"}}}
+{"t":37973,"frame":{"delta":{"type":"token-delta","tokens":8}}}
+{"t":37975,"frame":{"delta":{"type":"thinking-delta","text":"."}}}
+{"t":37975,"frame":{"message":{"type":"thinking","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","text":"."}}}
+{"t":37975,"frame":{"step":{"type":"thinkingMessage","message":{"text":"The command completed successfully.","thinkingDurationMs":2}}}}
+{"t":37975,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":2}}}
+{"t":37975,"frame":{"message":{"type":"thinking","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","text":"","thinking_duration_ms":2}}}
+{"t":37975,"frame":{"delta":{"type":"text-delta","text":"finished"}}}
+{"t":37975,"frame":{"message":{"type":"assistant","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","message":{"role":"assistant","content":[{"type":"text","text":"finished"}]}}}}
+{"t":37976,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":37981,"frame":{"step":{"type":"assistantMessage","message":{"text":"finished"}}}}
+{"t":37981,"frame":{"delta":{"type":"step-completed","stepId":4,"stepDurationMs":5354}}}
+{"t":37998,"frame":{"delta":{"type":"turn-ended","usage":{"inputTokens":15798,"outputTokens":151,"cacheReadTokens":7104,"cacheWriteTokens":0}}}}
+{"t":37998,"frame":{"message":{"type":"usage","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","usage":{"inputTokens":15798,"outputTokens":151,"cacheReadTokens":7104,"cacheWriteTokens":0,"totalTokens":15949}}}}
+{"t":38440,"frame":{"message":{"type":"status","agent_id":"agent-4ce78c5f-a468-43a5-93b2-25efe63ef62b","run_id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","status":"FINISHED"}}}
+{"t":38441,"frame":{"status":"finished"}}
+{"t":38447,"frame":{"result":{"id":"run-8566b4c9-6515-4afa-b716-0fef4365add4","requestId":"4b5eb0a4-a860-4302-84ff-faee953b55dd","status":"finished","result":"finished","model":{"id":"composer-2.5"},"durationMs":26983,"usage":{"inputTokens":15798,"outputTokens":151,"cacheReadTokens":7104,"cacheWriteTokens":0,"totalTokens":15949}}}}
+{"t":38447,"close":true}

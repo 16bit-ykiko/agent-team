@@ -11,6 +11,7 @@ import { z } from "zod";
 import { ClaudeSession, type StreamEvent } from "../../src/session/claude";
 import { CodexSession } from "../../src/session/codex";
 import type { RpcMessage, Transport } from "../../src/session/codex-rpc";
+import { CursorSession, type CursorSdk } from "../../src/session/cursor";
 import { LocalHost, HostRegistry, type HostSessionHandle } from "../../src/session/host";
 import type { PanelToolset } from "../../src/project/tools";
 import { Workspace, type Message, type WorkspaceCallbacks } from "../../src/workspace/workspace";
@@ -258,7 +259,10 @@ function makeWorkspace(model: string) {
     onMessageDone: () => {},
   };
   const ws = new Workspace("ws", "t", "p", "local", RECORD_CWD, registry, cb);
-  ws.addAgent("A", model, "🤖", "#888", { backend: backendForModel(model) });
+  const backend = backendForModel(model);
+  // The recording's agent stands in for the SDK, so no real key is read.
+  const providerEnv = backend === "cursor" ? { CURSOR_API_KEY: "replay" } : undefined;
+  ws.addAgent("A", model, "🤖", "#888", { backend, providerEnv });
   return { ws, host };
 }
 
@@ -303,6 +307,7 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
 
   const live = { feeder: null as Feeder<unknown> | null };
   const player = new AppServerPlayer();
+  const cursor = new CursorPlayer();
   // The recording's own clock, so times in the transcript (wake-ups) are
   // the same on every run. recordedAt is stamped when the capture ends.
   const end = rec.entries.at(-1)?.t ?? 0;
@@ -328,6 +333,8 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
         return q as unknown as Query;
       },
     };
+  } else if (backend === "cursor") {
+    CursorSession.sdk = cursor.sdk;
   } else {
     // Only this replay's sessions: one a failed replay left behind must not
     // write into the next one's recording.
@@ -348,6 +355,7 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
     if (c.op === "stop_task" && c.taskId) ws.cancelSubagent([...ws.agents.keys()][0], c.taskId);
     await flush();
   };
+  let pending: Promise<void> | null = null;
   try {
     if (backend === "codex") {
       await replayCodex(rec, ws, host, player, tools, at, attach);
@@ -358,13 +366,18 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
         limits,
         sessions: host.created,
         sent: player.sent,
+        sdkCalls: [],
+        sends: [],
       };
     }
     for (const [i, e] of rec.entries.entries()) {
       at(e.t);
       if ("step" in e) {
         if (e.step.op === "send") {
-          await ws.sendMessage(e.step.text);
+          pending = ws.sendMessage(e.step.text);
+          // Claude's send resolves once the query is up, cursor's only
+          // when its run has ended.
+          if (backend === "claude") await pending;
           await flush();
           attach();
         } else if (e.step.op === "end") {
@@ -379,7 +392,8 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
           if (next && "control" in next) await control(next.control);
         }
       } else if ("frame" in e) {
-        live.feeder?.push(e.frame);
+        if (backend === "cursor") cursor.play(e.frame as Record<string, unknown>);
+        else live.feeder?.push(e.frame);
         await flush();
       } else if ("error" in e) {
         live.feeder?.fail(new Error(e.error));
@@ -387,14 +401,121 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
       } else if ("close" in e) {
         live.feeder?.end();
         await flush();
+        if (pending) await pending;
       }
     }
     await flush();
   } finally {
     ClaudeSession.sdk = null;
     CodexSession.hooks = null;
+    CursorSession.sdk = null;
   }
-  return { messages: ws.messages, events, states, limits, sessions: host.created, sent: [] };
+  return {
+    messages: ws.messages,
+    events,
+    states,
+    limits,
+    sessions: host.created,
+    sent: [],
+    sdkCalls: cursor.calls.filter((c) => c !== "wait"),
+    sends: cursor.sends,
+  };
+}
+
+// Plays a cursor recording to the session: each SDK call it makes waits for
+// the frame that answered it (created/resumed, run, result) or threw, and a
+// frame answers only the call that produced it in the recording.
+class CursorPlayer {
+  readonly calls: string[] = [];
+  readonly sends: Array<{ model?: unknown; local?: Record<string, unknown> }> = [];
+  private pending: Partial<
+    Record<
+      "agent" | "run" | "wait",
+      { op: string; resolve(v: unknown): void; reject(e: unknown): void }
+    >
+  > = {};
+  private onDelta: ((args: { update: never }) => unknown) | undefined;
+
+  private call<T>(slot: "agent" | "run" | "wait", op: string): Promise<T> {
+    this.calls.push(op);
+    return new Promise<T>((resolve, reject) => {
+      this.pending[slot] = { op, resolve, reject };
+    });
+  }
+
+  private settle(slot: "agent" | "run" | "wait", value: unknown, failed = false): void {
+    const p = this.pending[slot];
+    delete this.pending[slot];
+    if (failed) p?.reject(value);
+    else p?.resolve(value);
+  }
+
+  readonly sdk: CursorSdk = {
+    Agent: {
+      create: () => this.call("agent", "create"),
+      resume: (id: string) => this.call("agent", `resume ${id}`),
+    },
+  };
+
+  private agent(agentId: string) {
+    return {
+      agentId,
+      [Symbol.asyncDispose]: () => Promise.resolve(),
+      send: (
+        _message: unknown,
+        options?: {
+          model?: unknown;
+          local?: Record<string, unknown>;
+          onDelta?: (args: { update: never }) => unknown;
+        },
+      ) => {
+        this.onDelta = options?.onDelta;
+        const { customTools: _, ...local } = options?.local ?? {};
+        this.sends.push({ model: options?.model, local });
+        return this.call("run", "send");
+      },
+    };
+  }
+
+  private run(id: string) {
+    return {
+      id,
+      wait: () => this.call("wait", "wait"),
+      cancel: () => {
+        this.calls.push("cancel");
+        return Promise.resolve();
+      },
+    };
+  }
+
+  play(frame: Record<string, unknown>): void {
+    const [source] = Object.keys(frame);
+    const v = frame[source] as Record<string, unknown>;
+    switch (source) {
+      case "created":
+      case "resumed": {
+        const asked = this.pending.agent?.op;
+        const recorded = source === "created" ? "create" : `resume ${v.agentId as string}`;
+        if (asked !== recorded) {
+          this.settle("agent", new Error(`recorded ${recorded}, the session asked ${asked}`), true);
+          return;
+        }
+        return this.settle("agent", this.agent(v.agentId as string));
+      }
+      case "run":
+        return this.settle("run", this.run(v.id as string));
+      case "delta":
+        void this.onDelta?.({ update: v as never });
+        return;
+      case "result":
+        return this.settle("wait", v);
+      case "thrown": {
+        const error = Object.assign(new Error(v.message as string), v);
+        const slot = v.where === "send" ? "run" : v.where === "wait" ? "wait" : "agent";
+        return this.settle(slot, error, true);
+      }
+    }
+  }
 }
 
 // A codex recording through the workspace: each step as the panel takes

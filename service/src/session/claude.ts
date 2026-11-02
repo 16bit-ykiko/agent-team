@@ -142,7 +142,7 @@ export interface UsageStats {
 
 export interface SessionConfig {
   cwd: string;
-  backend?: "claude" | "codex";
+  backend?: "claude" | "codex" | "cursor";
   model?: string;
   effort?: string;
   // Fast mode (Claude: SDK fastMode; codex: the model's fast service tier).
@@ -151,6 +151,9 @@ export interface SessionConfig {
   goal?: string;
   permissionMode?: string;
   systemPrompt?: string;
+  // Cursor: the agent and a hash of the panel instructions its conversation
+  // was last given, so a restart does not give them again.
+  panelInstructions?: string;
   providerEnv?: Record<string, string>;
 }
 

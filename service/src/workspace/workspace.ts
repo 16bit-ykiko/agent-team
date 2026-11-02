@@ -1078,7 +1078,7 @@ export class Workspace {
 
   // A session is a transcript, not tied to a model: the next turn resumes it
   // on the new one. Only within a backend (a Codex thread is not a Claude
-  // session), and only where the session can change it.
+  // session, nor a Cursor agent), and only where the session can change it.
   private handleModelCommand(arg: string, agent: AgentEntry): string {
     const { name, model: current } = agent.info;
     const backend = backendForModel(current);
@@ -1095,7 +1095,12 @@ export class Workspace {
     const next = arg;
     if (next === current) return `**${name}** already runs on **${label(current)}**.`;
     if (backendForModel(next) !== backend) {
-      return `**${name}** cannot move to \`${next}\`: a ${backend === "codex" ? "Codex thread" : "Claude session"} continues only on a ${backend === "codex" ? "Codex" : "Claude"} model.`;
+      const [kind, of] = {
+        claude: ["Claude session", "Claude"],
+        codex: ["Codex thread", "Codex"],
+        cursor: ["Cursor agent", "Cursor"],
+      }[backend];
+      return `**${name}** cannot move to \`${next}\`: a ${kind} continues only on a ${of} model.`;
     }
     if (!agent.session.setModel) {
       return `**${name}** cannot switch models; add an agent on \`${next}\` instead.`;

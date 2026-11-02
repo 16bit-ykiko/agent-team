@@ -1,0 +1,127 @@
+{"header":{"backend":"cursor","fixture":"web-tools","description":"a web search and a page fetch are tool calls with their results","model":"cursor/composer-2.5","cli":"@cursor/sdk 1.2.0","recordedAt":"2026-11-02T12:39:11.821Z"}}
+{"t":803,"step":{"i":0,"op":"send","text":"Search the web for `IANA example domain` with your web search tool, then fetch https://example.com with your web fetch tool, one call each. Reply with the page's title only."}}
+{"t":7957,"frame":{"created":{"agentId":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679"}}}
+{"t":27621,"frame":{"run":{"id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","requestId":"9b13676c-b24b-4d87-8389-e4ad31c5625b","status":"running"}}}
+{"t":27624,"frame":{"message":{"type":"status","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","status":"RUNNING"}}}
+{"t":27624,"step":{"i":1,"op":"wait","for":"result"}}
+{"t":32706,"frame":{"delta":{"type":"thinking-delta","text":"I"}}}
+{"t":32706,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"I"}}}
+{"t":32788,"frame":{"delta":{"type":"thinking-delta","text":" will search for \"IAN"}}}
+{"t":32788,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":" will search for \"IAN"}}}
+{"t":32789,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":32806,"frame":{"delta":{"type":"thinking-delta","text":"A example domain\" and"}}}
+{"t":32806,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"A example domain\" and"}}}
+{"t":32807,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":32824,"frame":{"delta":{"type":"thinking-delta","text":" fetch https://example"}}}
+{"t":32824,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":" fetch https://example"}}}
+{"t":32824,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":33105,"frame":{"delta":{"type":"thinking-delta","text":".com to return its title"}}}
+{"t":33105,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":".com to return its title"}}}
+{"t":33105,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":33119,"frame":{"delta":{"type":"thinking-delta","text":"."}}}
+{"t":33119,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"."}}}
+{"t":33120,"frame":{"step":{"type":"thinkingMessage","message":{"text":"I will search for \"IANA example domain\" and fetch https://example.com to return its title.","thinkingDurationMs":398}}}}
+{"t":33120,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":398}}}
+{"t":33120,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"","thinking_duration_ms":398}}}
+{"t":33120,"frame":{"delta":{"type":"text-delta","text":"Discover"}}}
+{"t":33120,"frame":{"message":{"type":"assistant","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","message":{"role":"assistant","content":[{"type":"text","text":"Discover"}]}}}}
+{"t":33121,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":33121,"frame":{"delta":{"type":"text-delta","text":"ing and"}}}
+{"t":33121,"frame":{"message":{"type":"assistant","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","message":{"role":"assistant","content":[{"type":"text","text":"ing and"}]}}}}
+{"t":33121,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":33121,"frame":{"delta":{"type":"text-delta","text":" invoking"}}}
+{"t":33121,"frame":{"message":{"type":"assistant","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","message":{"role":"assistant","content":[{"type":"text","text":" invoking"}]}}}}
+{"t":33121,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":33121,"frame":{"delta":{"type":"text-delta","text":" the"}}}
+{"t":33121,"frame":{"message":{"type":"assistant","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","message":{"role":"assistant","content":[{"type":"text","text":" the"}]}}}}
+{"t":33121,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":33121,"frame":{"delta":{"type":"text-delta","text":" web search and fetch"}}}
+{"t":33121,"frame":{"message":{"type":"assistant","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","message":{"role":"assistant","content":[{"type":"text","text":" web search and fetch"}]}}}}
+{"t":33121,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":33121,"frame":{"delta":{"type":"text-delta","text":" tools.\n\n\n"}}}
+{"t":33121,"frame":{"message":{"type":"assistant","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","message":{"role":"assistant","content":[{"type":"text","text":" tools.\n\n\n"}]}}}}
+{"t":33121,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":33122,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":33122,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":33123,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":33123,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":33124,"frame":{"step":{"type":"assistantMessage","message":{"text":"Discovering and invoking the web search and fetch tools.\n\n\n"}}}}
+{"t":33124,"frame":{"delta":{"type":"tool-requests-listed","callCount":1}}}
+{"t":33142,"frame":{"delta":{"type":"token-delta","tokens":120}}}
+{"t":33794,"frame":{"delta":{"type":"thinking-delta","text":"I"}}}
+{"t":33794,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"I"}}}
+{"t":33861,"frame":{"delta":{"type":"thinking-delta","text":" need to check the tool"}}}
+{"t":33861,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":" need to check the tool"}}}
+{"t":33862,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":33878,"frame":{"delta":{"type":"thinking-delta","text":" schemas before calling"}}}
+{"t":33878,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":" schemas before calling"}}}
+{"t":33878,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":33916,"frame":{"delta":{"type":"thinking-delta","text":" them."}}}
+{"t":33916,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":" them."}}}
+{"t":33916,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":33916,"frame":{"step":{"type":"thinkingMessage","message":{"text":"I need to check the tool schemas before calling them.","thinkingDurationMs":109}}}}
+{"t":33916,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":109}}}
+{"t":33916,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"","thinking_duration_ms":109}}}
+{"t":33916,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":33916,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":33916,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":33916,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":33917,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":33917,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":33917,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":33917,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":33930,"frame":{"delta":{"type":"tool-requests-listed","callCount":2}}}
+{"t":33930,"frame":{"delta":{"type":"token-delta","tokens":158}}}
+{"t":33944,"frame":{"delta":{"type":"token-delta","tokens":219}}}
+{"t":35080,"frame":{"delta":{"type":"thinking-delta","text":"Running"}}}
+{"t":35080,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"Running"}}}
+{"t":35081,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":35100,"frame":{"delta":{"type":"thinking-delta","text":" both tools in parallel"}}}
+{"t":35100,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":" both tools in parallel"}}}
+{"t":35100,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":35132,"frame":{"delta":{"type":"thinking-delta","text":"."}}}
+{"t":35132,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"."}}}
+{"t":35133,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":39}}}
+{"t":35133,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"","thinking_duration_ms":39}}}
+{"t":35133,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":35133,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":35133,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":35133,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":35133,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":35133,"frame":{"delta":{"type":"token-delta","tokens":27}}}
+{"t":35135,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":35135,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":35135,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":35135,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":35135,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":35152,"frame":{"delta":{"type":"token-delta","tokens":7}}}
+{"t":35156,"frame":{"delta":{"type":"tool-requests-listed","callCount":2}}}
+{"t":36329,"frame":{"delta":{"type":"token-delta","tokens":52}}}
+{"t":39799,"frame":{"delta":{"type":"token-delta","tokens":2339}}}
+{"t":40384,"frame":{"delta":{"type":"thinking-delta","text":"I"}}}
+{"t":40385,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"I"}}}
+{"t":40703,"frame":{"delta":{"type":"thinking-delta","text":" will fetch the page"}}}
+{"t":40703,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":" will fetch the page"}}}
+{"t":40703,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":40704,"frame":{"delta":{"type":"thinking-delta","text":" and return only its"}}}
+{"t":40704,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":" and return only its"}}}
+{"t":40704,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":40704,"frame":{"delta":{"type":"thinking-delta","text":" title."}}}
+{"t":40704,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":" title."}}}
+{"t":40704,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":40704,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":187}}}
+{"t":40704,"frame":{"message":{"type":"thinking","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","text":"","thinking_duration_ms":187}}}
+{"t":40704,"frame":{"delta":{"type":"text-delta","text":"Example"}}}
+{"t":40704,"frame":{"message":{"type":"assistant","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","message":{"role":"assistant","content":[{"type":"text","text":"Example"}]}}}}
+{"t":40704,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":40704,"frame":{"delta":{"type":"text-delta","text":" Domain"}}}
+{"t":40704,"frame":{"message":{"type":"assistant","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","message":{"role":"assistant","content":[{"type":"text","text":" Domain"}]}}}}
+{"t":40704,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":40705,"frame":{"step":{"type":"assistantMessage","message":{"text":"Example Domain"}}}}
+{"t":40705,"frame":{"delta":{"type":"step-completed","stepId":11,"stepDurationMs":9088}}}
+{"t":40708,"frame":{"delta":{"type":"turn-ended","usage":{"inputTokens":37617,"outputTokens":359,"cacheReadTokens":22912,"cacheWriteTokens":0}}}}
+{"t":40708,"frame":{"message":{"type":"usage","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","usage":{"inputTokens":37617,"outputTokens":359,"cacheReadTokens":22912,"cacheWriteTokens":0,"totalTokens":37976}}}}
+{"t":41064,"frame":{"message":{"type":"status","agent_id":"agent-97b1f720-68df-4c3f-97fe-57e6d0bf0679","run_id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","status":"FINISHED"}}}
+{"t":41065,"frame":{"status":"finished"}}
+{"t":41071,"frame":{"result":{"id":"run-1b4fd5a7-a7c0-4226-853a-238740262617","requestId":"9b13676c-b24b-4d87-8389-e4ad31c5625b","status":"finished","result":"Example Domain","model":{"id":"composer-2.5"},"durationMs":33104,"usage":{"inputTokens":37617,"outputTokens":359,"cacheReadTokens":22912,"cacheWriteTokens":0,"totalTokens":37976}}}}
+{"t":41071,"close":true}

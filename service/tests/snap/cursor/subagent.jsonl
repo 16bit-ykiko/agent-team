@@ -1,0 +1,147 @@
+{"header":{"backend":"cursor","fixture":"subagent","description":"a subagent's own steps arrive nested in its task call's deltas","model":"cursor/composer-2.5","cli":"@cursor/sdk 1.2.0","recordedAt":"2026-11-02T12:40:44.981Z"}}
+{"t":807,"step":{"i":0,"op":"send","text":"Start exactly one subagent with your task tool, in the foreground, with the prompt: `Run the shell command echo sub-ok and reply with its output.` Wait for it, then reply with what it returned."}}
+{"t":4440,"frame":{"created":{"agentId":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d"}}}
+{"t":7712,"frame":{"run":{"id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","requestId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae","status":"running"}}}
+{"t":7714,"frame":{"message":{"type":"status","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","status":"RUNNING"}}}
+{"t":7714,"step":{"i":1,"op":"wait","for":"result"}}
+{"t":10508,"frame":{"delta":{"type":"thinking-delta","text":"Starting"}}}
+{"t":10508,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"Starting"}}}
+{"t":10508,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":10576,"frame":{"delta":{"type":"thinking-delta","text":" one foreground subagent"}}}
+{"t":10576,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":" one foreground subagent"}}}
+{"t":10576,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":10576,"frame":{"delta":{"type":"thinking-delta","text":" with the Task tool "}}}
+{"t":10576,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":" with the Task tool "}}}
+{"t":10576,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":10576,"frame":{"delta":{"type":"thinking-delta","text":"and"}}}
+{"t":10576,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"and"}}}
+{"t":11041,"frame":{"delta":{"type":"thinking-delta","text":" the specified shell"}}}
+{"t":11041,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":" the specified shell"}}}
+{"t":11042,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":11042,"frame":{"delta":{"type":"thinking-delta","text":" command prompt."}}}
+{"t":11042,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":" command prompt."}}}
+{"t":11042,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":11042,"frame":{"step":{"type":"thinkingMessage","message":{"text":"Starting one foreground subagent with the Task tool and the specified shell command prompt.","thinkingDurationMs":536}}}}
+{"t":11042,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":536}}}
+{"t":11042,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"","thinking_duration_ms":536}}}
+{"t":11043,"frame":{"delta":{"type":"text-delta","text":"Starting"}}}
+{"t":11043,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":"Starting"}]}}}}
+{"t":11043,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":11043,"frame":{"delta":{"type":"text-delta","text":" one"}}}
+{"t":11043,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" one"}]}}}}
+{"t":11043,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":11043,"frame":{"delta":{"type":"text-delta","text":" foreground subagent with"}}}
+{"t":11043,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" foreground subagent with"}]}}}}
+{"t":11043,"frame":{"delta":{"type":"token-delta","tokens":7}}}
+{"t":11043,"frame":{"delta":{"type":"text-delta","text":" your"}}}
+{"t":11043,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" your"}]}}}}
+{"t":11043,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":11043,"frame":{"delta":{"type":"text-delta","text":" prompt"}}}
+{"t":11043,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" prompt"}]}}}}
+{"t":11043,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":11043,"frame":{"delta":{"type":"text-delta","text":"."}}}
+{"t":11044,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":"."}]}}}}
+{"t":11044,"frame":{"delta":{"type":"text-delta","text":" Checking the Task tool"}}}
+{"t":11044,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" Checking the Task tool"}]}}}}
+{"t":11044,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":11044,"frame":{"delta":{"type":"text-delta","text":" schema first"}}}
+{"t":11044,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" schema first"}]}}}}
+{"t":11044,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":11044,"frame":{"delta":{"type":"text-delta","text":".\n\n\n"}}}
+{"t":11044,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":".\n\n\n"}]}}}}
+{"t":11044,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":11045,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":11045,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":11045,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":11045,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":11078,"frame":{"step":{"type":"assistantMessage","message":{"text":"Starting one foreground subagent with your prompt. Checking the Task tool schema first.\n\n\n"}}}}
+{"t":11078,"frame":{"delta":{"type":"tool-requests-listed","callCount":1}}}
+{"t":11105,"frame":{"delta":{"type":"token-delta","tokens":1468}}}
+{"t":11838,"frame":{"delta":{"type":"thinking-delta","text":"Preparing"}}}
+{"t":11838,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"Preparing"}}}
+{"t":11839,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":11859,"frame":{"delta":{"type":"thinking-delta","text":" to invoke the Task "}}}
+{"t":11859,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":" to invoke the Task "}}}
+{"t":11859,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":11859,"frame":{"delta":{"type":"thinking-delta","text":"tool"}}}
+{"t":11859,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"tool"}}}
+{"t":11859,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":11894,"frame":{"delta":{"type":"thinking-delta","text":"."}}}
+{"t":11894,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"."}}}
+{"t":12022,"frame":{"step":{"type":"thinkingMessage","message":{"text":"Preparing to invoke the Task tool.","thinkingDurationMs":182}}}}
+{"t":12022,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":182}}}
+{"t":12022,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"","thinking_duration_ms":182}}}
+{"t":12022,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":12052,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":12052,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":12052,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":12055,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":12167,"frame":{"delta":{"type":"token-delta","tokens":36}}}
+{"t":12168,"frame":{"delta":{"type":"partial-tool-call","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","toolCall":{"type":"task","args":{"description":"Run echo sub-ok","prompt":"Run the shell command echo sub-ok and reply with its output.","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","mode":"unspecified"}},"modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x"}}}
+{"t":12168,"frame":{"message":{"type":"tool_call","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","call_id":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","name":"task","status":"running","args":{"description":"Run echo sub-ok","prompt":"Run the shell command echo sub-ok and reply with its output.","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","mode":"unspecified"}}}}
+{"t":12169,"frame":{"delta":{"type":"tool-call-started","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","toolCall":{"type":"task","args":{"description":"Run echo sub-ok","prompt":"Run the shell command echo sub-ok and reply with its output.","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","mode":"unspecified"}},"modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x"}}}
+{"t":12169,"frame":{"message":{"type":"tool_call","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","call_id":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","name":"task","status":"running","args":{"description":"Run echo sub-ok","prompt":"Run the shell command echo sub-ok and reply with its output.","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","mode":"unspecified"}}}}
+{"t":12202,"frame":{"delta":{"type":"tool-requests-listed","callCount":1}}}
+{"t":14366,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"thinking-delta","text":"Running"}}}}
+{"t":14422,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"thinking-delta","text":" `echo sub-ok` and will"}}}}
+{"t":14422,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"thinking-delta","text":" reply with its output"}}}}
+{"t":14442,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"thinking-delta","text":"."}}}}
+{"t":14442,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"thinking-completed","thinkingDurationMs":68}}}}
+{"t":14443,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"tool-call-started","callId":"tool_a4139d6b-da23-4b05-8965-149c71599c8","toolCall":{"type":"shell","args":{"command":"echo sub-ok","timeout":30000}},"modelCallId":"57994556-88c1-4fa0-aaf0-720dd305eb4d-0-2rwp"}}}}
+{"t":14452,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"tool-requests-listed","callCount":1}}}}
+{"t":14818,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"tool-call-completed","callId":"tool_a4139d6b-da23-4b05-8965-149c71599c8","toolCall":{"type":"shell","args":{"command":"echo sub-ok","timeout":30000},"result":{"status":"success","value":{"exitCode":0,"signal":"","stdout":"sub-ok\n","stderr":"","executionTime":351}}},"modelCallId":"57994556-88c1-4fa0-aaf0-720dd305eb4d-0-2rwp"}}}}
+{"t":15887,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"thinking-delta","text":"The"}}}}
+{"t":15898,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"thinking-delta","text":" command ran successfully"}}}}
+{"t":15926,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"thinking-delta","text":" and output \"sub-ok\"."}}}}
+{"t":15946,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"thinking-completed","thinkingDurationMs":54}}}}
+{"t":15946,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"text-delta","text":"Output"}}}}
+{"t":15946,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"text-delta","text":":\n\n```\nsub-"}}}}
+{"t":15946,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"text-delta","text":"ok\n```"}}}}
+{"t":16605,"frame":{"delta":{"type":"tool-call-delta","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x","taskUpdate":{"type":"step-completed","stepId":4,"stepDurationMs":3088}}}}
+{"t":16620,"frame":{"step":{"type":"toolCall","message":{"type":"task","args":{"description":"Run echo sub-ok","prompt":"Run the shell command echo sub-ok and reply with its output.","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","mode":"unspecified"},"result":{"status":"success","value":{"conversationSteps":[{"thinkingMessage":{"text":"Running `echo sub-ok` and will reply with its output.","durationMs":68,"startedAtMs":"1793623241311","completedAtMs":"1793623241379"}},{"toolCall":{"shellToolCall":{"args":{"command":"echo sub-ok","timeout":30000,"toolCallId":"tool_a4139d6b-da23-4b05-8965-149c71599c8","simpleCommands":["echo"],"parsingResult":{"executableCommands":[{"name":"echo","args":[{"type":"word","value":"sub-ok"}],"fullText":"echo sub-ok"}]},"fileOutputThresholdBytes":"40000","timeoutBehavior":"TIMEOUT_BEHAVIOR_BACKGROUND","hardTimeout":86400000,"description":"Echo sub-ok to stdout","closeStdin":true,"conversationId":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","requestId":"57994556-88c1-4fa0-aaf0-720dd305eb4d"},"result":{"success":{"command":"echo sub-ok","stdout":"sub-ok\n","executionTime":351,"interleavedOutput":"sub-ok\n","localExecutionTimeMs":21},"isBackground":false},"description":"Echo sub-ok to stdout"},"toolCallId":"tool_a4139d6b-da23-4b05-8965-149c71599c8","startedAtMs":"1793623241384","completedAtMs":"1793623241762"}},{"thinkingMessage":{"text":"The command ran successfully and output \"sub-ok\".","durationMs":54,"startedAtMs":"1793623242832","completedAtMs":"1793623242886"}},{"assistantMessage":{"text":"Output:\n\n```\nsub-ok\n```","startedAtMs":"1793623242887","completedAtMs":"1793623242893"}}],"agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","isBackground":false,"durationMs":4447,"backgroundReason":"unspecified"}}}}}}
+{"t":16620,"frame":{"delta":{"type":"tool-call-completed","callId":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","toolCall":{"type":"task","args":{"description":"Run echo sub-ok","prompt":"Run the shell command echo sub-ok and reply with its output.","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","mode":"unspecified"},"result":{"status":"success","value":{"conversationSteps":[{"thinkingMessage":{"text":"Running `echo sub-ok` and will reply with its output.","durationMs":68,"startedAtMs":"1793623241311","completedAtMs":"1793623241379"}},{"toolCall":{"shellToolCall":{"args":{"command":"echo sub-ok","timeout":30000,"toolCallId":"tool_a4139d6b-da23-4b05-8965-149c71599c8","simpleCommands":["echo"],"parsingResult":{"executableCommands":[{"name":"echo","args":[{"type":"word","value":"sub-ok"}],"fullText":"echo sub-ok"}]},"fileOutputThresholdBytes":"40000","timeoutBehavior":"TIMEOUT_BEHAVIOR_BACKGROUND","hardTimeout":86400000,"description":"Echo sub-ok to stdout","closeStdin":true,"conversationId":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","requestId":"57994556-88c1-4fa0-aaf0-720dd305eb4d"},"result":{"success":{"command":"echo sub-ok","stdout":"sub-ok\n","executionTime":351,"interleavedOutput":"sub-ok\n","localExecutionTimeMs":21},"isBackground":false},"description":"Echo sub-ok to stdout"},"toolCallId":"tool_a4139d6b-da23-4b05-8965-149c71599c8","startedAtMs":"1793623241384","completedAtMs":"1793623241762"}},{"thinkingMessage":{"text":"The command ran successfully and output \"sub-ok\".","durationMs":54,"startedAtMs":"1793623242832","completedAtMs":"1793623242886"}},{"assistantMessage":{"text":"Output:\n\n```\nsub-ok\n```","startedAtMs":"1793623242887","completedAtMs":"1793623242893"}}],"agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","isBackground":false,"durationMs":4447,"backgroundReason":"unspecified"}}},"modelCallId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae-1-yd2x"}}}
+{"t":16620,"frame":{"message":{"type":"tool_call","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","call_id":"tool_c4903049-23a0-4515-a4af-4ee3799eabc","name":"task","status":"completed","args":{"description":"Run echo sub-ok","prompt":"Run the shell command echo sub-ok and reply with its output.","subagentType":{"kind":"unspecified"},"model":"composer-2.5-fast","agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","mode":"unspecified"},"result":{"status":"success","value":{"conversationSteps":[{"thinkingMessage":{"text":"Running `echo sub-ok` and will reply with its output.","durationMs":68,"startedAtMs":"1793623241311","completedAtMs":"1793623241379"}},{"toolCall":{"shellToolCall":{"args":{"command":"echo sub-ok","timeout":30000,"toolCallId":"tool_a4139d6b-da23-4b05-8965-149c71599c8","simpleCommands":["echo"],"parsingResult":{"executableCommands":[{"name":"echo","args":[{"type":"word","value":"sub-ok"}],"fullText":"echo sub-ok"}]},"fileOutputThresholdBytes":"40000","timeoutBehavior":"TIMEOUT_BEHAVIOR_BACKGROUND","hardTimeout":86400000,"description":"Echo sub-ok to stdout","closeStdin":true,"conversationId":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","requestId":"57994556-88c1-4fa0-aaf0-720dd305eb4d"},"result":{"success":{"command":"echo sub-ok","stdout":"sub-ok\n","executionTime":351,"interleavedOutput":"sub-ok\n","localExecutionTimeMs":21},"isBackground":false},"description":"Echo sub-ok to stdout"},"toolCallId":"tool_a4139d6b-da23-4b05-8965-149c71599c8","startedAtMs":"1793623241384","completedAtMs":"1793623241762"}},{"thinkingMessage":{"text":"The command ran successfully and output \"sub-ok\".","durationMs":54,"startedAtMs":"1793623242832","completedAtMs":"1793623242886"}},{"assistantMessage":{"text":"Output:\n\n```\nsub-ok\n```","startedAtMs":"1793623242887","completedAtMs":"1793623242893"}}],"agentId":"3988db84-fb76-449f-b6d1-60e8e71f08be","isBackground":false,"durationMs":4447,"backgroundReason":"unspecified"}}}}}
+{"t":16634,"frame":{"delta":{"type":"token-delta","tokens":56}}}
+{"t":17432,"frame":{"delta":{"type":"thinking-delta","text":"The"}}}
+{"t":17432,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"The"}}}
+{"t":17450,"frame":{"delta":{"type":"thinking-delta","text":" subagent returned \""}}}
+{"t":17450,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":" subagent returned \""}}}
+{"t":17450,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":17486,"frame":{"delta":{"type":"thinking-delta","text":"sub-ok\"."}}}
+{"t":17486,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"sub-ok\"."}}}
+{"t":17486,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":17486,"frame":{"step":{"type":"thinkingMessage","message":{"text":"The subagent returned \"sub-ok\".","thinkingDurationMs":50}}}}
+{"t":17486,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":50}}}
+{"t":17486,"frame":{"message":{"type":"thinking","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","text":"","thinking_duration_ms":50}}}
+{"t":17486,"frame":{"delta":{"type":"text-delta","text":"The"}}}
+{"t":17486,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":"The"}]}}}}
+{"t":17486,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":17486,"frame":{"delta":{"type":"text-delta","text":" subagent ran"}}}
+{"t":17486,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" subagent ran"}]}}}}
+{"t":17486,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":17486,"frame":{"delta":{"type":"text-delta","text":" `"}}}
+{"t":17486,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" `"}]}}}}
+{"t":17486,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":17486,"frame":{"delta":{"type":"text-delta","text":"echo sub-ok"}}}
+{"t":17486,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":"echo sub-ok"}]}}}}
+{"t":17486,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":17486,"frame":{"delta":{"type":"text-delta","text":"` and reported"}}}
+{"t":17486,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":"` and reported"}]}}}}
+{"t":17486,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":17487,"frame":{"delta":{"type":"text-delta","text":" this"}}}
+{"t":17487,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" this"}]}}}}
+{"t":17487,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":17487,"frame":{"delta":{"type":"text-delta","text":" output:\n\n**`"}}}
+{"t":17487,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":" output:\n\n**`"}]}}}}
+{"t":17487,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":17487,"frame":{"delta":{"type":"text-delta","text":"sub-ok`**"}}}
+{"t":17487,"frame":{"message":{"type":"assistant","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","message":{"role":"assistant","content":[{"type":"text","text":"sub-ok`**"}]}}}}
+{"t":17487,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":17492,"frame":{"step":{"type":"assistantMessage","message":{"text":"The subagent ran `echo sub-ok` and reported this output:\n\n**`sub-ok`**"}}}}
+{"t":17492,"frame":{"delta":{"type":"step-completed","stepId":7,"stepDurationMs":7747}}}
+{"t":17506,"frame":{"delta":{"type":"turn-ended","usage":{"inputTokens":28202,"outputTokens":356,"cacheReadTokens":15552,"cacheWriteTokens":0}}}}
+{"t":17506,"frame":{"message":{"type":"usage","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","usage":{"inputTokens":28202,"outputTokens":356,"cacheReadTokens":15552,"cacheWriteTokens":0,"totalTokens":28558}}}}
+{"t":17893,"frame":{"message":{"type":"status","agent_id":"agent-f0febb7e-5fd0-4c07-adc7-8381ce58145d","run_id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","status":"FINISHED"}}}
+{"t":17894,"frame":{"status":"finished"}}
+{"t":17900,"frame":{"result":{"id":"run-8af7f775-922b-4205-ad33-b2461ce0a69e","requestId":"0794a7b4-7b47-4305-b74c-34ff2c59fdae","status":"finished","result":"The subagent ran `echo sub-ok` and reported this output:\n\n**`sub-ok`**","model":{"id":"composer-2.5"},"durationMs":13451,"usage":{"inputTokens":28202,"outputTokens":356,"cacheReadTokens":15552,"cacheWriteTokens":0,"totalTokens":28558}}}}
+{"t":17900,"close":true}

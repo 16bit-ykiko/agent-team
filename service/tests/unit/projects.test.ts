@@ -319,6 +319,23 @@ describe("ProjectManager", () => {
     });
   });
 
+  it("takes a Cursor model for the lead and its workers, never a Codex one", async () => {
+    const { manager, root, workspaces, call } = setup();
+    fs.mkdirSync(path.join(root, "wt"), { recursive: true });
+    expect(() => manager.create("x", root, "gpt-5.5")).toThrow("needs a Claude or Cursor model");
+    const project = manager.create("clice", root, "cursor/composer-2.5");
+    const lead = workspaces.get(project.leadWorkspaceId!)!;
+    expect([...lead.agents.values()][0].info.model).toBe("cursor/composer-2.5");
+    await call(lead, "start_session", {
+      title: "w",
+      cwd: "wt",
+      task: "t",
+      model: "cursor/grok-4.7",
+    });
+    const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
+    expect([...worker.agents.values()][0].info.model).toBe("cursor/grok-4.7");
+  });
+
   it("refuses bad input before creating anything", async () => {
     const { create, call, workspaces } = setup();
     const { lead } = create("clice");

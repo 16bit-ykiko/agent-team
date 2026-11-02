@@ -1,0 +1,4 @@
+{"header":{"backend":"cursor","fixture":"bad-model","description":"a model id Cursor does not know fails the turn with the SDK's error","model":"cursor/no-such-model","cli":"@cursor/sdk 1.2.0","recordedAt":"2026-11-02T12:09:40.042Z"}}
+{"t":716,"step":{"i":0,"op":"send","text":"Reply with the single word ok."}}
+{"t":115407,"frame":{"thrown":{"where":"create","name":"ConfigurationError","isRetryable":false,"message":"Cannot use this model: no-such-model. Available models: auto-smart, default, grok-4.7, grok-4.6, composer-2.5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, gemini-4-argon, muse-wonder-1.0, gpt-5.6-sol, gpt-5.5, claude-fable-5-1, claude-fable-5, grok-4.5, gemini-3.8-flash, gemini-3.7-flash, muse-spark-1.3, gpt-5.6-terra, claude-sonnet-5-5, claude-sonnet-5, claude-sonnet-4-6, composer-2, gpt-5.3…(+435)"}}}
+{"t":115407,"step":{"i":1,"op":"wait","for":"result"}}

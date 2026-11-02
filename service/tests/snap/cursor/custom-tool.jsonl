@@ -1,0 +1,130 @@
+{"header":{"backend":"cursor","fixture":"custom-tool","description":"a custom tool runs in our process: its call, its result and its thrown error","model":"cursor/composer-2.5","cli":"@cursor/sdk 1.2.0","recordedAt":"2026-11-02T12:07:03.896Z"}}
+{"t":739,"step":{"i":0,"op":"send","text":"Use the lookup_color tool for Alice, then for Bob, one call each. Reply with Alice's colour and, for Bob, the error the tool gave."}}
+{"t":3933,"frame":{"created":{"agentId":"agent-699bb9b0-677d-4167-8f1e-61af63823903"}}}
+{"t":24989,"frame":{"run":{"id":"run-3614e080-36ec-4295-9b12-7ea633355f23","requestId":"8ce9773b-2b79-4273-864c-2b1b470e9fea","status":"running"}}}
+{"t":24992,"frame":{"message":{"type":"status","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","status":"RUNNING"}}}
+{"t":24992,"step":{"i":1,"op":"wait","for":"result"}}
+{"t":29849,"frame":{"delta":{"type":"thinking-delta","text":"I"}}}
+{"t":29849,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":"I"}}}
+{"t":29888,"frame":{"delta":{"type":"thinking-delta","text":" will call the lookup"}}}
+{"t":29888,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":" will call the lookup"}}}
+{"t":29888,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":29891,"frame":{"delta":{"type":"thinking-delta","text":"_color tool for Alice"}}}
+{"t":29892,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":"_color tool for Alice"}}}
+{"t":29892,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":29988,"frame":{"delta":{"type":"thinking-delta","text":" and Bob."}}}
+{"t":29988,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":" and Bob."}}}
+{"t":29988,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":29989,"frame":{"step":{"type":"thinkingMessage","message":{"text":"I will call the lookup_color tool for Alice and Bob.","thinkingDurationMs":126}}}}
+{"t":29989,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":126}}}
+{"t":29989,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":"","thinking_duration_ms":126}}}
+{"t":29989,"frame":{"delta":{"type":"text-delta","text":"Checking the `"}}}
+{"t":29989,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":"Checking the `"}]}}}}
+{"t":29989,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":29989,"frame":{"delta":{"type":"text-delta","text":"lookup_color` tool"}}}
+{"t":29989,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":"lookup_color` tool"}]}}}}
+{"t":29989,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":29989,"frame":{"delta":{"type":"text-delta","text":" schema, then calling"}}}
+{"t":29989,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":" schema, then calling"}]}}}}
+{"t":29990,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":29990,"frame":{"delta":{"type":"text-delta","text":" it for Alice and"}}}
+{"t":29990,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":" it for Alice and"}]}}}}
+{"t":29990,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":29990,"frame":{"delta":{"type":"text-delta","text":" Bob"}}}
+{"t":29990,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":" Bob"}]}}}}
+{"t":29990,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":29990,"frame":{"delta":{"type":"text-delta","text":".\n"}}}
+{"t":29990,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]}}}}
+{"t":29990,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":29991,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":29991,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":29991,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":29991,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":29995,"frame":{"step":{"type":"assistantMessage","message":{"text":"Checking the `lookup_color` tool schema, then calling it for Alice and Bob.\n"}}}}
+{"t":29995,"frame":{"delta":{"type":"tool-requests-listed","callCount":1}}}
+{"t":31132,"frame":{"delta":{"type":"token-delta","tokens":52}}}
+{"t":31763,"frame":{"delta":{"type":"thinking-delta","text":"I"}}}
+{"t":31763,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":"I"}}}
+{"t":31789,"frame":{"delta":{"type":"thinking-delta","text":" have the schema. I'll"}}}
+{"t":31789,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":" have the schema. I'll"}}}
+{"t":31789,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":31841,"frame":{"delta":{"type":"thinking-delta","text":" call lookup_color for"}}}
+{"t":31841,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":" call lookup_color for"}}}
+{"t":31841,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":31965,"frame":{"delta":{"type":"thinking-delta","text":" Alice and Bob in parallel"}}}
+{"t":31966,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":" Alice and Bob in parallel"}}}
+{"t":31966,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":31989,"frame":{"delta":{"type":"thinking-delta","text":"."}}}
+{"t":31989,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":"."}}}
+{"t":31989,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":31989,"frame":{"step":{"type":"thinkingMessage","message":{"text":"I have the schema. I'll call lookup_color for Alice and Bob in parallel.","thinkingDurationMs":204}}}}
+{"t":31989,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":204}}}
+{"t":31989,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":"","thinking_duration_ms":204}}}
+{"t":31989,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":31989,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":31989,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31989,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":31989,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31989,"frame":{"delta":{"type":"token-delta","tokens":13}}}
+{"t":31989,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31989,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31990,"frame":{"delta":{"type":"tool-call-started","callId":"tool_793c24b3-aeff-4b08-bae2-c4de9bcd3ea","toolCall":{"type":"mcp","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Alice"}}},"modelCallId":"8ce9773b-2b79-4273-864c-2b1b470e9fea-1-34aa"}}}
+{"t":31990,"frame":{"message":{"type":"tool_call","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","call_id":"tool_793c24b3-aeff-4b08-bae2-c4de9bcd3ea","name":"mcp","status":"running","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Alice"}}}}}
+{"t":31992,"frame":{"tool":{"name":"lookup_color","args":{"name":"Alice"},"context":{"toolCallId":"tool_793c24b3-aeff-4b08-bae2-c4de9bcd3ea","sessionId":"agent-699bb9b0-677d-4167-8f1e-61af63823903"},"result":"Alice's favourite colour is teal."}}}
+{"t":31992,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31993,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31994,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31994,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":31994,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31994,"frame":{"delta":{"type":"token-delta","tokens":13}}}
+{"t":31994,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31994,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":31994,"frame":{"delta":{"type":"tool-call-started","callId":"tool_66bfc223-089c-47d1-b575-aba5e6c4c74","toolCall":{"type":"mcp","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Bob"}}},"modelCallId":"8ce9773b-2b79-4273-864c-2b1b470e9fea-1-34aa"}}}
+{"t":31994,"frame":{"message":{"type":"tool_call","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","call_id":"tool_66bfc223-089c-47d1-b575-aba5e6c4c74","name":"mcp","status":"running","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Bob"}}}}}
+{"t":31996,"frame":{"delta":{"type":"tool-requests-listed","callCount":2}}}
+{"t":32291,"frame":{"step":{"type":"toolCall","message":{"type":"mcp","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Alice"}},"result":{"status":"success","value":{"content":[{"text":{"text":"Alice's favourite colour is teal."}}],"isError":false}}}}}}
+{"t":32291,"frame":{"delta":{"type":"tool-call-completed","callId":"tool_793c24b3-aeff-4b08-bae2-c4de9bcd3ea","toolCall":{"type":"mcp","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Alice"}},"result":{"status":"success","value":{"content":[{"text":{"text":"Alice's favourite colour is teal."}}],"isError":false}}},"modelCallId":"8ce9773b-2b79-4273-864c-2b1b470e9fea-1-34aa"}}}
+{"t":32291,"frame":{"message":{"type":"tool_call","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","call_id":"tool_793c24b3-aeff-4b08-bae2-c4de9bcd3ea","name":"mcp","status":"completed","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Alice"}},"result":{"status":"success","value":{"content":[{"text":{"text":"Alice's favourite colour is teal."}}],"isError":false}}}}}
+{"t":32294,"frame":{"delta":{"type":"token-delta","tokens":8}}}
+{"t":32336,"frame":{"step":{"type":"toolCall","message":{"type":"mcp","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Bob"}},"result":{"status":"error","error":{"message":"Tool execution error"}}}}}}
+{"t":32336,"frame":{"delta":{"type":"tool-call-completed","callId":"tool_66bfc223-089c-47d1-b575-aba5e6c4c74","toolCall":{"type":"mcp","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Bob"}},"result":{"status":"error","error":{"message":"Tool execution error"}}},"modelCallId":"8ce9773b-2b79-4273-864c-2b1b470e9fea-1-34aa"}}}
+{"t":32336,"frame":{"message":{"type":"tool_call","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","call_id":"tool_66bfc223-089c-47d1-b575-aba5e6c4c74","name":"mcp","status":"completed","args":{"providerIdentifier":"custom-user-tools","toolName":"lookup_color","args":{"name":"Bob"}},"result":{"status":"error","error":{"message":"Tool execution error"}}}}}
+{"t":32375,"frame":{"delta":{"type":"token-delta","tokens":12}}}
+{"t":33070,"frame":{"delta":{"type":"thinking-delta","text":"Alice"}}}
+{"t":33070,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":"Alice"}}}
+{"t":33071,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":33205,"frame":{"delta":{"type":"thinking-delta","text":"'s color is teal."}}}
+{"t":33205,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":"'s color is teal."}}}
+{"t":33205,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":33205,"frame":{"step":{"type":"thinkingMessage","message":{"text":"Alice's color is teal.","thinkingDurationMs":132}}}}
+{"t":33205,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":132}}}
+{"t":33205,"frame":{"message":{"type":"thinking","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","text":"","thinking_duration_ms":132}}}
+{"t":33205,"frame":{"delta":{"type":"text-delta","text":"**"}}}
+{"t":33205,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":"**"}]}}}}
+{"t":33205,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":33205,"frame":{"delta":{"type":"text-delta","text":"Alice:**"}}}
+{"t":33205,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":"Alice:**"}]}}}}
+{"t":33205,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":33205,"frame":{"delta":{"type":"text-delta","text":" teal  \n\n"}}}
+{"t":33205,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":" teal  \n\n"}]}}}}
+{"t":33205,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":33205,"frame":{"delta":{"type":"text-delta","text":"**Bob:** The"}}}
+{"t":33205,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":"**Bob:** The"}]}}}}
+{"t":33205,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":33205,"frame":{"delta":{"type":"text-delta","text":" tool returned:"}}}
+{"t":33205,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":" tool returned:"}]}}}}
+{"t":33205,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":33205,"frame":{"delta":{"type":"text-delta","text":" `unknown"}}}
+{"t":33205,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":" `unknown"}]}}}}
+{"t":33206,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":33206,"frame":{"delta":{"type":"text-delta","text":" person: Bob`"}}}
+{"t":33206,"frame":{"message":{"type":"assistant","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","message":{"role":"assistant","content":[{"type":"text","text":" person: Bob`"}]}}}}
+{"t":33206,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":33211,"frame":{"step":{"type":"assistantMessage","message":{"text":"**Alice:** teal  \n\n**Bob:** The tool returned: `unknown person: Bob`"}}}}
+{"t":33211,"frame":{"delta":{"type":"step-completed","stepId":8,"stepDurationMs":4094}}}
+{"t":33223,"frame":{"delta":{"type":"turn-ended","usage":{"inputTokens":24135,"outputTokens":296,"cacheReadTokens":14592,"cacheWriteTokens":0}}}}
+{"t":33223,"frame":{"message":{"type":"usage","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","usage":{"inputTokens":24135,"outputTokens":296,"cacheReadTokens":14592,"cacheWriteTokens":0,"totalTokens":24431}}}}
+{"t":33571,"frame":{"message":{"type":"status","agent_id":"agent-699bb9b0-677d-4167-8f1e-61af63823903","run_id":"run-3614e080-36ec-4295-9b12-7ea633355f23","status":"FINISHED"}}}
+{"t":33573,"frame":{"status":"finished"}}
+{"t":33579,"frame":{"result":{"id":"run-3614e080-36ec-4295-9b12-7ea633355f23","requestId":"8ce9773b-2b79-4273-864c-2b1b470e9fea","status":"finished","result":"**Alice:** teal  \n\n**Bob:** The tool returned: `unknown person: Bob`","model":{"id":"composer-2.5"},"durationMs":29636,"usage":{"inputTokens":24135,"outputTokens":296,"cacheReadTokens":14592,"cacheWriteTokens":0,"totalTokens":24431}}}}
+{"t":33579,"close":true}

@@ -690,7 +690,7 @@ export class Server {
       {
         backend,
         effort: preset?.effort,
-        permissionMode: backend === "codex" ? undefined : (permissionMode ?? "bypassPermissions"),
+        permissionMode: backend === "claude" ? (permissionMode ?? "bypassPermissions") : undefined,
         providerEnv: this.sessionEnv(model, account),
       },
       account,
@@ -710,6 +710,10 @@ export class Server {
   }
 
   private sessionEnv(model: string, account?: string): Record<string, string> | undefined {
+    if (backendForModel(model) === "cursor") {
+      const key = this.config.cursor?.api_key;
+      return key ? { CURSOR_API_KEY: key } : undefined;
+    }
     const resolved = effectiveAccount(account, this.defaultAccount, this.config.accounts);
     const provider = this.resolveProviderEnv(model);
     const acct = this.resolveAccountEnv(resolved);

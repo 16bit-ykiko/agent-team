@@ -10,10 +10,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
   { name: "Alice", avatar: "avatars/Alice.jpg", color: "#F0D264" },
 ];
 
+export type Backend = "claude" | "codex" | "cursor";
+
 export interface ModelOption {
   id: string;
   label: string;
-  backend: "claude" | "codex";
+  backend: Backend;
   effort?: string;
   // Effort levels the model actually supports. Empty array = no effort support.
   // Omitted = unknown model, fall back to the full canonical set.
@@ -26,6 +28,10 @@ export interface ModelOption {
   // Effort the backend runs at when none is set explicitly (codex model
   // metadata `default_reasoning_level`); shown so the status row is never blank.
   defaultEffort?: string;
+  // Cursor: the model parameter effort is sent as (its name varies by model)
+  // and whether the model has a `fast` parameter. A parameter left out runs
+  // at its first allowed value, not the catalog's default variant.
+  cursorParams?: { effort?: string; fast?: boolean };
 }
 
 // xhigh was introduced with Opus 4.7; older models support the 4 base levels.
@@ -42,6 +48,9 @@ const CODEX_CONTEXT = 272_000;
 const CODEX_CONTEXT_1M = 872_000;
 // Every ChatGPT codex model lists Fast as service tier "priority".
 const CODEX_FAST = "priority";
+// Cursor models are `cursor/` + the SDK's id (Cursor.models.list()), which
+// alone can collide with ours (it lists claude-opus-5-5 and gpt-5.5 too).
+const CURSOR_PREFIX = "cursor/";
 
 // The picker's list. Models dropped from it move to LEGACY_MODELS, so agents
 // still on one keep their settings until switched with /model. Opus 5.5 and
@@ -147,6 +156,55 @@ export const MODEL_OPTIONS: ModelOption[] = [
     contextWindow: CODEX_CONTEXT,
     fastTier: CODEX_FAST,
   },
+  // Cursor's own models; efforts and defaults from its catalog
+  // (Cursor.models.list(), the default variant's parameters).
+  {
+    id: "cursor/composer-2.5",
+    label: "Composer 2.5",
+    backend: "cursor",
+    effortLevels: [],
+    cursorParams: { fast: true },
+  },
+  {
+    id: "cursor/grok-4.7",
+    label: "Grok 4.7",
+    backend: "cursor",
+    defaultEffort: "high",
+    effortLevels: ["low", "medium", "high", "xhigh"],
+    cursorParams: { effort: "reasoning_effort", fast: true },
+  },
+  {
+    id: "cursor/gemini-4-argon",
+    label: "Gemini 4 Argon",
+    backend: "cursor",
+    defaultEffort: "medium",
+    effortLevels: ["low", "medium", "high"],
+    cursorParams: { effort: "reasoning_effort" },
+  },
+  {
+    id: "cursor/gemini-3.8-flash",
+    label: "Gemini 3.8 Flash",
+    backend: "cursor",
+    defaultEffort: "high",
+    effortLevels: ["low", "medium", "high"],
+    cursorParams: { effort: "reasoning_effort" },
+  },
+  {
+    id: "cursor/kimi-k3",
+    label: "Kimi K3",
+    backend: "cursor",
+    defaultEffort: "max",
+    effortLevels: ["low", "high", "max"],
+    cursorParams: { effort: "reasoning" },
+  },
+  {
+    id: "cursor/glm-5p3",
+    label: "GLM 5.3",
+    backend: "cursor",
+    defaultEffort: "max",
+    effortLevels: ["low", "high", "max"],
+    cursorParams: { effort: "reasoning" },
+  },
 ];
 
 export const LEGACY_MODELS: ModelOption[] = [
@@ -208,8 +266,28 @@ function isNewClaude(modelId: string): boolean {
   return !findModelOption(modelId) && modelId.startsWith("claude-");
 }
 
-export function backendForModel(modelId: string): "claude" | "codex" {
-  return findModelOption(modelId)?.backend ?? (modelId.startsWith("gpt-") ? "codex" : "claude");
+export function backendForModel(modelId: string): Backend {
+  const known = findModelOption(modelId)?.backend;
+  if (known) return known;
+  if (modelId.startsWith(CURSOR_PREFIX)) return "cursor";
+  return modelId.startsWith("gpt-") ? "codex" : "claude";
+}
+
+// The model as the Cursor SDK takes it: its own id, effort and fast mode as
+// the model's parameters.
+export function cursorModel(
+  modelId: string,
+  effort: string | undefined,
+  fast: boolean | undefined,
+): { id: string; params?: Array<{ id: string; value: string }> } {
+  const id = modelId.startsWith(CURSOR_PREFIX) ? modelId.slice(CURSOR_PREFIX.length) : modelId;
+  const opt = findModelOption(modelId);
+  const params: Array<{ id: string; value: string }> = [];
+  const level = effort ?? opt?.defaultEffort;
+  if (opt?.cursorParams?.effort && level)
+    params.push({ id: opt.cursorParams.effort, value: level });
+  if (opt?.cursorParams?.fast) params.push({ id: "fast", value: fast ? "true" : "false" });
+  return params.length ? { id, params } : { id };
 }
 
 // The id the backend CLI understands: codex has no `[1m]` suffix convention,
@@ -231,6 +309,7 @@ export function codexContextWindow(modelId: string): number | null {
 export function supportsFastMode(modelId: string): boolean {
   const opt = findModelOption(modelId);
   if (!opt) return isNewClaude(modelId);
+  if (opt.backend === "cursor") return Boolean(opt.cursorParams?.fast);
   return opt.backend === "claude" ? opt.id.startsWith("claude-") : Boolean(opt.fastTier);
 }
 

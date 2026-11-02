@@ -1,0 +1,73 @@
+{"header":{"backend":"cursor","fixture":"two-turns","description":"after a restart the agent is resumed by id and remembers the first turn","model":"cursor/composer-2.5","cli":"@cursor/sdk 1.2.0","recordedAt":"2026-11-02T12:04:29.976Z"}}
+{"t":731,"step":{"i":0,"op":"send","text":"Remember the word kiwi and reply with the single word ok. Do not use any tools."}}
+{"t":5001,"frame":{"created":{"agentId":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35"}}}
+{"t":21862,"frame":{"run":{"id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","requestId":"54a3760e-1381-42df-b992-41e776845e5b","status":"running"}}}
+{"t":21864,"frame":{"message":{"type":"status","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","status":"RUNNING"}}}
+{"t":21864,"step":{"i":1,"op":"wait","for":"result"}}
+{"t":25209,"frame":{"delta":{"type":"thinking-delta","text":"I"}}}
+{"t":25209,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","text":"I"}}}
+{"t":25225,"frame":{"delta":{"type":"thinking-delta","text":" will remember the word"}}}
+{"t":25225,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","text":" will remember the word"}}}
+{"t":25225,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":25262,"frame":{"delta":{"type":"thinking-delta","text":" \"kiwi\" and reply with"}}}
+{"t":25262,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","text":" \"kiwi\" and reply with"}}}
+{"t":25262,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":25369,"frame":{"delta":{"type":"thinking-delta","text":" the single word \"ok"}}}
+{"t":25369,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","text":" the single word \"ok"}}}
+{"t":25370,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":25387,"frame":{"delta":{"type":"thinking-delta","text":"\"."}}}
+{"t":25387,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","text":"\"."}}}
+{"t":25387,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":25387,"frame":{"step":{"type":"thinkingMessage","message":{"text":"I will remember the word \"kiwi\" and reply with the single word \"ok\".","thinkingDurationMs":176}}}}
+{"t":25387,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":176}}}
+{"t":25387,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","text":"","thinking_duration_ms":176}}}
+{"t":25388,"frame":{"delta":{"type":"text-delta","text":"ok"}}}
+{"t":25388,"frame":{"message":{"type":"assistant","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}}}
+{"t":25396,"frame":{"step":{"type":"assistantMessage","message":{"text":"ok"}}}}
+{"t":25396,"frame":{"delta":{"type":"step-completed","stepId":2,"stepDurationMs":812}}}
+{"t":25448,"frame":{"delta":{"type":"turn-ended","usage":{"inputTokens":7796,"outputTokens":41,"cacheReadTokens":3552,"cacheWriteTokens":0}}}}
+{"t":25448,"frame":{"message":{"type":"usage","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","usage":{"inputTokens":7796,"outputTokens":41,"cacheReadTokens":3552,"cacheWriteTokens":0,"totalTokens":7837}}}}
+{"t":25810,"frame":{"message":{"type":"status","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","status":"FINISHED"}}}
+{"t":25812,"frame":{"status":"finished"}}
+{"t":25817,"frame":{"result":{"id":"run-89aa5c0e-472c-4010-9e4b-2040f18c1a9e","requestId":"54a3760e-1381-42df-b992-41e776845e5b","status":"finished","result":"ok","model":{"id":"composer-2.5"},"durationMs":20806,"usage":{"inputTokens":7796,"outputTokens":41,"cacheReadTokens":3552,"cacheWriteTokens":0,"totalTokens":7837}}}}
+{"t":25817,"close":true}
+{"t":25817,"step":{"i":2,"op":"end"}}
+{"t":25817,"step":{"i":3,"op":"send","text":"Which word did I ask you to remember? Reply with that word only. Do not use any tools."}}
+{"t":25818,"frame":{"resumed":{"agentId":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35"}}}
+{"t":25836,"frame":{"run":{"id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","requestId":"fd89e0bc-b0f7-4fd4-ad11-6bc34825d59c","status":"running"}}}
+{"t":25836,"frame":{"message":{"type":"status","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","status":"RUNNING"}}}
+{"t":25836,"step":{"i":4,"op":"wait","for":"result"}}
+{"t":29309,"frame":{"delta":{"type":"thinking-delta","text":"The"}}}
+{"t":29309,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","text":"The"}}}
+{"t":29323,"frame":{"delta":{"type":"thinking-delta","text":" word to remember is"}}}
+{"t":29323,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","text":" word to remember is"}}}
+{"t":29323,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":29368,"frame":{"delta":{"type":"thinking-delta","text":" \"kiwi\"."}}}
+{"t":29368,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","text":" \"kiwi\"."}}}
+{"t":29368,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":29368,"frame":{"step":{"type":"thinkingMessage","message":{"text":"The word to remember is \"kiwi\".","thinkingDurationMs":55}}}}
+{"t":29368,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":55}}}
+{"t":29368,"frame":{"message":{"type":"thinking","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","text":"","thinking_duration_ms":55}}}
+{"t":29368,"frame":{"delta":{"type":"text-delta","text":"The"}}}
+{"t":29368,"frame":{"message":{"type":"assistant","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","message":{"role":"assistant","content":[{"type":"text","text":"The"}]}}}}
+{"t":29369,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":29369,"frame":{"delta":{"type":"text-delta","text":" word"}}}
+{"t":29369,"frame":{"message":{"type":"assistant","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","message":{"role":"assistant","content":[{"type":"text","text":" word"}]}}}}
+{"t":29369,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":29369,"frame":{"delta":{"type":"text-delta","text":" you asked me"}}}
+{"t":29369,"frame":{"message":{"type":"assistant","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","message":{"role":"assistant","content":[{"type":"text","text":" you asked me"}]}}}}
+{"t":29369,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":29369,"frame":{"delta":{"type":"text-delta","text":" to remember is"}}}
+{"t":29369,"frame":{"message":{"type":"assistant","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","message":{"role":"assistant","content":[{"type":"text","text":" to remember is"}]}}}}
+{"t":29369,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":29369,"frame":{"delta":{"type":"text-delta","text":" **kiwi**."}}}
+{"t":29369,"frame":{"message":{"type":"assistant","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","message":{"role":"assistant","content":[{"type":"text","text":" **kiwi**."}]}}}}
+{"t":29369,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":29375,"frame":{"step":{"type":"assistantMessage","message":{"text":"The word you asked me to remember is **kiwi**."}}}}
+{"t":29375,"frame":{"delta":{"type":"step-completed","stepId":2,"stepDurationMs":733}}}
+{"t":29391,"frame":{"delta":{"type":"turn-ended","usage":{"inputTokens":7894,"outputTokens":45,"cacheReadTokens":3552,"cacheWriteTokens":0}}}}
+{"t":29391,"frame":{"message":{"type":"usage","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","usage":{"inputTokens":7894,"outputTokens":45,"cacheReadTokens":3552,"cacheWriteTokens":0,"totalTokens":7939}}}}
+{"t":30567,"frame":{"message":{"type":"status","agent_id":"agent-e4c871b7-b0c5-415e-93cd-b9e76f683e35","run_id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","status":"FINISHED"}}}
+{"t":30568,"frame":{"status":"finished"}}
+{"t":30573,"frame":{"result":{"id":"run-4667d37d-4d70-4fc9-b832-331d50a4c7fd","requestId":"fd89e0bc-b0f7-4fd4-ad11-6bc34825d59c","status":"finished","result":"The word you asked me to remember is **kiwi**.","model":{"id":"composer-2.5"},"durationMs":4748,"usage":{"inputTokens":7894,"outputTokens":45,"cacheReadTokens":3552,"cacheWriteTokens":0,"totalTokens":7939}}}}
+{"t":30573,"close":true}

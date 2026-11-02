@@ -166,7 +166,9 @@ export class ProjectManager {
   }
 
   create(name: string, root: string, model = LEAD_MODEL): Project {
-    if (!claudeModels().includes(model)) throw new Error(`The lead needs a Claude model: ${model}`);
+    if (!panelModels().includes(model)) {
+      throw new Error(`The lead needs a Claude or Cursor model: ${model}`);
+    }
     const taken = this.store.list().find((p) => p.root === root);
     if (taken) throw new Error(`${root} is already the project "${taken.name}"`);
     const project = this.store.create(name, root);
@@ -451,7 +453,7 @@ export class ProjectManager {
     const project = link && this.store.get(link.projectId);
     if (!link || !project) return null;
     return link.role === "lead"
-      ? leadToolset(this.api, project, this.store.notesDir(project.id), claudeModels())
+      ? leadToolset(this.api, project, this.store.notesDir(project.id), panelModels())
       : workerToolset(this.api, workspace.id, project, this.store.notesDir(project.id));
   }
 
@@ -794,7 +796,7 @@ export class ProjectManager {
         `Not a directory: ${a.cwd}. Create it first (a worktree: git -C ${project.root} worktree add <path> -b <branch>).`,
       );
     }
-    const models = claudeModels();
+    const models = panelModels();
     if (a.model && !models.includes(a.model)) {
       throw new Error(`Unknown model ${a.model}; one of: ${models.join(", ")}`);
     }
@@ -1777,8 +1779,9 @@ function fromLead(m: { from?: MessageOrigin }, lead: Workspace | undefined): boo
   return m.from?.role === "lead" && !!lead && m.from.workspaceId === lead.id;
 }
 
-function claudeModels(): string[] {
-  return MODEL_OPTIONS.filter((m) => m.backend === "claude").map((m) => m.id);
+// The models whose sessions take the panel's tools: a lead's or a worker's.
+function panelModels(): string[] {
+  return MODEL_OPTIONS.filter((m) => m.backend !== "codex").map((m) => m.id);
 }
 
 function sessionState(w: Workspace): "archived" | "working" | "waiting to start" | "idle" {

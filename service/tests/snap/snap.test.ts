@@ -18,7 +18,7 @@ import {
 // Every <backend>/<name>.ts is one recorded interaction. The fixture's own
 // verify() states why it exists; the pinned transcript catches everything
 // else; the client aggregation must agree with the server's.
-for (const backend of ["claude", "codex"] as Backend[]) {
+for (const backend of ["claude", "codex", "cursor"] as Backend[]) {
   const names = listFixtures(backend);
   if (names.length === 0) continue;
   const fixtures = await Promise.all(names.map((n) => loadFixture(backend, n)));

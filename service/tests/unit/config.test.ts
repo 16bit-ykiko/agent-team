@@ -37,6 +37,21 @@ afterAll(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+describe("loadConfig cursor", () => {
+  it("reads the Cursor key, and none from a section without one", () => {
+    const withKey = writeConfig(`[cursor]\napi_key = "key_test"\n`);
+    const without = writeConfig(`[cursor]\nnote = "x"\n`);
+    try {
+      expect(loadConfig(withKey).cursor).toEqual({ api_key: "key_test" });
+      expect(loadConfig(without).cursor).toBeNull();
+      expect(loadConfig(dir).cursor).toBeNull();
+    } finally {
+      fs.rmSync(withKey, { recursive: true, force: true });
+      fs.rmSync(without, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("loadConfig accounts", () => {
   it("parses named accounts with oauth tokens and skips entries without one", () => {
     const config = loadConfig(dir);

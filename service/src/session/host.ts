@@ -8,6 +8,7 @@ import {
   BackgroundTask,
 } from "./claude";
 import { CodexSession } from "./codex";
+import { CursorSession } from "./cursor";
 import type { PanelToolset } from "../project/tools";
 
 export interface HostSessionHandle extends EventEmitter {
@@ -69,7 +70,7 @@ export class LocalHost implements Host {
   readonly label: string;
   readonly type = "local" as const;
   readonly connected = true;
-  private sessions = new Map<string, ClaudeSession | CodexSession>();
+  private sessions = new Map<string, ClaudeSession | CodexSession | CursorSession>();
 
   constructor(id: string, label: string) {
     this.id = id;
@@ -82,7 +83,11 @@ export class LocalHost implements Host {
 
   createSession(agentId: string, config: SessionConfig): HostSessionHandle {
     const session =
-      config.backend === "codex" ? new CodexSession(config) : new ClaudeSession(config);
+      config.backend === "codex"
+        ? new CodexSession(config)
+        : config.backend === "cursor"
+          ? new CursorSession(config)
+          : new ClaudeSession(config);
     this.sessions.set(agentId, session);
     return session;
   }
@@ -99,7 +104,9 @@ export class LocalHost implements Host {
     const session =
       state.config.backend === "codex"
         ? CodexSession.fromState(state)
-        : ClaudeSession.fromState(state);
+        : state.config.backend === "cursor"
+          ? CursorSession.fromState(state)
+          : ClaudeSession.fromState(state);
     this.sessions.set(agentId, session);
     return session;
   }

@@ -1,0 +1,35 @@
+{"header":{"backend":"cursor","fixture":"text-only","description":"a plain reply streams as text deltas and ends the turn with its token usage","model":"cursor/composer-2.5","cli":"@cursor/sdk 1.2.0","recordedAt":"2026-11-02T12:00:17.944Z"}}
+{"t":699,"step":{"i":0,"op":"send","text":"Reply with the single word pong. Do not use any tools."}}
+{"t":4375,"frame":{"created":{"agentId":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39"}}}
+{"t":10598,"frame":{"run":{"id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","requestId":"1a9e0df9-c1d3-40bc-80e9-6caa37c8add5","status":"running"}}}
+{"t":10601,"frame":{"message":{"type":"status","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","status":"RUNNING"}}}
+{"t":10601,"step":{"i":1,"op":"wait","for":"result"}}
+{"t":13169,"frame":{"delta":{"type":"thinking-delta","text":"The"}}}
+{"t":13170,"frame":{"message":{"type":"thinking","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","text":"The"}}}
+{"t":13170,"frame":{"delta":{"type":"thinking-delta","text":" user wants a single"}}}
+{"t":13170,"frame":{"message":{"type":"thinking","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","text":" user wants a single"}}}
+{"t":13170,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":13170,"frame":{"delta":{"type":"thinking-delta","text":" word reply: \"pong\"."}}}
+{"t":13171,"frame":{"message":{"type":"thinking","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","text":" word reply: \"pong\"."}}}
+{"t":13171,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":13171,"frame":{"delta":{"type":"thinking-delta","text":" No tools will be used"}}}
+{"t":13171,"frame":{"message":{"type":"thinking","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","text":" No tools will be used"}}}
+{"t":13171,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":13171,"frame":{"delta":{"type":"thinking-delta","text":"."}}}
+{"t":13171,"frame":{"message":{"type":"thinking","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","text":"."}}}
+{"t":13171,"frame":{"step":{"type":"thinkingMessage","message":{"text":"The user wants a single word reply: \"pong\". No tools will be used.","thinkingDurationMs":98}}}}
+{"t":13171,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":98}}}
+{"t":13171,"frame":{"message":{"type":"thinking","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","text":"","thinking_duration_ms":98}}}
+{"t":13172,"frame":{"delta":{"type":"text-delta","text":"p"}}}
+{"t":13172,"frame":{"message":{"type":"assistant","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","message":{"role":"assistant","content":[{"type":"text","text":"p"}]}}}}
+{"t":13172,"frame":{"delta":{"type":"text-delta","text":"ong"}}}
+{"t":13172,"frame":{"message":{"type":"assistant","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","message":{"role":"assistant","content":[{"type":"text","text":"ong"}]}}}}
+{"t":13172,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":13172,"frame":{"step":{"type":"assistantMessage","message":{"text":"pong"}}}}
+{"t":13172,"frame":{"delta":{"type":"step-completed","stepId":2,"stepDurationMs":1090}}}
+{"t":13177,"frame":{"delta":{"type":"turn-ended","usage":{"inputTokens":7790,"outputTokens":33,"cacheReadTokens":3552,"cacheWriteTokens":0}}}}
+{"t":13177,"frame":{"message":{"type":"usage","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","usage":{"inputTokens":7790,"outputTokens":33,"cacheReadTokens":3552,"cacheWriteTokens":0,"totalTokens":7823}}}}
+{"t":14177,"frame":{"message":{"type":"status","agent_id":"agent-f5f81655-fdd7-4326-823e-97cdbb525f39","run_id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","status":"FINISHED"}}}
+{"t":14179,"frame":{"status":"finished"}}
+{"t":14185,"frame":{"result":{"id":"run-ea11c0a4-5ae6-4b8f-8f2a-34053a0a72ae","requestId":"1a9e0df9-c1d3-40bc-80e9-6caa37c8add5","status":"finished","result":"pong","model":{"id":"composer-2.5"},"durationMs":9801,"usage":{"inputTokens":7790,"outputTokens":33,"cacheReadTokens":3552,"cacheWriteTokens":0,"totalTokens":7823}}}}
+{"t":14185,"close":true}

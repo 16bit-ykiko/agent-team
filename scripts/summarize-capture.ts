@@ -123,6 +123,30 @@ function codexFrame(m: Obj, parts: string[]): void {
 
 const DELTA = /\/(delta|outputDelta|summaryTextDelta|textDelta)$/;
 
+// Cursor frames are tagged by source (see the recorder's cursorDriver).
+function cursorFrame(f: Obj, parts: string[]): void {
+  const [source] = Object.keys(f);
+  const v = obj(f[source]);
+  parts.push(source);
+  if (source === "delta" || source === "message") {
+    parts.push(str(v.type));
+    const call = obj(v.toolCall);
+    const name = call.type ?? v.name;
+    if (name) parts.push(`${str(name)}#${tail(v.callId ?? v.call_id)}`);
+    if (v.status) parts.push(`status=${str(v.status)}`);
+    if (typeof v.text === "string") parts.push(JSON.stringify(v.text.slice(0, 60)));
+    if (v.usage) parts.push(`usage=${JSON.stringify(v.usage)}`);
+    const result = obj(call.result ?? v.result);
+    if (result.status) parts.push(`result=${str(result.status)}`);
+  } else if (source === "step") {
+    parts.push(str(v.type));
+  } else if (source === "status") {
+    parts.push(str(f.status));
+  } else {
+    parts.push(JSON.stringify(v).slice(0, 160));
+  }
+}
+
 for (const file of process.argv.slice(2)) {
   mainThread = undefined;
   const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
@@ -169,6 +193,7 @@ for (const file of process.argv.slice(2)) {
       );
     } else if (e.frame) {
       if (header.backend === "codex") codexFrame(obj(e.frame), parts);
+      else if (header.backend === "cursor") cursorFrame(obj(e.frame), parts);
       else claudeFrame(obj(e.frame), parts);
     } else if (e.sent) {
       parts.push(">>");

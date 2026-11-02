@@ -5,7 +5,7 @@ import type { Message } from "../../src/workspace/workspace";
 import type { StreamEvent, UsageStats } from "../../src/session/claude";
 import type { RpcMessage } from "../../src/session/codex-rpc";
 
-export type Backend = "claude" | "codex";
+export type Backend = "claude" | "codex" | "cursor";
 
 export type Step =
   // Codex: turn/start when no turn runs, turn/steer into the running one.
@@ -37,6 +37,10 @@ export interface Replay {
   sessions: { sessionId: string | null; usage: UsageStats }[];
   // Codex: every message the sessions wrote to the app-server.
   sent: RpcMessage[];
+  // Cursor: the SDK calls the sessions made, in order ("create", "resume
+  // <id>", "send", "cancel"), and what each send passed.
+  sdkCalls: string[];
+  sends: Array<{ model?: unknown; local?: Record<string, unknown> }>;
 }
 
 // Codex: a tool the client defines (thread/start dynamicTools) and answers
@@ -54,7 +58,8 @@ export interface Fixture {
   description: string;
   model?: string;
   // Extra options for the recording: Claude SDK options (e.g.
-  // perTaskStopAffordance), codex thread/start params.
+  // perTaskStopAffordance), codex thread/start params, Cursor agent options
+  // (local.customTools).
   options?: Record<string, unknown>;
   // Codex: client-defined tools.
   tools?: CodexTool[];
@@ -87,6 +92,7 @@ export const stopTask = (match: { type?: string; ambient?: boolean }): Step => (
 export const DEFAULT_MODEL: Record<Backend, string> = {
   claude: "claude-sonnet-5",
   codex: "gpt-6-luna",
+  cursor: "cursor/composer-2.5",
 };
 export const RECORD_CWD = "/tmp/sdk-capture";
 

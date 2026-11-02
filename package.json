@@ -23,7 +23,8 @@
     "vscode-icons": "tsx scripts/vscode-icons.ts",
     "sarasa-font": "tsx scripts/sarasa-font.ts",
     "smoke:claude": "tsx scripts/smoke-claude.ts",
-    "smoke:codex": "tsx scripts/smoke-codex.ts"
+    "smoke:codex": "tsx scripts/smoke-codex.ts",
+    "smoke:cursor": "tsx scripts/smoke-cursor.ts"
   },
   "devDependencies": {
     "eslint": "^10.10.0",

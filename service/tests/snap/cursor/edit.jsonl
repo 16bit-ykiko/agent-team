@@ -1,0 +1,119 @@
+{"header":{"backend":"cursor","fixture":"edit","description":"an edit and a new file are tool calls that carry what changed","model":"cursor/composer-2.5","cli":"@cursor/sdk 1.2.0","recordedAt":"2026-11-02T12:03:16.654Z"}}
+{"t":715,"step":{"i":0,"op":"send","text":"In notes.txt change the line `color: red` to `color: blue` with an edit; do not rewrite the whole file. Then create a new file hello.txt containing exactly `hi`. Reply with the single word ok."}}
+{"t":6943,"frame":{"created":{"agentId":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce"}}}
+{"t":31988,"frame":{"run":{"id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","requestId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c","status":"running"}}}
+{"t":31991,"frame":{"message":{"type":"status","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","status":"RUNNING"}}}
+{"t":31991,"step":{"i":1,"op":"wait","for":"result"}}
+{"t":34700,"frame":{"delta":{"type":"thinking-delta","text":"I"}}}
+{"t":34700,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":"I"}}}
+{"t":34721,"frame":{"delta":{"type":"thinking-delta","text":" need to edit notes.txt"}}}
+{"t":34721,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" need to edit notes.txt"}}}
+{"t":34722,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":34761,"frame":{"delta":{"type":"thinking-delta","text":" to change `color: red"}}}
+{"t":34761,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" to change `color: red"}}}
+{"t":34762,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":34786,"frame":{"delta":{"type":"thinking-delta","text":"` to `color: blue` without"}}}
+{"t":34786,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":"` to `color: blue` without"}}}
+{"t":34786,"frame":{"delta":{"type":"token-delta","tokens":7}}}
+{"t":34801,"frame":{"delta":{"type":"thinking-delta","text":" rewriting the entire"}}}
+{"t":34801,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" rewriting the entire"}}}
+{"t":34801,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":34844,"frame":{"delta":{"type":"thinking-delta","text":" file. Then I will create"}}}
+{"t":34844,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" file. Then I will create"}}}
+{"t":34844,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":34844,"frame":{"delta":{"type":"thinking-delta","text":" hello.txt containing"}}}
+{"t":34844,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" hello.txt containing"}}}
+{"t":34844,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":34999,"frame":{"delta":{"type":"thinking-delta","text":" exactly `hi`. The final"}}}
+{"t":35000,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" exactly `hi`. The final"}}}
+{"t":35000,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":35016,"frame":{"delta":{"type":"thinking-delta","text":" reply should be the"}}}
+{"t":35016,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" reply should be the"}}}
+{"t":35016,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":35058,"frame":{"delta":{"type":"thinking-delta","text":" single word `ok`."}}}
+{"t":35058,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" single word `ok`."}}}
+{"t":35058,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":35058,"frame":{"step":{"type":"thinkingMessage","message":{"text":"I need to edit notes.txt to change `color: red` to `color: blue` without rewriting the entire file. Then I will create hello.txt containing exactly `hi`. The final reply should be the single word `ok`.","thinkingDurationMs":353}}}}
+{"t":35058,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":353}}}
+{"t":35058,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":"","thinking_duration_ms":353}}}
+{"t":35058,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":35058,"frame":{"delta":{"type":"token-delta","tokens":7}}}
+{"t":35060,"frame":{"delta":{"type":"tool-call-started","callId":"tool_67e29013-dd51-48bb-9c24-3fa4cc7a13f","toolCall":{"type":"read","args":{"path":"/tmp/sdk-capture/notes.txt"}},"modelCallId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c-0-9tuo"}}}
+{"t":35060,"frame":{"message":{"type":"tool_call","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","call_id":"tool_67e29013-dd51-48bb-9c24-3fa4cc7a13f","name":"read","status":"running","args":{"path":"/tmp/sdk-capture/notes.txt"}}}}
+{"t":35062,"frame":{"delta":{"type":"tool-requests-listed","callCount":1}}}
+{"t":35832,"frame":{"step":{"type":"toolCall","message":{"type":"read","args":{"path":"/tmp/sdk-capture/notes.txt"},"result":{"status":"success","value":{"content":"title: demo\ncolor: red\nsize: 3\n","totalLines":4,"fileSize":31}}}}}}
+{"t":35832,"frame":{"delta":{"type":"tool-call-completed","callId":"tool_67e29013-dd51-48bb-9c24-3fa4cc7a13f","toolCall":{"type":"read","args":{"path":"/tmp/sdk-capture/notes.txt"},"result":{"status":"success","value":{"content":"title: demo\ncolor: red\nsize: 3\n","totalLines":4,"fileSize":31}}},"modelCallId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c-0-9tuo"}}}
+{"t":35832,"frame":{"message":{"type":"tool_call","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","call_id":"tool_67e29013-dd51-48bb-9c24-3fa4cc7a13f","name":"read","status":"completed","args":{"path":"/tmp/sdk-capture/notes.txt"},"result":{"status":"success","value":{"content":"title: demo\ncolor: red\nsize: 3\n","totalLines":4,"fileSize":31}}}}}
+{"t":35847,"frame":{"delta":{"type":"token-delta","tokens":8}}}
+{"t":36501,"frame":{"delta":{"type":"thinking-delta","text":"I"}}}
+{"t":36501,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":"I"}}}
+{"t":36517,"frame":{"delta":{"type":"thinking-delta","text":" will edit notes.txt"}}}
+{"t":36517,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" will edit notes.txt"}}}
+{"t":36517,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":36557,"frame":{"delta":{"type":"thinking-delta","text":" to change `color: red"}}}
+{"t":36557,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" to change `color: red"}}}
+{"t":36557,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":36873,"frame":{"delta":{"type":"thinking-delta","text":"` to `color: blue` and"}}}
+{"t":36873,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":"` to `color: blue` and"}}}
+{"t":36873,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":36873,"frame":{"delta":{"type":"thinking-delta","text":" create hello.txt with"}}}
+{"t":36873,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" create hello.txt with"}}}
+{"t":36873,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":36874,"frame":{"delta":{"type":"thinking-delta","text":" `hi`."}}}
+{"t":36874,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" `hi`."}}}
+{"t":36874,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":36874,"frame":{"step":{"type":"thinkingMessage","message":{"text":"I will edit notes.txt to change `color: red` to `color: blue` and create hello.txt with `hi`.","thinkingDurationMs":122}}}}
+{"t":36874,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":122}}}
+{"t":36874,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":"","thinking_duration_ms":122}}}
+{"t":36874,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":36874,"frame":{"delta":{"type":"partial-tool-call","callId":"tool_f5005f71-4922-4827-ae5e-7f6dd8950c5","toolCall":{"type":"edit","args":{"path":"/tmp/sdk-capture/notes.txt"}},"modelCallId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c-1-fqia"}}}
+{"t":36874,"frame":{"message":{"type":"tool_call","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","call_id":"tool_f5005f71-4922-4827-ae5e-7f6dd8950c5","name":"edit","status":"running","args":{"path":"/tmp/sdk-capture/notes.txt"}}}}
+{"t":36874,"frame":{"delta":{"type":"token-delta","tokens":7}}}
+{"t":36874,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":36874,"frame":{"delta":{"type":"token-delta","tokens":3}}}
+{"t":36875,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":36875,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":36875,"frame":{"delta":{"type":"tool-call-started","callId":"tool_f5005f71-4922-4827-ae5e-7f6dd8950c5","toolCall":{"type":"edit","args":{"path":"/tmp/sdk-capture/notes.txt"}},"modelCallId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c-1-fqia"}}}
+{"t":36875,"frame":{"message":{"type":"tool_call","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","call_id":"tool_f5005f71-4922-4827-ae5e-7f6dd8950c5","name":"edit","status":"running","args":{"path":"/tmp/sdk-capture/notes.txt"}}}}
+{"t":36876,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":36876,"frame":{"delta":{"type":"partial-tool-call","callId":"tool_3fa8ac1a-b0c0-4898-9234-c0baf2e7b26","toolCall":{"type":"edit","args":{"path":"/tmp/sdk-capture/hello.txt"}},"modelCallId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c-1-fqia"}}}
+{"t":36876,"frame":{"message":{"type":"tool_call","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","call_id":"tool_3fa8ac1a-b0c0-4898-9234-c0baf2e7b26","name":"edit","status":"running","args":{"path":"/tmp/sdk-capture/hello.txt"}}}}
+{"t":36876,"frame":{"delta":{"type":"token-delta","tokens":7}}}
+{"t":36876,"frame":{"delta":{"type":"token-delta","tokens":4}}}
+{"t":36876,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":36876,"frame":{"delta":{"type":"tool-call-started","callId":"tool_3fa8ac1a-b0c0-4898-9234-c0baf2e7b26","toolCall":{"type":"edit","args":{"path":"/tmp/sdk-capture/hello.txt"}},"modelCallId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c-1-fqia"}}}
+{"t":36876,"frame":{"message":{"type":"tool_call","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","call_id":"tool_3fa8ac1a-b0c0-4898-9234-c0baf2e7b26","name":"edit","status":"running","args":{"path":"/tmp/sdk-capture/hello.txt"}}}}
+{"t":36876,"frame":{"delta":{"type":"tool-requests-listed","callCount":2}}}
+{"t":37787,"frame":{"step":{"type":"toolCall","message":{"type":"edit","args":{"path":"/tmp/sdk-capture/hello.txt"},"result":{"status":"success","value":{"linesAdded":1,"linesRemoved":0,"diffString":"--- /dev/null\n+++ b//tmp/sdk-capture/hello.txt\n@@ -1,0 +1 @@\n+hi"}}}}}}
+{"t":37787,"frame":{"delta":{"type":"tool-call-completed","callId":"tool_3fa8ac1a-b0c0-4898-9234-c0baf2e7b26","toolCall":{"type":"edit","args":{"path":"/tmp/sdk-capture/hello.txt"},"result":{"status":"success","value":{"linesAdded":1,"linesRemoved":0,"diffString":"--- /dev/null\n+++ b//tmp/sdk-capture/hello.txt\n@@ -1,0 +1 @@\n+hi"}}},"modelCallId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c-1-fqia"}}}
+{"t":37787,"frame":{"message":{"type":"tool_call","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","call_id":"tool_3fa8ac1a-b0c0-4898-9234-c0baf2e7b26","name":"edit","status":"completed","args":{"path":"/tmp/sdk-capture/hello.txt"},"result":{"status":"success","value":{"linesAdded":1,"linesRemoved":0,"diffString":"--- /dev/null\n+++ b//tmp/sdk-capture/hello.txt\n@@ -1,0 +1 @@\n+hi"}}}}}
+{"t":37787,"frame":{"delta":{"type":"token-delta","tokens":11}}}
+{"t":38116,"frame":{"step":{"type":"toolCall","message":{"type":"edit","args":{"path":"/tmp/sdk-capture/notes.txt"},"result":{"status":"success","value":{"linesAdded":1,"linesRemoved":1,"diffString":"--- a//tmp/sdk-capture/notes.txt\n+++ b//tmp/sdk-capture/notes.txt\n@@ -1,3 +1,3 @@\n title: demo\n-color: red\n+color: blue\n size: 3"}}}}}}
+{"t":38116,"frame":{"delta":{"type":"tool-call-completed","callId":"tool_f5005f71-4922-4827-ae5e-7f6dd8950c5","toolCall":{"type":"edit","args":{"path":"/tmp/sdk-capture/notes.txt"},"result":{"status":"success","value":{"linesAdded":1,"linesRemoved":1,"diffString":"--- a//tmp/sdk-capture/notes.txt\n+++ b//tmp/sdk-capture/notes.txt\n@@ -1,3 +1,3 @@\n title: demo\n-color: red\n+color: blue\n size: 3"}}},"modelCallId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c-1-fqia"}}}
+{"t":38116,"frame":{"message":{"type":"tool_call","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","call_id":"tool_f5005f71-4922-4827-ae5e-7f6dd8950c5","name":"edit","status":"completed","args":{"path":"/tmp/sdk-capture/notes.txt"},"result":{"status":"success","value":{"linesAdded":1,"linesRemoved":1,"diffString":"--- a//tmp/sdk-capture/notes.txt\n+++ b//tmp/sdk-capture/notes.txt\n@@ -1,3 +1,3 @@\n title: demo\n-color: red\n+color: blue\n size: 3"}}}}}
+{"t":38117,"frame":{"delta":{"type":"token-delta","tokens":13}}}
+{"t":39023,"frame":{"delta":{"type":"thinking-delta","text":"Updated"}}}
+{"t":39023,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":"Updated"}}}
+{"t":39023,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":39040,"frame":{"delta":{"type":"thinking-delta","text":" notes.txt and created"}}}
+{"t":39040,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" notes.txt and created"}}}
+{"t":39040,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":39063,"frame":{"delta":{"type":"thinking-delta","text":" hello.txt. Reply is"}}}
+{"t":39063,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" hello.txt. Reply is"}}}
+{"t":39063,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":39259,"frame":{"delta":{"type":"thinking-delta","text":" ok."}}}
+{"t":39260,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":" ok."}}}
+{"t":39260,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":39260,"frame":{"step":{"type":"thinkingMessage","message":{"text":"Updated notes.txt and created hello.txt. Reply is ok.","thinkingDurationMs":110}}}}
+{"t":39260,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":110}}}
+{"t":39260,"frame":{"message":{"type":"thinking","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","text":"","thinking_duration_ms":110}}}
+{"t":39260,"frame":{"delta":{"type":"text-delta","text":"ok"}}}
+{"t":39260,"frame":{"message":{"type":"assistant","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}}}
+{"t":39261,"frame":{"step":{"type":"assistantMessage","message":{"text":"ok"}}}}
+{"t":39261,"frame":{"delta":{"type":"step-completed","stepId":7,"stepDurationMs":5019}}}
+{"t":39279,"frame":{"delta":{"type":"turn-ended","usage":{"inputTokens":23821,"outputTokens":193,"cacheReadTokens":10656,"cacheWriteTokens":0}}}}
+{"t":39279,"frame":{"message":{"type":"usage","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","usage":{"inputTokens":23821,"outputTokens":193,"cacheReadTokens":10656,"cacheWriteTokens":0,"totalTokens":24014}}}}
+{"t":39868,"frame":{"message":{"type":"status","agent_id":"agent-aedacb9f-25fc-4ff6-b22f-643a9df669ce","run_id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","status":"FINISHED"}}}
+{"t":39870,"frame":{"status":"finished"}}
+{"t":39876,"frame":{"result":{"id":"run-983e121c-516a-40ca-a104-f52a5a2e35f2","requestId":"b34d7b0b-73d1-4a99-a451-2fa432309c6c","status":"finished","result":"ok","model":{"id":"composer-2.5"},"durationMs":32924,"usage":{"inputTokens":23821,"outputTokens":193,"cacheReadTokens":10656,"cacheWriteTokens":0,"totalTokens":24014}}}}
+{"t":39876,"close":true}

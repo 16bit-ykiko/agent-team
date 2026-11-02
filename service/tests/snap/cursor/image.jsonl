@@ -1,0 +1,57 @@
+{"header":{"backend":"cursor","fixture":"image","description":"an attached image reaches the model through the read tool, its bytes never in the transcript","model":"cursor/composer-2.5","cli":"@cursor/sdk 1.2.0","recordedAt":"2026-11-02T12:10:51.192Z"}}
+{"t":722,"step":{"i":0,"op":"send","text":"[User attached image(s). Use the Read tool to view:\n/tmp/sdk-capture/sample.png]\n\nWhat colour is this image? Reply with one word."}}
+{"t":9272,"frame":{"created":{"agentId":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21"}}}
+{"t":14631,"frame":{"run":{"id":"run-6d381859-2826-429d-a9fc-9d432ef42631","requestId":"18fe9483-719b-451f-a0c3-5d30937b7333","status":"running"}}}
+{"t":14634,"frame":{"message":{"type":"status","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","status":"RUNNING"}}}
+{"t":14634,"step":{"i":1,"op":"wait","for":"result"}}
+{"t":16596,"frame":{"delta":{"type":"thinking-delta","text":"I"}}}
+{"t":16596,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":"I"}}}
+{"t":16597,"frame":{"delta":{"type":"thinking-delta","text":" need to examine the"}}}
+{"t":16597,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":" need to examine the"}}}
+{"t":16597,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":16597,"frame":{"delta":{"type":"thinking-delta","text":" attached image and "}}}
+{"t":16597,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":" attached image and "}}}
+{"t":16598,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":16598,"frame":{"delta":{"type":"thinking-delta","text":"identify"}}}
+{"t":16598,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":"identify"}}}
+{"t":16598,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":16598,"frame":{"delta":{"type":"thinking-delta","text":" its color in one word"}}}
+{"t":16598,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":" its color in one word"}}}
+{"t":16598,"frame":{"delta":{"type":"token-delta","tokens":5}}}
+{"t":16598,"frame":{"delta":{"type":"thinking-delta","text":"."}}}
+{"t":16598,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":"."}}}
+{"t":16598,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":16599,"frame":{"step":{"type":"thinkingMessage","message":{"text":"I need to examine the attached image and identify its color in one word.","thinkingDurationMs":99}}}}
+{"t":16599,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":99}}}
+{"t":16599,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":"","thinking_duration_ms":99}}}
+{"t":16599,"frame":{"delta":{"type":"token-delta","tokens":2}}}
+{"t":16599,"frame":{"delta":{"type":"token-delta","tokens":7}}}
+{"t":16600,"frame":{"delta":{"type":"tool-call-started","callId":"tool_e2aa6b1f-ab46-4866-86ab-818fb84e429","toolCall":{"type":"read","args":{"path":"/tmp/sdk-capture/sample.png"}},"modelCallId":"18fe9483-719b-451f-a0c3-5d30937b7333-0-uvjc"}}}
+{"t":16600,"frame":{"message":{"type":"tool_call","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","call_id":"tool_e2aa6b1f-ab46-4866-86ab-818fb84e429","name":"read","status":"running","args":{"path":"/tmp/sdk-capture/sample.png"}}}}
+{"t":16601,"frame":{"delta":{"type":"tool-requests-listed","callCount":1}}}
+{"t":18061,"frame":{"step":{"type":"toolCall","message":{"type":"read","args":{"path":"/tmp/sdk-capture/sample.png"},"result":{"status":"success","value":{"content":"","totalLines":0,"fileSize":79}}}}}}
+{"t":18061,"frame":{"delta":{"type":"tool-call-completed","callId":"tool_e2aa6b1f-ab46-4866-86ab-818fb84e429","toolCall":{"type":"read","args":{"path":"/tmp/sdk-capture/sample.png"},"result":{"status":"success","value":{"content":"","totalLines":0,"fileSize":79}}},"modelCallId":"18fe9483-719b-451f-a0c3-5d30937b7333-0-uvjc"}}}
+{"t":18062,"frame":{"message":{"type":"tool_call","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","call_id":"tool_e2aa6b1f-ab46-4866-86ab-818fb84e429","name":"read","status":"completed","args":{"path":"/tmp/sdk-capture/sample.png"},"result":{"status":"success","value":{"content":"","totalLines":0,"fileSize":79}}}}}
+{"t":18074,"frame":{"delta":{"type":"token-delta","tokens":11}}}
+{"t":20565,"frame":{"delta":{"type":"thinking-delta","text":"The"}}}
+{"t":20565,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":"The"}}}
+{"t":20565,"frame":{"delta":{"type":"thinking-delta","text":" image is solid vibrant"}}}
+{"t":20565,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":" image is solid vibrant"}}}
+{"t":20565,"frame":{"delta":{"type":"token-delta","tokens":6}}}
+{"t":20569,"frame":{"delta":{"type":"thinking-delta","text":" red."}}}
+{"t":20569,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":" red."}}}
+{"t":20569,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":20570,"frame":{"step":{"type":"thinkingMessage","message":{"text":"The image is solid vibrant red.","thinkingDurationMs":3}}}}
+{"t":20570,"frame":{"delta":{"type":"thinking-completed","thinkingDurationMs":3}}}
+{"t":20570,"frame":{"message":{"type":"thinking","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","text":"","thinking_duration_ms":3}}}
+{"t":20570,"frame":{"delta":{"type":"text-delta","text":"Red"}}}
+{"t":20570,"frame":{"message":{"type":"assistant","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","message":{"role":"assistant","content":[{"type":"text","text":"Red"}]}}}}
+{"t":20570,"frame":{"delta":{"type":"token-delta","tokens":1}}}
+{"t":20858,"frame":{"step":{"type":"assistantMessage","message":{"text":"Red"}}}}
+{"t":20858,"frame":{"delta":{"type":"step-completed","stepId":4,"stepDurationMs":4856}}}
+{"t":20863,"frame":{"delta":{"type":"turn-ended","usage":{"inputTokens":15814,"outputTokens":68,"cacheReadTokens":7104,"cacheWriteTokens":0}}}}
+{"t":20863,"frame":{"message":{"type":"usage","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","usage":{"inputTokens":15814,"outputTokens":68,"cacheReadTokens":7104,"cacheWriteTokens":0,"totalTokens":15882}}}}
+{"t":21219,"frame":{"message":{"type":"status","agent_id":"agent-15460178-40eb-4272-b3b3-58d1cc54cd21","run_id":"run-6d381859-2826-429d-a9fc-9d432ef42631","status":"FINISHED"}}}
+{"t":21220,"frame":{"status":"finished"}}
+{"t":21227,"frame":{"result":{"id":"run-6d381859-2826-429d-a9fc-9d432ef42631","requestId":"18fe9483-719b-451f-a0c3-5d30937b7333","status":"finished","result":"Red","model":{"id":"composer-2.5"},"durationMs":11945,"usage":{"inputTokens":15814,"outputTokens":68,"cacheReadTokens":7104,"cacheWriteTokens":0,"totalTokens":15882}}}}
+{"t":21227,"close":true}
