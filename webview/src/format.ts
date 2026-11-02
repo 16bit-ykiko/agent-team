@@ -76,7 +76,7 @@ export function formatRunTime(ms: number): string {
 
 export function shortModel(model: string): string {
   const m = model.match(/^(.*?)(\[1m\])?$/i);
-  let base = (m?.[1] ?? model).replace(/^claude-/, "").replace(/-\d{8}$/, "");
+  let base = (m?.[1] ?? model).replace(/^(claude-|cursor\/)/, "").replace(/-\d{8}$/, "");
   base = base.replace(/-(\d+)-(\d+)(?=-|$)/, " $1.$2").replace(/-/g, " ");
   return m?.[2] ? `${base} ${m[2]}` : base;
 }

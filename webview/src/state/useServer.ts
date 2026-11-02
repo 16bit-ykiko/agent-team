@@ -372,7 +372,7 @@ export interface AgentPreset {
 export interface ModelOption {
   id: string;
   label: string;
-  backend: "claude" | "codex";
+  backend: "claude" | "codex" | "cursor";
 }
 
 export interface CommandInfo {

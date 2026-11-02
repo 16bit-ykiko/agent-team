@@ -210,6 +210,14 @@ describe("render cost of a live transcript", () => {
 });
 
 describe("composer", () => {
+  it("names each agent's model in the @ list as the agent cards do", () => {
+    const cursor = { ...AGENT, id: "a2", name: "Isla", model: "cursor/composer-2.5" };
+    boot([], { agents: [AGENT, cursor] });
+    fireEvent.change(composer(), { target: { value: "@", selectionStart: 1 } });
+    const models = [...document.querySelectorAll(".mention-model")].map((e) => e.textContent);
+    expect(models).toEqual(["opus 5.5", "composer 2.5"]);
+  });
+
   it("keeps the draft when the message could not be sent", async () => {
     const sock = boot([settled(1)]);
     sock.drop();

@@ -42,6 +42,8 @@ describe("shortModel", () => {
     expect(shortModel("claude-haiku-4-5-20251001")).toBe("haiku 4.5");
     expect(shortModel("gpt-5.6-sol")).toBe("gpt 5.6 sol");
     expect(shortModel("deepseek-v4-pro")).toBe("deepseek v4 pro");
+    expect(shortModel("cursor/composer-2.5")).toBe("composer 2.5");
+    expect(shortModel("cursor/gemini-4-argon")).toBe("gemini 4 argon");
   });
 });
 

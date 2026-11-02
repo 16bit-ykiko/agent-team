@@ -349,7 +349,8 @@ describe("the agents panel in the app", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  const boot = (active = "lead") => {
+  const opus = { id: "claude-opus-5-5", label: "Opus", backend: "claude" };
+  const boot = (active = "lead", workspaces = [lead, w1, w2], models: object[] = [opus]) => {
     localStorage.setItem("activeWsId", active);
     render(<App />);
     const sock = FakeSocket.instances.at(-1)!;
@@ -357,10 +358,10 @@ describe("the agents panel in the app", () => {
     act(() =>
       sock.receive({
         type: "init",
-        workspaces: [lead, w1, w2],
+        workspaces,
         config: {
           presets: [{ name: "Isla", avatar: "I", color: "#ccc" }],
-          models: [{ id: "claude-opus-5-5", label: "Opus", backend: "claude" }],
+          models,
           commands: [],
           hosts: {},
         },
@@ -534,6 +535,57 @@ describe("the agents panel in the app", () => {
       content: "/model claude-opus-5-5",
       target: "kisara",
     });
+  });
+
+  it("offers Cursor's models in their own group, and moves a Cursor agent only among them", () => {
+    const cursor = [
+      { id: "cursor/composer-2.5", label: "Composer 2.5", backend: "cursor" },
+      { id: "cursor/grok-4.7", label: "Grok 4.7", backend: "cursor" },
+    ];
+    const w3 = ws("w3", {
+      name: "parser",
+      projectLink: { projectId: "p1", role: "worker" },
+      agents: [agent("isla", { model: "cursor/composer-2.5" })],
+    });
+    boot("w3", [lead, w1, w3], [opus, ...cursor]);
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    const card = document.querySelector('[aria-label="parser"]')!;
+    const options = [...card.querySelectorAll(".ap-model option")].map((o) => o.textContent);
+    expect(options).toEqual(["composer 2.5", "grok 4.7"]);
+    fireEvent.click(within(card as HTMLElement).getByText("+ Agent"));
+    const groups = [...document.querySelectorAll(".dialog optgroup")].map((g) => [
+      g.getAttribute("label"),
+      [...g.querySelectorAll("option")].map((o) => o.textContent),
+    ]);
+    expect(groups).toEqual([
+      ["Claude", ["Opus"]],
+      ["Cursor", ["Composer 2.5", "Grok 4.7"]],
+    ]);
+  });
+
+  it("offers the Claude accounts only for a Claude model", () => {
+    const sock = boot(
+      "lead",
+      [lead, w1, w2],
+      [opus, { id: "cursor/composer-2.5", label: "Composer 2.5", backend: "cursor" }],
+    );
+    act(() => sock.receive({ type: "config_update", accounts: ["work"], defaultAccount: null }));
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    fireEvent.click(document.querySelector('[aria-label="clice · lead"] .ap-toggle')!);
+    const leadCard = within(document.querySelector('[aria-label="clice · lead"]') as HTMLElement);
+    fireEvent.click(leadCard.getByText("+ Agent"));
+    const fields = () =>
+      [...document.querySelectorAll(".dialog-field > span")].map((e) => e.textContent);
+    expect(fields()).toContain("Account");
+    const [modelSelect, accountSelect] =
+      document.querySelectorAll<HTMLSelectElement>(".dialog select");
+    fireEvent.change(accountSelect, { target: { value: "work" } });
+    fireEvent.change(modelSelect, { target: { value: "cursor/composer-2.5" } });
+    expect(fields()).not.toContain("Account");
+    fireEvent.click(document.querySelector(".dialog .btn-primary")!);
+    const added = sock.frames().find((f) => f.type === "add_agent")!;
+    expect(added).toMatchObject({ model: "cursor/composer-2.5" });
+    expect(added.account).toBeUndefined();
   });
 
   it("adds an agent to the session it was asked from", () => {

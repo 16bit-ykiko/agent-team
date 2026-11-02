@@ -348,11 +348,13 @@ function AgentRow({
 }
 
 // Models an agent can move to mid-session: Claude ones (the session is a
-// transcript any of them resumes); a Codex thread stays on its model. The
-// current one leads even when the list has dropped it.
+// transcript any of them resumes), Cursor ones for a Cursor agent (each run
+// names its model); a Codex thread stays on its model. The current one leads
+// even when the list has dropped it.
 function switchable(a: AgentInfo, models: ModelOption[]): string[] {
   if (a.model.startsWith("gpt-")) return [a.model];
-  const ids = models.filter((m) => m.backend === "claude").map((m) => m.id);
+  const backend = a.model.startsWith("cursor/") ? "cursor" : "claude";
+  const ids = models.filter((m) => m.backend === backend).map((m) => m.id);
   return ids.includes(a.model) ? ids : [a.model, ...ids];
 }
 

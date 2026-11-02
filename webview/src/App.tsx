@@ -20,7 +20,7 @@ import { FileOpenContext, parseFileRef, type FileRef } from "./chat/fileRef";
 import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
 import { isImeKeyEvent } from "./chat/ime";
 import { AgentAvatar } from "./workspace/avatar";
-import { formatRelative } from "./format";
+import { formatRelative, shortModel } from "./format";
 import { MessageItem, MessageBoundary, originLabel, SessionLinkContext } from "./chat/messages";
 import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./workspace/dialogs";
 import { Sidebar } from "./sidebar/Sidebar";
@@ -1490,9 +1490,7 @@ export function App() {
                       >
                         <AgentAvatar agent={a} size={20} />
                         <span className="mention-name">{a.name}</span>
-                        <span className="mention-model">
-                          {a.model.replace("claude-", "").replace(/-/g, " ")}
-                        </span>
+                        <span className="mention-model">{shortModel(a.model)}</span>
                       </div>
                     ))}
                   </div>

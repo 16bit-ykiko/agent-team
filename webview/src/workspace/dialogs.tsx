@@ -66,6 +66,12 @@ function useDialogKeys(focus: RefObject<HTMLElement | null>, onClose: () => void
   }, [focus]);
 }
 
+const BACKEND_GROUPS: Array<[ModelOption["backend"], string]> = [
+  ["claude", "Claude"],
+  ["codex", "Codex"],
+  ["cursor", "Cursor"],
+];
+
 export function AddAgentDialog({
   presets,
   models,
@@ -85,6 +91,8 @@ export function AddAgentDialog({
   const [account, setAccount] = useState("");
 
   const preset = presets[selectedPreset];
+  // Accounts are Claude logins; another backend's agent runs on its own.
+  const onAccount = models.find((m) => m.id === model)?.backend === "claude";
   const finalName = customName || preset?.name || "Agent";
   const nameRef = useRef<HTMLInputElement>(null);
   useDialogKeys(nameRef, onClose);
@@ -141,36 +149,24 @@ export function AddAgentDialog({
         <label className="dialog-field">
           <span>Model</span>
           <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {(() => {
-              const claude = models.filter((m) => m.backend === "claude");
-              const codex = models.filter((m) => m.backend === "codex");
+            {BACKEND_GROUPS.map(([backend, label]) => {
+              const group = models.filter((m) => m.backend === backend);
               return (
-                <>
-                  {claude.length > 0 && (
-                    <optgroup label="Claude">
-                      {claude.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {codex.length > 0 && (
-                    <optgroup label="Codex">
-                      {codex.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </>
+                group.length > 0 && (
+                  <optgroup key={backend} label={label}>
+                    {group.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </optgroup>
+                )
               );
-            })()}
+            })}
           </select>
         </label>
 
-        {accounts.length > 0 && (
+        {accounts.length > 0 && onAccount && (
           <label className="dialog-field">
             <span>Account</span>
             <select value={account} onChange={(e) => setAccount(e.target.value)}>
@@ -196,7 +192,7 @@ export function AddAgentDialog({
                 model,
                 preset?.avatar ?? "🤖",
                 preset?.color ?? "#888",
-                account || undefined,
+                (onAccount && account) || undefined,
               );
               onClose();
             }}
