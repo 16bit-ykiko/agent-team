@@ -7,7 +7,7 @@
 // Every run is a real session on the user's account. Bursts of sessions
 // risk an account ban: at most a few fixtures per run, one at a time, with
 // a pause between them. Never loop this.
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -21,6 +21,12 @@ import {
   DEFAULT_MODEL,
   RECORD_CWD,
 } from "../service/tests/snap/fixture.ts";
+import {
+  AppServerClient,
+  codexBinary,
+  spawnAppServer,
+  type Transport,
+} from "../service/src/session/codex-rpc.ts";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const SNAP = path.join(ROOT, "service", "tests", "snap");
@@ -65,6 +71,7 @@ interface Driver {
   abort(): Promise<void>;
   interrupt(): Promise<void>;
   stopTask(match: { type?: string; ambient?: boolean }): Promise<void>;
+  compact(): Promise<void>;
   cli(): string | undefined;
 }
 
@@ -250,56 +257,224 @@ async function claudeDriver(
         });
       }
     },
+    compact: () => Promise.reject(new Error("claude fixtures compact by sending /compact")),
     cli: () => cli,
   };
 }
 
 // --- codex ------------------------------------------------------------------
 
-async function codexDriver(tape: Tape, model: string): Promise<Driver> {
-  const { Codex } = await import("@openai/codex-sdk");
-  const { codexHome, findRollout, readRolloutContext } =
-    await import("../service/src/session/codex.ts");
-  const bin = execSync("which codex", { encoding: "utf-8" }).trim();
-  const version = execSync(`${bin} --version`, { encoding: "utf-8" }).trim();
-  const codex = new Codex({ codexPathOverride: bin });
-  let threadId: string | null = null;
-  let abort: AbortController | null = null;
-  const options = {
-    workingDirectory: RECORD_CWD,
-    sandboxMode: "danger-full-access" as const,
-    approvalPolicy: "never" as const,
-    skipGitRepoCheck: true,
-    model,
+// What a recording must not carry: the account's identity and the machine's.
+const REDACT = new Set(["email", "accountId", "installationId", "serverName"]);
+function redact(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(redact);
+  if (v && typeof v === "object") {
+    const o: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) o[k] = REDACT.has(k) ? "<redacted>" : redact(val);
+    return o;
+  }
+  return v;
+}
+
+// The session's own connection to `codex app-server`, every line both ways
+// on the tape.
+function tapedAppServer(tape: Tape, args: string[], ended: () => boolean): Transport {
+  const t = spawnAppServer({ cwd: RECORD_CWD, args });
+  return {
+    write: (m) => {
+      tape.add({ sent: trim(m) });
+      t.write(m);
+    },
+    onMessage: (cb) =>
+      t.onMessage((m) => {
+        tape.frame(redact(m));
+        cb(m);
+      }),
+    onClose: (cb) =>
+      t.onClose((reason) => {
+        if (!ended()) tape.add({ error: reason });
+        tape.add({ close: true });
+        cb(reason);
+      }),
+    close: () => t.close(),
   };
+}
+
+function codexDriver(tape: Tape, model: string, fixture: Fixture, api?: { url: string }): Driver {
+  const version = execFileSync(codexBinary(), ["--version"], { encoding: "utf-8" }).trim();
+  // The stand-in is a provider of its own, whatever the user's config.toml
+  // picks; the ChatGPT login still signs its requests.
+  const args = api
+    ? [
+        "-c",
+        'model_provider="capture"',
+        "-c",
+        `model_providers.capture={ name = "capture", base_url = "${api.url}", wire_api = "responses", requires_openai_auth = true, supports_websockets = false }`,
+      ]
+    : [];
+  const tools = fixture.tools ?? [];
+  const namespaces = new Map<string, typeof tools>();
+  for (const t of tools) {
+    if (!t.namespace) continue;
+    namespaces.set(t.namespace, [...(namespaces.get(t.namespace) ?? []), t]);
+  }
+  const spec = (t: (typeof tools)[number]) => ({
+    type: "function",
+    name: t.name,
+    description: t.description,
+    inputSchema: t.inputSchema,
+  });
+  const dynamicTools = [
+    ...tools.filter((t) => !t.namespace).map(spec),
+    ...[...namespaces].map(([name, ts]) => ({
+      type: "namespace",
+      name,
+      description: `The ${name} tools.`,
+      tools: ts.map(spec),
+    })),
+  ];
+
+  let server: { client: AppServerClient; closed: Promise<void>; ended: boolean } | null = null;
+  let threadId: string | null = null;
+  let turnId: string | null = null;
+  let completed = 0;
+  let steers = 0;
+  let lastAt = Date.now();
+  let seen: string[] = [];
+
+  const onNotification = (method: string, p: Record<string, unknown>) => {
+    lastAt = Date.now();
+    seen.push(JSON.stringify({ method, params: p }));
+    // A subagent's turns run on threads of their own.
+    if (p.threadId !== threadId) return;
+    if (method === "turn/started") turnId = (p.turn as { id: string }).id;
+    if (method === "turn/completed") {
+      turnId = null;
+      completed++;
+    }
+  };
+  const onRequest = (method: string, p: Record<string, unknown>): Promise<unknown> => {
+    lastAt = Date.now();
+    seen.push(JSON.stringify({ method, params: p }));
+    if (method !== "item/tool/call") {
+      return Promise.reject(new Error(`the recorder does not handle ${method}`));
+    }
+    const tool = tools.find(
+      (t) => t.name === p.tool && (t.namespace ?? null) === (p.namespace ?? null),
+    );
+    return Promise.resolve({
+      contentItems: [{ type: "inputText", text: tool?.reply ?? "unknown tool" }],
+      success: tool ? (tool.success ?? true) : false,
+    });
+  };
+
+  const ensure = async (): Promise<AppServerClient> => {
+    if (server) return server.client;
+    let close!: () => void;
+    const s = {
+      client: null as unknown as AppServerClient,
+      closed: new Promise<void>((r) => (close = r)),
+      ended: false,
+    };
+    s.client = new AppServerClient(
+      tapedAppServer(tape, args, () => s.ended),
+      {
+        notification: onNotification,
+        request: onRequest,
+        close: () => {
+          if (server === s) server = null;
+          turnId = null;
+          close();
+        },
+      },
+    );
+    server = s;
+    await s.client.initialize();
+    // What CodexSession sends, at the standard tier whatever config.toml says.
+    const thread = {
+      cwd: RECORD_CWD,
+      model,
+      sandbox: "danger-full-access",
+      approvalPolicy: "never",
+      serviceTier: "default",
+      ...fixture.options,
+    };
+    const res = threadId
+      ? await s.client.request<{ thread: { id: string } }>("thread/resume", {
+          threadId,
+          ...thread,
+          excludeTurns: true,
+        })
+      : await s.client.request<{ thread: { id: string } }>("thread/start", {
+          ...thread,
+          ...(tools.length && {
+            developerInstructions: "Panel tools of a recorded fixture.",
+            dynamicTools,
+          }),
+        });
+    threadId = res.thread.id;
+    return s.client;
+  };
+
   return {
     async send(text) {
-      const thread = threadId ? codex.resumeThread(threadId, options) : codex.startThread(options);
-      abort = new AbortController();
-      try {
-        const { events } = await thread.runStreamed(text, { signal: abort.signal });
-        for await (const ev of events) {
-          tape.frame(ev);
-          if (ev.type === "thread.started") threadId = ev.thread_id;
-        }
-      } catch (e) {
-        if (!abort.signal.aborted) tape.add({ error: e instanceof Error ? e.message : String(e) });
+      const client = await ensure();
+      const input = [{ type: "text", text, text_elements: [] }];
+      seen = [];
+      if (turnId) {
+        await client.request("turn/steer", {
+          threadId,
+          input,
+          expectedTurnId: turnId,
+          clientUserMessageId: `steer-${++steers}`,
+        });
+        return;
       }
-      tape.add({ close: true });
-      if (threadId) {
-        const file = findRollout(codexHome(), threadId);
-        const ctx = file ? readRolloutContext(file) : undefined;
-        if (ctx) tape.add({ rollout: { threadId, ...ctx } });
+      completed = 0;
+      // Low effort at the standard tier, whatever config.toml says: a
+      // recording needs the frames, not the model's best.
+      const res = await client.request<{ turn: { id: string } }>("turn/start", {
+        threadId,
+        input,
+        summary: "detailed",
+        effort: "low",
+        serviceTier: "default",
+      });
+      if (completed === 0) turnId = res.turn.id;
+    },
+    async wait(until) {
+      if (typeof until === "number") return sleep(until);
+      const deadline = Date.now() + STEP_DEADLINE_MS;
+      while (Date.now() < deadline) {
+        const quiet = Date.now() - lastAt;
+        if (typeof until === "object" && seen.some((f) => f.includes(until.frame))) return;
+        if (until === "result" && completed > 0 && !turnId && quiet > 300) return;
+        if (until === "idle" && completed > 0 && !turnId && quiet > 4000) return;
+        if (!server && typeof until !== "object") return;
+        await sleep(200);
       }
+      throw new Error(`wait(${JSON.stringify(until)}) timed out`);
     },
-    wait: () => Promise.resolve(),
-    end: () => Promise.resolve(),
-    abort() {
-      abort?.abort();
-      return Promise.resolve();
+    async end() {
+      const s = server;
+      if (!s) return;
+      s.ended = true;
+      s.client.close();
+      await s.closed;
     },
-    interrupt: () => Promise.reject(new Error("codex has no interrupt")),
-    stopTask: () => Promise.reject(new Error("codex has no background tasks")),
+    async abort() {
+      if (server && turnId) await server.client.request("turn/interrupt", { threadId, turnId });
+    },
+    async interrupt() {
+      if (!server || !turnId) return tape.add({ control: { op: "interrupt", error: "no turn" } });
+      await server.client.request("turn/interrupt", { threadId, turnId });
+    },
+    stopTask: () => Promise.reject(new Error("codex fixtures have no stopTask")),
+    async compact() {
+      const client = await ensure();
+      completed = 0;
+      await client.request("thread/compact/start", { threadId });
+    },
     cli: () => version,
   };
 }
@@ -339,6 +514,43 @@ async function usageLimitApi(): Promise<{ url: string; close(): void }> {
   return { url: `http://127.0.0.1:${port}`, close: () => server.close() };
 }
 
+// Refuses every Responses request as a spent Codex limit does: a 429 whose
+// body names usage_limit_reached, with the x-codex-* rate-limit headers
+// (names from the codex binary; the body's fields are the documented ones,
+// not seen from the real backend).
+async function codexUsageLimitApi(): Promise<{ url: string; close(): void }> {
+  const resetsAt = Math.ceil(Date.now() / 600_000) * 600 + 1800;
+  const server = http.createServer((req, res) => {
+    console.log(`api: ${req.method} ${req.url}`);
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(429, {
+        "content-type": "application/json",
+        "x-codex-primary-used-percent": "100",
+        "x-codex-primary-window-minutes": "300",
+        "x-codex-primary-reset-at": String(resetsAt),
+        "x-codex-secondary-used-percent": "41",
+        "x-codex-secondary-window-minutes": "10080",
+        "x-codex-secondary-reset-at": String(resetsAt + 6 * 86400),
+      });
+      res.end(
+        JSON.stringify({
+          error: {
+            type: "usage_limit_reached",
+            message: "The usage limit has been reached",
+            plan_type: "pro",
+            resets_at: resetsAt,
+            resets_in_seconds: resetsAt - Math.floor(Date.now() / 1000),
+          },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const { port } = server.address() as { port: number };
+  return { url: `http://127.0.0.1:${port}`, close: () => server.close() };
+}
+
 // --- run --------------------------------------------------------------------
 
 function materialize(files: Fixture["files"]): void {
@@ -357,14 +569,22 @@ async function record(backend: Backend, name: string): Promise<void> {
   const model = fixture.model ?? DEFAULT_MODEL[backend];
   materialize(fixture.files);
   const tape = new Tape();
-  const api = fixture.api === "usage-limit" ? await usageLimitApi() : undefined;
-  const options = api
-    ? { ...fixture.options, env: { ...process.env, ANTHROPIC_BASE_URL: api.url } }
-    : fixture.options;
+  const api =
+    fixture.api !== "usage-limit"
+      ? undefined
+      : backend === "claude"
+        ? await usageLimitApi()
+        : await codexUsageLimitApi();
   const driver =
     backend === "claude"
-      ? await claudeDriver(tape, model, options)
-      : await codexDriver(tape, model);
+      ? await claudeDriver(
+          tape,
+          model,
+          api
+            ? { ...fixture.options, env: { ...process.env, ANTHROPIC_BASE_URL: api.url } }
+            : fixture.options,
+        )
+      : codexDriver(tape, model, fixture, api);
   const run = async (step: Step) => {
     switch (step.op) {
       case "send":
@@ -379,6 +599,8 @@ async function record(backend: Backend, name: string): Promise<void> {
         return driver.interrupt();
       case "stopTask":
         return driver.stopTask(step.match);
+      case "compact":
+        return driver.compact();
     }
   };
   // A failed run still leaves its tape (as <name>.failed.jsonl), so the

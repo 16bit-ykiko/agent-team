@@ -252,6 +252,8 @@ export interface Message {
   images?: MessageImage[];
   forwardRef?: ForwardRef;
   queuedFor?: string;
+  // Handed to the agent's running turn (Codex steer): no taking it back.
+  steering?: boolean;
   // Sent by another session, not the user: the project's lead, one of its
   // sessions, or another project's lead (peer, named by its project).
   from?: MessageOrigin;

@@ -38,7 +38,7 @@ for (const backend of ["claude", "codex"] as Backend[]) {
         expect(rec.header.description, "description in the recording header").toBe(
           fixture.description,
         );
-        const result = await replay(backend, rec);
+        const result = await replay(backend, rec, fixture);
         fixture.verify?.(result);
         await expect(transcript(result.messages)).toMatchFileSnapshot(
           path.join(SNAP_DIR, backend, `${name}.snap.md`),

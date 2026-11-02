@@ -1187,23 +1187,29 @@ systemctl --user restart agent-team-server
     // A limit on a turn the CLI started itself: no prompt of ours to retry.
     if (!entry.currentMsg && !entry.retryPending) entry.lastPrompt = undefined;
 
-    if (!info.rateLimitType || info.rateLimitType === "five_hour") {
+    // The accounts below are Claude logins: a Codex limit of any window
+    // waits for its reset.
+    const codex = backendForModel(entry.info.model) === "codex";
+    if (!info.rateLimitType || info.rateLimitType === "five_hour" || codex) {
       // A wake-up or a task's report the same limit refused while the
       // retry waits: that retry stands, its time and start slot too.
       const now = Date.now();
       if (entry.retryPending && (entry.pausedUntil ?? 0) > now) return;
       // Retry one minute after the reset; a reset already past (clock skew,
       // a limit lifting late) or none named, in half an hour. Never sooner
-      // than 1 min or later than 6 h from now.
+      // than 1 min, nor later than 6 h from now unless a weekly reset is
+      // named: then at that reset, every refused try in between being lost.
       const reset = info.resetsAt ? info.resetsAt * 1000 + 60_000 : 0;
       const retryAt = reset > now ? reset : now + 31 * 60_000;
-      const delay = Math.min(Math.max(retryAt - now, 60_000), 6 * 3600_000);
+      const cap = codex && info.rateLimitType === "seven_day" ? 8 * 86400_000 : 6 * 3600_000;
+      const delay = Math.min(Math.max(retryAt - now, 60_000), cap);
       ws.pauseAgent(agentId, now + delay, true);
       const at = new Date(now + delay).toLocaleTimeString();
+      const limit = info.rateLimitType === "seven_day" ? "weekly" : "5-hour";
       ws.postSystemMessage(
         entry.lastPrompt
-          ? `⏳ **${agentName}** hit the 5-hour limit — auto-retrying at ${at}.`
-          : `⏳ **${agentName}** hit the 5-hour limit — it will be told to carry on at ${at}.`,
+          ? `⏳ **${agentName}** hit the ${limit} limit — auto-retrying at ${at}.`
+          : `⏳ **${agentName}** hit the ${limit} limit — it will be told to carry on at ${at}.`,
       );
       this.persistWorkspace(wsId);
       this.scheduleRetry(wsId, agentId, delay);
@@ -1301,6 +1307,9 @@ systemctl --user restart agent-team-server
         this.broadcastUI({ type: "commands_update", commands: this.commands });
       },
       onRateLimit: (wsId, agentId, info) => this.handleRateLimit(wsId, agentId, info),
+      onCodexQuota: (limits) => this.quota.noteCodex(limits),
+      onMessageRemoved: (wsId, messageId) =>
+        this.broadcastUI({ type: "message_removed", workspaceId: wsId, messageId }),
       onAgentUpdated: (wsId, agent, transient) => {
         this.broadcastUI({ type: "agent_updated", workspaceId: wsId, agent });
         if (!transient) this.persistWorkspace(wsId);

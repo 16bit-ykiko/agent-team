@@ -7,7 +7,7 @@ them is a conversation you can open and join — from a browser, or from a phone
 where the panel installs as a home-screen app.
 
 It drives the agent CLIs you already have: **Claude** through
-`@anthropic-ai/claude-agent-sdk` and **Codex** through `@openai/codex-sdk`.
+`@anthropic-ai/claude-agent-sdk` and **Codex** through `codex app-server`.
 There is no model of its own here; this is the orchestration and the UI around
 the CLIs.
 
@@ -63,8 +63,8 @@ the CLIs.
   - _Objectives_ — the project's board.
 - **Run state per agent** — idle, working, waiting on background work, or
   sleeping until a scheduled wake-up. The context figure is the size of the
-  turn's last request against the model's window (for Codex, read from the
-  thread's rollout), not a running total.
+  turn's last request against the model's window, not a running total. A
+  message to a working Codex agent goes into its running turn.
 - **Slash commands** handled by the panel itself, on top of whatever the
   Claude CLI offers: `/effort <level>`, `/fast [on|off]` (Claude fast mode /
   Codex priority tier), `/goal <objective>` (Codex goals: the agent keeps
@@ -86,12 +86,14 @@ the CLIs.
 ## Requirements
 
 - Node.js 24+ (the history is stored with `node:sqlite`)
-- The agent CLIs you intend to use, on `PATH`:
-  - [`claude`](https://docs.claude.com/en/docs/claude-code/overview)
-  - [`codex`](https://developers.openai.com/codex/cli)
+- [`claude`](https://docs.claude.com/en/docs/claude-code/overview) on `PATH`, if
+  you use Claude
+- A [Codex](https://developers.openai.com/codex/cli) login, if you use Codex
+  (`npx codex login` in the repository runs the bundled CLI)
 
-The server resolves `codex` via `which codex`, so the CLI on your `PATH` is the
-one that runs — keep it current or new model ids will be rejected.
+Codex runs as the binary of the `@openai/codex` version pinned in
+`service/package.json`, not a `codex` on your `PATH`: bump it there when new
+model ids are rejected.
 
 [pixi](https://pixi.sh) is used for the Node toolchain but is optional; plain
 `npm` works too.

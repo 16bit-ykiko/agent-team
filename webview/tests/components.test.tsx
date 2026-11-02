@@ -350,6 +350,18 @@ describe("MessageItem queued state", () => {
     expect(onCancelQueued).toHaveBeenCalledWith("mq");
   });
 
+  it("offers no cancel for a message handed to the running turn", () => {
+    const { container, queryByTitle } = render(
+      <MessageItem
+        msg={{ ...queuedMsg, steering: true }}
+        agents={agents}
+        onCancelQueued={vi.fn()}
+      />,
+    );
+    expect(container.querySelector(".queued-badge")!.textContent).toBe("queued");
+    expect(queryByTitle("Remove from queue")).toBeNull();
+  });
+
   it("renders normally once the message leaves the queue", () => {
     const { container } = render(
       <MessageItem msg={{ ...queuedMsg, status: "done", queuedFor: undefined }} agents={agents} />,

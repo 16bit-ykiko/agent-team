@@ -640,14 +640,14 @@ export class ProjectManager {
   }
 
   // What the lead said that has not run yet (a task still waiting for its
-  // start slot, follow-ups queued behind a turn), and the panel's word to
-  // carry on.
+  // start slot, follow-ups queued behind a turn or steered into it unread),
+  // and the panel's word to carry on.
   private dropQueuedFromLead(w: Workspace): void {
     const queued = w.messages.filter(
       (m) => m.status === "queued" && (m.from?.role === "lead" || m.from?.role === "panel"),
     );
     for (const m of queued) {
-      if (w.cancelQueued(m.id)) {
+      if (w.cancelQueued(m.id, true)) {
         this.host.broadcast({ type: "message_removed", workspaceId: w.id, messageId: m.id });
       }
     }
@@ -711,7 +711,7 @@ export class ProjectManager {
     text: string,
     from: MessageOrigin,
     prompt: string,
-  ): "sent" | "queued" {
+  ): "sent" | "queued" | "steered" {
     if (target.agents.size === 0) throw new Error(`"${target.name}" has no agent`);
     if (!this.host.restoreWorkspace(target)) throw new Error(`"${target.name}" cannot be loaded`);
     const outcome = target.deliver(text, from, prompt);
@@ -1570,7 +1570,13 @@ export class ProjectManager {
       if (delay > 0) {
         return `Sent to "${w.name}"; it goes out in ${Math.ceil(delay / 1000)} s: starts are spaced out.`;
       }
-      return `Sent to "${w.name}"${outcome === "queued" ? " (queued: it is busy)" : ""}.`;
+      const note =
+        outcome === "queued"
+          ? " (queued: it is busy)"
+          : outcome === "steered"
+            ? " (it is working: the message goes into its running turn)"
+            : "";
+      return `Sent to "${w.name}"${note}.`;
     },
     stopSession: (pid, sid) => {
       const w = this.session(pid, sid);

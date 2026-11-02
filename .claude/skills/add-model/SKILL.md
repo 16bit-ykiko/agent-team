@@ -28,22 +28,21 @@ Then the preset: id, label, `backend: "claude"`, `defaultEffort`, whether it `su
 
 ## Codex
 
-`getCodexBin()` in `service/src/session/codex.ts` tries `which codex` **first**, so the system CLI (`~/.pixi/envs/nodejs/bin/codex`) runs; the `@openai/codex-*` binaries under `node_modules` are never executed. Bump the CLI, not (only) the workspace SDK:
+The server runs the native binary of the `@openai/codex` version pinned in `service/package.json` (`codexBinary()` in `service/src/session/codex-rpc.ts`), never a `codex` on PATH: the app-server protocol is experimental and changes with the binary. A model the pinned binary does not know needs a bump there:
 
 ```bash
-~/.pixi/envs/nodejs/bin/npm install -g @openai/codex@latest
-codex --version
-grep -ac gpt-6-astra "$(readlink -f "$(which codex)")"   # slug present in the binary?
+npm install -w service --save-exact @openai/codex@<version>
+npm run smoke:codex -- <slug>                       # prints the binary and its version, then PONG
 ```
 
-Keep `@openai/codex-sdk` in `service/package.json` on the same version anyway — it supplies `ThreadOptions` types.
+A bump re-records the codex snap fixtures (capture-sdk skill) and checks the protocol types in `codex-rpc.ts` against `codex app-server generate-ts --experimental --out <dir>`.
 
 Codex has a machine-readable list Claude lacks: `~/.codex/models_cache.json` (refreshed by the CLI). Each entry has `slug`, `display_name`, `default_reasoning_level`, `supported_reasoning_levels`, `visibility`; only `visibility: "list"` entries belong in the picker, and `client_version` tells you which CLI version the account is served.
 
 Smoke test:
 
 ```bash
-npm run smoke:codex -- gpt-6-astra high            # prints binary path/version + PONG
+npm run smoke:codex -- gpt-6-astra high            # binary path/version + PONG, through CodexSession
 ```
 
 Preset fields for Codex: `codexModelId` strips the `[1m]` suffix; `[1m]` variants set `contextWindow: 872_000` and are passed as `model_context_window`; `fastTier: "priority"` backs `/fast`.

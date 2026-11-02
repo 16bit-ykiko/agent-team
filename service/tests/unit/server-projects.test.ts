@@ -17,6 +17,7 @@ vi.mock("../../src/server/quota", () => ({
     entries = [];
     refreshIfStale() {}
     invalidate() {}
+    noteCodex() {}
   },
 }));
 
@@ -24,6 +25,8 @@ import { Server } from "../../src/server/server";
 import { ProjectManager } from "../../src/project/manager";
 import { closeHistory, historyOf, saveIndex, saveWorkspace } from "../../src/workspace/state";
 import { ClaudeSession, MCP_TEXT_LIMIT } from "../../src/session/claude";
+import { CodexSession } from "../../src/session/codex";
+import type { RpcMessage } from "../../src/session/codex-rpc";
 
 interface FakeTool {
   name: string;
@@ -174,6 +177,7 @@ function seed(
     livePaused?: number;
     orphanPaused?: number;
     liveQueued?: boolean;
+    liveCodex?: boolean;
   } = {},
 ) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-server-projects-"));
@@ -238,7 +242,20 @@ function seed(
       project: "repo",
       hostId: "local",
       cwd: root,
-      agents: [{ ...agent("a-live", "Live", root), ...paused(opts.livePaused) }],
+      agents: [
+        {
+          ...agent("a-live", "Live", root),
+          ...paused(opts.livePaused),
+          ...(opts.liveCodex && {
+            model: "gpt-6-astra",
+            session: {
+              sessionId: null,
+              config: { cwd: root, backend: "codex" as const, model: "gpt-6-astra" },
+              usage: agent("a-live", "Live", root).session.usage,
+            },
+          }),
+        },
+      ],
       createdAt: now,
       messages: opts.liveQueued
         ? [
@@ -709,6 +726,86 @@ describe("rate limits on the server", () => {
       await until(() => launches[1].prompts.length === 2, "the user's message");
       expect(launches[1].prompts).toEqual(["P", "U"]);
     } finally {
+      stop();
+      log.mockRestore();
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("waits a Codex weekly limit out to its reset, switching no Claude account", async () => {
+    const { base, web } = seed({ liveCodex: true });
+    fs.writeFileSync(path.join(base, "config.toml"), '[accounts.other]\noauth_token = "t"\n');
+    const resetsAt = Math.floor(Date.now() / 1000) + 3 * 86400;
+    // An app-server whose every turn the weekly limit refuses
+    // (codex/usage-limit, with the long window spent).
+    CodexSession.hooks = {
+      transport: () => {
+        const listeners: Array<(m: RpcMessage) => void> = [];
+        const emit = (m: RpcMessage) => setImmediate(() => listeners.forEach((cb) => cb(m)));
+        const params = { threadId: "thr_1" };
+        return {
+          write: (m) => {
+            if (m.id == null || !m.method) return;
+            if (m.method === "thread/start")
+              emit({ id: m.id, result: { thread: { id: "thr_1" } } });
+            else if (m.method !== "turn/start") emit({ id: m.id, result: {} });
+            else {
+              const turn = { id: "turn_1", status: "inProgress", error: null };
+              emit({ id: m.id, result: { turn } });
+              emit({ method: "turn/started", params: { ...params, turn } });
+              emit({
+                method: "account/rateLimits/updated",
+                params: {
+                  rateLimits: {
+                    limitId: "codex",
+                    primary: {
+                      usedPercent: 30,
+                      windowDurationMins: 300,
+                      resetsAt: resetsAt - 86400,
+                    },
+                    secondary: { usedPercent: 100, windowDurationMins: 10080, resetsAt },
+                    planType: null,
+                  },
+                },
+              });
+              const error = {
+                message: "You've hit your usage limit.",
+                codexErrorInfo: "usageLimitExceeded",
+                additionalDetails: null,
+              };
+              emit({
+                method: "turn/completed",
+                params: { ...params, turn: { ...turn, status: "failed", error } },
+              });
+            }
+          },
+          onMessage: (cb) => listeners.push(cb),
+          onClose: () => {},
+          close: () => {},
+        };
+      },
+    };
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { server, frames, send, stop } = await start(base, web);
+    try {
+      send({ type: "send_message", workspaceId: "ws-live", content: "P" });
+      const posted = () =>
+        frames.filter((f) => f.type === "new_message").map((f) => (f.message as Message).content);
+      await until(() => posted().some((c) => c.includes("weekly limit")), "the pause");
+      expect(posted().filter((c) => c.includes("limit"))).toEqual([
+        expect.stringMatching(/hit the weekly limit — auto-retrying at /) as string,
+      ]);
+      expect(frames.some((f) => f.type === "default_account")).toBe(false);
+      const entry = (
+        server as unknown as {
+          workspaces: Map<string, { agents: Map<string, { pausedUntil?: number }> }>;
+        }
+      ).workspaces
+        .get("ws-live")!
+        .agents.get("a-live")!;
+      expect(entry.pausedUntil).toBe(resetsAt * 1000 + 60_000);
+    } finally {
+      CodexSession.hooks = null;
       stop();
       log.mockRestore();
     }

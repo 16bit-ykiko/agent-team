@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, act } from "@testing-library/react";
 import { EventItem, BannerItem, StepGroup, MessageItem } from "../src/chat/messages";
-import { Sidebar, SidebarProps } from "../src/sidebar/Sidebar";
+import { Sidebar, SidebarProps, SystemStatusPanel } from "../src/sidebar/Sidebar";
 import { ConfirmDialog } from "../src/workspace/dialogs";
-import { StreamEvent, Message, AgentInfo, Workspace } from "../src/state/useServer";
+import { StreamEvent, Message, AgentInfo, Workspace, SystemStatus } from "../src/state/useServer";
 
 const ev = (kind: string, over: Partial<StreamEvent> = {}): StreamEvent => ({
   kind,
@@ -895,5 +895,38 @@ describe("live thinking", () => {
     );
     expect(container.querySelector(".working-indicator")).toBeNull();
     expect(container.querySelector(".live-thinking")!.textContent).toContain("Thinking · 0s");
+  });
+});
+
+describe("SystemStatusPanel quota", () => {
+  const status = (quota: SystemStatus["quota"]): SystemStatus =>
+    ({ cpuUsage: 10, memUsed: 1, memTotal: 4, quota }) as SystemStatus;
+  const labels = (quota: SystemStatus["quota"]) =>
+    [
+      ...render(
+        <SystemStatusPanel
+          status={status(quota)}
+          accounts={[]}
+          defaultAccount={null}
+          onSetDefault={() => {}}
+        />,
+      ).container.querySelectorAll(".status-label"),
+    ].map((e) => e.textContent);
+  const week = { utilization: 0.12, resetsAt: 1794204562 };
+
+  it("names the Codex row Codex, alone or beside one Claude login", () => {
+    const codex = { label: "Codex", fiveHour: null, sevenDay: week, fetchedAt: 0 };
+    const local = { label: "local", fiveHour: week, sevenDay: week, fetchedAt: 0 };
+    expect(labels([codex])).toEqual(["CPU", "Mem", "Codex 7d"]);
+    expect(labels([local, codex])).toEqual(["CPU", "Mem", "Opus 5h", "Opus 7d", "Codex 7d"]);
+    expect(labels([local, { ...local, label: "work" }, codex])).toEqual([
+      "CPU",
+      "Mem",
+      "local 5h",
+      "local 7d",
+      "work 5h",
+      "work 7d",
+      "Codex 7d",
+    ]);
   });
 });

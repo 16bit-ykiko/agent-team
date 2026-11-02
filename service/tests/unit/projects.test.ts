@@ -846,6 +846,36 @@ describe("message_session and read_session", () => {
     ]);
   });
 
+  it("go into a Codex worker's running turn, and its stop takes back what the model had not read", async () => {
+    const { create, call, session, workers } = setup();
+    const { lead } = create("clice");
+    await call(lead, "start_session", { title: "w", cwd: "wt", task: "first task" });
+    const [worker] = workers();
+    const s = session(worker);
+    // As CodexSession does: steered ids it has not seen read go back at the
+    // turn's end.
+    const unread: string[] = [];
+    Object.assign(s, {
+      steer: (_text: string, id: string) => {
+        unread.push(id);
+        return Promise.resolve(true);
+      },
+      abort: () => {
+        s.isRunning = false;
+        s.emit("unread", unread.splice(0));
+      },
+    });
+    expect(
+      await call(lead, "message_session", { session_id: worker.id, message: "tests too" }),
+    ).toBe('Sent to "w" (it is working: the message goes into its running turn).');
+    const note = worker.messages.find((m) => m.content === "tests too")!;
+    expect(note).toMatchObject({ status: "queued", steering: true });
+    await call(lead, "stop_session", { session_id: worker.id });
+    await tick();
+    expect(worker.messages.includes(note)).toBe(false);
+    expect(s.sent).toEqual(["[From the project lead]\n\nfirst task"]);
+  });
+
   it("refuse the lead itself and other projects' sessions", async () => {
     const { create, call, workers } = setup();
     const a = create("a");

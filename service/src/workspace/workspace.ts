@@ -10,6 +10,7 @@ import {
 } from "../session/claude";
 import type { GitInfo, PrInfo } from "../repo/git";
 import { HostSessionHandle, HostRegistry } from "../session/host";
+import type { RateLimitSnapshot } from "../session/codex-rpc";
 import {
   MODEL_OPTIONS,
   backendForModel,
@@ -51,6 +52,10 @@ export interface Message {
   // prompt to dispatch (kept on the message so queues survive restarts).
   queuedFor?: string;
   queuedPrompt?: string;
+  // Handed to the running turn (Codex steer) and not yet read by the model:
+  // the queue leaves it alone and it cannot be cancelled. A turn that ends
+  // without reading it, or a restart, gives it back to the queue.
+  steering?: boolean;
   // Agent replies: reasoning effort the turn ran with, whether it ran in
   // fast mode, and the context occupancy reported when it finished.
   effort?: string;
@@ -227,6 +232,10 @@ export interface WorkspaceCallbacks {
   // Agent attributes changed: persistent ones (effort level...) or, when
   // `transient`, runtime-only ones (background tasks) that need no save.
   onAgentUpdated?: (wsId: string, agent: AgentRuntimeInfo, transient?: boolean) => void;
+  // A Codex session's account limits changed (its rate-limit update).
+  onCodexQuota?: (limits: RateLimitSnapshot) => void;
+  // A message left the list (an empty reply a steered message replaced).
+  onMessageRemoved?: (wsId: string, msgId: string) => void;
   // An SDK message the session did not know how to render; logged so a
   // missing rendering is diagnosable instead of silent.
   onUnhandled?: (wsId: string, agentId: string, msg: unknown) => void;
@@ -806,6 +815,21 @@ export class Workspace {
         const matchIdx = msg.events!.findIndex(
           (e) => e.kind === "tool_use" && e.toolUseId === event.toolUseId,
         );
+        // A call an earlier reply of the turn made (a steered message
+        // started a new one while it ran).
+        const owner = matchIdx < 0 ? this.findToolUseOwner(event.toolUseId) : null;
+        if (owner && owner !== msg) {
+          const call = owner.events!.find(
+            (e) => e.kind === "tool_use" && e.toolUseId === event.toolUseId,
+          )!;
+          call.toolResult = event.content;
+          if (event.isMarkdown) call.toolResultIsMarkdown = true;
+          if (event.isError) call.toolResultIsError = true;
+          if (event.durationMs != null) call.durationMs = event.durationMs;
+          this.streamed(owner, event);
+          this.finished(owner.id, owner.status, owner.content, owner.events);
+          return;
+        }
         if (matchIdx >= 0) {
           msg.events![matchIdx].toolResult = event.content;
           if (event.isMarkdown) msg.events![matchIdx].toolResultIsMarkdown = true;
@@ -858,6 +882,9 @@ export class Workspace {
     session.on("rateLimit", (info: { rateLimitType?: string; resetsAt?: number }) => {
       this.cb?.onRateLimit?.(this.id, agentId, info);
     });
+    session.on("steered", (inputId: string) => this.steered(agentId, inputId));
+    session.on("unread", (ids: string[]) => this.unread(ids));
+    session.on("quota", (limits: RateLimitSnapshot) => this.cb?.onCodexQuota?.(limits));
     session.on("backgroundTasks", () => {
       const entry = this.agents.get(agentId);
       if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
@@ -873,8 +900,8 @@ export class Workspace {
       this.cb?.onAgentState?.(this.id, agentId, state);
       // The pending wake-up (and its time) comes and goes with the state.
       if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
-      // A stopped Codex turn ends only when its process has exited, with no
-      // terminal event; this is the one signal that the queue may move.
+      // A turn a session's abort ended has no terminal event; this is the
+      // one signal that the queue may move.
       if (state === "idle") setTimeout(() => this.dequeueNext(agentId), 0);
     });
     session.on("activity", (activity: string | null) => {
@@ -909,6 +936,7 @@ export class Workspace {
     for (const m of queued) {
       if (!heir || !m.from) continue;
       m.queuedFor = heir.info.id;
+      delete m.steering;
       this.changed.add(m.id);
     }
     const dropped = queued.filter((m) => m.queuedFor === agentId).map((m) => m.id);
@@ -1214,6 +1242,7 @@ export class Workspace {
     if (!agent.lastPrompt) this.dropRetry(agent);
     const retried = agent.retryPending && !agent.session.isRunning && this.retryLast(agent.info.id);
     const busy = retried || agent.session.isRunning;
+    const steering = busy && !retried && this.steerable(agent);
     const userMsg: Message = {
       id: genId("msg"),
       kind: "user",
@@ -1224,11 +1253,78 @@ export class Workspace {
       images: msgImages?.length ? msgImages : undefined,
       forwardRef,
       ...(busy && { queuedFor: agent.info.id, queuedPrompt: prompt }),
+      ...(steering && { steering: true }),
     };
     this.pushMessage(userMsg);
+    if (steering) await this.steer(agent, userMsg);
     if (busy) return;
 
     await this.dispatchPrompt(agent, prompt, userMsg);
+  }
+
+  // Whether a message for the agent now goes into its running turn: the
+  // backend takes one mid-turn (Codex), and neither messages waiting ahead
+  // nor a rate limit hold the queue. Decided before the message is shown,
+  // so clients know it from the start (no cancelling it).
+  private steerable(agent: AgentEntry): boolean {
+    return (
+      !!agent.session.steer &&
+      agent.session.isRunning &&
+      !this.held(agent) &&
+      !this.messages.some(
+        (m) => m.status === "queued" && m.queuedFor === agent.info.id && !m.steering,
+      )
+    );
+  }
+
+  // A message handed to the running turn stays queued until the model reads
+  // it (steered); not taken, it waits like any other.
+  private async steer(agent: AgentEntry, msg: Message): Promise<void> {
+    const taken = await agent.session.steer!(msg.queuedPrompt ?? msg.content, msg.id).catch(
+      () => false,
+    );
+    // Given back meanwhile (unread) when the turn ended under the request.
+    if (taken || !msg.steering) return;
+    delete msg.steering;
+    this.dequeueNext(agent.info.id);
+  }
+
+  // The model read a steered message: what follows answers it, as a reply
+  // of its own under it.
+  private steered(agentId: string, inputId: string): void {
+    const entry = this.agents.get(agentId);
+    const msg = this.messages.find((m) => m.id === inputId);
+    if (!entry || !msg) return;
+    delete msg.steering;
+    delete msg.queuedFor;
+    delete msg.queuedPrompt;
+    msg.status = "done";
+    this.finished(msg.id, "done", msg.content);
+    const current = entry.currentMsg;
+    if (current && !current.content.trim() && !current.events?.length) {
+      // Read with the prompt, before any output: the empty reply goes.
+      this.messages = this.messages.filter((m) => m !== current);
+      if (entry.input) entry.input.replies = entry.input.replies.filter((id) => id !== current.id);
+      this.cb?.onMessageRemoved?.(this.id, current.id);
+    } else if (current) {
+      this.settle(current);
+    }
+    // The model has seen every prompt so far: a usage limit from here on
+    // is retried by carrying on, not by sending one of them again.
+    if (!entry.retryPending) entry.lastPrompt = undefined;
+    entry.input = { id: msg.id, replies: [] };
+    if (msg.from) entry.delivered = entry.input;
+    entry.currentMsg = this.makeAgentMsg(agentId);
+    entry.input.replies.push(entry.currentMsg.id);
+    this.pushMessage(entry.currentMsg);
+  }
+
+  // Steered messages a turn ended without reading: the queue's again, and
+  // it runs them next.
+  private unread(ids: string[]): void {
+    for (const m of this.messages) {
+      if (m.steering && ids.includes(m.id)) delete m.steering;
+    }
   }
 
   // Who wrote a message, for quotes and forwards.
@@ -1241,15 +1337,17 @@ export class Workspace {
 
   // A message from another session, to the default agent: the panel shows
   // `text` with its sender, the model reads `prompt`. It waits in the queue
-  // behind a running turn, earlier queued messages or a rate-limit pause.
-  deliver(text: string, from: MessageOrigin, prompt: string): "sent" | "queued" {
+  // behind a running turn, earlier queued messages or a rate-limit pause,
+  // unless it can be steered into the running turn.
+  deliver(text: string, from: MessageOrigin, prompt: string): "sent" | "queued" | "steered" {
     const agent = this.resolveAgent();
     if (!agent) throw new Error(`"${this.name}" has no agent to take the message`);
     const paused = this.held(agent);
-    const queued =
-      agent.session.isRunning ||
-      paused ||
-      this.messages.some((m) => m.status === "queued" && m.queuedFor === agent.info.id);
+    const waiting = this.messages.some(
+      (m) => m.status === "queued" && m.queuedFor === agent.info.id && !m.steering,
+    );
+    const queued = agent.session.isRunning || paused || waiting;
+    const steering = queued && this.steerable(agent);
     const msg: Message = {
       id: genId("msg"),
       kind: "user",
@@ -1259,10 +1357,16 @@ export class Workspace {
       status: queued ? "queued" : "done",
       from,
       ...(queued && { queuedFor: agent.info.id, queuedPrompt: prompt }),
+      ...(steering && { steering: true }),
     };
     this.pushMessage(msg);
-    if (!queued) void this.dispatchPrompt(agent, prompt, msg);
-    return queued ? "queued" : "sent";
+    if (!queued) {
+      void this.dispatchPrompt(agent, prompt, msg);
+      return "sent";
+    }
+    if (!steering) return "queued";
+    void this.steer(agent, msg);
+    return "steered";
   }
 
   private async dispatchPrompt(agent: AgentEntry, prompt: string, input?: Message): Promise<void> {
@@ -1305,7 +1409,9 @@ export class Workspace {
     const entry = this.agents.get(agentId);
     if (this.disposed || !entry || entry.session.isRunning) return;
     if (this.held(entry)) return;
-    const msg = this.messages.find((m) => m.status === "queued" && m.queuedFor === agentId);
+    const msg = this.messages.find(
+      (m) => m.status === "queued" && m.queuedFor === agentId && !m.steering,
+    );
     if (!msg) return;
     const prompt = msg.queuedPrompt ?? msg.content;
     msg.status = "done";
@@ -1376,8 +1482,12 @@ export class Workspace {
 
   // Remove a still-queued message. Returns false if it no longer exists or
   // already started running.
-  cancelQueued(messageId: string): boolean {
-    const idx = this.messages.findIndex((m) => m.id === messageId && m.status === "queued");
+  // A steered one is the running turn's already: only a stop that ends the
+  // turn with it (`evenSteered`) takes it back.
+  cancelQueued(messageId: string, evenSteered = false): boolean {
+    const idx = this.messages.findIndex(
+      (m) => m.id === messageId && m.status === "queued" && (evenSteered || !m.steering),
+    );
     if (idx < 0) return false;
     this.messages.splice(idx, 1);
     return true;
@@ -1451,10 +1561,9 @@ export class Workspace {
   }
 
   // Stop the running turns and nothing else: background tasks and pending
-  // wake-ups go on. A backend without interrupts (Codex) stops as by abort.
-  // A Stop the backend cannot take as an interrupt stops by abort: a second
-  // one while the first is unanswered (the SDK's request has no timeout), or
-  // one while the process is still starting.
+  // wake-ups go on. A Stop the backend cannot take as an interrupt stops by
+  // abort: a second one while the first is unanswered (the SDK's request has
+  // no timeout), or one while the process is still starting.
   async interruptAgent(agentId: string): Promise<void> {
     const entry = this.agents.get(agentId);
     if (!entry) return;
@@ -1630,6 +1739,8 @@ export class Workspace {
         kind: m.kind ?? (m.agentId === null ? "user" : "agent"),
         status: m.status === "streaming" ? ("done" as MessageStatus) : m.status,
       };
+      // The turn it was steered into went with the process.
+      delete msg.steering;
       // Cut off by a server restart or crash mid-turn.
       if (m.status === "streaming") {
         msg.content = m.content ? `${m.content}\n\n*\\[interrupted\\]*` : "*\\[interrupted\\]*";

@@ -4,6 +4,8 @@ import * as https from "https";
 import * as os from "os";
 import * as path from "path";
 import type { AccountConfig } from "../config/config";
+import { readCodexRateLimits } from "../session/codex";
+import type { RateLimitSnapshot } from "../session/codex-rpc";
 
 export interface QuotaWindow {
   utilization: number;
@@ -22,12 +24,37 @@ export interface QuotaEntry {
 const QUOTA_INTERVAL_MS = 5 * 60_000;
 
 // Rate-limit utilisation of the local login and every configured account,
-// read from the headers of a minimal API request.
+// read from the headers of a minimal API request, and of the Codex login,
+// from its sessions' updates or a read of our own.
 export class QuotaMonitor {
-  entries: QuotaEntry[] = [];
+  private claude: QuotaEntry[] = [];
+  private codex: QuotaEntry | null = null;
   private refreshedAt = 0;
 
-  constructor(private accounts: () => Record<string, AccountConfig>) {}
+  constructor(
+    private accounts: () => Record<string, AccountConfig>,
+    private codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
+  ) {}
+
+  get entries(): QuotaEntry[] {
+    return this.codex ? [...this.claude, this.codex] : this.claude;
+  }
+
+  noteCodex(limits: RateLimitSnapshot): void {
+    const entry: QuotaEntry = {
+      label: "Codex",
+      fiveHour: null,
+      sevenDay: null,
+      fetchedAt: Date.now(),
+    };
+    for (const w of [limits.primary, limits.secondary]) {
+      if (!w?.resetsAt) continue;
+      const window = { utilization: w.usedPercent / 100, resetsAt: w.resetsAt };
+      if ((w.windowDurationMins ?? 0) <= 24 * 60) entry.fiveHour = window;
+      else entry.sevenDay = window;
+    }
+    this.codex = entry;
+  }
 
   refreshIfStale(): void {
     if (Date.now() - this.refreshedAt < QUOTA_INTERVAL_MS) return;
@@ -41,6 +68,15 @@ export class QuotaMonitor {
 
   private refresh(): void {
     this.refreshedAt = Date.now();
+    // A read costs no quota; sessions' updates spare even that.
+    const fresh = this.codex && Date.now() - this.codex.fetchedAt < QUOTA_INTERVAL_MS;
+    if (!fresh && fs.existsSync(path.join(this.codexHome, "auth.json"))) {
+      const before = this.codex;
+      // A session's update while the read ran is the newer one.
+      void readCodexRateLimits().then((limits) => {
+        if (limits && this.codex === before) this.noteCodex(limits);
+      });
+    }
     const sources: Array<{ label: string; token: string }> = [];
 
     const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
@@ -74,7 +110,7 @@ export class QuotaMonitor {
         if (entry) results.push({ ...entry, label: src.label });
         if (++done === sources.length) {
           results.sort((a, b) => a.label.localeCompare(b.label));
-          this.entries = results;
+          this.claude = results;
         }
       });
     }

@@ -1,11 +1,11 @@
 # agent-team — Project Guide
 
-A self-hosted panel that runs Claude (via `@anthropic-ai/claude-agent-sdk`) and Codex (via `@openai/codex-sdk`) agents in per-folder workspaces. `service/` is the Node server (HTTP + WebSocket, sessions, persistence, git), `webview/` the React client (Vite), `scripts/` the tooling. Everything is TypeScript.
+A self-hosted panel that runs Claude (via `@anthropic-ai/claude-agent-sdk`) and Codex (via `codex app-server`, the binary of the pinned `@openai/codex`) agents in per-folder workspaces. `service/` is the Node server (HTTP + WebSocket, sessions, persistence, git), `webview/` the React client (Vite), `scripts/` the tooling. Everything is TypeScript.
 
 Detailed knowledge lives in skills — load them at the moments their descriptions state, don't work from memory:
 
 - **deploy** — before building, restarting, or checking the production server. You are usually running _inside_ that server.
-- **capture-sdk** — the snap fixtures (`service/tests/snap/`): whenever behaviour depends on what the Claude CLI or `codex exec` actually emits. Record first, then code.
+- **capture-sdk** — the snap fixtures (`service/tests/snap/`): whenever behaviour depends on what the Claude CLI or `codex app-server` actually emits. Record first, then code.
 - **stream-debug** — before touching the event pipeline (`session/claude.ts` → `workspace/workspace.ts` → `state/stream.ts`/`chat/events.ts` → `chat/messages.tsx`): frame semantics and the event model.
 - **add-model** — before adding or renaming a model in `config/presets.ts`.
 - **review** — before committing anything non-trivial: independent reviewer subagents, findings verified before fixes.
@@ -18,7 +18,7 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 - **Never guess the shape of an SDK stream.** If a fix depends on frame order or fields, capture the scenario (capture-sdk skill) and add the recording as a fixture.
 - **Never start many real Claude/Codex sessions in a short time.** Captures and smoke tests hit the user's own account; bursts of sessions look like abuse and can get the account banned. Capture only the scenarios you need, one at a time, spaced out; never loop captures or run them in parallel.
 - **Never push unverified code.** `npm run check && npm test && npm run build` locally before every push. Commit only when asked; push only when asked.
-- Never `pkill -f` a pattern that can match your own shell (the server command line, `codex exec`, ...). Kill specific PIDs.
+- Never `pkill -f` a pattern that can match your own shell (the server command line, `codex app-server`, ...). Kill specific PIDs.
 
 ## Working Style
 
@@ -33,7 +33,7 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 `service/src/` (Node server):
 
 - `index.ts` — entry point; `server/` — `server.ts` (WebSocket protocol, workspace lifecycle, accounts, persistence), `auth.ts`, `http.ts` (static files, uploads), `quota.ts`, `system.ts`, `commands.ts` (slash commands handled locally)
-- `session/` — `claude.ts` / `codex.ts`, one adapter per backend, both emit `StreamEvent`s; `host.ts` creates them
+- `session/` — `claude.ts` / `codex.ts`, one adapter per backend, both emit `StreamEvent`s (`codex-rpc.ts`: the app-server's JSON-RPC transport and protocol types); `host.ts` creates them
 - `workspace/` — `workspace.ts` (message list, event aggregation), `state.ts` (persistence: `<id>.json` per workspace), `history-db.ts` (every message in `history.db`, only changed ones written), `history-index.ts` / `history-worker.ts` / `history-service.ts` (search index: messages cut into entries, trigram FTS, read-only SQL, in a worker thread; derived, rebuilt when deleted), `summary.ts` (summary pages sent before details are requested)
 - `project/` — `manager.ts` (project leads, worker sessions, cross-project messages), `tools.ts` (the panel's MCP tools), `store.ts` (projects, objectives, notes under `.agent-team/projects/`), `objectives.ts` (one TOML per objective; a done one is deleted, a dropped one keeps its title and reason), `issues.ts` / `issue-board.ts` (known defects, one TOML per module, apart from the objectives and linked to them; a fixed one is deleted), `paths.ts` (a path as the board writes it: `notes/…` in the project's notes, other relative ones in its repository; nothing outside the two)
 - `config/` — `config.ts` (config.toml), `presets.ts` (agent and model lists, hand-maintained)
@@ -52,7 +52,7 @@ Tests and tooling:
 - Node ≥ 24 (the history is in `node:sqlite`), npm workspaces rooted at the repo top level — `npm install` at the root only. TypeScript scripts run through `tsx` (`npm run capture -- …`), never compiled.
 - `npm run check` — root `tsc` (scripts + cross-package test), per-workspace strict `tsc`, ESLint (`typescript-eslint` recommendedTypeChecked + react-hooks), prettier. Zero tolerance; no `eslint-disable` except `react-hooks/exhaustive-deps` with a stated reason.
 - `npm test` — vitest in `service/` (`tests/unit` + `tests/snap`) then `webview/` (jsdom + testing-library).
-- `npm run build` — Vite bundle then esbuild server bundle into `dist/`. The SDKs are `external`: the server resolves them from `node_modules` at runtime.
+- `npm run build` — Vite bundle then esbuild server bundle into `dist/`. The Claude SDK is `external` and the codex binary is found in `node_modules`: the server resolves both at runtime.
 - CI (`.github/workflows/ci.yml`) runs check, test, build on every push and PR.
 
 ## Commits

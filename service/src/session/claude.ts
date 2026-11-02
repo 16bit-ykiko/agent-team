@@ -1929,7 +1929,7 @@ export function fenced(body: string, lang = ""): string {
   return `${fence}${lang}\n${body}\n${fence}`;
 }
 
-function formatToolUse(block: Record<string, unknown>): string {
+export function formatToolUse(block: Record<string, unknown>): string {
   const name = block.name as string;
   const input = block.input as Record<string, unknown> | undefined;
 

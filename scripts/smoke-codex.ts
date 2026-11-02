@@ -1,8 +1,10 @@
-// Prove a Codex model slug works through the binary the server resolves
-// (`which codex` first, like service/src/codex-session.ts).
+// Prove a Codex model slug works through the session the server runs: the
+// pinned @openai/codex binary's app-server, one turn.
 // Usage: npm run smoke:codex -- <slug> [effort]
-import { execSync } from "node:child_process";
-import { Codex, type ThreadOptions } from "@openai/codex-sdk";
+import { execFileSync } from "node:child_process";
+import type { StreamEvent } from "../service/src/session/claude.ts";
+import { CodexSession } from "../service/src/session/codex.ts";
+import { codexBinary } from "../service/src/session/codex-rpc.ts";
 
 const [slug, effort] = process.argv.slice(2);
 if (!slug) {
@@ -10,17 +12,17 @@ if (!slug) {
   process.exit(2);
 }
 
-const bin = execSync("which codex", { encoding: "utf-8" }).trim();
-console.log(`binary: ${bin} (${execSync(`${bin} --version`, { encoding: "utf-8" }).trim()})`);
+const bin = codexBinary();
+console.log(`binary: ${bin} (${execFileSync(bin, ["--version"], { encoding: "utf-8" }).trim()})`);
 
-const codex = new Codex({ codexPathOverride: bin });
-const thread = codex.startThread({
-  workingDirectory: "/tmp",
-  sandboxMode: "read-only",
-  approvalPolicy: "never",
-  skipGitRepoCheck: true,
-  model: slug,
-  ...(effort && { modelReasoningEffort: effort as ThreadOptions["modelReasoningEffort"] }),
+const session = new CodexSession({ cwd: "/tmp", backend: "codex", model: slug, effort });
+let text = "";
+session.on("event", (e: StreamEvent) => {
+  if (e.kind === "text_delta") text += e.content;
+  if (e.kind === "result" || e.kind === "error") {
+    console.log(e.kind === "result" ? `result: ${text.trim()}` : `error: ${e.content}`);
+    session.abort();
+    process.exit(e.kind === "result" ? 0 : 1);
+  }
 });
-const turn = await thread.run("Reply with the single word PONG.");
-console.log(`result: ${turn.finalResponse.trim()}`);
+await session.send("Reply with the single word PONG.");

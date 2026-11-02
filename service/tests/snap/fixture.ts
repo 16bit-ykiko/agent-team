@@ -3,12 +3,15 @@
 // under plain node.
 import type { Message } from "../../src/workspace/workspace";
 import type { StreamEvent, UsageStats } from "../../src/session/claude";
-import type { ContextUsage } from "../../src/session/claude";
+import type { RpcMessage } from "../../src/session/codex-rpc";
 
 export type Backend = "claude" | "codex";
 
 export type Step =
-  | { op: "send"; text: string }
+  // Codex: turn/start when no turn runs, turn/steer into the running one.
+  // `requeued`: the panel sends it by itself (a steered message the stopped
+  // turn never read, back from the queue); the replay only expects it.
+  | { op: "send"; text: string; requeued?: true }
   // Recording pacing only: "result" = the turn's result frame arrived,
   // "idle" = result and no live background task, a number = milliseconds,
   // { frame } = a frame whose JSON contains the string arrived.
@@ -17,10 +20,12 @@ export type Step =
   | { op: "end" }
   // The user's Stop button mid-turn.
   | { op: "abort" }
-  // Query.interrupt(): stop the running turn, keep the process.
+  // Query.interrupt() / turn/interrupt: stop the running turn, keep the process.
   | { op: "interrupt" }
   // Query.stopTask() on the latest listed task matching `match`.
-  | { op: "stopTask"; match: { type?: string; ambient?: boolean } };
+  | { op: "stopTask"; match: { type?: string; ambient?: boolean } }
+  // Codex: thread/compact/start, the user's /compact.
+  | { op: "compact" };
 
 export interface Replay {
   messages: Message[];
@@ -30,18 +35,34 @@ export interface Replay {
   limits: { rateLimitType?: string; resetsAt?: number }[];
   // Every session handle the workspace created, in order (a restart adds one).
   sessions: { sessionId: string | null; usage: UsageStats }[];
+  // Codex: every message the sessions wrote to the app-server.
+  sent: RpcMessage[];
+}
+
+// Codex: a tool the client defines (thread/start dynamicTools) and answers
+// itself when the model calls it (item/tool/call).
+export interface CodexTool {
+  namespace?: string;
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  reply: string;
+  success?: boolean;
 }
 
 export interface Fixture {
   description: string;
   model?: string;
-  // Extra SDK options for the recording (e.g. perTaskStopAffordance).
+  // Extra options for the recording: Claude SDK options (e.g.
+  // perTaskStopAffordance), codex thread/start params.
   options?: Record<string, unknown>;
+  // Codex: client-defined tools.
+  tools?: CodexTool[];
   // Files materialised in the recording cwd (skills, images).
   files?: Record<string, string | { base64: string }>;
-  // Claude: the CLI's API calls go to a local stand-in instead of Anthropic.
-  // "usage-limit" refuses each one as the five-hour limit does, so a limit
-  // is recorded without spending the account's.
+  // The backend's API calls go to a local stand-in instead of Anthropic or
+  // OpenAI. "usage-limit" refuses each one as a spent usage limit does, so a
+  // limit is recorded without spending the account's.
   api?: "usage-limit";
   steps: Step[];
   verify?: (replay: Replay) => void;
@@ -49,6 +70,7 @@ export interface Fixture {
 
 export const fixture = (f: Fixture): Fixture => f;
 export const send = (text: string): Step => ({ op: "send", text });
+export const requeued = (text: string): Step => ({ op: "send", text, requeued: true });
 export const wait = (until: "result" | "idle" | number | { frame: string }): Step => ({
   op: "wait",
   for: until,
@@ -56,6 +78,7 @@ export const wait = (until: "result" | "idle" | number | { frame: string }): Ste
 export const end = (): Step => ({ op: "end" });
 export const abort = (): Step => ({ op: "abort" });
 export const interrupt = (): Step => ({ op: "interrupt" });
+export const compact = (): Step => ({ op: "compact" });
 export const stopTask = (match: { type?: string; ambient?: boolean }): Step => ({
   op: "stopTask",
   match,
@@ -63,7 +86,7 @@ export const stopTask = (match: { type?: string; ambient?: boolean }): Step => (
 
 export const DEFAULT_MODEL: Record<Backend, string> = {
   claude: "claude-sonnet-5",
-  codex: "gpt-6-astra",
+  codex: "gpt-6-luna",
 };
 export const RECORD_CWD = "/tmp/sdk-capture";
 
@@ -79,12 +102,11 @@ export interface Header {
 export type Entry = { t: number } & (
   | { step: Step & { i: number } }
   | { frame: unknown }
+  // Codex: a JSON-RPC message the recorder sent to the app-server.
+  | { sent: unknown }
   | { error: string }
-  // The backend's event stream closed (process exit, or codex's per-turn
-  // stream ending).
+  // The backend's event stream closed (process exit).
   | { close: true }
-  // Codex: the rollout's context snapshot after a turn.
-  | { rollout: ContextUsage & { threadId: string } }
   // A control request the recorder made (interrupt, stop_task) and its answer.
   | { control: { op: string; taskId?: string; response?: unknown; error?: string } }
 );

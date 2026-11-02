@@ -5,6 +5,7 @@ import { EventEmitter } from "events";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import type { RateLimitSnapshot } from "../../src/session/codex-rpc";
 
 type Reply = { headers: Record<string, string>; delay?: number } | "error" | "timeout";
 
@@ -44,6 +45,15 @@ vi.mock("http", () => {
   };
   return { request, default: { request } };
 });
+
+// The Codex limits come from a short-lived app-server; none is started here.
+const codex = vi.hoisted(() => ({ reads: 0, limits: null as RateLimitSnapshot | null }));
+vi.mock("../../src/session/codex", () => ({
+  readCodexRateLimits: () => {
+    codex.reads++;
+    return Promise.resolve(codex.limits);
+  },
+}));
 
 import { QuotaMonitor } from "../../src/server/quota";
 
@@ -160,5 +170,47 @@ describe("QuotaMonitor", () => {
     const q = new QuotaMonitor(() => ({}));
     q.refreshIfStale();
     expect(net.requests).toEqual([]);
+  });
+
+  it("lists the Codex limits after the Claude ones, read only with a Codex login", async () => {
+    fs.rmSync(path.join(home, ".claude"), { recursive: true });
+    const codexHome = path.join(home, ".codex");
+    const q = new QuotaMonitor(() => ({}), codexHome);
+    q.refreshIfStale();
+    expect(codex.reads).toBe(0);
+    fs.mkdirSync(codexHome);
+    fs.writeFileSync(path.join(codexHome, "auth.json"), "{}");
+    codex.limits = {
+      limitId: "codex",
+      primary: { usedPercent: 12, windowDurationMins: 10080, resetsAt: 1794204562 },
+      secondary: null,
+      planType: "prolite",
+    };
+    q.invalidate();
+    q.refreshIfStale();
+    await flush();
+    expect(codex.reads).toBe(1);
+    expect(q.entries).toEqual([
+      {
+        label: "Codex",
+        fiveHour: null,
+        sevenDay: { utilization: 0.12, resetsAt: 1794204562 },
+        fetchedAt: expect.any(Number) as number,
+      },
+    ]);
+    // A session's update counts as fresh: no read of our own.
+    q.noteCodex({
+      limitId: "codex",
+      primary: { usedPercent: 100, windowDurationMins: 300, resetsAt: 1700000000 },
+      secondary: { usedPercent: 50, windowDurationMins: 10080, resetsAt: 1700500000 },
+      planType: null,
+    });
+    q.invalidate();
+    q.refreshIfStale();
+    expect(codex.reads).toBe(1);
+    expect(q.entries[0]).toMatchObject({
+      fiveHour: { utilization: 1, resetsAt: 1700000000 },
+      sevenDay: { utilization: 0.5, resetsAt: 1700500000 },
+    });
   });
 });

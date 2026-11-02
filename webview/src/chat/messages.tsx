@@ -1063,9 +1063,12 @@ export const MessageItem = memo(function MessageItem({
                     <span className="message-author user-author">You</span>
                   )}
                   {msg.status === "queued" && (
-                    <span className="queued-badge">
+                    <span
+                      className="queued-badge"
+                      title={msg.steering ? "Sent into the running turn" : undefined}
+                    >
                       queued
-                      {onCancelQueued && (
+                      {onCancelQueued && !msg.steering && (
                         <button
                           className="queued-cancel"
                           title="Remove from queue"

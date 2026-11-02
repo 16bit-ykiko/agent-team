@@ -16,7 +16,7 @@ const build = {
     "history-worker": "src/workspace/history-worker.ts",
   },
   outdir: "../dist",
-  external: ["@anthropic-ai/claude-agent-sdk", "@openai/codex-sdk"],
+  external: ["@anthropic-ai/claude-agent-sdk"],
 };
 
 if (watch) {

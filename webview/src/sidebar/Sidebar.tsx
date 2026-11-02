@@ -81,7 +81,9 @@ export function SystemStatusPanel({
           extra={`${formatBytes(status.memUsed)} / ${formatBytes(status.memTotal)}`}
         />
         {status.quota.flatMap((q) => {
-          const tag = status.quota.length > 1 ? q.label : "Opus";
+          // One Claude login is "Opus"; several go by their account names.
+          const claude = status.quota.filter((e) => e.label !== "Codex").length;
+          const tag = q.label === "Codex" || claude > 1 ? q.label : "Opus";
           const items = [];
           if (q.fiveHour) {
             const pct = Math.round(q.fiveHour.utilization * 100);
