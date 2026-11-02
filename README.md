@@ -7,9 +7,11 @@ them is a conversation you can open and join — from a browser, or from a phone
 where the panel installs as a home-screen app.
 
 It drives the agent CLIs you already have: **Claude** through
-`@anthropic-ai/claude-agent-sdk` and **Codex** through `codex app-server`.
+`@anthropic-ai/claude-agent-sdk` and **Codex** through `codex app-server`,
+and **Cursor**'s agents (Composer, Gemini, Grok, ...) through `@cursor/sdk`,
+whose agent loop runs inside the server against Cursor's hosted models.
 There is no model of its own here; this is the orchestration and the UI around
-the CLIs.
+them.
 
 ## How the team works
 
@@ -63,11 +65,12 @@ the CLIs.
   - _Objectives_ — the project's board.
 - **Run state per agent** — idle, working, waiting on background work, or
   sleeping until a scheduled wake-up. The context figure is the size of the
-  turn's last request against the model's window, not a running total. A
-  message to a working Codex agent goes into its running turn.
+  turn's last request against the model's window (Cursor reports none), not
+  a running total. A message to a working Codex agent goes into its running
+  turn.
 - **Slash commands** handled by the panel itself, on top of whatever the
   Claude CLI offers: `/effort <level>`, `/fast [on|off]` (Claude fast mode /
-  Codex priority tier), `/goal <objective>` (Codex goals: the agent keeps
+  Codex priority tier / a Cursor model's `fast` parameter), `/goal <objective>` (Codex goals: the agent keeps
   working toward it across turns; `/goal clear` ends it), `/context`,
   `/usage`. The CLI's own command list is remembered across restarts.
 - **Scheduled wake-ups** — an agent can put itself to sleep and come back
@@ -90,6 +93,8 @@ the CLIs.
   you use Claude
 - A [Codex](https://developers.openai.com/codex/cli) login, if you use Codex
   (`npx codex login` in the repository runs the bundled CLI)
+- For Cursor models, a Cursor API key (`[cursor]` below); the SDK is an npm
+  dependency, nothing to install on `PATH`
 
 Codex runs as the binary of the `@openai/codex` version pinned in
 `service/package.json`, not a `codex` on your `PATH`: bump it there when new
@@ -138,8 +143,8 @@ and pull request. Agent-facing project rules live in `.claude/CLAUDE.md`, with
 task-specific playbooks under `.claude/skills/` (deploy, capture-sdk,
 stream-debug, add-model, review).
 
-Both backends' event mappings are tested against recorded real interactions
-(`service/tests/snap/{claude,codex}/`): each fixture is a script (`<name>.ts`,
+Every backend's event mapping is tested against recorded real interactions
+(`service/tests/snap/{claude,codex,cursor}/`): each fixture is a script (`<name>.ts`,
 which also states what it verifies), the recording it produced
 (`<name>.jsonl`) and the transcript the replay pins (`<name>.snap.md`).
 `npm run capture -- <backend> <name>` records a fixture with your own login;
@@ -172,6 +177,9 @@ oauth_token = "sk-ant-oat01-..."   # from `claude setup-token`
 [providers.deepseek]         # any Anthropic-compatible endpoint
 api_key = "..."
 base_url = "https://api.deepseek.com/anthropic"
+
+[cursor]                     # the cursor/ models
+api_key = "..."              # a Cursor user or service account key, billed to its plan
 ```
 
 A provider name must be a prefix of the model ids routed to it, so
@@ -193,8 +201,9 @@ boards, debug snapshots) lives under `.agent-team/` in the base directory.
 
 The model list is maintained by hand in
 [`service/src/config/presets.ts`](service/src/config/presets.ts) — ids, labels, backend,
-which reasoning-effort levels each one accepts, the default effort, and for
-Codex the context window and fast service tier. Adding a model means adding
+which reasoning-effort levels each one accepts, the default effort, for
+Codex the context window and fast service tier, and for Cursor the model
+parameters effort and fast mode are sent as. Adding a model means adding
 an entry there **and** making sure the CLI on your `PATH` is new enough to
 know the id.
 
@@ -202,6 +211,11 @@ A `[1m]` suffix selects the large context window: for Claude it is part of
 the model id the CLI accepts; for Codex (`gpt-6-astra[1m]`, `gpt-5.6-*[1m]`)
 the id is stripped and the 872K window is set through `model_context_window`.
 The numbers come from `~/.codex/models_cache.json`.
+
+Cursor models are `cursor/` + the id in Cursor's catalog
+(`Cursor.models.list()`, which also lists each model's parameters and
+default variant); the prefix keeps them apart from the Claude and GPT ids
+that catalog shares.
 
 Agent identities (name, avatar, colour) are presets in the same file.
 
@@ -229,7 +243,7 @@ detached from the caller; it logs to `~/.cache/agent-team-deploy.log`.
 ```
 service/src/     Node server
   server/        HTTP + WebSocket, auth, uploads, quota
-  session/       one adapter per CLI backend (claude.ts, codex.ts)
+  session/       one adapter per backend (claude.ts, codex.ts, cursor.ts)
   workspace/     message list, event aggregation, persistence, search
   project/       project leads, worker sessions, objectives, the panel's MCP tools
   config/        config.toml, agent + model lists (presets.ts, hand-maintained)

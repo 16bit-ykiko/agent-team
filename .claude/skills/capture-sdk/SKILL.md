@@ -1,15 +1,15 @@
 ---
 name: capture-sdk
-description: Snap fixtures — script a real Claude or Codex interaction, record it once, replay it as a test with a pinned transcript. Read BEFORE changing how backend frames map to events, and whenever you are unsure what a backend actually emits — record, don't guess.
+description: Snap fixtures — script a real Claude, Codex or Cursor interaction, record it once, replay it as a test with a pinned transcript. Read BEFORE changing how backend frames map to events, and whenever you are unsure what a backend actually emits — record, don't guess.
 ---
 
 # Snap fixtures: record real backend streams
 
-Frame shapes and order from the Claude CLI and `codex app-server` are not documented well enough to code against from memory; past bugs (foreground shells rendered as cards, Skill invocations shown as wake-ups, a phantom result on resume) all came from guessing. **If a fix depends on what the stream looks like, record it first.**
+Frame shapes and order from the Claude CLI, `codex app-server` and the Cursor SDK are not documented well enough to code against from memory; past bugs (foreground shells rendered as cards, Skill invocations shown as wake-ups, a phantom result on resume) all came from guessing. **If a fix depends on what the stream looks like, record it first.**
 
 ## Rate limit — read first
 
-Every recording is a real session on the user's account. Bursts of sessions can get the account **banned**. Record only the fixture the current bug needs (one or two), never "all of them"; the recorder refuses more than 4 per run and pauses 30 s between them — do not shorten that; never loop recordings to "try again". Reuse an existing recording whenever one shows the frames you need (`ls service/tests/snap/{claude,codex}`).
+Every recording is a real session on the user's account. Bursts of sessions can get the account **banned**. Record only the fixture the current bug needs (one or two), never "all of them"; the recorder refuses more than 4 per run and pauses 30 s between them — do not shorten that; never loop recordings to "try again". Reuse an existing recording whenever one shows the frames you need (`ls service/tests/snap/{claude,codex,cursor}`).
 
 ## Anatomy
 
@@ -19,7 +19,7 @@ One fixture = three files in `service/tests/snap/<backend>/`:
 - `<name>.jsonl` — the recording: a header line (backend, model, CLI version, date) then `{t, frame}` entries with `{t, step}` markers between them, plus `{t, close}` (stream closed) and `{t, error}`. Codex recordings hold the JSON-RPC lines both ways: `{t, frame}` from the app-server, `{t, sent}` from the recorder.
 - `<name>.snap.md` — the transcript the replay produced, pinned by vitest (`toMatchFileSnapshot`). Reviewed like code; regenerate with `npm test -w service -- -u` only after you understand every changed line.
 
-`service/tests/snap/snap.test.ts` globs the fixtures. For each: replay through the real session (`ClaudeSession.sdk` / `CodexSession.hooks` swapped for a player of the recorded frames, `Date` advanced per frame; the codex player answers each request the session writes with the recorded response to the recorder's request of the same method, and fails when the session never writes one the recorder did), the real `Workspace`, then `verify()`, the snapshot, and the client/server transcript convergence. A fixture without a `.jsonl` fails with the record command.
+`service/tests/snap/snap.test.ts` globs the fixtures. For each: replay through the real session (`ClaudeSession.sdk` / `CodexSession.hooks` / `CursorSession.sdk` swapped for a player of the recorded frames, `Date` advanced per frame; the codex player answers each request the session writes with the recorded response to the recorder's request of the same method, and fails when the session never writes one the recorder did), the real `Workspace`, then `verify()`, the snapshot, and the client/server transcript convergence. A fixture without a `.jsonl` fails with the record command.
 
 ```ts
 export default fixture({
@@ -38,7 +38,7 @@ export default fixture({
 });
 ```
 
-Steps: `send`, `wait`, `end`, `abort` (the user's Stop), `interrupt`, `stopTask`, and for codex `compact` (`thread/compact/start`) and `requeued` (a message the panel sends by itself, such as a steered one its stopped turn never read: the recorder sends it, the replay only expects the session to). Codex: a `send` while a turn runs is `turn/steer`, `interrupt` is `turn/interrupt`, `end` stops the app-server and the next step resumes the thread in a new one. `tools` declares client-defined tools (`dynamicTools`) the recorder answers with each one's `reply` (`success: false` for a refusal); the replay serves the same replies as the session's panel tools.
+Steps: `send`, `wait`, `end`, `abort` (the user's Stop), `interrupt`, `stopTask`, and for codex `compact` (`thread/compact/start`) and `requeued` (a message the panel sends by itself, such as a steered one its stopped turn never read: the recorder sends it, the replay only expects the session to). Codex: a `send` while a turn runs is `turn/steer`, `interrupt` is `turn/interrupt`, `end` stops the app-server and the next step resumes the thread in a new one. `tools` declares client-defined tools (`dynamicTools`) the recorder answers with each one's `reply` (`success: false` for a refusal); the replay serves the same replies as the session's panel tools. Cursor: `end` closes the agent handle and the next `send` resumes the agent by id; `interrupt` is `run.cancel()`.
 
 ## Record
 
@@ -46,10 +46,13 @@ Steps: `send`, `wait`, `end`, `abort` (the user's Stop), `interrupt`, `stopTask`
 npm run capture -- claude resume-orphan-bg      # writes service/tests/snap/claude/resume-orphan-bg.jsonl
 npm run capture -- codex commands
 npm run summarize -- service/tests/snap/codex/commands.jsonl   # one line per entry
+npm run capture -- cursor shell                                # key from ~/.cursor/api_key.txt
 ```
 
+A Cursor frame is tagged by where it came from: `delta` (onDelta), `step` (onStep), `message` (run.stream()), `status`, `result` (run.wait()), `tool` (a fixture's custom tool ran), `created`/`resumed` (the agent id), `thrown` (an SDK call threw, with the error's name and code). A fixture's `options.local.customTools` are passed to the agent; each send carries the model parameters and `force`, as `CursorSession` sends. In the replay a frame answers only the SDK call that produced it (a `resumed` frame only a `resume` of that id), and `verify()` sees `r.sdkCalls` (create / resume / send / cancel, in order) and `r.sends` (each send's model and local options).
+
 - `api: "usage-limit"` points the backend at a local stand-in that refuses every request as a spent limit does: Claude's CLI through `ANTHROPIC_BASE_URL` (the five-hour limit), codex through a provider of its own (`usage_limit_reached` and the `x-codex-*` rate-limit headers). A limit recorded without spending any quota. Never hit a real limit on purpose.
-- Uses the user's own logins; default models `claude-sonnet-5` / `gpt-6-luna` (`model:` in the fixture overrides, e.g. a bad model for a failure recording). Codex turns run at low effort on the standard tier, whatever `~/.codex/config.toml` says.
+- Uses the user's own logins (Cursor: the key file, billed to the user's plan); default models `claude-sonnet-5` / `gpt-6-luna` / `cursor/composer-2.5` (`model:` in the fixture overrides, e.g. a bad model for a failure recording). Codex turns run at low effort on the standard tier, whatever `~/.codex/config.toml` says.
 - Recording cwd is `/tmp/sdk-capture`; `files` are written there first. Strings are trimmed to 400 chars and base64 payloads replaced, so recordings are safe to commit — still read the transcript before committing.
 - Prompts must force the exact behaviour ("foreground", "run_in_background set to true", "do not poll", "each as its own command").
 
@@ -62,6 +65,6 @@ npm run summarize -- service/tests/snap/codex/commands.jsonl   # one line per en
 
 ## Re-record when
 
-- The SDK/CLI is bumped (`@anthropic-ai/claude-agent-sdk` or `@openai/codex` in `service/package.json`).
+- The SDK/CLI is bumped (`@anthropic-ai/claude-agent-sdk`, `@openai/codex` or `@cursor/sdk` in `service/package.json`).
 - A user screenshot shows a scenario no fixture covers.
 - The mapping needs a frame field you cannot point to in an existing recording.
