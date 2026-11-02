@@ -205,6 +205,14 @@ export const MODEL_OPTIONS: ModelOption[] = [
     effortLevels: ["low", "high", "max"],
     cursorParams: { effort: "reasoning" },
   },
+  {
+    id: "cursor/deepseek-v41-flash-1017",
+    label: "DeepSeek V4.1 Flash",
+    backend: "cursor",
+    defaultEffort: "max",
+    effortLevels: ["none", "low", "medium", "high", "max"],
+    cursorParams: { effort: "reasoning_effort" },
+  },
 ];
 
 export const LEGACY_MODELS: ModelOption[] = [
