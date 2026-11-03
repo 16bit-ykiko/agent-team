@@ -902,40 +902,56 @@ export class ProjectManager {
     return delay;
   }
 
-  // A project's own sessions (its lead's too), and the history: archived
-  // sessions no other project holds.
-  private readable(projectId: string, sessionId: string): Workspace {
+  // Any session, by its id: one is only known from a search or a message.
+  private readable(sessionId: string): Workspace {
     const w = this.host.workspace(sessionId);
-    const link = w?.projectLink;
-    if (w && link?.projectId === projectId) return w;
-    if (w?.isArchived && !link) return w;
-    throw new Error(`No session ${sessionId} in this project or its history`);
+    if (!w) throw new Error(`No session ${sessionId}`);
+    return w;
   }
 
-  // Archived sessions that belong to no other project, in the project's
-  // folders (the repository, folders in it, its worktrees) or anywhere.
-  private async history(projectId: string, everywhere: boolean): Promise<Workspace[]> {
-    const project = this.require(projectId);
-    const roots = everywhere ? [] : await gitWorktrees(project.root);
+  // Archived sessions that belong to no project, in the project's folders
+  // (the repository, folders in it, its worktrees).
+  private async history(projectId: string): Promise<Workspace[]> {
+    const roots = await gitWorktrees(this.require(projectId).root);
     const inside = (cwd: string) => roots.some((r) => cwd === r || cwd.startsWith(`${r}/`));
-    return [...this.host.workspaces()]
-      .filter((w) => w.isArchived && (!w.projectLink || w.projectLink.projectId === projectId))
-      .filter((w) => everywhere || inside(w.cwd))
-      .sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+    return [...this.host.workspaces()].filter(
+      (w) => w.isArchived && !w.projectLink && inside(w.cwd),
+    );
   }
 
-  // What the history tools reach: the project's sessions, its lead's
-  // included, and the history (with everywhere, in any folder).
-  private async scope(projectId: string, everywhere: boolean, session?: string) {
-    if (session) return [this.readable(projectId, session)];
-    return [
-      ...new Set([...this.members(projectId), ...(await this.history(projectId, everywhere))]),
-    ];
+  // The project a history tool reads: its own, another by name or id, or
+  // none for every session ("*").
+  private target(projectId: string, project?: string): Project | null {
+    if (project === undefined) return this.require(projectId);
+    if (project === "*") return null;
+    const all = this.store.list();
+    const byId = all.find((p) => p.id === project);
+    if (byId) return byId;
+    const named = all.filter((p) => p.name.toLowerCase() === project.toLowerCase());
+    if (named.length === 1) return named[0];
+    const list = all.map((p) => `${p.id} "${p.name}"`).join(", ");
+    throw new Error(
+      named.length
+        ? `"${project}" names ${named.length} projects; give the id: ${list}`
+        : `No project "${project}": ${list}`,
+    );
+  }
+
+  // What the history tools reach: a project's sessions, its lead's included,
+  // and the archived ones of no project in its folders; or every session.
+  private async scope(projectId: string, project?: string, session?: string) {
+    if (session) return [this.readable(session)];
+    const target = this.target(projectId, project);
+    const sessions = target
+      ? [...new Set([...this.members(target.id), ...(await this.history(target.id))])]
+      : [...this.host.workspaces()];
+    return sessions.sort((a, b) => b.lastActivityAt - a.lastActivityAt);
   }
 
   private async searchHistory(projectId: string, a: HistorySearch): Promise<string> {
-    const folder = a.folder && path.resolve(this.require(projectId).root, a.folder);
-    const sessions = (await this.scope(projectId, a.everywhere, a.session)).filter(
+    const base = this.target(projectId, a.project) ?? this.require(projectId);
+    const folder = a.folder && path.resolve(base.root, a.folder);
+    const sessions = (await this.scope(projectId, a.project, a.session)).filter(
       (w) => !folder || w.cwd === folder || w.cwd.startsWith(`${folder}/`),
     );
     const names = new Map(sessions.map((w) => [w.id, w.name]));
@@ -1002,7 +1018,7 @@ export class ProjectManager {
   ): Promise<string> {
     const e = await this.host.history.read(entry, from, count, fromChar);
     if (!e) throw new Error(`No entry #${entry}`);
-    const w = this.readable(projectId, e.session);
+    const w = this.readable(e.session);
     if (e.lines.length === 0) return `#${e.entry} has ${e.lineCount} lines`;
     const out: string[] = [];
     let size = 0;
@@ -1034,7 +1050,7 @@ export class ProjectManager {
     tools = false,
     start = false,
   ): Promise<string> {
-    const w = this.readable(projectId, sessionId);
+    const w = this.readable(sessionId);
     if (!this.host.loadWorkspace(w)) throw new Error(`"${w.name}" cannot be loaded`);
     const agents = new Map([...w.agents.values()].map((a) => [a.info.id, a.info.name]));
     const messages = w.getMessages().filter((x) => x.kind !== "system");
@@ -1094,9 +1110,9 @@ export class ProjectManager {
     return out.join("\n");
   }
 
-  // One read-only SQL statement over the histories this lead may read.
-  private async queryHistory(projectId: string, query: string): Promise<string> {
-    const sessions: SessionRow[] = (await this.scope(projectId, true)).map((w) => ({
+  // One read-only SQL statement over the histories search_history reaches.
+  private async queryHistory(projectId: string, query: string, project?: string): Promise<string> {
+    const sessions: SessionRow[] = (await this.scope(projectId, project)).map((w) => ({
       id: w.id,
       name: w.name,
       cwd: w.cwd,
@@ -1612,7 +1628,7 @@ export class ProjectManager {
     searchHistory: (pid, a) => this.searchHistory(pid, a),
     readEntry: (pid, entry, from, count, fromChar) =>
       this.readEntry(pid, entry, from, count, fromChar),
-    queryHistory: (pid, query) => this.queryHistory(pid, query),
+    queryHistory: (pid, query, project) => this.queryHistory(pid, query, project),
     messageSession: (pid, sid, text) => {
       const w = this.session(pid, sid);
       const delay = this.spaceStart(w);

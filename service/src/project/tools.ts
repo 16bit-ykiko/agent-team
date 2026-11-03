@@ -100,7 +100,7 @@ export interface HistorySearch {
   until?: number;
   level?: "main" | "subagents";
   caseSensitive?: boolean;
-  everywhere: boolean;
+  project?: string;
   limit: number;
   offset: number;
   lines?: number;
@@ -126,7 +126,7 @@ export interface PanelApi {
     count: number,
     fromChar: number,
   ): Promise<string>;
-  queryHistory(projectId: string, query: string): Promise<string>;
+  queryHistory(projectId: string, query: string, project?: string): Promise<string>;
   messageSession(projectId: string, sessionId: string, text: string): string;
   stopSession(projectId: string, sessionId: string): string;
   archiveSession(projectId: string, sessionId: string): string;
@@ -310,6 +310,11 @@ function projectStatusTool(api: PanelApi, id: string): PanelTool {
   };
 }
 
+const PROJECT_SCOPE = z
+  .string()
+  .optional()
+  .describe('Another project\'s sessions, by name or id; "*" every session there is');
+
 // Reading the project's sessions and history, the lead's and its workers'
 // alike: nothing here acts on another session.
 function historyTools(api: PanelApi, id: string): PanelTool[] {
@@ -317,7 +322,7 @@ function historyTools(api: PanelApi, id: string): PanelTool[] {
     {
       name: "read_session",
       description:
-        "A session's messages, live or archived: the last ones, the first (start) or those around a message id; with tools, their tool calls by entry.",
+        "A session's messages, any project's, live or archived: the last ones, the first (start) or those around a message id; with tools, their tool calls by entry.",
       shape: {
         session_id: z.string(),
         last: z.number().int().min(1).max(50).optional().describe("How many (6)"),
@@ -365,7 +370,7 @@ function historyTools(api: PanelApi, id: string): PanelTool[] {
         lines: z.number().int().min(1).max(50).optional().describe("Per hit (3)"),
         context: z.number().int().min(0).max(20).optional().describe("Around each line (0)"),
         case_sensitive: z.boolean().optional(),
-        everywhere: z.boolean().optional().describe("Every archived session, any folder"),
+        project: PROJECT_SCOPE,
         limit: z.number().int().min(1).max(100).optional().describe("(20)"),
         offset: z.number().int().min(0).optional(),
       },
@@ -386,7 +391,7 @@ function historyTools(api: PanelApi, id: string): PanelTool[] {
             ...(typeof a.lines === "number" && { lines: a.lines }),
             ...(typeof a.context === "number" && { context: a.context }),
             caseSensitive: a.case_sensitive === true,
-            everywhere: a.everywhere === true,
+            ...(typeof a.project === "string" && { project: a.project }),
             limit: Number(a.limit ?? 20),
             offset: Number(a.offset ?? 0),
           }),
@@ -416,12 +421,19 @@ function historyTools(api: PanelApi, id: string): PanelTool[] {
     {
       name: "query_history",
       description: [
-        "One read-only SQLite statement over the sessions search_history reaches with everywhere, at most 200 rows: for counts, grouping, listing sessions.",
+        "One read-only SQLite statement over the sessions search_history reaches, at most 200 rows: for counts, grouping, listing sessions.",
         "Tables: sessions(id, name, cwd, project, role, created_at, last_active, archived_at); entries(id, session, message, ts, kind, role, tool, depth, lines, call, duration_ms, text), call being a tool_output's tool_call id; messages(session, id, seq, ts, kind, status, hash, body JSON).",
         "entries_fts: trigram index of entries.text, rowid = entries.id, for words of 3+ characters (shorter: instr). regexp(pattern, text) and iregexp take JavaScript patterns. Times: ms since the epoch.",
       ].join(" "),
-      shape: { sql: z.string() },
-      handler: (a) => run(() => api.queryHistory(id, String(a.sql))),
+      shape: { sql: z.string(), project: PROJECT_SCOPE },
+      handler: (a) =>
+        run(() =>
+          api.queryHistory(
+            id,
+            String(a.sql),
+            typeof a.project === "string" ? a.project : undefined,
+          ),
+        ),
     },
   ];
 }

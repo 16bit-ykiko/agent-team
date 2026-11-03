@@ -102,7 +102,7 @@ describe("a folder's project", () => {
 });
 
 describe("the lead's history tools", () => {
-  it("reach the archived sessions in the repository's folders, everywhere only when asked", async () => {
+  it("reach the archived sessions of no project in the repository's folders, the others with *", async () => {
     const { create, call, root, base, old } = setup();
     const { lead } = create("clice");
     old("parser work", root, [msg("m1", "zebra in the repo", 1000)]);
@@ -112,14 +112,13 @@ describe("the lead's history tools", () => {
     expect(here).toContain("zebra in the repo");
     expect(here).toContain("zebra in a worktree");
     expect(here).not.toContain("zebra elsewhere");
-    expect(await call(lead, "search_history", { query: "zebra", everywhere: true })).toContain(
+    expect(await call(lead, "search_history", { query: "zebra", project: "*" })).toContain(
       "zebra elsewhere",
     );
-    // query_history lists them.
-    const listed = await call(lead, "query_history", {
-      sql: "select name from sessions where archived_at is not null order by name",
-    });
-    for (const name of ["elsewhere", "parser work", "sub"]) expect(listed).toContain(name);
+    // query_history lists them, as far as search_history reaches.
+    const sql = "select name from sessions where archived_at is not null order by name";
+    expect(await call(lead, "query_history", { sql })).toBe("name\nparser work\nsub\n(2 rows)");
+    expect(await call(lead, "query_history", { sql, project: "*" })).toContain("elsewhere");
   });
 
   it("search unloaded histories, and read a hit in its context", async () => {
@@ -384,31 +383,37 @@ describe("the lead's history tools", () => {
     );
   });
 
-  it("do not reach into another project's sessions, live or archived", async () => {
-    const { create, call, workers, saveAll } = setup();
+  it("reach another project's sessions when asked, and read any by its id", async () => {
+    const { create, call, workers, saveAll, manager, base } = setup();
     const a = create("a");
     const b = create("b");
     await call(b.lead, "start_session", { title: "theirs", cwd: "wt", task: "zebra" });
     const [theirs] = workers();
-    for (const id of [b.lead.id, theirs.id]) {
-      await expect(call(a.lead, "read_session", { session_id: id })).rejects.toThrow(
-        "in this project or its history",
+    theirs.archivedAt = 1;
+    saveAll();
+    expect(await call(a.lead, "read_session", { session_id: theirs.id })).toContain(
+      `Session ${theirs.id} "theirs"`,
+    );
+    expect(await call(a.lead, "search_history", { query: "zebra" })).toContain("nothing matches");
+    for (const project of ["B", b.project.id, "*"]) {
+      expect(await call(a.lead, "search_history", { query: "zebra", project })).toContain(
+        `${theirs.id} "theirs"`,
       );
     }
-    theirs.archivedAt = 1;
-    await expect(call(a.lead, "read_session", { session_id: theirs.id })).rejects.toThrow(
-      "in this project or its history",
-    );
-    saveAll();
-    const query = { query: "zebra", everywhere: true };
-    expect(await call(a.lead, "search_history", query)).toContain("nothing matches");
-    const found = await call(b.lead, "search_history", query);
+    const found = await call(a.lead, "search_history", { query: "zebra", project: "b" });
     const entry = Number(/^- #(\d+) /m.exec(found)![1]);
-    await expect(call(a.lead, "read_entry", { entry })).rejects.toThrow(
-      "in this project or its history",
+    expect(await call(a.lead, "read_entry", { entry })).toContain("zebra");
+    const sql = `select count(*) as n from entries where session = '${theirs.id}'`;
+    expect(await call(a.lead, "query_history", { sql })).toBe("n\n0\n(1 rows)");
+    expect(await call(a.lead, "query_history", { sql, project: "b" })).not.toBe("n\n0\n(1 rows)");
+
+    await expect(call(a.lead, "search_history", { query: "zebra", project: "c" })).rejects.toThrow(
+      'No project "c"',
     );
-    const count = `select count(*) as n from entries where session = '${theirs.id}'`;
-    expect(await call(a.lead, "query_history", { sql: count })).toBe("n\n0\n(1 rows)");
-    expect(await call(b.lead, "query_history", { sql: count })).not.toBe("n\n0\n(1 rows)");
+    fs.mkdirSync(path.join(base, "b2"));
+    manager.create("b", path.join(base, "b2"));
+    await expect(call(a.lead, "search_history", { query: "zebra", project: "b" })).rejects.toThrow(
+      '"b" names 2 projects; give the id',
+    );
   });
 });

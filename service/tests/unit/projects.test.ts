@@ -88,11 +88,12 @@ describe("panel tool arguments", () => {
       tool: "Bash",
       since: "2026-09-01",
       level: "subagents",
+      project: "clice",
       limit: 5,
       offset: 10,
     });
     await t.read_entry.handler({ entry: 12 });
-    await t.query_history.handler({ sql: "select 1" });
+    await t.query_history.handler({ sql: "select 1", project: "*" });
     await t.write_objective.handler({
       id: "core/modules",
       status: "later",
@@ -125,13 +126,13 @@ describe("panel tool arguments", () => {
           since: Date.parse("2026-09-01"),
           level: "subagents",
           caseSensitive: false,
-          everywhere: false,
+          project: "clice",
           limit: 5,
           offset: 10,
         },
       ],
       ["readEntry", "p1", 12, 1, 200, 0],
-      ["queryHistory", "p1", "select 1"],
+      ["queryHistory", "p1", "select 1", "*"],
       [
         "writeObjective",
         "p1",
@@ -235,7 +236,7 @@ describe("panel tool arguments", () => {
     await t.query_history.handler({ sql: "select 1" });
     expect(calls).toEqual([
       ["readSession", "p1", "ws-x", 6, undefined, false, false],
-      ["queryHistory", "p1", "select 1"],
+      ["queryHistory", "p1", "select 1", undefined],
     ]);
     for (const name of [
       "start_session",
