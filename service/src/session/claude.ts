@@ -1275,13 +1275,15 @@ export class ClaudeSession extends EventEmitter {
           // for it gets routed as a nested event, not a top-level subagent.
           if (taskId) this.nestedToolUseToParent.set(innerToolId, taskId);
           this.noteCommand(innerToolId, b);
-          this.toolStartedAt.set(innerToolId, Date.now());
+          const startedAt = Date.now();
+          this.toolStartedAt.set(innerToolId, startedAt);
           ev = {
             kind: "tool_use",
             content: formatToolUse(b),
             toolName: b.name as string,
             toolUseId: innerToolId,
             toolInput: extractToolInput(b),
+            startedAt,
           };
         } else if (blockType === "tool_result") {
           const rc = toolResultText(b.content);
@@ -1340,7 +1342,8 @@ export class ClaudeSession extends EventEmitter {
         const toolId = b.id as string;
         const toolInput = extractToolInput(b);
         this.noteCommand(toolId, b);
-        this.toolStartedAt.set(toolId, Date.now());
+        const startedAt = Date.now();
+        this.toolStartedAt.set(toolId, startedAt);
         this.emit("event", {
           kind: "tool_use",
           content: formatToolUse(b),
@@ -1348,6 +1351,7 @@ export class ClaudeSession extends EventEmitter {
           toolInput,
           toolUseId: toolId,
           step,
+          startedAt,
         });
         if (b.name === "ScheduleWakeup") {
           this.scheduleCalls.set(toolId, (b.input as Record<string, unknown>) ?? {});

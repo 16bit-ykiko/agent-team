@@ -719,8 +719,9 @@ export class CodexSession extends EventEmitter {
 
   private toolUse(item: ThreadItem, toolName: string, content: string): void {
     this.openTools.add(item.id);
-    this.itemStartedAt.set(item.id, Date.now());
-    this.emit("event", { kind: "tool_use", toolName, content, toolUseId: item.id });
+    const startedAt = Date.now();
+    this.itemStartedAt.set(item.id, startedAt);
+    this.emit("event", { kind: "tool_use", toolName, content, toolUseId: item.id, startedAt });
   }
 
   private toolResult(
@@ -918,6 +919,7 @@ export class CodexSession extends EventEmitter {
         toolName: "Bash",
         content: `**Bash**\n${fenced(commandText(item), "bash")}`,
         toolUseId: item.id,
+        startedAt: Date.now(),
       });
     } else if (method === "item/completed" && item?.type === "commandExecution") {
       inner({

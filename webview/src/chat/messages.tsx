@@ -149,6 +149,10 @@ export interface SessionLinks {
 }
 export const SessionLinkContext = createContext<SessionLinks>({});
 
+// The message's turn is still running: a call left without a result by a
+// stopped one (a restart) is not counted up for ever.
+const TurnRunningContext = createContext(false);
+
 const ACTION_LABEL: Record<string, string> = {
   start_session: "New session",
   message_session: "Message",
@@ -348,6 +352,7 @@ export const EventItem = memo(function EventItem({
   const [bodyOpen, setBodyOpen] = useState(false);
   const summarized = !!onLoadDetails;
   const running =
+    useContext(TurnRunningContext) &&
     ev.kind === "tool_use" &&
     ev.toolResult == null &&
     ev.resultLength == null &&
@@ -817,6 +822,25 @@ export function LiveThinking({ text, secs }: { text: string; secs: number }) {
   );
 }
 
+const CALL_SHOWN_AFTER_S = 3;
+
+// The latest call still running that knows when it started.
+function runningCall(events: StreamEvent[]): StreamEvent | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (
+      e.kind === "tool_use" &&
+      e.startedAt != null &&
+      e.toolResult == null &&
+      e.resultLength == null &&
+      e.durationMs == null
+    ) {
+      return e;
+    }
+  }
+  return null;
+}
+
 // A tool call still running or a subagent still working: the turn is not
 // waiting on the model.
 function workInFlight(events: StreamEvent[]): boolean {
@@ -938,6 +962,14 @@ export const MessageItem = memo(function MessageItem({
     [agentId, onCancelSubagent],
   );
 
+  // What the turn is doing, as its backend says ("Bash · 42s"); otherwise
+  // the call it has been waiting on for a while, by the call's own start.
+  const waitingOn =
+    msg.status === "streaming" && !agents.find((a) => a.id === msg.agentId)?.activity
+      ? runningCall(msg.events ?? [])
+      : null;
+  const waited = useElapsed(waitingOn?.startedAt);
+
   if (msg.kind === "system") {
     const [avatar, text] = systemAvatar(msg.content);
     return (
@@ -952,10 +984,15 @@ export const MessageItem = memo(function MessageItem({
   const from = isUser ? msg.from : undefined;
   const agent = !isUser ? agents.find((a) => a.id === msg.agentId) : null;
   const streaming = msg.status === "streaming";
-  const activity = streaming ? (agent?.activity ?? null) : null;
   const thinkingLive = streaming && msg.liveThinking != null;
 
   const events = msg.events ?? [];
+  const activity = !streaming
+    ? null
+    : (agent?.activity ??
+      (waitingOn && waited >= CALL_SHOWN_AFTER_S
+        ? `${chipLabelFor(toolNameOf(waitingOn) ?? "tool")} · ${formatDuration(waited * 1000)}`
+        : null));
   const detailEvents = events.filter(
     (e) => e.kind !== "text" && e.kind !== "text_delta" && e.kind !== "thinking_delta",
   );
@@ -1036,159 +1073,162 @@ export const MessageItem = memo(function MessageItem({
 
   return (
     <SessionLinkContext.Provider value={sessionLinks}>
-      <div
-        id={`msg-${msg.id}`}
-        className={`message${isUser ? " message-user" : " message-agent"}${compact ? " message-compact" : ""}${highlight ? " message-highlight" : ""}${msg.status === "queued" ? " message-queued" : ""}${msg.status === "error" ? " message-error" : ""}`}
-      >
-        <div className="message-gutter">
-          {compact ? null : from ? (
-            <div className="avatar-user avatar-from">{ORIGIN_GLYPH[from.role]}</div>
-          ) : isUser ? (
-            <div className="avatar-user">
-              <img
-                src="avatars/ykiko.jpg"
-                alt="You"
-                style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }}
-              />
-            </div>
-          ) : agent ? (
-            <AgentAvatar agent={agent} size={32} />
-          ) : (
-            <div className="avatar-user">?</div>
-          )}
-        </div>
-        <div className="message-body">
-          {!compact && (
-            <div className="message-header">
-              {isUser ? (
-                <>
-                  {from ? (
-                    <button
-                      className="message-author from-author"
-                      title="Open that session"
-                      onClick={() => onOpenWorkspace?.(from.workspaceId)}
-                    >
-                      {originLabel(from)}
-                    </button>
-                  ) : (
-                    <span className="message-author user-author">You</span>
-                  )}
-                  {msg.status === "queued" && (
-                    <span
-                      className="queued-badge"
-                      title={msg.steering ? "Sent into the running turn" : undefined}
-                    >
-                      queued
-                      {onCancelQueued && !msg.steering && (
-                        <button
-                          className="queued-cancel"
-                          title="Remove from queue"
-                          onClick={() => onCancelQueued(msg.id)}
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </span>
-                  )}
-                </>
-              ) : agent ? (
-                <>
-                  <span className="message-author" style={{ color: agent.color }}>
-                    {agent.name}
-                  </span>
-                  <span className="message-model">{shortModel(msg.model ?? agent.model)}</span>
-                </>
-              ) : null}
-              <span className="message-time">{time}</span>
-              {streaming && <span className="streaming-dot" />}
-              {activity && <span className="activity-label">{activity}</span>}
-              {!streaming && quoteButton}
-            </div>
-          )}
-          {compact && (
-            <div className="compact-header">
-              <span className="message-time">{time}</span>
-              {streaming && <span className="streaming-dot" />}
-              {activity && <span className="activity-label">{activity}</span>}
-              {!streaming && quoteButton}
-            </div>
-          )}
-          {!isUser && <MessageStatus msg={msg} />}
-
-          {msg.forwardRef && (
-            <div className="forward-ref">
-              <span className="forward-ref-icon">↩</span>
-              <span className="forward-ref-agent">
-                <Avatar
-                  avatar={msg.forwardRef.fromAvatar}
-                  color={
-                    agents.find((a) => a.name === msg.forwardRef!.fromAgent)?.color ?? "transparent"
-                  }
-                  name={msg.forwardRef.fromAgent}
-                  size={16}
+      <TurnRunningContext.Provider value={streaming}>
+        <div
+          id={`msg-${msg.id}`}
+          className={`message${isUser ? " message-user" : " message-agent"}${compact ? " message-compact" : ""}${highlight ? " message-highlight" : ""}${msg.status === "queued" ? " message-queued" : ""}${msg.status === "error" ? " message-error" : ""}`}
+        >
+          <div className="message-gutter">
+            {compact ? null : from ? (
+              <div className="avatar-user avatar-from">{ORIGIN_GLYPH[from.role]}</div>
+            ) : isUser ? (
+              <div className="avatar-user">
+                <img
+                  src="avatars/ykiko.jpg"
+                  alt="You"
+                  style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }}
                 />
-                {msg.forwardRef.fromAgent}
-              </span>
-              <span className="forward-ref-preview">{msg.forwardRef.preview}</span>
-            </div>
-          )}
-
-          {streaming &&
-            !thinkingLive &&
-            !msg.content &&
-            detailEvents.length === 0 &&
-            (activity ? (
-              <div className="working-indicator">{activity}</div>
+              </div>
+            ) : agent ? (
+              <AgentAvatar agent={agent} size={32} />
             ) : (
-              <WaitingIndicator progress="start" immediate />
-            ))}
+              <div className="avatar-user">?</div>
+            )}
+          </div>
+          <div className="message-body">
+            {!compact && (
+              <div className="message-header">
+                {isUser ? (
+                  <>
+                    {from ? (
+                      <button
+                        className="message-author from-author"
+                        title="Open that session"
+                        onClick={() => onOpenWorkspace?.(from.workspaceId)}
+                      >
+                        {originLabel(from)}
+                      </button>
+                    ) : (
+                      <span className="message-author user-author">You</span>
+                    )}
+                    {msg.status === "queued" && (
+                      <span
+                        className="queued-badge"
+                        title={msg.steering ? "Sent into the running turn" : undefined}
+                      >
+                        queued
+                        {onCancelQueued && !msg.steering && (
+                          <button
+                            className="queued-cancel"
+                            title="Remove from queue"
+                            onClick={() => onCancelQueued(msg.id)}
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </span>
+                    )}
+                  </>
+                ) : agent ? (
+                  <>
+                    <span className="message-author" style={{ color: agent.color }}>
+                      {agent.name}
+                    </span>
+                    <span className="message-model">{shortModel(msg.model ?? agent.model)}</span>
+                  </>
+                ) : null}
+                <span className="message-time">{time}</span>
+                {streaming && <span className="streaming-dot" />}
+                {activity && <span className="activity-label">{activity}</span>}
+                {!streaming && quoteButton}
+              </div>
+            )}
+            {compact && (
+              <div className="compact-header">
+                <span className="message-time">{time}</span>
+                {streaming && <span className="streaming-dot" />}
+                {activity && <span className="activity-label">{activity}</span>}
+                {!streaming && quoteButton}
+              </div>
+            )}
+            {!isUser && <MessageStatus msg={msg} />}
 
-          {msg.images && msg.images.length > 0 && (
-            <div className="msg-images">
-              {msg.images.map((img, i) => (
-                <a key={i} href={img.url} target="_blank" rel="noopener noreferrer">
-                  <img src={img.url} alt={img.name} />
-                </a>
+            {msg.forwardRef && (
+              <div className="forward-ref">
+                <span className="forward-ref-icon">↩</span>
+                <span className="forward-ref-agent">
+                  <Avatar
+                    avatar={msg.forwardRef.fromAvatar}
+                    color={
+                      agents.find((a) => a.name === msg.forwardRef!.fromAgent)?.color ??
+                      "transparent"
+                    }
+                    name={msg.forwardRef.fromAgent}
+                    size={16}
+                  />
+                  {msg.forwardRef.fromAgent}
+                </span>
+                <span className="forward-ref-preview">{msg.forwardRef.preview}</span>
+              </div>
+            )}
+
+            {streaming &&
+              !thinkingLive &&
+              !msg.content &&
+              detailEvents.length === 0 &&
+              (activity ? (
+                <div className="working-indicator">{activity}</div>
+              ) : (
+                <WaitingIndicator progress="start" immediate />
               ))}
-            </div>
-          )}
 
-          {isUser
-            ? msg.content && (
-                <div className="message-content" onCopy={copySelectionAsMarkdown}>
-                  {renderMentionContent(msg.content, agents)}
-                </div>
-              )
-            : segments.length > 0 && (
-                <div className="message-content" onCopy={copySelectionAsMarkdown}>
-                  {segments.map((seg, si) => (
-                    <div key={si}>
-                      {seg.text &&
-                        (streaming ? (
-                          <StreamingMdBlock>{seg.text}</StreamingMdBlock>
-                        ) : (
-                          <MdBlock>{seg.text}</MdBlock>
-                        ))}
-                      {(seg.events.length > 0 || si === liveAt) && (
-                        <StepGroup
-                          group={{ step: si, events: seg.events }}
-                          onLoadEvents={handleLoadEvents}
-                          onCancelSubagent={handleCancelSubagent}
-                          onLoadDetails={handleLoadDetails}
-                          live={si === liveAt ? liveBlock : undefined}
-                        />
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-          {streaming &&
-            !thinkingLive &&
-            !activity &&
-            (msg.content || detailEvents.length > 0) &&
-            !workInFlight(detailEvents) && <WaitingIndicator progress={progressOf(msg)} />}
+            {msg.images && msg.images.length > 0 && (
+              <div className="msg-images">
+                {msg.images.map((img, i) => (
+                  <a key={i} href={img.url} target="_blank" rel="noopener noreferrer">
+                    <img src={img.url} alt={img.name} />
+                  </a>
+                ))}
+              </div>
+            )}
+
+            {isUser
+              ? msg.content && (
+                  <div className="message-content" onCopy={copySelectionAsMarkdown}>
+                    {renderMentionContent(msg.content, agents)}
+                  </div>
+                )
+              : segments.length > 0 && (
+                  <div className="message-content" onCopy={copySelectionAsMarkdown}>
+                    {segments.map((seg, si) => (
+                      <div key={si}>
+                        {seg.text &&
+                          (streaming ? (
+                            <StreamingMdBlock>{seg.text}</StreamingMdBlock>
+                          ) : (
+                            <MdBlock>{seg.text}</MdBlock>
+                          ))}
+                        {(seg.events.length > 0 || si === liveAt) && (
+                          <StepGroup
+                            group={{ step: si, events: seg.events }}
+                            onLoadEvents={handleLoadEvents}
+                            onCancelSubagent={handleCancelSubagent}
+                            onLoadDetails={handleLoadDetails}
+                            live={si === liveAt ? liveBlock : undefined}
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+            {streaming &&
+              !thinkingLive &&
+              !activity &&
+              (msg.content || detailEvents.length > 0) &&
+              !workInFlight(detailEvents) && <WaitingIndicator progress={progressOf(msg)} />}
+          </div>
         </div>
-      </div>
+      </TurnRunningContext.Provider>
     </SessionLinkContext.Provider>
   );
 });

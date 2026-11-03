@@ -27,29 +27,46 @@ const withSheet = (fn: () => void) => {
 };
 
 describe("the transcript", () => {
-  it("counts up the time a tool call has been running, then shows how long it took", () => {
+  it("counts up a running call's time in the header and its row, then shows how long it took", () => {
     vi.useFakeTimers();
     try {
-      const ev: StreamEvent = {
+      const call: StreamEvent = {
         kind: "tool_use",
         toolName: "Cursor",
         content: "**Cursor** a tool the SDK does not show (an await, a web search, …)",
         toolUseId: "cursor-hidden-1",
         startedAt: Date.now() - 37_000,
       };
-      const { container, rerender } = render(<EventItem ev={ev} />);
-      const time = () => container.querySelector(".event-time")?.textContent;
-      expect(time()).toBe("37s");
+      const msg: Message = {
+        id: "m0",
+        kind: "agent",
+        agentId: "a1",
+        content: "",
+        timestamp: 0,
+        status: "streaming",
+        events: [call],
+      };
+      const { container, rerender } = render(<MessageItem msg={msg} agents={[agent]} />);
+      const header = () => container.querySelector(".activity-label")?.textContent;
+      const row = () => container.querySelector(".event-time")?.textContent;
+      expect(header()).toBe("Cursor · 37s");
+      fireEvent.click(container.querySelector(".step-header")!);
+      expect(row()).toBe("37s");
       act(() => {
         vi.advanceTimersByTime(25_000);
       });
-      expect(time()).toBe("1m 2s");
-      rerender(<EventItem ev={{ ...ev, toolResult: "done", durationMs: 63_000 }} />);
-      expect(container.querySelector(".event-time-live")).toBeNull();
-      expect(time()).toBe("1m 3s");
-      // A call without its start (older messages, other backends) shows none.
-      rerender(<EventItem ev={{ ...ev, toolUseId: "x", startedAt: undefined }} />);
-      expect(time()).toBeUndefined();
+      expect([header(), row()]).toEqual(["Cursor · 1m 2s", "1m 2s"]);
+      // What the backend says it is doing comes first.
+      const busy = { ...agent, activity: "Bash · 40s" };
+      rerender(<MessageItem msg={msg} agents={[busy]} />);
+      expect(header()).toBe("Bash · 40s");
+      const ended = { ...call, toolResult: "done", durationMs: 63_000 };
+      rerender(<MessageItem msg={{ ...msg, events: [ended] }} agents={[agent]} />);
+      expect([header(), row()]).toEqual([undefined, "1m 3s"]);
+      // A turn that stopped with the call open (a restart) counts nothing.
+      rerender(<MessageItem msg={{ ...msg, status: "done" }} agents={[agent]} />);
+      expect(container.querySelector(".event-row")).not.toBeNull();
+      expect([header(), row()]).toEqual([undefined, undefined]);
     } finally {
       vi.useRealTimers();
     }
