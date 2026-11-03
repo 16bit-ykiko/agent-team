@@ -1779,7 +1779,7 @@ function fromLead(m: { from?: MessageOrigin }, lead: Workspace | undefined): boo
   return m.from?.role === "lead" && !!lead && m.from.workspaceId === lead.id;
 }
 
-// The models whose sessions take the panel's tools: a lead's or a worker's.
+// The models a project's lead and the workers it starts may run on.
 function panelModels(): string[] {
   return MODEL_OPTIONS.filter((m) => m.backend !== "codex").map((m) => m.id);
 }
