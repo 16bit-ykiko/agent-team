@@ -1275,6 +1275,7 @@ export class Workspace {
     return (
       !!agent.session.steer &&
       agent.session.isRunning &&
+      agent.session.canSteer !== false &&
       !this.held(agent) &&
       !this.messages.some(
         (m) => m.status === "queued" && m.queuedFor === agent.info.id && !m.steering,

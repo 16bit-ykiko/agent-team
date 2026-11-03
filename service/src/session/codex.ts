@@ -44,6 +44,17 @@ const PANEL_NAMESPACE = "panel";
 // ~/.codex/sessions.
 const THREAD_GONE = /no rollout found|thread not found/i;
 
+// "Selected model is at capacity" fails the turn at once, often after work
+// was done, and passes in minutes. The prompt is in the thread by then (its
+// rollout records it before the model is asked), so a retry asks to carry on
+// rather than sending it again.
+const CAPACITY_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
+const CAPACITY_CONTINUE = [
+  "Continue from where you left off.",
+  "The previous turn was interrupted because the selected model was at capacity.",
+  "Inspect the current conversation and workspace state, preserve completed work, and do not repeat commands or edits that already succeeded.",
+].join(" ");
+
 // A Codex session is one long-lived `codex app-server` (JSON-RPC over stdio,
 // see codex-rpc.ts) holding one thread, started on the first message and
 // resumed by thread id after a restart. A turn runs from turn/start to
@@ -65,7 +76,10 @@ export class CodexSession extends EventEmitter {
 
   // Replaced by the tests: the connection a session opens (a recording
   // played back, an in-memory server) instead of a real app-server.
-  static hooks: { transport?: (session: CodexSession) => Transport } | null = null;
+  static hooks: {
+    transport?: (session: CodexSession) => Transport;
+    capacityRetryDelaysMs?: number[];
+  } | null = null;
 
   private client: AppServerClient | null = null;
   private connecting: Promise<AppServerClient> | null = null;
@@ -88,6 +102,10 @@ export class CodexSession extends EventEmitter {
   private turnWaiters: Array<() => void> = [];
   // The turn's error (an `error` notification); turn/completed follows.
   private turnError: TurnError | null = null;
+  // The panel's turn runs on in a new one of codex's once this fires.
+  private capacityRetry: NodeJS.Timeout | null = null;
+  private capacityRetries = 0;
+  private compacting = false;
   // The turn was started with a prompt: its first userMessage item is that
   // prompt, any later one a message steered in.
   private awaitingPrompt = false;
@@ -124,6 +142,10 @@ export class CodexSession extends EventEmitter {
     return (
       this.config.effort ?? (this.config.model ? defaultEffortForModel(this.config.model) : null)
     );
+  }
+
+  get canSteer(): boolean {
+    return !this.capacityRetry;
   }
 
   get interruptPending(): boolean {
@@ -307,6 +329,7 @@ export class CodexSession extends EventEmitter {
     if (this.busy) throw new Error("Session is busy");
     const compact = message.trim() === "/compact";
     this.beginTurn(!compact);
+    this.compacting = compact;
     // A turn stopped and replaced meanwhile: what this one's requests do
     // later is not the new turn's.
     const generation = this.generation;
@@ -318,15 +341,58 @@ export class CodexSession extends EventEmitter {
       if (compact) {
         await client.request("thread/compact/start", { threadId });
       } else {
-        const res = await client.request<{ turn: CodexTurn }>("turn/start", {
-          threadId,
-          input: [{ type: "text", text: message, text_elements: [] }],
-          ...this.turnParams(),
-        });
-        if (generation === this.generation && !this.turnId && res.turn.status === "inProgress") {
-          this.turnId = res.turn.id;
-          this.releaseTurnWaiters();
-        }
+        await this.startTurn(client, message, generation);
+      }
+    } catch (e) {
+      if (generation === this.generation && this.busy) {
+        this.failTurn(`[Codex error] ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+
+  private async startTurn(client: AppServerClient, text: string, generation: number) {
+    const res = await client.request<{ turn: CodexTurn }>("turn/start", {
+      threadId: this.sessionId,
+      input: [{ type: "text", text, text_elements: [] }],
+      ...this.turnParams(),
+    });
+    if (generation === this.generation && !this.turnId && res.turn.status === "inProgress") {
+      this.turnId = res.turn.id;
+      this.releaseTurnWaiters();
+    }
+  }
+
+  private retryAfterCapacity(error: TurnError): boolean {
+    const delays = CodexSession.hooks?.capacityRetryDelaysMs ?? CAPACITY_RETRY_DELAYS_MS;
+    if (this.compacting || this.interruptRequested || this.capacityRetries >= delays.length) {
+      return false;
+    }
+    const delay = delays[this.capacityRetries++];
+    this.emit("event", {
+      kind: "retry",
+      content: `${error.message} Retrying in ${Math.ceil(delay / 1000)}s (${this.capacityRetries}/${delays.length}).`,
+    });
+    this.turnId = null;
+    this.turnStarted = false;
+    this.interruptSent = false;
+    this.turnError = null;
+    // Dropped with the failed turn, like a stopped one's: the queue runs them.
+    const unread = this.steers.splice(0);
+    if (unread.length) this.emit("unread", unread);
+    const generation = this.generation;
+    this.capacityRetry = setTimeout(() => void this.carryOn(generation), delay);
+    return true;
+  }
+
+  private async carryOn(generation: number): Promise<void> {
+    this.capacityRetry = null;
+    this.awaitingPrompt = true;
+    try {
+      if (this.client && this.launched !== this.launchKey()) this.closeProcess();
+      const client = await this.connect();
+      // Not when codex carried on by itself meanwhile.
+      if (generation === this.generation && !this.turnId) {
+        await this.startTurn(client, CAPACITY_CONTINUE, generation);
       }
     } catch (e) {
       if (generation === this.generation && this.busy) {
@@ -342,6 +408,8 @@ export class CodexSession extends EventEmitter {
   // never came.
   async steer(message: string, inputId: string): Promise<boolean> {
     if (!this.busy || this.interruptRequested || message.trim() === "/compact") return false;
+    // No turn to take it for minutes: it waits in the queue instead.
+    if (this.capacityRetry) return false;
     const generation = this.generation;
     if (!this.turnId) await new Promise<void>((r) => this.turnWaiters.push(r));
     const client = this.client;
@@ -369,6 +437,10 @@ export class CodexSession extends EventEmitter {
   // Stops the running turn; the process lives on. False when none runs.
   async interrupt(): Promise<boolean> {
     if (!this.busy) return false;
+    if (this.capacityRetry) {
+      this.endTurn(this.resultEvent(true));
+      return true;
+    }
     this.interruptRequested = true;
     await this.sendInterrupt();
     return true;
@@ -427,6 +499,8 @@ export class CodexSession extends EventEmitter {
     this.interruptRequested = false;
     this.interruptSent = false;
     this.turnError = null;
+    this.capacityRetries = 0;
+    this.compacting = false;
     this.awaitingPrompt = withPrompt;
     this.steers = [];
     this.textEmitted = false;
@@ -440,6 +514,8 @@ export class CodexSession extends EventEmitter {
   // on that event and checks isRunning.
   private endTurn(terminal?: StreamEvent): void {
     this.busy = false;
+    clearTimeout(this.capacityRetry ?? undefined);
+    this.capacityRetry = null;
     this.turnId = null;
     this.interruptRequested = false;
     this.usage.turns++;
@@ -497,6 +573,7 @@ export class CodexSession extends EventEmitter {
         this.endTurn(this.refused(error));
         return;
       }
+      if (error?.codexErrorInfo === "serverOverloaded" && this.retryAfterCapacity(error)) return;
       this.endTurn({ kind: "error", content: `[Codex error] ${errorText(error?.message)}` });
       return;
     }
@@ -570,6 +647,8 @@ export class CodexSession extends EventEmitter {
           this.beginTurn(false);
           this.emit("event", { kind: "notice", level: "wakeup", content: "Codex carried on" });
         }
+        clearTimeout(this.capacityRetry ?? undefined);
+        this.capacityRetry = null;
         this.turnId = turn.id;
         this.turnStarted = true;
         this.releaseTurnWaiters();

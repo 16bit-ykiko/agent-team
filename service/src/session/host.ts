@@ -28,6 +28,8 @@ export interface HostSessionHandle extends EventEmitter {
   send(message: string): Promise<void>;
   // Codex: a message for the running turn; false when no turn takes it.
   steer?(message: string, inputId: string): Promise<boolean>;
+  // False while the running turn takes no message (it waits to retry).
+  readonly canSteer?: boolean;
   abort(): void;
   setEffort?(level: string): void;
   setFastMode?(on: boolean): void;

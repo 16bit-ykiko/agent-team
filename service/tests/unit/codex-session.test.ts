@@ -426,6 +426,135 @@ describe("codex app-server session", () => {
     });
   });
 
+  const overloaded = {
+    message: "Selected model is at capacity. Please try a different model.",
+    codexErrorInfo: "serverOverloaded",
+    additionalDetails: null,
+  };
+
+  it("carries on in a new turn when the model's capacity failed one, without resending the prompt", async () => {
+    CodexSession.hooks = { ...CodexSession.hooks, capacityRetryDelaysMs: [0, 0] };
+    const { session, events, states } = makeSession();
+    const steered: string[] = [];
+    session.on("steered", (id: string) => steered.push(id));
+    await session.send("hi");
+    server.startTurn();
+    server.item("started", { type: "userMessage", id: "u1", clientId: null, content: [] });
+    server.notify("item/agentMessage/delta", { threadId: "thr_1", itemId: "m1", delta: "Half" });
+    server.completeTurn("failed", overloaded);
+    expect(events.map((e) => e.kind)).toEqual(["text_delta", "retry"]);
+    expect(events[1].content).toBe(`${overloaded.message} Retrying in 0s (1/2).`);
+    expect(session.isRunning).toBe(true);
+
+    await flush();
+    const turns = server.sent("turn/start");
+    expect(turns).toHaveLength(2);
+    expect((turns[1].input as Array<{ text: string }>)[0].text).toMatch(
+      /^Continue from where you left off\. The previous turn was interrupted because the selected model was at capacity\./,
+    );
+    server.startTurn();
+    server.item("started", { type: "userMessage", id: "u2", clientId: null, content: [] });
+    server.notify("item/agentMessage/delta", { threadId: "thr_1", itemId: "m2", delta: "done" });
+    server.completeTurn();
+    expect(events.map((e) => e.kind)).toEqual(["text_delta", "retry", "text_delta", "result"]);
+    expect(events[2].content).toBe("\n\ndone");
+    expect(steered).toEqual([]);
+    expect(states).toEqual(["working", "idle"]);
+  });
+
+  it("gives up on capacity after the last retry, and a Stop while it waits ends the turn", async () => {
+    CodexSession.hooks = { ...CodexSession.hooks, capacityRetryDelaysMs: [0] };
+    const { session, events } = makeSession();
+    await session.send("hi");
+    server.startTurn();
+    server.completeTurn("failed", overloaded);
+    await flush();
+    server.startTurn();
+    server.completeTurn("failed", overloaded);
+    expect(events.map((e) => e.kind)).toEqual(["retry", "error"]);
+    expect(events[1].content).toBe(`[Codex error] ${overloaded.message}`);
+    expect(session.isRunning).toBe(false);
+
+    // A new turn starts counting again.
+    CodexSession.hooks = { ...CodexSession.hooks, capacityRetryDelaysMs: [60_000] };
+    await session.send("again");
+    server.startTurn();
+    server.completeTurn("failed", overloaded);
+    expect(events.at(-1)?.kind).toBe("retry");
+    expect(await session.interrupt()).toBe(true);
+    expect(session.isRunning).toBe(false);
+    expect(events.at(-1)).toMatchObject({ kind: "result", interrupted: true });
+    await flush();
+    expect(server.sent("turn/start")).toHaveLength(3);
+    expect(server.sent("turn/interrupt")).toEqual([]);
+  });
+
+  it("gives a capacity retry's unread steers back to the queue, and takes none while it waits", async () => {
+    CodexSession.hooks = { ...CodexSession.hooks, capacityRetryDelaysMs: [0] };
+    const { session } = makeSession();
+    const unread: string[][] = [];
+    session.on("unread", (ids: string[]) => unread.push(ids));
+    await session.send("hi");
+    server.startTurn();
+    server.item("started", { type: "userMessage", id: "u1", clientId: null, content: [] });
+    expect(await session.steer("also this", "m1")).toBe(true);
+    server.completeTurn("failed", overloaded);
+    expect(unread).toEqual([["m1"]]);
+    expect(await session.steer("and this", "m2")).toBe(false);
+    await flush();
+    expect(server.sent("turn/start")).toHaveLength(2);
+    expect(server.sent("turn/steer")).toHaveLength(1);
+  });
+
+  it("retries no compaction, and no turn when codex carried on by itself meanwhile", async () => {
+    CodexSession.hooks = { ...CodexSession.hooks, capacityRetryDelaysMs: [20] };
+    const { session, events } = makeSession();
+    await session.send("hi");
+    server.startTurn();
+    server.completeTurn("failed", overloaded);
+    server.startTurn("turn_goal");
+    await new Promise((r) => setTimeout(r, 40));
+    expect(server.sent("turn/start")).toHaveLength(1);
+    server.completeTurn("completed", null, "turn_goal");
+    expect(events.map((e) => e.kind)).toEqual(["retry", "result"]);
+
+    await session.send("/compact");
+    server.startTurn("turn_c");
+    server.completeTurn("failed", overloaded, "turn_c");
+    expect(events.at(-1)).toEqual({
+      kind: "error",
+      content: `[Codex error] ${overloaded.message}`,
+    });
+    expect(session.isRunning).toBe(false);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(server.sent("turn/start")).toHaveLength(1);
+  });
+
+  it("retries a turn codex started itself after a compaction", async () => {
+    CodexSession.hooks = { ...CodexSession.hooks, capacityRetryDelaysMs: [60_000] };
+    const { session, events } = makeSession();
+    await session.send("/compact");
+    server.startTurn("turn_c");
+    server.completeTurn("completed", null, "turn_c");
+    server.startTurn("turn_goal");
+    server.completeTurn("failed", overloaded, "turn_goal");
+    expect(events.at(-1)?.kind).toBe("retry");
+    session.abort();
+  });
+
+  it("restarts the process before a capacity retry when its env changed during the wait", async () => {
+    CodexSession.hooks = { ...CodexSession.hooks, capacityRetryDelaysMs: [0] };
+    const { session } = makeSession();
+    await session.send("hi");
+    server.startTurn();
+    server.completeTurn("failed", overloaded);
+    session.setProviderEnv({ OPENAI_BASE_URL: "http://proxy" });
+    await flush();
+    expect(server.connections).toBe(2);
+    expect(server.sent("thread/resume")).toHaveLength(1);
+    expect(server.sent("turn/start")).toHaveLength(2);
+  });
+
   it("goes idle without a terminal event when the process is killed mid-turn", async () => {
     const { session, events, states } = makeSession();
     await session.send("hi");
@@ -739,6 +868,32 @@ describe("codex steering through the workspace", () => {
       "user done also this",
       "agent done Done both.",
     ]);
+  });
+
+  it("queues a message, cancellable, while a capacity retry waits", async () => {
+    CodexSession.hooks = { ...CodexSession.hooks, capacityRetryDelaysMs: [60_000] };
+    const shown: Array<{ content: string; steering?: boolean }> = [];
+    const registry = new HostRegistry();
+    registry.register(new LocalHost("local", "Local"));
+    const ws = new Workspace("ws", "t", "p", "local", "/tmp", registry, {
+      onNewMessage: (_ws, m) => shown.push({ content: m.content, steering: m.steering }),
+      onStreamEvent: () => {},
+      onMessageDone: () => {},
+    });
+    ws.addAgent("A", "gpt-6-astra", "🤖", "#888", { backend: "codex" });
+    await ws.sendMessage("first");
+    server.startTurn();
+    server.completeTurn("failed", {
+      message: "Selected model is at capacity. Please try a different model.",
+      codexErrorInfo: "serverOverloaded",
+      additionalDetails: null,
+    });
+    await ws.sendMessage("also this");
+    const waiting = ws.messages.find((m) => m.content === "also this")!;
+    expect(shown.find((m) => m.content === "also this")?.steering).toBeUndefined();
+    expect(server.sent("turn/steer")).toEqual([]);
+    expect(ws.cancelQueued(waiting.id)).toBe(true);
+    ws.agents.values().next().value!.session.abort();
   });
 
   it("queues a message the turn would not take, and runs it when the turn ends", async () => {
