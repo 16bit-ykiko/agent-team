@@ -36,7 +36,7 @@ export function CopyButton({ text }: { text: () => string }) {
   );
 }
 
-export function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
+export function CodeBlock({ children, node: _node, ...rest }: ComponentProps<"pre"> & ExtraProps) {
   const preRef = useRef<HTMLPreElement>(null);
   const text = () => {
     const code = preRef.current?.querySelector("code");
@@ -50,7 +50,7 @@ export function CodeBlock({ children, ...rest }: ComponentProps<"pre">) {
   );
 }
 
-function ScrollTable(props: ComponentProps<"table">) {
+function ScrollTable({ node: _node, ...props }: ComponentProps<"table"> & ExtraProps) {
   return (
     <div className="table-scroll-wrapper">
       <table {...props} />
@@ -308,8 +308,23 @@ function urlTransform(url: string): string {
   return /^file:\/\//i.test(url) || linkFileRef(url) ? url : defaultUrlTransform(url);
 }
 
+// GFM keeps HTML as it is, which shows escaped; agents break lines in a
+// table cell or a list item with <br>, which is a line break.
+const BR = /^<br\s*\/?>$/i;
+function remarkHtmlBreaks() {
+  const walk = (node: MdNode) => {
+    for (const child of node.children ?? []) {
+      if (child.type === "html" && BR.test(child.value?.trim() ?? "")) {
+        child.type = "break";
+        delete child.value;
+      } else walk(child);
+    }
+  };
+  return walk;
+}
+
 const mdComponents = { pre: CodeBlock, table: ScrollTable, a: Link, code: InlineCode };
-const mdRemarkPlugins: Options["remarkPlugins"] = [remarkGfm];
+const mdRemarkPlugins: Options["remarkPlugins"] = [remarkGfm, remarkHtmlBreaks];
 const mdRehypePlugins: Options["rehypePlugins"] = [rehypeCodeHighlight];
 
 interface MathPlugins {
@@ -382,7 +397,7 @@ export const MdBlock = memo(function MdBlock({ children }: { children: string })
 
 // Text written as markdown (a task, an objective's title or goal) shown in
 // a row: one paragraph, its code, bold and italics; no blocks or links.
-const INLINE_ELEMENTS = ["p", "code", "strong", "em", "del"];
+const INLINE_ELEMENTS = ["p", "code", "strong", "em", "del", "br"];
 // "1. first", "- item", "# 640": text, not a list or a heading.
 const BLOCK_START = /^(?:(\d{1,9})([.)])|([-+*>]|#{1,6}))(?=\s|$)/;
 // Only what the board's plugins link gets here (see InlineMd): an issue, a
@@ -418,6 +433,8 @@ function InlineCodeText({ children }: { children?: ReactNode }) {
 }
 const inlineComponents: Options["components"] = {
   p: ({ children }) => <>{children}</>,
+  // One line: the line end that follows a break is space enough.
+  br: () => null,
   code: ({ children }) => <InlineCodeText>{children}</InlineCodeText>,
   a: ({ href, children }) => <InlineLink href={href}>{children}</InlineLink>,
 };

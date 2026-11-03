@@ -286,5 +286,24 @@ describe("markdown in a row", () => {
     expect(html("# 640 first")).toBe("# 640 first");
     expect(html("std::vector<int> **x**")).toBe("std::vector&lt;int&gt; <strong>x</strong>");
     expect(html("**bold** start")).toBe("<strong>bold</strong> start");
+    expect(html("first<br>second")).toBe("first\nsecond");
+  });
+});
+
+describe("html in agent markdown", () => {
+  it("breaks the line at a <br> in a list item, a table cell or a paragraph; other tags stay text", () => {
+    const html = (md: string) => render(<MdBlock>{md}</MdBlock>).container.innerHTML;
+    expect(html("- first<br>second\n- x<br/>y")).toBe(
+      "<ul>\n<li>first<br>\nsecond</li>\n<li>x<br>\ny</li>\n</ul>",
+    );
+    expect(html("| a |\n|---|\n| one<BR />two |")).toContain("<td>one<br>\ntwo</td>");
+    expect(html("line one<br>line two")).toBe("<p>line one<br>\nline two</p>");
+    expect(html("a <kbd>Ctrl</kbd>")).toBe("<p>a &lt;kbd&gt;Ctrl&lt;/kbd&gt;</p>");
+  });
+
+  it("puts no stray attribute on a table or a code block", () => {
+    const { container } = render(<MdBlock>{"| a |\n|---|\n| b |\n\n```\nx\n```"}</MdBlock>);
+    expect(container.querySelector("table")!.getAttributeNames()).toEqual([]);
+    expect(container.querySelector("pre")!.getAttributeNames()).toEqual([]);
   });
 });
