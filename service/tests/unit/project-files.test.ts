@@ -251,7 +251,7 @@ describe("VS Code's CLI", () => {
       });
       const run = path.join(dir, "run");
       fs.mkdirSync(run);
-      const env = { serverDir: path.join(dir, "server"), runtimeDir: run };
+      const env = { serverDir: path.join(dir, "server"), runtimeDirs: [run] };
 
       await expect(openInVSCode("/repo/a.cpp", 3, env)).rejects.toBeInstanceOf(VSCodeUnavailable);
 
@@ -268,6 +268,29 @@ describe("VS Code's CLI", () => {
 
       await openInVSCode("/repo/a.cpp", 3, env);
       expect(fs.readFileSync(log, "utf-8").trim()).toBe(`${live} --goto /repo/a.cpp:3`);
+      await new Promise<void>((r) => window.close(() => r()));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("finds a window's socket in any of the runtime dirs", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-vsc-"));
+    try {
+      const cli = path.join(dir, "server", "bin", "abc", "bin", "remote-cli", "code");
+      fs.mkdirSync(path.dirname(cli), { recursive: true });
+      const log = path.join(dir, "log");
+      fs.writeFileSync(cli, `#!/bin/sh\necho "$VSCODE_IPC_HOOK_CLI" > ${log}\n`, { mode: 0o755 });
+      const [run, tmp] = ["run", "tmp"].map((d) => path.join(dir, d));
+      fs.mkdirSync(run);
+      fs.mkdirSync(tmp);
+      const live = path.join(tmp, "vscode-ipc-live.sock");
+      const window = net.createServer((c) => c.end());
+      await new Promise<void>((r) => window.listen(live, r));
+      // The hook the server was started with, of a window closed since.
+      const env = { serverDir: path.join(dir, "server"), runtimeDirs: [run, tmp], hook: "/gone" };
+      await openInVSCode("/repo/a.cpp", undefined, env);
+      expect(fs.readFileSync(log, "utf-8").trim()).toBe(live);
       await new Promise<void>((r) => window.close(() => r()));
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -298,7 +321,7 @@ describe("VS Code's CLI", () => {
 
       await openInVSCode("/repo/a.cpp", undefined, {
         serverDir: path.join(dir, "server"),
-        runtimeDir: run,
+        runtimeDirs: [run],
         timeoutMs: 300,
       });
       expect(fs.readFileSync(log, "utf-8").trim()).toBe(live);
@@ -329,7 +352,7 @@ describe("VS Code's CLI", () => {
       const socks = ["a", "b", "c"].map((n) => path.join(run, `vscode-ipc-${n}.sock`));
       const servers = socks.map(() => net.createServer((c) => c.end()));
       await Promise.all(servers.map((srv, i) => new Promise<void>((r) => srv.listen(socks[i], r))));
-      const env = { serverDir: path.join(dir, "server"), runtimeDir: run };
+      const env = { serverDir: path.join(dir, "server"), runtimeDirs: [run] };
 
       await expect(openInVSCode("/repo/a.cpp", 3, env)).rejects.toThrow();
       expect(fs.readFileSync(log, "utf-8").trim().split("\n")).toEqual(["--goto /repo/a.cpp:3"]);
@@ -344,7 +367,7 @@ describe("VS Code's CLI", () => {
 
   it("is reported missing when no VS Code server is installed", async () => {
     await expect(
-      openInVSCode("/a", undefined, { serverDir: "/nonexistent", runtimeDir: "/nonexistent" }),
+      openInVSCode("/a", undefined, { serverDir: "/nonexistent", runtimeDirs: [] }),
     ).rejects.toThrow(/not installed/);
   });
 });

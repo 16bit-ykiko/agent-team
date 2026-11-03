@@ -5,20 +5,22 @@ import * as os from "os";
 import * as path from "path";
 
 // Opens a file in the user's VS Code, connected to this machine over Remote
-// (WSL, SSH), through the `code` its server ships. The server runs outside
-// any VS Code terminal, so VSCODE_IPC_HOOK_CLI, which tells `code` which
-// VS Code to talk to, is not set: the IPC sockets VS Code leaves in the
-// runtime dir are tried newest first (dead ones from closed windows stay
-// behind, and a live one may not answer). Which window shows the file is
-// VS Code's choice: one whose folder holds it, else the last active one.
+// (WSL, SSH, a dev container), through the `code` its server ships. The
+// server runs outside any VS Code terminal, so VSCODE_IPC_HOOK_CLI, which
+// tells `code` which VS Code to talk to, is not set (or names a window gone
+// since): the IPC sockets VS Code leaves in the runtime dir are tried newest
+// first (dead ones from closed windows stay behind, and a live one may not
+// answer). Which window shows the file is VS Code's choice: one whose folder
+// holds it, else the last active one.
 
 export class VSCodeUnavailable extends Error {}
 
 export interface VSCodeEnv {
   // ~/.vscode-server, where the remote CLI lives.
   serverDir: string;
-  // Where the vscode-ipc-*.sock files are (/run/user/<uid>).
-  runtimeDir: string;
+  // Where the vscode-ipc-*.sock files are: /run/user/<uid>, or the temp dir
+  // where there is none (a dev container).
+  runtimeDirs: string[];
   // The hook of a VS Code terminal, when the server was started from one.
   hook?: string;
   // How long one window may take to answer.
@@ -29,7 +31,7 @@ export function vscodeEnv(): VSCodeEnv {
   const uid = process.getuid?.() ?? 0;
   return {
     serverDir: path.join(os.homedir(), ".vscode-server"),
-    runtimeDir: process.env.XDG_RUNTIME_DIR || `/run/user/${uid}`,
+    runtimeDirs: [...new Set([process.env.XDG_RUNTIME_DIR || `/run/user/${uid}`, os.tmpdir()])],
     ...(process.env.VSCODE_IPC_HOOK_CLI && { hook: process.env.VSCODE_IPC_HOOK_CLI }),
   };
 }
@@ -43,7 +45,7 @@ export async function openInVSCode(
   if (!cli) throw new VSCodeUnavailable("VS Code's remote CLI is not installed here");
   const sockets = [
     ...(env.hook ? [env.hook] : []),
-    ...newestFirst(ipcSockets(env.runtimeDir)).filter((s) => s !== env.hook),
+    ...newestFirst(env.runtimeDirs.flatMap(ipcSockets)).filter((s) => s !== env.hook),
   ];
   // --goto reads a trailing :N of the name as a line: only with one.
   const args = line ? ["--goto", `${file}:${line}`] : [file];
