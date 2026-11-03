@@ -588,6 +588,22 @@ describe("the agents panel in the app", () => {
     expect(added.account).toBeUndefined();
   });
 
+  it("adds a Claude agent on the account picked for it", () => {
+    const sock = boot("lead", [lead, w1, w2], [opus]);
+    act(() => sock.receive({ type: "config_update", accounts: ["work"], defaultAccount: null }));
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    fireEvent.click(document.querySelector('[aria-label="clice · lead"] .ap-toggle')!);
+    const leadCard = within(document.querySelector('[aria-label="clice · lead"]') as HTMLElement);
+    fireEvent.click(leadCard.getByText("+ Agent"));
+    const [, accountSelect] = document.querySelectorAll<HTMLSelectElement>(".dialog select");
+    fireEvent.change(accountSelect, { target: { value: "work" } });
+    fireEvent.click(document.querySelector(".dialog .btn-primary")!);
+    expect(sock.frames().find((f) => f.type === "add_agent")).toMatchObject({
+      model: "claude-opus-5-5",
+      account: "work",
+    });
+  });
+
   it("adds an agent to the session it was asked from", () => {
     const sock = boot();
     fireEvent.click(document.querySelector(".agents-chip")!);

@@ -1748,8 +1748,8 @@ export function App() {
             models={models}
             accounts={accounts}
             onClose={() => setAddAgentFor(null)}
-            onAdd={(name, model, avatar, color) =>
-              addAgent(addAgentFor, name, model, avatar, color)
+            onAdd={(name, model, avatar, color, account) =>
+              addAgent(addAgentFor, name, model, avatar, color, account)
             }
           />
         )}
