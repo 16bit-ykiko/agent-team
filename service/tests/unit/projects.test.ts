@@ -319,6 +319,36 @@ describe("ProjectManager", () => {
     });
   });
 
+  it("runs leads and unnamed workers on the configured model and effort, if a lead may run on it", async () => {
+    const { manager, root, workspaces, call, host, session } = setup();
+    fs.mkdirSync(path.join(root, "wt"), { recursive: true });
+    host.projectDefaults = () => ({ model: "cursor/gemini-4-argon", effort: "high" });
+    const project = manager.create("clice", root);
+    const lead = workspaces.get(project.leadWorkspaceId!)!;
+    expect([...lead.agents.values()][0].info.model).toBe("cursor/gemini-4-argon");
+    expect(session(lead).getState().config.effort).toBe("high");
+    const start = lead.agents.values().next().value!.session as unknown as {
+      panelTools: { tools: Array<{ name: string; description: string }> };
+    };
+    const tool = start.panelTools.tools.find((t) => t.name === "start_session")!;
+    expect(tool.description).toContain("Models: cursor/gemini-4-argon, claude-opus-5-5");
+    await call(lead, "start_session", { title: "w", cwd: "wt", task: "t" });
+    const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
+    expect([...worker.agents.values()][0].info.model).toBe("cursor/gemini-4-argon");
+    expect(session(worker).getState().config.effort).toBe("high");
+
+    // A model no lead runs on, or an effort its model lacks, is not taken.
+    host.projectDefaults = () => ({ model: "gpt-5.5", effort: "high" });
+    const other = path.join(root, "..", "other");
+    fs.mkdirSync(other, { recursive: true });
+    const next = workspaces.get(manager.create("other", other).leadWorkspaceId!)!;
+    expect([...next.agents.values()][0].info.model).toBe("claude-opus-5-5");
+    host.projectDefaults = () => ({ model: "cursor/gemini-4-argon", effort: "max" });
+    await call(lead, "start_session", { title: "w2", cwd: "wt", task: "t" });
+    const second = [...workspaces.values()].filter((w) => w.projectLink?.role === "worker")[1];
+    expect(session(second).getState().config.effort).toBeUndefined();
+  });
+
   it("takes a Cursor model for the lead and its workers, never a Codex one", async () => {
     const { manager, root, workspaces, call } = setup();
     fs.mkdirSync(path.join(root, "wt"), { recursive: true });

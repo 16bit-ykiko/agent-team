@@ -220,7 +220,7 @@ export function leadToolset(
       projectStatusTool(api, id),
       {
         name: "start_session",
-        description: `Start a worker: a Claude session in cwd whose first message is task. cwd is the repository or a worktree, reused: one whose sessions are idle or archived (project_status), clean, its branch merged or pushed; archive its idle session, then git -C <worktree> switch -c <branch> origin/main. A new worktree only when all are taken, at most four unless the user wants more. Models: ${models.join(", ")}.`,
+        description: `Start a worker: a session in cwd whose first message is task. cwd is the repository or a worktree, reused: one whose sessions are idle or archived (project_status), clean, its branch merged or pushed; archive its idle session, then git -C <worktree> switch -c <branch> origin/main. A new worktree only when all are taken, at most four unless the user wants more. Models: ${models.join(", ")}.`,
         shape: {
           title: z.string(),
           cwd: z.string(),

@@ -679,6 +679,7 @@ export class Server {
     color: string,
     permissionMode?: string,
     account?: string,
+    effort?: string,
   ): void {
     const preset = MODEL_OPTIONS.find((m) => m.id === model);
     const backend = backendForModel(model);
@@ -689,7 +690,7 @@ export class Server {
       color,
       {
         backend,
-        effort: preset?.effort,
+        effort: effort ?? preset?.effort,
         permissionMode: backend === "claude" ? (permissionMode ?? "bypassPermissions") : undefined,
         providerEnv: this.sessionEnv(model, account),
       },
@@ -1050,7 +1051,9 @@ systemctl --user restart agent-team-server
       workspaces: () => this.workspaces.values(),
       workspace: (id) => this.workspaces.get(id),
       createWorkspace: (name, cwd, link) => this.makeWorkspace(name, cwd, undefined, link),
-      addAgent: (w, name, model, avatar, color) => this.addAgentTo(w, name, model, avatar, color),
+      addAgent: (w, name, model, avatar, color, effort) =>
+        this.addAgentTo(w, name, model, avatar, color, undefined, undefined, effort),
+      projectDefaults: () => this.config.projects,
       removeWorkspace: (id) => this.removeWorkspace(id),
       archiveWorkspace: (w) => {
         if (!w.isIdle) return false;

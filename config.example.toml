@@ -38,6 +38,13 @@ type = "local"
 # [accounts.work]
 # oauth_token = "sk-ant-oat01-..."
 
+# Projects (optional): the model a new project's lead runs on, and the
+# workers it starts without naming one; Claude Opus 5.5 when unset. Any
+# Claude or cursor/ model from the picker; effort if the model has it.
+# [projects]
+# model = "cursor/gemini-4-argon"
+# effort = "high"
+
 # Cursor (optional): the key the cursor/ models run on, a user API key
 # (cursor.com/dashboard/api) or a service account key; runs bill to its plan.
 # [cursor]

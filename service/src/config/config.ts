@@ -38,6 +38,13 @@ export interface ProviderConfig {
   base_url: string;
 }
 
+// The model, and its effort, a new project's lead runs on, and the workers
+// it starts without naming one.
+export interface ProjectsConfig {
+  model?: string;
+  effort?: string;
+}
+
 // The Cursor API key the cursor/ models run on (a user or service account
 // key, billed to its plan).
 export interface CursorConfig {
@@ -52,6 +59,7 @@ export interface AppConfig {
   hosts: Record<string, HostConfig>;
   providers: Record<string, ProviderConfig>;
   cursor: CursorConfig | null;
+  projects: ProjectsConfig;
 }
 
 export function loadConfig(baseDir: string): AppConfig {
@@ -138,7 +146,15 @@ export function loadConfig(baseDir: string): AppConfig {
       ? { api_key: rawCursor.api_key }
       : null;
 
-  return { server, workspace, auth, hosts, providers, accounts, cursor };
+  const rawProjects = parsed.projects as Record<string, unknown> | undefined;
+  const projects: ProjectsConfig = {
+    ...(typeof rawProjects?.model === "string" &&
+      rawProjects.model && { model: rawProjects.model }),
+    ...(typeof rawProjects?.effort === "string" &&
+      rawProjects.effort && { effort: rawProjects.effort }),
+  };
+
+  return { server, workspace, auth, hosts, providers, accounts, cursor, projects };
 }
 
 // Which account a session should run on: an explicit per-agent account wins,

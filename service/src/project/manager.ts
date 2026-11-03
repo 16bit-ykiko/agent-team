@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { AGENT_PRESETS, MODEL_OPTIONS } from "../config/presets";
+import { AGENT_PRESETS, MODEL_OPTIONS, effortLevelsForModel } from "../config/presets";
 import { resolveWorkspacePath } from "../repo/dirs";
 import { gitCommitsSince, gitHead, gitStatus, gitWorktrees, repositoryRoot } from "../repo/git";
 import type { EntryInfo, EntryKind, SessionRow, SqlValue } from "../workspace/history-index";
@@ -80,7 +80,16 @@ export interface ProjectHost {
   workspaces(): Iterable<Workspace>;
   workspace(id: string): Workspace | undefined;
   createWorkspace(name: string, cwd: string, link: ProjectLink): Workspace;
-  addAgent(workspace: Workspace, name: string, model: string, avatar: string, color: string): void;
+  addAgent(
+    workspace: Workspace,
+    name: string,
+    model: string,
+    avatar: string,
+    color: string,
+    effort?: string,
+  ): void;
+  // config.toml's [projects]: the model and effort leads default to.
+  projectDefaults?(): { model?: string; effort?: string };
   // Deletes a workspace without the project bookkeeping of a user delete.
   removeWorkspace(id: string): void;
   // False when the workspace is still busy.
@@ -165,7 +174,17 @@ export class ProjectManager {
     return out;
   }
 
-  create(name: string, root: string, model = LEAD_MODEL): Project {
+  // The model leads, and workers started without one, run on: the
+  // configured one where a lead may run on it, its effort where it has it.
+  private defaultModel(): { model: string; effort?: string } {
+    const { model, effort } = this.host.projectDefaults?.() ?? {};
+    if (!model || !panelModels().includes(model)) return { model: LEAD_MODEL };
+    return { model, ...(effort && effortLevelsForModel(model).includes(effort) && { effort }) };
+  }
+
+  create(name: string, root: string, model?: string): Project {
+    const defaults = this.defaultModel();
+    model ??= defaults.model;
     if (!panelModels().includes(model)) {
       throw new Error(`The lead needs a Claude or Cursor model: ${model}`);
     }
@@ -182,7 +201,8 @@ export class ProjectManager {
       this.store.save(project);
       this.issues(project.id);
       const preset = AGENT_PRESETS[0];
-      this.host.addAgent(lead, "Lead", model, preset.avatar, preset.color);
+      const effort = model === defaults.model ? defaults.effort : undefined;
+      this.host.addAgent(lead, "Lead", model, preset.avatar, preset.color, effort);
     } catch (e) {
       if (lead) this.host.removeWorkspace(lead.id);
       this.store.remove(project.id);
@@ -447,13 +467,19 @@ export class ProjectManager {
     this.changed(projectId);
   }
 
+  // What a lead may start workers on, its default first.
+  private workerModels(): string[] {
+    const first = this.defaultModel().model;
+    return [first, ...panelModels().filter((m) => m !== first)];
+  }
+
   // The tools a project workspace's agents get: the lead's or a worker's.
   toolsFor(workspace: Workspace): PanelToolset | null {
     const link = workspace.projectLink;
     const project = link && this.store.get(link.projectId);
     if (!link || !project) return null;
     return link.role === "lead"
-      ? leadToolset(this.api, project, this.store.notesDir(project.id), panelModels())
+      ? leadToolset(this.api, project, this.store.notesDir(project.id), this.workerModels())
       : workerToolset(this.api, workspace.id, project, this.store.notesDir(project.id));
   }
 
@@ -796,7 +822,7 @@ export class ProjectManager {
         `Not a directory: ${a.cwd}. Create it first (a worktree: git -C ${project.root} worktree add <path> -b <branch>).`,
       );
     }
-    const models = panelModels();
+    const models = this.workerModels();
     if (a.model && !models.includes(a.model)) {
       throw new Error(`Unknown model ${a.model}; one of: ${models.join(", ")}`);
     }
@@ -810,11 +836,13 @@ export class ProjectManager {
       throw new Error(`No task ${a.taskId} in ${objective!.id}`);
     }
 
-    const model = a.model ?? LEAD_MODEL;
+    const defaults = this.defaultModel();
+    const model = a.model ?? defaults.model;
+    const effort = model === defaults.model ? defaults.effort : undefined;
     const preset = AGENT_PRESETS[this.workers(projectId).length % AGENT_PRESETS.length];
     const w = this.host.createWorkspace(a.title, cwd, { projectId, role: "worker" });
     try {
-      this.host.addAgent(w, preset.name, model, preset.avatar, preset.color);
+      this.host.addAgent(w, preset.name, model, preset.avatar, preset.color, effort);
     } catch (e) {
       this.host.removeWorkspace(w.id);
       throw e;

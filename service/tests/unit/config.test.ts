@@ -52,6 +52,18 @@ describe("loadConfig cursor", () => {
   });
 });
 
+describe("loadConfig projects", () => {
+  it("reads the lead's default model and effort, nothing when unset", () => {
+    const d = writeConfig(`[projects]\nmodel = "cursor/gemini-4-argon"\neffort = "high"\n`);
+    try {
+      expect(loadConfig(d).projects).toEqual({ model: "cursor/gemini-4-argon", effort: "high" });
+      expect(loadConfig(dir).projects).toEqual({});
+    } finally {
+      fs.rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("loadConfig accounts", () => {
   it("parses named accounts with oauth tokens and skips entries without one", () => {
     const config = loadConfig(dir);

@@ -178,6 +178,10 @@ oauth_token = "sk-ant-oat01-..."   # from `claude setup-token`
 api_key = "..."
 base_url = "https://api.deepseek.com/anthropic"
 
+[projects]                   # what new leads (and workers started without a model) run on
+model = "cursor/gemini-4-argon"   # a Claude or cursor/ model; Opus 5.5 when unset
+effort = "high"
+
 [cursor]                     # the cursor/ models
 api_key = "..."              # a Cursor user or service account key, billed to its plan
 ```

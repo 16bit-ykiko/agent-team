@@ -74,8 +74,8 @@ export function setupProjects() {
       workspaces.set(w.id, w);
       return w;
     },
-    addAgent: (w, name, model, avatar, color) => {
-      const agent = w.addAgent(name, model, avatar, color, { backend: "claude" });
+    addAgent: (w, name, model, avatar, color, effort) => {
+      const agent = w.addAgent(name, model, avatar, color, { backend: "claude", effort });
       w.agents.get(agent.id)!.session.setPanelTools?.(manager.toolsFor(w));
     },
     removeWorkspace: (id) => {
