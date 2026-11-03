@@ -2,6 +2,7 @@ node_modules/
 dist/
 .agent-team/
 .pixi/
+.clice/
 python-src/
 *.vsix
 package-lock.json
