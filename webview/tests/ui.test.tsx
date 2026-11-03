@@ -501,12 +501,13 @@ describe("CreateWorkspaceDialog initial path", () => {
         onListDirs={() => {}}
         dirSuggestions={{ prefix: "", dirs: [] }}
         initialPath="/home/me/repo"
+        projectFolders={["/home/me/repo"]}
       />,
     );
     expect(getByDisplayValue("/home/me/repo")).toBeTruthy();
     expect(getByPlaceholderText("repo")).toBeTruthy();
     fireEvent.click(getByText("Create"));
-    expect(onCreate).toHaveBeenCalledWith("repo", "/home/me/repo", "local");
+    expect(onCreate).toHaveBeenCalledWith("repo", "/home/me/repo", "local", undefined);
   });
 });
 

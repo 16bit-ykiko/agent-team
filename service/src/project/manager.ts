@@ -215,13 +215,13 @@ export class ProjectManager {
 
   // Every folder is part of a project, the one of its repository (a git
   // worktree's is the checkout it was added to); the first workspace there
-  // brings the project and its lead into being. The lead runs nothing until
-  // it is written to.
-  ensureFor(cwd: string): Project {
+  // brings the project and its lead into being, named `name` or after the
+  // folder. The lead runs nothing until it is written to.
+  ensureFor(cwd: string, name?: string): Project {
     const root = repositoryRoot(cwd);
     const project =
       this.store.list().find((p) => p.root === root) ??
-      this.create(path.basename(root) || root, root);
+      this.create(name?.trim() || path.basename(root) || root, root);
     // Work there again brings an archived project back.
     if (project.archivedAt) this.setArchived(project.id, false);
     return project;

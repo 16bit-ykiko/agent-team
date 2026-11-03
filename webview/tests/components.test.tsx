@@ -266,7 +266,31 @@ describe("CreateWorkspaceDialog", () => {
     const { pathInput, onCreate, getByText } = setup();
     fireEvent.change(pathInput, { target: { value: "/home/ykiko/clice" } });
     fireEvent.click(getByText("Create"));
-    expect(onCreate).toHaveBeenCalledWith("clice", "/home/ykiko/clice", "local");
+    expect(onCreate).toHaveBeenCalledWith("clice", "/home/ykiko/clice", "local", undefined);
+  });
+
+  it("names the project a folder outside every project starts, and only that", () => {
+    const onCreate = vi.fn();
+    const { getByPlaceholderText, queryByLabelText, getByLabelText, getByText } = render(
+      <CreateWorkspaceDialog
+        hosts={hosts}
+        onClose={() => {}}
+        onCreate={onCreate}
+        onListDirs={() => {}}
+        dirSuggestions={{ prefix: "", dirs: [] }}
+        projectFolders={["/repo/clice", "/wt/clice-x"]}
+      />,
+    );
+    const pathInput = getByPlaceholderText("~/workspace/...");
+    for (const known of ["/repo/clice", "/repo/clice/src/", "/wt/clice-x"]) {
+      fireEvent.change(pathInput, { target: { value: known } });
+      expect(queryByLabelText("Project")).toBeNull();
+    }
+    fireEvent.change(pathInput, { target: { value: "/repo/clice2" } });
+    expect((getByLabelText("Project") as HTMLInputElement).placeholder).toBe("clice2");
+    fireEvent.change(getByLabelText("Project"), { target: { value: " Clice Two " } });
+    fireEvent.click(getByText("Create"));
+    expect(onCreate).toHaveBeenCalledWith("clice2", "/repo/clice2", "local", "Clice Two");
   });
 
   it("closes the suggestion list when the path input loses focus (mobile has no Esc)", () => {

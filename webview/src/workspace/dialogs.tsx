@@ -216,15 +216,20 @@ export function CreateWorkspaceDialog({
   onListDirs,
   dirSuggestions,
   initialPath,
+  projectFolders = [],
 }: {
   hosts: HostInfo[];
   onClose: () => void;
-  onCreate: (name: string, path: string, hostId?: string) => void;
+  onCreate: (name: string, path: string, hostId?: string, projectName?: string) => void;
   onListDirs: (prefix: string) => void;
   dirSuggestions: { prefix: string; dirs: string[] };
   initialPath?: string;
+  // Where the projects work (their repositories and worktrees): a folder
+  // outside them all starts a project, which can be named here.
+  projectFolders?: string[];
 }) {
   const [name, setName] = useState("");
+  const [projectName, setProjectName] = useState("");
   const [dirPath, setDirPath] = useState(initialPath ?? "~/");
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestIdx, setSuggestIdx] = useState(0);
@@ -286,12 +291,18 @@ export function CreateWorkspaceDialog({
 
   const canSubmit = dirPath.trim().length > 0;
   const defaultName = dirPath.split("/").filter(Boolean).pop() ?? "";
+  const folder = dirPath.trim().replace(/\/+$/, "");
+  const newProject =
+    defaultName !== "" &&
+    defaultName !== "~" &&
+    !projectFolders.some((f) => folder === f || folder.startsWith(`${f}/`));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     const finalName = (name.trim() || defaultName || "workspace").trim();
-    onCreate(finalName, dirPath.trim(), hostId || undefined);
+    const project = newProject ? projectName.trim() : "";
+    onCreate(finalName, dirPath.trim(), hostId || undefined, project || undefined);
     onClose();
   };
 
@@ -348,6 +359,16 @@ export function CreateWorkspaceDialog({
             </div>
           )}
         </label>
+        {newProject && (
+          <label className="dialog-field">
+            <span>Project</span>
+            <input
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              placeholder={defaultName}
+            />
+          </label>
+        )}
         {hosts.length > 1 && (
           <label className="dialog-field">
             <span>Host</span>

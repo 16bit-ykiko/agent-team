@@ -404,6 +404,17 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ws-group-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 4px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  outline: none;
+}
 .ws-group-branch {
   color: var(--text-muted);
   font-family: var(--font-mono);

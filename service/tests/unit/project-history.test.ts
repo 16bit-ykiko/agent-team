@@ -62,6 +62,15 @@ describe("a folder's project", () => {
     expect(manager.ensureFor(notes)).toMatchObject({ name: "notes", root: notes });
   });
 
+  it("takes the name it is given when it comes into being, the folder's otherwise", () => {
+    const { manager, base } = setup();
+    const [named, plain] = ["clice3", "plain"].map((d) => path.join(base, d));
+    for (const d of [named, plain]) fs.mkdirSync(d);
+    expect(manager.ensureFor(named, " Clice ").name).toBe("Clice");
+    expect(manager.ensureFor(named, "Other").name).toBe("Clice");
+    expect(manager.ensureFor(plain, " ").name).toBe("plain");
+  });
+
   it("takes in every workspace from before projects; a folder of archived ones is an archived project", () => {
     const { manager, root, base, old, workspaces } = setup();
     fs.mkdirSync(path.join(base, "clice2"));

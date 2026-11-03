@@ -321,6 +321,7 @@ export class Server {
           msg.name as string,
           msg.path as string,
           msg.hostId as string | undefined,
+          msg.projectName as string | undefined,
         );
         return;
 
@@ -561,7 +562,13 @@ export class Server {
     }
   }
 
-  private createWorkspace(ws: WebSocket, name: string, pathInput: string, hostId?: string): void {
+  private createWorkspace(
+    ws: WebSocket,
+    name: string,
+    pathInput: string,
+    hostId?: string,
+    projectName?: string,
+  ): void {
     const cwd = resolveWorkspacePath(pathInput ?? "");
     if (!cwd) {
       this.sendJson(ws, { type: "error", message: `Not a directory: ${pathInput}` });
@@ -570,7 +577,7 @@ export class Server {
     // A workspace is a session of its folder's project (made, with its lead,
     // if the folder has none yet).
     this.projectAction(ws, () => {
-      const project = this.projects.ensureFor(cwd);
+      const project = this.projects.ensureFor(cwd, projectName);
       this.makeWorkspace(name, cwd, hostId, { projectId: project.id, role: "worker" });
     });
   }

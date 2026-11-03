@@ -1125,8 +1125,8 @@ export function useServer() {
       return "replay-demo";
     }, [handleServerMessage]),
     createWorkspace: useCallback(
-      (name: string, path: string, hostId?: string) =>
-        send({ type: "create_workspace", name, path, hostId }),
+      (name: string, path: string, hostId?: string, projectName?: string) =>
+        send({ type: "create_workspace", name, path, hostId, projectName }),
       [send],
     ),
     renameProject: useCallback(

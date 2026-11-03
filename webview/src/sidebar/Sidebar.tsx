@@ -11,6 +11,7 @@ import { Icon } from "../panels/Icon";
 import { DEFAULT_BRANCH } from "../panels/scope";
 import { formatBytes, formatRelative, formatResetTime } from "../format";
 import { RoleTag } from "../workspace/RoleTag";
+import { NameInput } from "../project/NameInput";
 
 function gitTitle(git: { dirty: number; ahead: number; behind: number }): string {
   const parts: string[] = [];
@@ -145,6 +146,7 @@ export interface SidebarProps {
   // One project's archived sessions, or (null) those in no project.
   onPurgeArchived: (projectId: string | null) => void;
   onArchiveProject?: (projectId: string) => void;
+  onRenameProject?: (projectId: string, name: string) => void;
   onRestoreProject?: (projectId: string) => void;
   onSetDefaultAccount: (account: string | null) => void;
 }
@@ -182,6 +184,8 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
   const showShelf =
     shelfOpen ||
     shelved.some((g) => [...g.workspaces, ...g.archived].some((w) => w.id === p.activeWsId));
+  // The project whose name is being edited.
+  const [renaming, setRenaming] = useState<string | null>(null);
   // Groups whose archived sessions are unfolded.
   const [openArchives, setOpenArchives] = useState<ReadonlySet<string>>(new Set());
   const toggleArchive = (key: string) =>
@@ -303,7 +307,31 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
           ) : (
             <span className="events-toggle">{expanded ? "▾" : "▸"}</span>
           )}
-          <span className="ws-group-label">{g.label}</span>
+          {g.project && renaming === g.project.id ? (
+            <NameInput
+              name={g.label}
+              label="Project name"
+              className="ws-group-rename"
+              onDone={(name) => {
+                setRenaming(null);
+                if (name) p.onRenameProject?.(g.project!.id, name);
+              }}
+            />
+          ) : (
+            <span
+              className="ws-group-label"
+              {...(g.project &&
+                p.onRenameProject && {
+                  title: "Double-click to rename",
+                  onDoubleClick: (e: React.MouseEvent) => {
+                    e.stopPropagation();
+                    setRenaming(g.project!.id);
+                  },
+                })}
+            >
+              {g.label}
+            </span>
+          )}
           {leadUnread > 0 && lead!.id !== p.activeWsId && (
             <span className="unread-badge">{leadUnread}</span>
           )}

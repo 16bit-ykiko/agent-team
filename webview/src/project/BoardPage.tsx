@@ -17,7 +17,6 @@ import {
   type IssueRefs,
 } from "../chat/markdown";
 import { FileOpenContext, parseFileRef } from "../chat/fileRef";
-import { isImeKeyEvent } from "../chat/ime";
 import { formatRelative } from "../format";
 import { Icon } from "../panels/Icon";
 import {
@@ -50,6 +49,7 @@ import {
 import { IssueDetail, IssueList, IssueNav } from "./IssuesView";
 import { DetailSection, FilterChip } from "./parts";
 import { NotesView, openInEditor, reachable, type BoardFile } from "./NotesView";
+import { NameInput } from "./NameInput";
 import { inVSCode } from "../vscode";
 
 // A worker session as the board shows it.
@@ -1111,8 +1111,6 @@ function ObjectiveDetail({
 
 function ProjectName({ name, onRename }: { name: string; onRename: (name: string) => void }) {
   const [editing, setEditing] = useState(false);
-  const composing = useRef(false);
-  const compositionEnd = useRef(0);
   if (!editing) {
     return (
       <button className="bp-name" title="Rename" onClick={() => setEditing(true)}>
@@ -1120,31 +1118,15 @@ function ProjectName({ name, onRename }: { name: string; onRename: (name: string
       </button>
     );
   }
-  const commit = (value: string) => {
-    setEditing(false);
-    if (value.trim() && value.trim() !== name) onRename(value.trim());
-  };
   return (
-    <input
+    <NameInput
+      name={name}
+      label="Project name"
       className="bp-name-input"
-      aria-label="Project name"
-      autoFocus
-      defaultValue={name}
-      onCompositionStart={() => (composing.current = true)}
-      onCompositionEnd={(e) => {
-        composing.current = false;
-        compositionEnd.current = e.timeStamp;
+      onDone={(renamed) => {
+        setEditing(false);
+        if (renamed) onRename(renamed);
       }}
-      onKeyDown={(e) => {
-        if (isImeKeyEvent(e, composing.current, compositionEnd.current)) return;
-        if (e.key === "Enter") commit(e.currentTarget.value);
-        else if (e.key === "Escape") {
-          e.stopPropagation();
-          e.nativeEvent.preventDefault();
-          setEditing(false);
-        }
-      }}
-      onBlur={(e) => commit(e.currentTarget.value)}
     />
   );
 }

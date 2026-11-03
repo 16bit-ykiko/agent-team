@@ -394,7 +394,7 @@ describe("CreateWorkspaceDialog", () => {
     });
     expect(queryByRole("checkbox")).toBeNull();
     fireEvent.click(getByText("Create"));
-    expect(onCreate).toHaveBeenCalledWith("clice", "/repo/clice", "local");
+    expect(onCreate).toHaveBeenCalledWith("clice", "/repo/clice", "local", undefined);
   });
 
   it("closes on Escape, the path's suggestions first", () => {
@@ -558,6 +558,24 @@ describe("archives in the sidebar", () => {
         (e) => e.textContent,
       ),
     ).toEqual(["old-a"]);
+  });
+
+  it("rename a project from its row on a double click", () => {
+    const p = props({ onRenameProject: vi.fn() });
+    const { container, getByLabelText, queryByLabelText } = render(<Sidebar {...p} />);
+    const label = () => container.querySelector(".ws-group-project .ws-group-label")!;
+    fireEvent.doubleClick(label());
+    fireEvent.keyDown(getByLabelText("Project name"), { key: "Escape" });
+    expect(queryByLabelText("Project name")).toBeNull();
+    fireEvent.doubleClick(label());
+    const input = getByLabelText("Project name");
+    fireEvent.click(input);
+    fireEvent.change(input, { target: { value: " clice next " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(p.onRenameProject).toHaveBeenCalledTimes(1);
+    expect(p.onRenameProject).toHaveBeenCalledWith("p1", "clice next");
+    // Editing the name opens nothing.
+    expect(p.onSelect).toHaveBeenCalledTimes(0);
   });
 
   it("archive a live project from its row; an archived one offers Restore instead", () => {

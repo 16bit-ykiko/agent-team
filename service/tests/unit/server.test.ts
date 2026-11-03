@@ -385,10 +385,20 @@ describe("server websocket", () => {
       cwd: folder,
       projectLink: { projectId: project.id, role: "worker" },
     });
-    ws.send(JSON.stringify({ type: "create_workspace", name: "second", path: folder }));
+    // A name given for the project is the project's only when it brings one.
+    ws.send(
+      JSON.stringify({ type: "create_workspace", name: "second", path: folder, projectName: "X" }),
+    );
     const second = (await next("workspace_created")).workspace as Record<string, unknown>;
-    ws.close();
     expect(second).toMatchObject({ projectLink: { projectId: project.id, role: "worker" } });
+    const other = path.join(base, "other");
+    fs.mkdirSync(other, { recursive: true });
+    ws.send(
+      JSON.stringify({ type: "create_workspace", name: "w", path: other, projectName: " Named " }),
+    );
+    const named = (await next("workspace_created")).workspace as Record<string, unknown>;
+    ws.close();
+    expect(named).toMatchObject({ name: "Named · lead", cwd: other });
   });
 
   it("creates a project with its lead workspace and lists it on connect", async () => {

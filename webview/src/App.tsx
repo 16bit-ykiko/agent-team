@@ -411,6 +411,13 @@ export function App() {
     [],
   );
   useEffect(() => installMacTextKeys(), []);
+  const projectFolders = useMemo(
+    () => [
+      ...projects.map((p) => p.root),
+      ...workspaces.filter((w) => w.projectLink).map((w) => w.cwd),
+    ],
+    [projects, workspaces],
+  );
   const draggingRef = useRef(false);
 
   const sortedWorkspaces = useMemo(
@@ -1294,6 +1301,7 @@ export function App() {
             onReplayDemo={onReplayDemo}
             onPurgeArchived={onPurgeArchived}
             onArchiveProject={onArchiveProject}
+            onRenameProject={renameProject}
             onRestoreProject={onRestoreProject}
             onDebugSnapshot={takeSnapshot}
             onSetDefaultAccount={setDefaultAccount}
@@ -1691,6 +1699,7 @@ export function App() {
             onListDirs={listDirs}
             dirSuggestions={dirSuggestions}
             initialPath={createInPath}
+            projectFolders={projectFolders}
           />
         )}
 
