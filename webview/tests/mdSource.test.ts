@@ -36,6 +36,26 @@ describe("math in the source", () => {
     unchanged("hash(${pkg.version}_${nodeVersion}_${x})");
   });
 
+  it("takes a formula whose CJK text is all in \\text{…}, escaping that text's underscores", () => {
+    const md = [
+      "*   原来需要：$\\text{模型数} \\times (8\\text{ Prologue} \\times \\text{split_k} + 14\\text{ Mega}) = \\text{几百上千个实例}$；",
+      "*   **精简后只需要**：**$3\\text{ 个 Prologue} + 4\\text{ 个 Mega} = 7\\text{ 个实例}$**（最多十几个）",
+    ].join("\n");
+    expect(prepareSource(md)).toEqual({
+      text: [
+        "*   原来需要：$$\\text{模型数} \\times (8\\text{ Prologue} \\times \\text{split\\_k} + 14\\text{ Mega}) = \\text{几百上千个实例}$$；",
+        "*   **精简后只需要**：**$$3\\text{ 个 Prologue} + 4\\text{ 个 Mega} = 7\\text{ 个实例}$$**（最多十几个）",
+      ].join("\n"),
+      hasMath: true,
+    });
+    expect(text("so \\(\\text{a_b} + \\mathrm{x_1} + \\text{c\\_d}\\) holds")).toBe(
+      "so $$\\text{a\\_b} + \\mathrm{x_1} + \\text{c\\_d}$$ holds",
+    );
+    // CJK outside such text is still prose.
+    unchanged("$\\alpha 是角度$");
+    unchanged("$5 到 $10 之间，\\text{两边}都有");
+  });
+
   it("rewrites \\( \\) inline and a lone \\[ \\] line as a display block", () => {
     expect(text("so \\(a_1\\) holds")).toBe("so $$a_1$$ holds");
     expect(text("- sum:\n  \\[ \\sum_i x_i \\]\n")).toBe("- sum:\n  $$\n  \\sum_i x_i\n  $$\n");

@@ -212,6 +212,22 @@ describe("math", () => {
     expect(container.textContent).not.toContain("$");
   });
 
+  it("renders formulas with Chinese in \\text{…}, a slipped underscore there included", async () => {
+    await loadMath();
+    const { container } = render(
+      <MdBlock>
+        {[
+          "*   原来需要：$\\text{模型数} \\times (8\\text{ Prologue} \\times \\text{split_k} + 14\\text{ Mega})$；",
+          "*   **精简后只需要**：**$3\\text{ 个 Prologue} + 4\\text{ 个 Mega} = 7\\text{ 个实例}$**（最多十几个）",
+        ].join("\n")}
+      </MdBlock>,
+    );
+    expect(container.querySelectorAll(".katex")).toHaveLength(2);
+    expect(container.querySelector(".katex-error")).toBeNull();
+    expect(container.querySelector("strong .katex")).not.toBeNull();
+    expect(container.textContent).not.toContain("$");
+  });
+
   it("leaves prices and code alone", async () => {
     await loadMath();
     const { container } = render(<MdBlock>{"costs $5 and $10, run `echo $a$`"}</MdBlock>);

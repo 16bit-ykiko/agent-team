@@ -9,7 +9,9 @@
 // Over real replies most $…$ pairs are not math (shell variables, JSON
 // $ref, .debug$S), so a pair without TeX markup must stand apart from
 // letters and digits and read like a formula; a pair holding CJK text or
-// quotes is never math.
+// quotes is never math, unless they are all in the text a command such as
+// \text{…} takes ("$7\text{ 个实例}$"). An underscore in that text, an
+// error to TeX and KaTeX alike, is escaped ("\text{split_k}").
 //
 // Bare URLs. GFM ends one only at whitespace or "<", so in Chinese prose
 // ("见 https://x.com/a，然后…") the link swallows the rest of the sentence.
@@ -28,6 +30,8 @@ const CJK =
 const TEXISH = /[\\^_{}=]/;
 const TEX_MARKUP = /[\\^_]/;
 const NEVER_MATH = new RegExp(`${CJK.source}|["\`]`);
+const TEXT_ARG = /\\(?:text(?:rm|bf|it|tt|sf|normal)?|mbox|mathrm|operatorname)\s*\{[^{}]*\}/g;
+const TEXT_MODE_ARG = /\\(?:text(?:rm|bf|it|tt|sf|normal)?|mbox)\s*\{[^{}]*\}/g;
 const ALNUM = /[A-Za-z0-9]/;
 const URL_START = /^(?:https?:\/\/|www\.)/i;
 const URL_END = /[\s<>]/;
@@ -117,7 +121,8 @@ export function prepareSource(md: string): PreparedSource {
   let hasMath = false;
   let i = 0;
 
-  const display = (body: string, indent: string) => `$$\n${indent}${body.trim()}\n${indent}$$`;
+  const display = (body: string, indent: string) =>
+    `$$\n${indent}${textMode(body.trim())}\n${indent}$$`;
 
   // The closing run of a code span opened by `len` backticks, or -1.
   const codeSpanClose = (from: number, len: number, limit: number): number => {
@@ -194,7 +199,7 @@ export function prepareSource(md: string): PreparedSource {
           }
           if (!body.includes("\n")) {
             hasMath = true;
-            out += `$$${body.trim()}$$`;
+            out += `$$${textMode(body.trim())}$$`;
             i = after;
             continue;
           }
@@ -216,9 +221,9 @@ export function prepareSource(md: string): PreparedSource {
       }
       const end = nextDouble(i + 2);
       const body = end < lines.paragraphEnd(i) ? md.slice(i + 2, end) : "";
-      if (body.trim() && !NEVER_MATH.test(body)) {
+      if (body.trim() && !neverMath(body)) {
         hasMath = true;
-        out += `$$${body}$$`;
+        out += `$$${textMode(body)}$$`;
         i = end + 2;
         continue;
       }
@@ -233,7 +238,7 @@ export function prepareSource(md: string): PreparedSource {
       const close = inlineClose(md, i);
       if (close >= 0) {
         hasMath = true;
-        out += `$$${md.slice(i + 1, close)}$$`;
+        out += `$$${textMode(md.slice(i + 1, close))}$$`;
         i = close + 1;
         continue;
       }
@@ -281,7 +286,7 @@ function inlineClose(md: string, open: number): number {
   }
   if (md[j] !== "$" || md[j + 1] === "$" || /\s/.test(md[j - 1])) return -1;
   const body = md.slice(open + 1, j);
-  if (NEVER_MATH.test(body)) return -1;
+  if (neverMath(body)) return -1;
   const before = md[open - 1] ?? "";
   const after = md[j + 1] ?? "";
   // "$x$" quoted is talking about the syntax.
@@ -292,6 +297,17 @@ function inlineClose(md: string, open: number): number {
   if (ALNUM.test(before) || ALNUM.test(after)) return -1;
   if (/[{}]/.test(body) || /[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(body)) return -1;
   return j;
+}
+
+function neverMath(body: string): boolean {
+  if (!NEVER_MATH.test(body)) return false;
+  const rest = body.replace(TEXT_ARG, "");
+  return rest === body || NEVER_MATH.test(rest);
+}
+
+function textMode(body: string): string {
+  if (!body.includes("_")) return body;
+  return body.replace(TEXT_MODE_ARG, (arg) => arg.replace(/(?<!\\)_/g, "\\_"));
 }
 
 // GFM's trailing-punctuation rule, re-applied after the cut: "a.，" → "a".
