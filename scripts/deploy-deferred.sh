@@ -9,5 +9,15 @@ LOG="$HOME/.cache/agent-team-deploy.log"
 mkdir -p "$(dirname "$LOG")"
 {
   echo "=== $(date) build $(git rev-parse --short HEAD)"
-  npm run build 2>&1 && echo "=== build ok, restarting" && systemctl --user restart agent-team-server && echo "=== restarted"
+  npm run build 2>&1 || exit 1
+  echo "=== build ok, restarting"
+  if [[ "$(systemctl --user show -p LoadState --value agent-team-server 2>/dev/null)" == loaded ]]; then
+    systemctl --user restart agent-team-server || exit 1
+  elif [[ -x "$HOME/.local/bin/agent-team-service" ]]; then
+    "$HOME/.local/bin/agent-team-service" restart || exit 1
+  else
+    echo "=== no supported service manager found; server was not restarted"
+    exit 1
+  fi
+  echo "=== restarted"
 } >> "$LOG" 2>&1

@@ -5,12 +5,13 @@ description: Build and restart the production agent-team server safely from insi
 
 # Deploy
 
-Production is `agent-team-server.service` (systemd --user), `node dist/server.js` on port 9800, started via `scripts/start-server.sh`. Every agent session — including the one running this request — is a child process of that server. A restart kills the requesting session mid-turn, so restarts are always deferred and detached.
+Production is `node dist/server.js` on port 9800, run by `agent-team-server.service` (systemd --user) or, on a machine without a systemd user bus, by `~/.local/bin/agent-team-service supervise` (pid file `.agent-team/service-supervisor.pid`, log `.agent-team/service.log`), which loops `pixi run serve` and so rebuilds `dist/` from the working tree on every start. Every agent session — including the one running this request — is a child process of that server. A restart kills the requesting session mid-turn, so restarts are always deferred and detached.
 
 ## Confirm who you are
 
 ```bash
-pid=$(systemctl --user show -p MainPID --value agent-team-server); echo server=$pid
+pid=$(systemctl --user show -p MainPID --value agent-team-server 2>/dev/null)
+[[ $pid =~ ^[1-9] ]] || pid=$(pgrep -f '^\S*node dist/server.js' -o); echo server=$pid
 pgrep -P "$pid" | wc -l                       # live agent sessions (you are one)
 grep -qa "AGENT_TEAM" /proc/$$/environ && echo "running inside the server"
 ```
@@ -25,7 +26,7 @@ Only when the user asked for a restart in this turn. Finish all edits, run `npm 
 setsid nohup scripts/deploy-deferred.sh 10 >/dev/null 2>&1 < /dev/null &
 ```
 
-The script sleeps, runs `npm run build`, and `systemctl --user restart agent-team-server`, logging to `~/.cache/agent-team-deploy.log`. It lives in the repo on purpose: `/tmp` gets wiped and a script placed there once silently never ran. End your turn promptly after scheduling — the delay only has to outlast your final message.
+The script sleeps, runs `npm run build`, and restarts through systemd, else `agent-team-service restart`, logging to `~/.cache/agent-team-deploy.log`. It lives in the repo on purpose: `/tmp` gets wiped and a script placed there once silently never ran. End your turn promptly after scheduling — the delay only has to outlast your final message.
 
 If the user said "先别重启" (don't restart yet), commit and stop; schedule nothing.
 
@@ -33,11 +34,12 @@ If the user said "先别重启" (don't restart yet), commit and stop; schedule n
 
 ```bash
 tail -20 ~/.cache/agent-team-deploy.log        # "=== build ok, restarting" / "=== restarted"
-systemctl --user show -p ActiveEnterTimestamp -p MainPID agent-team-server
+systemctl --user show -p ActiveEnterTimestamp -p MainPID agent-team-server \
+  || ps -o pid,lstart -p "$(pgrep -f '^\S*node dist/server.js' -o)"
 git -C dist log -1 2>/dev/null; ls -l --time-style=+%T dist/server.js
 ```
 
-Compare `ActiveEnterTimestamp` with the log's timestamp and `dist/server.js` mtime with your last commit. If the log has no entry after your commit, the deferred script did not run: reschedule, don't assume.
+Compare the start time with the log's timestamp and `dist/server.js` mtime with your last commit. If the log has no entry after your commit, the deferred script did not run: reschedule, don't assume.
 
 ## Testing a build without touching production
 

@@ -13,7 +13,7 @@ Detailed knowledge lives in skills — load them at the moments their descriptio
 ## Hard Rules
 
 - **Never add `"type": "module"` to the root `package.json`.** `dist/server.js` is a CommonJS bundle; that flag makes it crash on start. ESM-only directories carry their own `package.json`.
-- **Never restart, kill, or redeploy the production server directly.** It is `agent-team-server.service` (systemd --user, port 9800) and the session running your request is one of its children. The only allowed path is `scripts/deploy-deferred.sh` (deploy skill), and only when the user asked for a restart in this turn.
+- **Never restart, kill, or redeploy the production server directly.** It is `node dist/server.js` on port 9800, run by `agent-team-server.service` (systemd --user) or `~/.local/bin/agent-team-service` where there is no user bus, and the session running your request is one of its children. The only allowed path is `scripts/deploy-deferred.sh` (deploy skill), and only when the user asked for a restart in this turn.
 - **Never skip, weaken, or `.skip` a failing test.** Fix the cause. Every UI change ships with a vitest test; every event-pipeline change is checked against the snap fixtures, and a `.snap.md` is only regenerated (`-u`) for diffs you can explain line by line.
 - **Never guess the shape of an SDK stream.** If a fix depends on frame order or fields, capture the scenario (capture-sdk skill) and add the recording as a fixture.
 - **Never start many real Claude/Codex/Cursor sessions in a short time.** Captures and smoke tests hit the user's own account; bursts of sessions look like abuse and can get the account banned. Capture only the scenarios you need, one at a time, spaced out; never loop captures or run them in parallel.
