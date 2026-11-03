@@ -153,6 +153,7 @@ type = "local"
     PATH: process.env.PATH,
     HOME: home,
     AGENT_TEAM_PORT: String(port),
+    AGENT_TEAM_HOST: "127.0.0.1",
     AGENT_TEAM_BASE_DIR: base,
     AGENT_TEAM_WEB_DIR: web,
   };

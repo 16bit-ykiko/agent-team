@@ -146,8 +146,9 @@ export class Server {
     this.sweepArchives();
     this.archiveTimer = setInterval(() => this.sweepArchives(), 3600_000);
 
-    this.httpServer.listen(port, "0.0.0.0", () => {
-      console.log(`Agent Team server listening on http://0.0.0.0:${port}`);
+    const host = process.env.AGENT_TEAM_HOST || "0.0.0.0";
+    this.httpServer.listen(port, host, () => {
+      console.log(`Agent Team server listening on http://${host}:${port}`);
     });
   }
 

@@ -191,12 +191,13 @@ A provider name must be a prefix of the model ids routed to it, so
 
 ### Environment
 
-| Variable              | Default | Meaning                           |
-| --------------------- | ------- | --------------------------------- |
-| `AGENT_TEAM_PORT`     | `9800`  | HTTP + WebSocket port             |
-| `AGENT_TEAM_BASE_DIR` | cwd     | Where `.agent-team/` is stored    |
-| `AGENT_TEAM_WEB_DIR`  | bundled | Where the built UI is served from |
-| `AGENT_TEAM_DEBUG`    | unset   | `1` logs raw CLI payloads         |
+| Variable              | Default   | Meaning                           |
+| --------------------- | --------- | --------------------------------- |
+| `AGENT_TEAM_PORT`     | `9800`    | HTTP + WebSocket port             |
+| `AGENT_TEAM_HOST`     | `0.0.0.0` | Address the server listens on     |
+| `AGENT_TEAM_BASE_DIR` | cwd       | Where `.agent-team/` is stored    |
+| `AGENT_TEAM_WEB_DIR`  | bundled   | Where the built UI is served from |
+| `AGENT_TEAM_DEBUG`    | unset     | `1` logs raw CLI payloads         |
 
 State (workspaces, `history.db` and its search index, projects and their
 boards, debug snapshots) lives under `.agent-team/` in the base directory.
