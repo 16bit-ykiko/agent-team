@@ -2967,7 +2967,7 @@ button.action-target:hover {
 
 /* ---- Projects ----------------------------------------------------------- */
 
-.task-lead-tag {
+.task-role-tag {
   flex-shrink: 0;
   color: var(--text-muted);
 }

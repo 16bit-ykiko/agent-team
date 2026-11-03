@@ -25,6 +25,10 @@ them.
   "your turn". When the task is done it reports to the lead with
   `finish_task`; `report_progress` is only for news that changes the lead's
   plans. The lead steps back: it does not relay, chase or poll.
+- **Isolated workers** — for one self-contained task the lead can start a
+  worker that sees its own task and nothing else of the project: only
+  `report_progress`, `finish_task` and `current_task`, no board, notes,
+  issues, history or other sessions. Tagged "isolated" in the sidebar.
 - **An objectives board** — objectives with tasks, decisions and dependencies,
   kept current by the workers as they go and read by the lead to talk things
   over with you. A list by area and a dependency graph; each objective is a

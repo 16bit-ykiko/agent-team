@@ -382,6 +382,28 @@ describe("the agents panel in the app", () => {
     expect(document.querySelector(".side-panel")).toBeNull();
   });
 
+  it("tags the lead and an isolated worker, in the sidebar and on the cards", () => {
+    const isolated = {
+      ...w1,
+      projectLink: { projectId: "p1", role: "worker" as const, isolated: true },
+    };
+    boot("lead", [lead, isolated, w2]);
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    const tags = (selector: string) =>
+      [...document.querySelectorAll(selector)].map((e) => [
+        e.querySelector(".clip")!.textContent,
+        e.querySelector(".task-role-tag")?.textContent ?? null,
+      ]);
+    // The lead heads its group; an archived worker is out of the list.
+    expect(tags(".task-item")).toEqual([["modules", "isolated"]]);
+    // The lead's card is named "lead" already.
+    expect(tags(".ap-session-name")).toEqual([
+      ["lead", null],
+      ["modules", "isolated"],
+      ["docs", null],
+    ]);
+  });
+
   it("is the project's overview from its lead, folded; a worker's own session alone, unfolded", () => {
     boot("lead");
     fireEvent.click(document.querySelector(".agents-chip")!);

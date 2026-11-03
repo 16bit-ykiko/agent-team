@@ -164,6 +164,34 @@ describe("panel tool arguments", () => {
     expect(Object.keys(t.finish_task.shape)).toEqual(["summary", "context", "objective_id"]);
   });
 
+  it("give an isolated worker its reports and its task, and no word of the rest", async () => {
+    const lead = byName(leadToolset(api, project, "/notes", ["m"]));
+    await lead.start_session.handler({ title: "w", cwd: "wt", task: "t", isolated: true });
+    const set = workerToolset(api, "ws-w", project, "/notes", true);
+    const t = byName(set);
+    expect(Object.keys(t)).toEqual(["report_progress", "finish_task", "current_task"]);
+    expect(Object.keys(t.finish_task.shape)).toEqual(["summary"]);
+    expect(Object.keys(t.current_task.shape)).toEqual([]);
+    await t.finish_task.handler({ summary: "done" });
+    await t.current_task.handler({});
+    expect(calls).toEqual([
+      ["startSession", "p1", { title: "w", cwd: "wt", task: "t", isolated: true }],
+      ["workerReport", "ws-w", "done", true, {}],
+      ["currentTask", "ws-w", undefined],
+    ]);
+    expect(set.instructions).toContain("Write to the user in 简体中文");
+    expect(set.instructions).toContain("not yours to look at");
+    for (const word of [
+      "/notes",
+      "search_history",
+      "write_issues",
+      "project_status",
+      "read_session",
+    ]) {
+      expect(set.instructions, word).not.toContain(word);
+    }
+  });
+
   it("give a worker the board to keep, as its own session, but not to delete or archive", async () => {
     const t = byName(workerToolset(api, "ws-w", project, "/notes"));
     expect(Object.keys(t)).toEqual([
@@ -428,6 +456,50 @@ describe("ProjectManager", () => {
     expect(await call(worker, "current_task", { objective_id: "core/lexer" })).toContain(
       "core/lexer — Lexer",
     );
+  });
+
+  it("starts an isolated worker that sees its own tasks and nothing else of the board", async () => {
+    const { create, call, session, workspaces, objectives } = setup();
+    const { lead, project } = create("clice");
+    await withTask(call, lead);
+    await call(lead, "add_items", {
+      objective_id: "core/modules",
+      tasks: ["document"],
+      decisions: ["which std?"],
+    });
+    await call(lead, "write_objective", { id: "core/modules", context: "lexer half done" });
+    await call(lead, "start_session", {
+      title: "modules",
+      cwd: "wt",
+      task: "Implement it.",
+      objective_id: "core/modules",
+      task_id: "t1",
+      isolated: true,
+    });
+    const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
+    expect(worker.projectLink).toEqual({ projectId: project.id, role: "worker", isolated: true });
+    expect(session(worker).panelTools!.tools.map((t) => t.name)).toEqual([
+      "report_progress",
+      "finish_task",
+      "current_task",
+    ]);
+    const now = await call(worker, "current_task");
+    expect(now).toContain("Implement it.");
+    expect(now).toContain(
+      "core/modules — Modules\ngoal: C++20\n\nyour tasks:\n- t1 [doing] implement",
+    );
+    for (const hidden of ["document", "which std?", "lexer half done", "decisions"]) {
+      expect(now, hidden).not.toContain(hidden);
+    }
+    // Neither reaches the handler through a backend's schema; the manager holds anyway.
+    await expect(call(worker, "current_task", { objective_id: "core/modules" })).rejects.toThrow(
+      "reads only its own task",
+    );
+    await call(worker, "finish_task", { summary: "done", context: "rewritten" });
+    expect(objectives()[0]).toMatchObject({
+      context: "lexer half done",
+      tasks: [{ id: "t1", state: "review" }, { state: "todo" }],
+    });
   });
 
   it("delivers a worker's report to the lead and moves its task to review", async () => {

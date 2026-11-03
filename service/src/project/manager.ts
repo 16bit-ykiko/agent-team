@@ -27,6 +27,7 @@ import {
   type BrokenObjective,
   type Objective,
   type Stamp,
+  type Task,
 } from "./objectives";
 import { IssueStore, locate, type IssueModule, type ModuleEntry } from "./issues";
 import { IssueBoard } from "./issue-board";
@@ -480,7 +481,13 @@ export class ProjectManager {
     if (!link || !project) return null;
     return link.role === "lead"
       ? leadToolset(this.api, project, this.store.notesDir(project.id), this.workerModels())
-      : workerToolset(this.api, workspace.id, project, this.store.notesDir(project.id));
+      : workerToolset(
+          this.api,
+          workspace.id,
+          project,
+          this.store.notesDir(project.id),
+          link.isolated === true,
+        );
   }
 
   // A worker's turn ended or its agent went idle: the check waits until it
@@ -840,7 +847,11 @@ export class ProjectManager {
     const model = a.model ?? defaults.model;
     const effort = model === defaults.model ? defaults.effort : undefined;
     const preset = AGENT_PRESETS[this.workers(projectId).length % AGENT_PRESETS.length];
-    const w = this.host.createWorkspace(a.title, cwd, { projectId, role: "worker" });
+    const w = this.host.createWorkspace(a.title, cwd, {
+      projectId,
+      role: "worker",
+      ...(a.isolated && { isolated: true }),
+    });
     try {
       this.host.addAgent(w, preset.name, model, preset.avatar, preset.color, effort);
     } catch (e) {
@@ -1256,7 +1267,7 @@ export class ProjectManager {
     }
     out.push("", "tasks:");
     for (const t of o.tasks) {
-      out.push(`- ${t.id} [${t.state}] ${t.text}${t.session ? ` (session ${t.session})` : ""}`);
+      out.push(`${taskLine(t)}${t.session ? ` (session ${t.session})` : ""}`);
     }
     if (o.tasks.length === 0) out.push("(none)");
     out.push("", "decisions:");
@@ -1465,12 +1476,16 @@ export class ProjectManager {
 
   // What a worker session is on, for when its own context no longer holds
   // it: the task as the lead gave it, the lead's later messages, and its
-  // objectives on the board as they are now.
+  // objectives on the board as they are now (an isolated worker's own tasks
+  // in them only).
   private async currentTask(workspaceId: string, objectiveId?: string): Promise<string> {
     const w = this.host.workspace(workspaceId);
     const projectId = w?.projectLink?.projectId;
     if (!w || !projectId) throw new Error("This session belongs to no project");
-    if (objectiveId) return this.readObjective(projectId, objectiveId);
+    if (objectiveId) {
+      if (w.projectLink?.isolated) throw new Error("An isolated session reads only its own task");
+      return this.readObjective(projectId, objectiveId);
+    }
     if (!this.host.loadWorkspace(w)) throw new Error(`"${w.name}" cannot be loaded`);
     const fromLead = w.getMessages().filter((m) => m.from?.role === "lead");
     const when = (t: number) => new Date(t).toISOString();
@@ -1485,13 +1500,17 @@ export class ProjectManager {
     for (const m of later.slice(-5)) {
       out.push("", `Later from the lead (${when(m.timestamp)}):\n\n${cap(m.content, 2000)}`);
     }
-    const age = await this.ages(
-      projectId,
-      this.objectivesOf(projectId, w.id).map((o) => o.contextCommit),
-    );
     const mine = this.objectivesOf(projectId, w.id);
-    for (const o of mine)
-      out.push("", "---", "", this.describeObjective(projectId, o.id, age, true));
+    if (w.projectLink?.isolated) {
+      for (const o of mine) out.push("", "---", "", ownTasks(o, w.id));
+    } else {
+      const age = await this.ages(
+        projectId,
+        mine.map((o) => o.contextCommit),
+      );
+      for (const o of mine)
+        out.push("", "---", "", this.describeObjective(projectId, o.id, age, true));
+    }
     if (mine.length === 0) out.push("", "(no objective on the board names this session)");
     return out.join("\n");
   }
@@ -1543,7 +1562,8 @@ export class ProjectManager {
     let unwritten = "";
     const notWritten = (e: unknown) =>
       ` The context was not written: ${e instanceof Error ? e.message : String(e)}.`;
-    if (final && finish.context) {
+    // An isolated worker sees no context to rewrite.
+    if (final && finish.context && !w.projectLink?.isolated) {
       let target: Objective | undefined;
       try {
         target = this.contextTarget(projectId, w.id, finish.objectiveId);
@@ -1811,6 +1831,24 @@ function fromLead(m: { from?: MessageOrigin }, lead: Workspace | undefined): boo
 // backend's session takes the panel's tools.
 function panelModels(): string[] {
   return MODEL_OPTIONS.map((m) => m.id);
+}
+
+function taskLine(t: Task): string {
+  return `- ${t.id} [${t.state}] ${t.text}`;
+}
+
+// An objective as an isolated worker sees it: what it is for, and the
+// worker's own tasks in it.
+function ownTasks(o: Objective, sessionId: string): string {
+  const tasks = o.tasks.filter((t) => t.session === sessionId);
+  return [
+    `${o.id} — ${o.title}`,
+    ...(o.status !== "active" ? [`status: ${o.status}${o.reason ? ` — ${o.reason}` : ""}`] : []),
+    ...(o.goal ? [`goal: ${o.goal}`] : []),
+    "",
+    "your tasks:",
+    ...(tasks.length ? tasks.map(taskLine) : ["(none)"]),
+  ].join("\n");
 }
 
 function sessionState(w: Workspace): "archived" | "working" | "waiting to start" | "idle" {

@@ -114,6 +114,9 @@ export type ProjectRole = "lead" | "worker";
 export interface ProjectLink {
   projectId: string;
   role: ProjectRole;
+  // A worker kept to its own task: its panel tools reach nothing else of
+  // the project.
+  isolated?: boolean;
 }
 
 // Who sent a message the user did not type: the project's lead, one of its

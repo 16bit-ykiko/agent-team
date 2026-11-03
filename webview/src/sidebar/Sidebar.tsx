@@ -10,6 +10,7 @@ import { isAgentActive } from "../workspace/agents";
 import { Icon } from "../panels/Icon";
 import { DEFAULT_BRANCH } from "../panels/scope";
 import { formatBytes, formatRelative, formatResetTime } from "../format";
+import { RoleTag } from "../workspace/RoleTag";
 
 function gitTitle(git: { dirty: number; ahead: number; behind: number }): string {
   const parts: string[] = [];
@@ -350,9 +351,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                   <div className="task-info">
                     <div className="task-name">
                       <span className="task-name-text">
-                        {ws.projectLink?.role === "lead" && (
-                          <span className="task-lead-tag">lead</span>
-                        )}
+                        <RoleTag link={ws.projectLink} />
                         <span className="clip" title={ws.name}>
                           {ws.name}
                         </span>

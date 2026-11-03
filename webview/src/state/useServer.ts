@@ -130,6 +130,7 @@ export type ProjectRole = "lead" | "worker";
 export interface ProjectLink {
   projectId: string;
   role: ProjectRole;
+  isolated?: boolean;
 }
 
 export interface MessageOrigin {

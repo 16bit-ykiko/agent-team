@@ -41,6 +41,7 @@ export interface StartSessionArgs {
   model?: string;
   objectiveId?: string;
   taskId?: string;
+  isolated?: boolean;
 }
 
 // Fields to set on an objective; given lists replace the old ones.
@@ -234,6 +235,12 @@ export function leadToolset(
             ),
           objective_id: z.string().optional(),
           task_id: z.string().optional().describe("Doing now, review when it finishes"),
+          isolated: z
+            .boolean()
+            .optional()
+            .describe(
+              "For one self-contained task: the worker gets only report_progress, finish_task and current_task, sees its own tasks and nothing else of the project, and writes no context: you keep its objective's",
+            ),
         },
         handler: (a) =>
           run(() =>
@@ -244,6 +251,7 @@ export function leadToolset(
               ...(typeof a.model === "string" && { model: a.model }),
               ...(typeof a.objective_id === "string" && { objectiveId: a.objective_id }),
               ...(typeof a.task_id === "string" && { taskId: a.task_id }),
+              ...(a.isolated === true && { isolated: true }),
             }),
           ),
       },
@@ -666,11 +674,31 @@ function issueTools(api: PanelApi, id: string, sessionId?: string): PanelTool[] 
 const REPORT_REFUSAL =
   "Only the session's own agent reports to the project's lead. Put this in your final reply instead: it goes to the agent that started you.";
 
+// The project's view a worker gets beside its task: the board, the issues,
+// the notes and the history.
+function projectView(notesDir: string): string[] {
+  return [
+    "A board task the lead started you on is doing already; one you take up, set to doing (it becomes yours). finish_task writes the context you pass it and moves your doing tasks to review; before it, delete what your work made obsolete (your own tasks stay). In between, write only when the plan changes: a task found or no longer needed, a decision the user settles with you, new work the user decides on with you, what your work showed elsewhere on the board.",
+    "When your work replaces something (a build system, a module, a test suite, an API, a workflow), it is done only when the old one is gone wherever it is described: docs, CLAUDE.md, skills, scripts, comments, tasks, issues, notes, and objectives (name those in finish_task: the lead deletes them). Search by its names; delete what applied only to the old one and keep what still holds. That is part of the task, not scope creep.",
+    LIVE,
+    ISSUES,
+    `The project's notes are markdown files under ${notesDir}. When unsure what exactly the task is or what was decided (a long task, a compacted context), call current_task. When your work touches what another session did, read it (project_status, read_session) rather than asking the user.`,
+    HISTORY,
+  ];
+}
+
+// What an isolated worker is told instead.
+const OWN_TASK =
+  "You work on this one task alone, from what the task, the repository and the messages here say. The project's board, notes, issues, history and other sessions are not yours to look at, through tools or through the files behind them. When unsure what exactly the task is (a long task, a compacted context), call current_task. finish_task moves your tasks on the board to review. When your work replaces something (a module, an API, a workflow), it is done only when its traces are gone from the repository (docs, CLAUDE.md, skills, scripts, comments); name in finish_task what it replaced.";
+
+// A worker's tools; an isolated one, kept to its own task, gets only those
+// that report to the lead and recall the task.
 export function workerToolset(
   api: PanelApi,
   workspaceId: string,
   project: Project,
   notesDir: string,
+  isolated = false,
 ): PanelToolset {
   return {
     instructions: [
@@ -679,59 +707,69 @@ export function workerToolset(
       "The task is yours: decide what you can yourself. What is the user's to decide, ask the user, not the lead, here in your reply, and stop: they come to this session to talk it over with you. A task to discuss something with the user is that discussion: start work only when they ask for it.",
       "When the task is done, or the user calls it off, call finish_task once with a concise summary for the lead: what changed, where (branch, commits, PR), what is left, and what your work replaced and where its traces were removed. Use report_progress only for what changes the lead's plans before you finish (the scope changed, the plan proved wrong, a finding that affects other work), not for milestones.",
       "The lead's messages reach you prefixed [From the project lead], the panel's [From the panel]; the rest is the user's. When the lead asks you something after the task, just answer: your reply reaches it once you stop, or at once with report_progress while background work or a scheduled wake-up keeps you going. When the user changes the lead's task, say so in your finish_task summary. Work the lead sends after you finished ends with finish_task too; what the user asks after that needs one only if what you reported no longer holds.",
-      "A board task the lead started you on is doing already; one you take up, set to doing (it becomes yours). finish_task writes the context you pass it and moves your doing tasks to review; before it, delete what your work made obsolete (your own tasks stay). In between, write only when the plan changes: a task found or no longer needed, a decision the user settles with you, new work the user decides on with you, what your work showed elsewhere on the board.",
-      "When your work replaces something (a build system, a module, a test suite, an API, a workflow), it is done only when the old one is gone wherever it is described: docs, CLAUDE.md, skills, scripts, comments, tasks, issues, notes, and objectives (name those in finish_task: the lead deletes them). Search by its names; delete what applied only to the old one and keep what still holds. That is part of the task, not scope creep.",
-      LIVE,
-      ISSUES,
-      `The project's notes are markdown files under ${notesDir}. When unsure what exactly the task is or what was decided (a long task, a compacted context), call current_task. When your work touches what another session did, read it (project_status, read_session) rather than asking the user.`,
-      HISTORY,
+      ...(isolated ? [OWN_TASK] : projectView(notesDir)),
     ].join("\n\n"),
     tools: [
-      {
-        name: "report_progress",
-        description: "Tell the lead, briefly, what changes its plans; not milestones.",
-        shape: { text: z.string() },
-        handler: (a) => run(() => api.workerReport(workspaceId, String(a.text), false)),
-        subagentRefusal: REPORT_REFUSAL,
-      },
-      {
-        name: "finish_task",
-        description:
-          "Report the task done, or called off, to the lead, once per task; moves your doing tasks to review.",
-        shape: {
-          summary: z.string(),
+      ...reportTools(api, workspaceId, isolated),
+      ...(isolated
+        ? []
+        : [
+            ...boardTools(api, project.id, workspaceId).filter((t) => t.name !== "read_objective"),
+            ...issueTools(api, project.id, workspaceId),
+            projectStatusTool(api, project.id),
+            ...historyTools(api, project.id),
+          ]),
+    ],
+  };
+}
+
+// A worker's reports to its lead and its recall of the task. An isolated
+// one names no objective and writes no context: it sees neither.
+function reportTools(api: PanelApi, workspaceId: string, isolated: boolean): PanelTool[] {
+  return [
+    {
+      name: "report_progress",
+      description: "Tell the lead, briefly, what changes its plans; not milestones.",
+      shape: { text: z.string() },
+      handler: (a) => run(() => api.workerReport(workspaceId, String(a.text), false)),
+      subagentRefusal: REPORT_REFUSAL,
+    },
+    {
+      name: "finish_task",
+      description:
+        "Report the task done, or called off, to the lead, once per task; moves your doing tasks to review.",
+      shape: {
+        summary: z.string(),
+        ...(!isolated && {
           context: z
             .string()
             .optional()
             .describe(`Your objective's new context (≤${LIMITS.context})`),
           objective_id: z.string().optional().describe("When you work on more than one"),
-        },
-        handler: (a) =>
-          run(() =>
-            api.workerReport(workspaceId, String(a.summary), true, {
-              ...(typeof a.context === "string" && { context: a.context }),
-              ...(typeof a.objective_id === "string" && { objectiveId: a.objective_id }),
-            }),
-          ),
-        subagentRefusal: REPORT_REFUSAL,
+        }),
       },
-      {
-        name: "current_task",
-        description:
-          "Your task, the lead's later messages and your objectives as they stand; objective_id reads another objective in full.",
-        shape: { objective_id: z.string().optional() },
-        handler: (a) =>
-          run(() =>
-            api.currentTask(
-              workspaceId,
-              typeof a.objective_id === "string" ? a.objective_id : undefined,
-            ),
+      handler: (a) =>
+        run(() =>
+          api.workerReport(workspaceId, String(a.summary), true, {
+            ...(typeof a.context === "string" && { context: a.context }),
+            ...(typeof a.objective_id === "string" && { objectiveId: a.objective_id }),
+          }),
+        ),
+      subagentRefusal: REPORT_REFUSAL,
+    },
+    {
+      name: "current_task",
+      description: isolated
+        ? "Your task, the lead's later messages and your tasks on the board as they stand."
+        : "Your task, the lead's later messages and your objectives as they stand; objective_id reads another objective in full.",
+      shape: isolated ? {} : { objective_id: z.string().optional() },
+      handler: (a) =>
+        run(() =>
+          api.currentTask(
+            workspaceId,
+            typeof a.objective_id === "string" ? a.objective_id : undefined,
           ),
-      },
-      ...boardTools(api, project.id, workspaceId).filter((t) => t.name !== "read_objective"),
-      ...issueTools(api, project.id, workspaceId),
-      projectStatusTool(api, project.id),
-      ...historyTools(api, project.id),
-    ],
-  };
+        ),
+    },
+  ];
 }

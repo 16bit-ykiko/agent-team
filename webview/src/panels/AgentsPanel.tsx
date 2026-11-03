@@ -7,6 +7,7 @@ import { DEFAULT_BRANCH, sessionName, sessionState, sessionWork } from "./scope"
 import { AgentTasks, hasWork, soon, workCount, type TaskActions } from "./SessionTasks";
 import { Icon } from "./Icon";
 import { InlineMd } from "../chat/markdown";
+import { RoleTag } from "../workspace/RoleTag";
 
 export interface AgentsPanelActions extends TaskActions {
   onOpen: (workspaceId: string) => void;
@@ -133,9 +134,7 @@ function SessionCard({
           title="Open this session"
           onClick={() => actions.onOpen(w.id)}
         >
-          {w.projectLink?.role === "lead" && !/\blead\b/i.test(name) && (
-            <span className="task-lead-tag">lead</span>
-          )}
+          <RoleTag link={w.projectLink} name={name} />
           <span className="clip" title={w.name}>
             {name}
           </span>
