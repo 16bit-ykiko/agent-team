@@ -256,20 +256,42 @@ export class ProjectManager {
     }
   }
 
+  // A project is archived with its sessions, none of which may be busy, and
+  // comes back with its lead; its workers stay archived until opened.
   setArchived(id: string, archived: boolean): void {
     const project = this.require(id);
+    const live = this.members(id).filter((w) => !w.isArchived);
+    const busy = live.filter((w) => !w.isIdle);
+    if (archived && busy.length) {
+      throw new Error(`Still busy: ${busy.map((w) => `"${w.name}"`).join(", ")}; stop them first`);
+    }
     project.archivedAt = archived ? Date.now() : null;
     this.store.save(project);
+    const lead = this.leadOf(id);
+    if (archived) for (const w of live) this.host.archiveWorkspace(w);
+    else if (lead?.isArchived) this.host.restoreWorkspace(lead);
     this.changed(id);
-    for (const w of this.host.workspaces()) {
-      if (w.projectLink?.projectId === id) this.showAwaiting(w);
+    for (const w of this.members(id)) this.showAwaiting(w);
+  }
+
+  // At startup: an archived project keeps none of its idle sessions live.
+  archiveShelved(): void {
+    for (const project of this.store.list()) {
+      if (!project.archivedAt) continue;
+      for (const w of this.members(project.id)) {
+        if (!w.isArchived) this.host.archiveWorkspace(w);
+      }
     }
   }
 
-  // A workspace from before projects (restored from the archive) joins the
-  // project of its folder as one of its sessions.
-  adopt(w: Workspace): void {
-    if (w.projectLink) return;
+  // An unarchived session: one of an archived project brings the project
+  // back; a workspace from before projects joins its folder's.
+  restored(w: Workspace): void {
+    if (w.projectLink) {
+      const id = w.projectLink.projectId;
+      if (this.store.get(id)?.archivedAt) this.setArchived(id, false);
+      return;
+    }
     const project = this.ensureFor(w.cwd);
     w.projectLink = { projectId: project.id, role: "worker" };
     const tools = this.toolsFor(w);

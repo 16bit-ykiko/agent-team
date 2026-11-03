@@ -540,12 +540,44 @@ describe("archives in the sidebar", () => {
     }
   });
 
-  it("show a project whose lead is archived too", () => {
-    const { container } = render(
-      <Sidebar
-        {...props({ workspaces: [{ ...lead, archivedAt: NOW - 10 }, archived("old-a")] })}
-      />,
-    );
-    expect(container.querySelector(".ws-group-project .ws-group-label")!.textContent).toBe("clice");
+  it("open an archived project's lead from its row, and list it nowhere else", () => {
+    const shelved = { ...project, archivedAt: NOW - 10 };
+    const p = props({
+      workspaces: [{ ...lead, archivedAt: NOW - 10 }, archived("old-a")],
+      projects: [shelved],
+    });
+    const { container } = render(<Sidebar {...p} />);
+    fireEvent.click(container.querySelector(".ws-shelf .ws-archived-header")!);
+    const row = container.querySelector(".ws-group-project")!;
+    expect(row.querySelector(".ws-group-label")!.textContent).toBe("clice");
+    fireEvent.click(row);
+    expect(p.onSelect).toHaveBeenCalledWith("lead");
+    fireEvent.click(container.querySelector(".ws-archive-toggle")!);
+    expect(
+      [...container.querySelectorAll(".task-item-archived .task-name-text")].map(
+        (e) => e.textContent,
+      ),
+    ).toEqual(["old-a"]);
+  });
+
+  it("archive a live project from its row; an archived one offers Restore instead", () => {
+    const shelved = { ...project, id: "p2", name: "clice2", root: "/repo/clice2", archivedAt: 1 };
+    const lead2 = ws("lead2", {
+      cwd: "/repo/clice2",
+      projectLink: { projectId: "p2", role: "lead" },
+    });
+    const p = props({
+      workspaces: [lead, worker, { ...lead2, archivedAt: 1 }],
+      projects: [project, shelved],
+      onArchiveProject: vi.fn(),
+    });
+    const { container, getByTitle, queryByTitle } = render(<Sidebar {...p} />);
+    fireEvent.click(getByTitle("Archive clice with its sessions"));
+    expect(p.onArchiveProject).toHaveBeenCalledWith("p1");
+    // The row's own click (opening the lead) is not taken too.
+    expect(p.onSelect).not.toHaveBeenCalled();
+    fireEvent.click(container.querySelector(".ws-shelf .ws-archived-header")!);
+    expect(queryByTitle("Archive clice2 with its sessions")).toBeNull();
+    expect(getByTitle("Bring clice2 back among the projects")).toBeTruthy();
   });
 });

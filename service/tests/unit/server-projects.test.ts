@@ -579,20 +579,53 @@ describe("server restart with projects", () => {
     fs.rmSync(base, { recursive: true, force: true });
   });
 
-  it("keeps a lead out of the archive: its project is archived instead", async () => {
+  it("archives a lead only with its project, which a session opened again brings back", async () => {
     const { base, web } = seed();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { frames, send, stop } = await start(base, web);
+    const archived = () =>
+      frames.filter((f) => f.type === "workspace_archived").map((f) => f.workspaceId);
+    const project = () =>
+      frames.filter((f) => f.type === "project_updated").at(-1)?.project as { archivedAt?: number };
     try {
       send({ type: "archive_workspace", workspaceId: "ws-lead" });
       await until(() => frames.some((f) => f.type === "error"), "the refusal");
       expect(frames.find((f) => f.type === "error")!.message).toBe(
-        "A lead goes with its project: archive the project from its board",
+        "A lead goes with its project: archive the project",
       );
-      expect(frames.some((f) => f.type === "workspace_archived")).toBe(false);
+      expect(archived()).toEqual([]);
+
+      send({ type: "archive_project", projectId: "proj-1", archived: true });
+      await until(() => archived().length === 2, "the project's sessions archived");
+      expect(archived().sort()).toEqual(["ws-lead", "ws-live"]);
+      expect(project().archivedAt).toBeGreaterThan(0);
+
+      send({ type: "unarchive_workspace", workspaceId: "ws-w" });
+      await until(() => project().archivedAt === null, "the project back");
+      const unarchived = frames
+        .filter((f) => f.type === "workspace_unarchived")
+        .map((f) => f.workspaceId);
+      expect(unarchived.sort()).toEqual(["ws-lead", "ws-w"]);
     } finally {
       stop();
       log.mockRestore();
+    }
+    expect(readState(base, "ws-lead").archivedAt).toBeNull();
+    expect(readState(base, "ws-live").archivedAt).toBeGreaterThan(0);
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it("archives at startup the sessions an archived project still had live", async () => {
+    const { base, web } = seed();
+    const file = path.join(base, ".agent-team", "projects", "proj-1", "project.json");
+    const saved = JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, unknown>;
+    fs.writeFileSync(file, JSON.stringify({ ...saved, archivedAt: 5 }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { stop } = await start(base, web);
+    stop();
+    log.mockRestore();
+    for (const id of ["ws-lead", "ws-live"]) {
+      expect(readState(base, id).archivedAt).toBeGreaterThan(0);
     }
     fs.rmSync(base, { recursive: true, force: true });
   });

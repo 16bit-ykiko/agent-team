@@ -144,6 +144,7 @@ export interface SidebarProps {
   onDebugSnapshot: () => void;
   // One project's archived sessions, or (null) those in no project.
   onPurgeArchived: (projectId: string | null) => void;
+  onArchiveProject?: (projectId: string) => void;
   onRestoreProject?: (projectId: string) => void;
   onSetDefaultAccount: (account: string | null) => void;
 }
@@ -215,8 +216,8 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
   );
 
   // A group's archived sessions, folded until asked for (or one is open).
-  const archiveList = (g: WorkspaceGroup) => {
-    const open = openArchives.has(g.key) || g.archived.some((w) => w.id === p.activeWsId);
+  const archiveList = (g: WorkspaceGroup, list: Workspace[]) => {
+    const open = openArchives.has(g.key) || list.some((w) => w.id === p.activeWsId);
     const root = g.project?.root;
     return (
       <>
@@ -228,7 +229,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
         >
           <span className="events-toggle">{open ? "▾" : "▸"}</span>
           <span>Archived</span>
-          {open && <span className="ws-group-count">{g.archived.length}</span>}
+          {open && <span className="ws-group-count">{list.length}</span>}
           {open && g.project && (
             <button
               className="ws-archived-purge"
@@ -243,7 +244,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
           )}
         </div>
         {open &&
-          g.archived.map((w) =>
+          list.map((w) =>
             archivedItem(
               w,
               w.cwd === root ? null : (w.cwd.split("/").filter(Boolean).pop() ?? w.cwd),
@@ -263,12 +264,16 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
       [...g.workspaces, ...g.archived].some((w) => w.id === p.activeWsId),
     );
     const toggle = () => p.onToggleGroup(g.key, !expanded);
-    // A project's own row is its lead: it opens the lead, which is not
-    // listed again under it; the arrow folds the sessions it started.
-    const lead = g.project ? g.workspaces.find((w) => w.projectLink?.role === "lead") : undefined;
-    const items = lead ? g.workspaces.filter((w) => w !== lead) : g.workspaces;
+    // A project's own row is its lead, archived with it or not: it opens the
+    // lead, which is not listed again under it; the arrow folds the sessions
+    // it started.
+    const lead = g.project
+      ? [...g.workspaces, ...g.archived].find((w) => w.projectLink?.role === "lead")
+      : undefined;
+    const items = g.workspaces.filter((w) => w !== lead);
+    const past = g.archived.filter((w) => w !== lead);
     const leadUnread = lead ? lead.messages.length - (p.seenCounts[lead.id] ?? 0) : 0;
-    const hasContent = items.length > 0 || g.archived.length > 0;
+    const hasContent = items.length > 0 || past.length > 0;
     // A project of archived sessions only (its lead archived too) has no live one.
     const git = (g.workspaces[0] ?? g.archived[0])?.git;
     // The group of the open session: on touch only its row offers a new one.
@@ -319,9 +324,21 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
           </button>
           {!expanded && items.length > 0 && <span className="ws-group-count">{items.length}</span>}
           {g.running && <span className="streaming-dot" />}
+          {!shelf && g.project && p.onArchiveProject && (
+            <button
+              className="ws-group-pill ws-group-archive"
+              title={`Archive ${g.label} with its sessions`}
+              onClick={(e) => {
+                e.stopPropagation();
+                p.onArchiveProject!(g.project!.id);
+              }}
+            >
+              Archive
+            </button>
+          )}
           {shelf && g.project && p.onRestoreProject && (
             <button
-              className="ws-group-restore"
+              className="ws-group-pill"
               title={`Bring ${g.label} back among the projects`}
               onClick={(e) => {
                 e.stopPropagation();
@@ -375,7 +392,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
                 </div>
               );
             })}
-            {g.archived.length > 0 && archiveList(g)}
+            {past.length > 0 && archiveList(g, past)}
           </div>
         )}
       </div>

@@ -249,7 +249,7 @@ describe("AgentsPanel", () => {
     expect(a.onRemoveAgent).toHaveBeenCalledWith("w1", "kisara");
     const leadCard = within(container.querySelector('[aria-label="clice · lead"]') as HTMLElement);
     expect(leadCard.queryByText("Stop")).toBeNull();
-    // A lead goes with its project, archived from the board.
+    // A lead goes with its project.
     expect(leadCard.queryByText("Archive")).toBeNull();
   });
 

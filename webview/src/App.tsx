@@ -679,6 +679,10 @@ export function App() {
     [],
   );
   const closePurge = useCallback(() => setPurgeScope(null), []);
+  const onArchiveProject = useCallback(
+    (projectId: string) => archiveProject(projectId, true),
+    [archiveProject],
+  );
   const onRestoreProject = useCallback(
     (projectId: string) => archiveProject(projectId, false),
     [archiveProject],
@@ -1287,6 +1291,7 @@ export function App() {
             onCreateIn={onCreateWorkspaceIn}
             onReplayDemo={onReplayDemo}
             onPurgeArchived={onPurgeArchived}
+            onArchiveProject={onArchiveProject}
             onRestoreProject={onRestoreProject}
             onDebugSnapshot={takeSnapshot}
             onSetDefaultAccount={setDefaultAccount}
@@ -1334,7 +1339,7 @@ export function App() {
                   <span className="ws-info-spacer" />
                   {/* Phones: the panels' rail shares the branch's line. */}
                   <Rail className="header-rail" items={railItems} />
-                  {/* A lead goes with its project, archived from the board. */}
+                  {/* A lead goes with its project. */}
                   {activeWs.archivedAt == null && activeWs.projectLink?.role !== "lead" ? (
                     <button
                       className="btn-ghost ws-archive-btn"

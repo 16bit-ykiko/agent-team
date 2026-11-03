@@ -74,6 +74,7 @@ describe("a folder's project", () => {
     );
     expect(repo.archivedAt ?? null).toBeNull();
     expect(clice2.archivedAt).toBeGreaterThan(0);
+    expect(workspaces.get(clice2.leadWorkspaceId!)!.isArchived).toBe(true);
     expect([live, past].map((w) => w.projectLink)).toEqual([
       { projectId: repo.id, role: "worker" },
       { projectId: repo.id, role: "worker" },
@@ -88,12 +89,13 @@ describe("a folder's project", () => {
     // Work in an archived project's folder brings it back.
     manager.ensureFor(path.join(base, "clice2"));
     expect(manager.list().find((p) => p.id === clice2.id)!.archivedAt).toBeNull();
+    expect(workspaces.get(clice2.leadWorkspaceId!)!.isArchived).toBe(false);
   });
 
   it("takes in a workspace from before projects when it is restored", () => {
     const { manager, root, old } = setup();
     const w = old("parser", root, [msg("m1", "hi", 1)], false);
-    manager.adopt(w);
+    manager.restored(w);
     const project = manager.list()[0];
     expect(project.root).toBe(root);
     expect(w.projectLink).toEqual({ projectId: project.id, role: "worker" });

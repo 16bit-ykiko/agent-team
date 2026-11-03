@@ -1009,6 +1009,7 @@ systemctl --user restart agent-team-server
     } catch (e) {
       console.error("[projects] workspaces from before projects stay on their own", e);
     }
+    this.projects.archiveShelved();
     this.projects.recheckWorkers();
     const archived = [...this.workspaces.values()].filter((w) => w.isArchived).length;
     console.log(`Restored ${this.workspaces.size} workspace(s), ${archived} archived`);
@@ -1058,7 +1059,7 @@ systemctl --user restart agent-team-server
       removeWorkspace: (id) => this.removeWorkspace(id),
       archiveWorkspace: (w) => {
         if (!w.isIdle) return false;
-        this.archiveWorkspace(w.id, true);
+        if (!w.isArchived) this.archive(w);
         return true;
       },
       restoreWorkspace: (w) => this.unarchiveWorkspace(w),
@@ -1101,7 +1102,7 @@ systemctl --user restart agent-team-server
       if (!auto) {
         this.broadcastUI({
           type: "error",
-          message: "A lead goes with its project: archive the project from its board",
+          message: "A lead goes with its project: archive the project",
         });
       }
       return;
@@ -1110,11 +1111,15 @@ systemctl --user restart agent-team-server
       if (!auto) this.broadcastUI({ type: "error", message: "Workspace is still busy" });
       return;
     }
+    this.archive(ws);
+  }
+
+  private archive(ws: Workspace): void {
     ws.abortAll();
     ws.settleForArchive();
     ws.archivedAt = Date.now();
     this.unload(ws);
-    this.broadcastUI({ type: "workspace_archived", workspaceId, archivedAt: ws.archivedAt });
+    this.broadcastUI({ type: "workspace_archived", workspaceId: ws.id, archivedAt: ws.archivedAt });
   }
 
   private unarchiveWorkspace(ws: Workspace): boolean {
@@ -1124,7 +1129,7 @@ systemctl --user restart agent-team-server
     this.persistWorkspaceNow(ws.id);
     this.broadcastUI({ type: "workspace_unarchived", workspaceId: ws.id });
     try {
-      this.projects.adopt(ws);
+      this.projects.restored(ws);
     } catch (e) {
       console.error(`[projects] ${ws.id} stays outside a project`, e);
     }

@@ -662,7 +662,7 @@ button {
 .ws-archive-toggle:hover .ws-archived-purge {
   opacity: 1;
 }
-.ws-group-restore {
+.ws-group-pill {
   flex-shrink: 0;
   font: inherit;
   font-size: var(--fs-tag);
@@ -676,25 +676,26 @@ button {
   cursor: pointer;
   opacity: 0;
 }
-.ws-group-header:hover .ws-group-restore,
-.ws-group-restore:focus-visible {
+.ws-group-header:hover .ws-group-pill,
+.ws-group-pill:focus-visible {
   opacity: 1;
 }
-.ws-group-restore:hover {
+.ws-group-pill:hover {
   color: var(--accent);
   border-color: var(--accent);
 }
 /* Touch has no hover: the group's actions show, the open project's × too;
-   a new session is offered only in the open session's group. A hidden one
-   takes no tap. */
+   a new session, or archiving, is offered only in the open session's
+   group. A hidden one takes no tap. */
 @media (hover: none) {
-  .ws-group-restore,
+  .ws-group-pill,
   .ws-group-header.current .ws-group-add,
   .ws-archived-purge,
   .ws-group-header.active .task-delete {
     opacity: 1;
   }
-  .ws-group-header:not(.current) .ws-group-add {
+  .ws-group-header:not(.current) .ws-group-add,
+  .ws-group-header:not(.current) .ws-group-archive {
     display: none;
   }
   .ws-group-header:not(.active) .task-delete {

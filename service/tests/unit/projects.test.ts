@@ -2073,7 +2073,7 @@ describe("a worker that goes idle without reporting", () => {
       const { w, endTurn, settle, manager, project, workspaces } = await started();
       manager.delete(project.id);
       endTurn(w);
-      manager.adopt(w);
+      manager.restored(w);
       manager.recheckWorkers();
       await settle();
       const fresh = workspaces.get(manager.get(w.projectLink!.projectId)!.leadWorkspaceId!)!;
@@ -2104,7 +2104,7 @@ describe("a worker that goes idle without reporting", () => {
 
     vi.useFakeTimers();
     try {
-      const { w, say, settle, endTurn, session, call, askNext, frames, manager, project } =
+      const { w, lead, say, settle, endTurn, session, call, askNext, frames, manager, project } =
         await started();
       const shown = () =>
         frames
@@ -2141,8 +2141,14 @@ describe("a worker that goes idle without reporting", () => {
       endTurn(w);
       await settle();
       expect(shown()).toEqual([true, false, true]);
+      // Archived with its project it waits for nobody, until it is opened.
+      endTurn(lead);
       manager.setArchived(project.id, true);
       manager.setArchived(project.id, false);
+      expect(w.isArchived).toBe(true);
+      expect(shown()).toEqual([true, false, true, false]);
+      w.archivedAt = null;
+      manager.showAwaiting(w);
       expect(shown()).toEqual([true, false, true, false, true]);
 
       // What it answers the lead later is the lead's.
@@ -2302,15 +2308,37 @@ describe("a worker that goes idle without reporting", () => {
     }
   });
 
-  it("stays quiet for an archived project", async () => {
+  it("is archived with all its sessions once none is busy, and comes back with its lead", async () => {
     vi.useFakeTimers();
     try {
-      const { w, told, settle, endTurn, askNext, manager, project } = await started();
+      const { w, lead, told, settle, endTurn, askNext, manager, project } = await started();
       await askNext("which branch?");
-      manager.setArchived(project.id, true);
+      expect(() => manager.setArchived(project.id, true)).toThrow(
+        'Still busy: "w"; stop them first',
+      );
+      expect(manager.get(project.id)!.archivedAt ?? null).toBeNull();
       endTurn(w);
       await settle();
-      expect(told()).toEqual([]);
+      expect(told()).toHaveLength(1);
+      expect(() => manager.setArchived(project.id, true)).toThrow('Still busy: "a · lead"');
+      endTurn(lead);
+      manager.setArchived(project.id, true);
+      expect([lead.isArchived, w.isArchived]).toEqual([true, true]);
+      manager.setArchived(project.id, false);
+      expect([lead.isArchived, w.isArchived]).toEqual([false, true]);
+
+      // A session of an archived project opened again brings it back.
+      manager.setArchived(project.id, true);
+      w.archivedAt = null;
+      manager.restored(w);
+      expect(manager.get(project.id)!.archivedAt).toBeNull();
+      expect(lead.isArchived).toBe(false);
+
+      // One archived before its sessions went with it is settled at startup.
+      manager.setArchived(project.id, true);
+      lead.archivedAt = null;
+      manager.archiveShelved();
+      expect(lead.isArchived).toBe(true);
     } finally {
       vi.useRealTimers();
     }
