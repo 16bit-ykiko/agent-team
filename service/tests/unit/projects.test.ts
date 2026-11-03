@@ -338,7 +338,7 @@ describe("ProjectManager", () => {
     expect(session(worker).getState().config.effort).toBe("high");
 
     // A model no lead runs on, or an effort its model lacks, is not taken.
-    host.projectDefaults = () => ({ model: "gpt-5.5", effort: "high" });
+    host.projectDefaults = () => ({ model: "gpt-5", effort: "high" });
     const other = path.join(root, "..", "other");
     fs.mkdirSync(other, { recursive: true });
     const next = workspaces.get(manager.create("other", other).leadWorkspaceId!)!;
@@ -349,10 +349,10 @@ describe("ProjectManager", () => {
     expect(session(second).getState().config.effort).toBeUndefined();
   });
 
-  it("takes a Cursor model for the lead and its workers, never a Codex one", async () => {
+  it("takes a Cursor or Codex model for the lead and its workers, not an unknown one", async () => {
     const { manager, root, workspaces, call } = setup();
     fs.mkdirSync(path.join(root, "wt"), { recursive: true });
-    expect(() => manager.create("x", root, "gpt-5.5")).toThrow("needs a Claude or Cursor model");
+    expect(() => manager.create("x", root, "gpt-5")).toThrow("Unknown model for a lead: gpt-5");
     const project = manager.create("clice", root, "cursor/composer-2.5");
     const lead = workspaces.get(project.leadWorkspaceId!)!;
     expect([...lead.agents.values()][0].info.model).toBe("cursor/composer-2.5");
@@ -364,6 +364,9 @@ describe("ProjectManager", () => {
     });
     const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
     expect([...worker.agents.values()][0].info.model).toBe("cursor/grok-4.7");
+    await call(lead, "start_session", { title: "c", cwd: "wt", task: "t", model: "gpt-5.5" });
+    const codex = [...workspaces.values()].filter((w) => w.projectLink?.role === "worker")[1];
+    expect([...codex.agents.values()][0].info.model).toBe("gpt-5.5");
   });
 
   it("refuses bad input before creating anything", async () => {

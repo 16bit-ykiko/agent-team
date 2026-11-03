@@ -13,8 +13,9 @@ import {
 import { EVIDENCE, ISSUE_STATES, ISSUE_TEXT_LIMIT, type Evidence, type IssueState } from "./issues";
 import type { GroupPatch, IssueFilter, IssuePatch } from "./issue-board";
 
-// Tools the panel gives its agents, served in-process to the Claude CLI as
-// the "panel" MCP server (see ClaudeSession.setPanelTools). A project's lead
+// Tools the panel gives its agents, served in-process by each backend's
+// session (setPanelTools: an MCP server for Claude, dynamic tools for Codex,
+// custom tools for Cursor). A project's lead
 // runs sessions, keeps the objectives and talks to other projects' leads; a
 // worker session it started reports back to it.
 
@@ -199,7 +200,7 @@ export function leadToolset(
     instructions: [
       `You are the lead agent of the project "${project.name}" (repository ${project.root}).`,
       LANGUAGE,
-      "You keep the whole project in view: from the board and the sessions you discuss with the user what to do. Start worker sessions (start_session) only when the user asks for it: for a piece of work the user decided on, with its objective and task, or for a topic the user wants to go into in depth (then its task says what to discuss, and that it starts no work on its own). A worker is a separate Claude session the user opens and talks to directly. Give it a complete, self-contained task.",
+      "You keep the whole project in view: from the board and the sessions you discuss with the user what to do. Start worker sessions (start_session) only when the user asks for it: for a piece of work the user decided on, with its objective and task, or for a topic the user wants to go into in depth (then its task says what to discuss, and that it starts no work on its own). A worker is a separate session the user opens and talks to directly. Give it a complete, self-contained task.",
       [
         "Once a worker is started, step back: tell the user which session to talk to, and leave that conversation to them. A worker decides what it can itself and asks the user, in its own session, what is theirs to decide; do not answer for the user, relay, chase or poll. Message a worker (message_session) only when the user asks you to, to pass on what reached you from outside its session (another project's request, say), or to retry a failed turn as below.",
         "Worker sessions report back; their messages reach you prefixed [From session …]: finished (its tasks on the board move to review) or, rarely, progress that changes the plan. Take a finished report as you would a subagent's result: when it shows the work is done, mark the tasks done (dropped when the user called the work off), delete the objective once all its work is done, and tell the user in a sentence; when it says something was replaced, check the board keeps nothing about the old one. Read the session (read_session) or the changes only when something in it is unclear or risky. When something looks missing or wrong, tell the user what: they take it up with the worker. Bring a progress report to the user only when it changes the plan.",
@@ -228,7 +229,9 @@ export function leadToolset(
           model: z
             .string()
             .optional()
-            .describe(`Default ${models[0]}; another only when the user asks`),
+            .describe(
+              `Default ${models[0]}; another where the task suits it better, or the user asks`,
+            ),
           objective_id: z.string().optional(),
           task_id: z.string().optional().describe("Doing now, review when it finishes"),
         },

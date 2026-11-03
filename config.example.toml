@@ -40,7 +40,7 @@ type = "local"
 
 # Projects (optional): the model a new project's lead runs on, and the
 # workers it starts without naming one; Claude Opus 5.5 when unset. Any
-# Claude or cursor/ model from the picker; effort if the model has it.
+# model from the picker; effort if the model has it.
 # [projects]
 # model = "cursor/gemini-4-argon"
 # effort = "high"

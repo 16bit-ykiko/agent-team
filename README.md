@@ -179,7 +179,7 @@ api_key = "..."
 base_url = "https://api.deepseek.com/anthropic"
 
 [projects]                   # what new leads (and workers started without a model) run on
-model = "cursor/gemini-4-argon"   # a Claude or cursor/ model; Opus 5.5 when unset
+model = "cursor/gemini-4-argon"   # any model in the picker; Opus 5.5 when unset
 effort = "high"
 
 [cursor]                     # the cursor/ models

@@ -186,7 +186,7 @@ export class ProjectManager {
     const defaults = this.defaultModel();
     model ??= defaults.model;
     if (!panelModels().includes(model)) {
-      throw new Error(`The lead needs a Claude or Cursor model: ${model}`);
+      throw new Error(`Unknown model for a lead: ${model}`);
     }
     const taken = this.store.list().find((p) => p.root === root);
     if (taken) throw new Error(`${root} is already the project "${taken.name}"`);
@@ -1807,9 +1807,10 @@ function fromLead(m: { from?: MessageOrigin }, lead: Workspace | undefined): boo
   return m.from?.role === "lead" && !!lead && m.from.workspaceId === lead.id;
 }
 
-// The models a project's lead and the workers it starts may run on.
+// The models a project's lead and the workers it starts may run on: every
+// backend's session takes the panel's tools.
 function panelModels(): string[] {
-  return MODEL_OPTIONS.filter((m) => m.backend !== "codex").map((m) => m.id);
+  return MODEL_OPTIONS.map((m) => m.id);
 }
 
 function sessionState(w: Workspace): "archived" | "working" | "waiting to start" | "idle" {
