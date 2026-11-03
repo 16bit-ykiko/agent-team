@@ -1753,6 +1753,9 @@ export class ClaudeSession extends EventEmitter {
       // silently downgrading.
     };
 
+    const claudeExecutable = process.env.AGENT_TEAM_CLAUDE_EXECUTABLE?.trim();
+    if (claudeExecutable) opts.pathToClaudeCodeExecutable = claudeExecutable;
+
     if (this.sessionId) {
       opts.resume = this.sessionId;
     }
