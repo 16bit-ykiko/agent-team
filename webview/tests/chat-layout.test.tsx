@@ -1,7 +1,7 @@
 // The transcript on narrow screens and touch: nothing said twice, nothing
 // pushed off the row, no invisible tap targets over the text.
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import css from "../src/styles.css?raw";
 import { EventItem, MessageItem, SubAgentItem } from "../src/chat/messages";
 import type { AgentInfo, Message, StreamEvent, SubAgentInfo } from "../src/state/useServer";
@@ -27,6 +27,34 @@ const withSheet = (fn: () => void) => {
 };
 
 describe("the transcript", () => {
+  it("counts up the time a tool call has been running, then shows how long it took", () => {
+    vi.useFakeTimers();
+    try {
+      const ev: StreamEvent = {
+        kind: "tool_use",
+        toolName: "Cursor",
+        content: "**Cursor** a tool the SDK does not show (an await, a web search, …)",
+        toolUseId: "cursor-hidden-1",
+        startedAt: Date.now() - 37_000,
+      };
+      const { container, rerender } = render(<EventItem ev={ev} />);
+      const time = () => container.querySelector(".event-time")?.textContent;
+      expect(time()).toBe("37s");
+      act(() => {
+        vi.advanceTimersByTime(25_000);
+      });
+      expect(time()).toBe("1m 2s");
+      rerender(<EventItem ev={{ ...ev, toolResult: "done", durationMs: 63_000 }} />);
+      expect(container.querySelector(".event-time-live")).toBeNull();
+      expect(time()).toBe("1m 3s");
+      // A call without its start (older messages, other backends) shows none.
+      rerender(<EventItem ev={{ ...ev, toolUseId: "x", startedAt: undefined }} />);
+      expect(time()).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("names an edited file once: in its block under the row, not again atop the diff", () => {
     const ev: StreamEvent = {
       kind: "tool_use",

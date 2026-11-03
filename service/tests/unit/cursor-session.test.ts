@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { z } from "zod";
 import type { AgentOptions, RunResult, SDKCustomTool, SendOptions } from "@cursor/sdk";
 import { CursorSession, type CursorSdk } from "../../src/session/cursor";
@@ -356,6 +356,58 @@ describe("cursor session lifecycle", () => {
       ["thinking", "Half a"],
       ["result", ""],
     ]);
+  });
+
+  it("shows the calls the SDK leaves out once the agent has waited on them a while", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    try {
+      const { session, events } = makeSession();
+      const sent = session.send("x");
+      await tick();
+      const { onDelta } = fake.sends[0].options;
+      const update = (u: object) => onDelta!({ update: u as never });
+      const shell = { type: "shell", args: { command: "sleep 20; echo late" } };
+      // As cursor/background-shell: a command sent to the background with an
+      // instant lookup beside it, then an await, both counted only.
+      await update({ type: "tool-call-started", callId: "c1", modelCallId: "m", toolCall: shell });
+      await update({ type: "tool-requests-listed", callCount: 2 });
+      await update({
+        type: "tool-call-completed",
+        callId: "c1",
+        modelCallId: "m",
+        toolCall: {
+          ...shell,
+          result: { status: "success", value: { exitCode: 0, stdout: "", stderr: "" } },
+        },
+      });
+      await vi.advanceTimersByTimeAsync(1_300);
+      await update({ type: "thinking-completed", thinkingDurationMs: 5 });
+      await update({ type: "tool-requests-listed", callCount: 1 });
+      const waitStart = Date.now();
+      await vi.advanceTimersByTimeAsync(20_000);
+      await update({ type: "thinking-delta", text: "Done." });
+      // One still awaited when the user stops the run.
+      await update({ type: "tool-requests-listed", callCount: 1 });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await session.interrupt();
+      await sent;
+      const calls = events
+        .filter((e) => e.kind === "tool_use" || e.kind === "tool_result")
+        .map((e) => [e.kind, e.toolUseId, e.toolName ?? e.content, e.durationMs]);
+      expect(calls).toEqual([
+        ["tool_use", "c1", "Bash", undefined],
+        ["tool_result", "c1", "Running in the background.", 0],
+        ["tool_use", "cursor-hidden-1", "Cursor", undefined],
+        ["tool_result", "cursor-hidden-1", "done", 20_000],
+        ["tool_use", "cursor-hidden-2", "Cursor", undefined],
+        ["tool_result", "cursor-hidden-2", "Interrupted", 5_000],
+      ]);
+      // It counts from the start of the wait, not from when it showed.
+      const card = events.find((e) => e.kind === "tool_use" && e.toolUseId === "cursor-hidden-1");
+      expect(card!.startedAt).toBe(waitStart);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("starts a new paragraph after a thought that streamed no text", async () => {

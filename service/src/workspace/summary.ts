@@ -32,6 +32,7 @@ export function summarizeEvent(e: StreamEvent): StreamEvent {
   if (e.toolResultIsMarkdown) base.toolResultIsMarkdown = true;
   if (e.toolResultIsError) base.toolResultIsError = true;
   if (e.durationMs != null) base.durationMs = e.durationMs;
+  if (e.startedAt != null) base.startedAt = e.startedAt;
   if (e.tokens != null) base.tokens = e.tokens;
 
   switch (e.kind) {

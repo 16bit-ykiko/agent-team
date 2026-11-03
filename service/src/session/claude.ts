@@ -76,6 +76,9 @@ export interface StreamEvent {
   // by a later thinking_tokens event) how many tokens it spent. On a tool
   // call (its result, then the call it merges into): from call to result.
   durationMs?: number;
+  // On a tool call: when it started (ms since the epoch), so one still
+  // running shows how long it has been.
+  startedAt?: number;
   tokens?: number;
   toolInput?: ToolInput;
   step?: number;

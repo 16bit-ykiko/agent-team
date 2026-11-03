@@ -347,6 +347,12 @@ export const EventItem = memo(function EventItem({
   const [resultOpen, setResultOpen] = useState(false);
   const [bodyOpen, setBodyOpen] = useState(false);
   const summarized = !!onLoadDetails;
+  const running =
+    ev.kind === "tool_use" &&
+    ev.toolResult == null &&
+    ev.resultLength == null &&
+    ev.durationMs == null;
+  const runningSecs = useElapsed(running ? ev.startedAt : undefined);
 
   if (ev.kind === "compact" || ev.kind === "notice" || ev.kind === "retry" || ev.kind === "error") {
     return <BannerItem ev={ev} onLoadDetails={onLoadDetails} />;
@@ -394,6 +400,11 @@ export const EventItem = memo(function EventItem({
         {isToolUse && ev.durationMs != null && (
           <span className="event-time" title="From the call to its result">
             {formatRunTime(ev.durationMs)}
+          </span>
+        )}
+        {running && ev.startedAt != null && (
+          <span className="event-time event-time-live" title="Running for">
+            {formatDuration(runningSecs * 1000)}
           </span>
         )}
         {hasHiddenBody && (

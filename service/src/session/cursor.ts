@@ -65,6 +65,23 @@ export const AGENT_DEFAULTS = {
   disallowedTools: ["askQuestion"],
 } satisfies Partial<AgentOptions>;
 
+// A call the SDK leaves out (an await, a web search: cursor/background-shell,
+// cursor/web-tools) shows as running once it has kept the agent this long;
+// the instant ones the model makes along the way do not.
+export const HIDDEN_CALL_SHOWN_MS = 2_000;
+
+// What ends a wait on calls the SDK leaves out: the agent moving on.
+const ACTIVITY = new Set([
+  "thinking-delta",
+  "thinking-completed",
+  "text-delta",
+  "partial-tool-call",
+  "tool-call-started",
+  "tool-requests-listed",
+  "step-completed",
+  "turn-ended",
+]);
+
 // A subagent's task call in flight: what its card has streamed so far.
 interface Task {
   startedAt: number;
@@ -115,6 +132,15 @@ export class CursorSession extends EventEmitter {
   private reasoningTokens = 0;
   private textEmitted = false;
   private afterText = false;
+  // Calls the SDK leaves out: each step's tool-requests-listed counts them
+  // with the ones it shows, whose starts come before it. Once the shown ones
+  // are done the agent waits on the rest, which get a card of their own.
+  private callsListed = 0;
+  private hidden = 0;
+  private hiddenSince = 0;
+  private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
+  private hiddenCard: { id: string; count: number } | null = null;
+  private hiddenCards = 0;
 
   constructor(config: SessionConfig) {
     super();
@@ -266,6 +292,9 @@ export class CursorSession extends EventEmitter {
     this.reasoningTokens = 0;
     this.textEmitted = false;
     this.afterText = false;
+    this.callsListed = 0;
+    this.hiddenCards = 0;
+    this.endHiddenWait();
     const startTime = Date.now();
     let terminal: StreamEvent | null = null;
     try {
@@ -301,6 +330,8 @@ export class CursorSession extends EventEmitter {
     } finally {
       this.run = null;
       this.busy = false;
+      if (this.hiddenTimer) clearTimeout(this.hiddenTimer);
+      this.hiddenTimer = null;
       this.usage.turns++;
       this.usage.duration_ms += Date.now() - startTime;
       if (this.closePending) {
@@ -413,10 +444,53 @@ export class CursorSession extends EventEmitter {
       });
     }
     this.openCalls.clear();
+    this.endHiddenWait(closed);
+  }
+
+  // The step's shown calls are done and it listed more: the agent waits on
+  // those, shown once the wait has lasted.
+  private awaitHidden(): void {
+    if (this.hidden === 0 || this.openCalls.size > 0 || this.hiddenSince) return;
+    this.hiddenSince = Date.now();
+    this.hiddenTimer = setTimeout(() => this.showHidden(), HIDDEN_CALL_SHOWN_MS);
+  }
+
+  private showHidden(): void {
+    this.hiddenTimer = null;
+    if (!this.busy || !this.hiddenSince || this.hiddenCard) return;
+    if (Date.now() - this.hiddenSince < HIDDEN_CALL_SHOWN_MS) return;
+    const count = this.hidden;
+    this.hiddenCard = { id: `cursor-hidden-${++this.hiddenCards}`, count };
+    this.emit("event", {
+      kind: "tool_use",
+      toolName: "Cursor",
+      content: `**Cursor** ${count > 1 ? `${count} tools` : "a tool"} the SDK does not show (an await, a web search, …)`,
+      toolUseId: this.hiddenCard.id,
+      startedAt: this.hiddenSince,
+    });
+  }
+
+  // `closed` when the run ended with the wait.
+  private endHiddenWait(closed?: string): void {
+    if (this.hiddenTimer) clearTimeout(this.hiddenTimer);
+    this.hiddenTimer = null;
+    if (this.hiddenCard) {
+      this.emit("event", {
+        kind: "tool_result",
+        content: closed ?? "done",
+        toolUseId: this.hiddenCard.id,
+        durationMs: Date.now() - this.hiddenSince,
+        ...(closed && { isError: true }),
+      });
+    }
+    this.hiddenCard = null;
+    this.hiddenSince = 0;
+    this.hidden = 0;
   }
 
   private handleUpdate(update: InteractionUpdate): void {
     const u = update as Obj;
+    if (this.hiddenSince && ACTIVITY.has(text(u.type))) this.endHiddenWait();
     switch (u.type) {
       case "text-delta": {
         let content = text(u.text);
@@ -455,9 +529,15 @@ export class CursorSession extends EventEmitter {
         const callId = text(u.callId);
         if (!callId || this.openCalls.has(callId)) break;
         const call = obj(u.toolCall);
-        this.openCalls.set(callId, Date.now());
+        const startedAt = Date.now();
+        this.openCalls.set(callId, startedAt);
+        this.callsListed++;
         this.afterText = false;
-        this.emit("event", { ...toolUse(call, this.panelToolNames()), toolUseId: callId });
+        this.emit("event", {
+          ...toolUse(call, this.panelToolNames()),
+          toolUseId: callId,
+          startedAt,
+        });
         if (call.type === "task") this.startTask(callId, obj(call.args));
         break;
       }
@@ -474,15 +554,21 @@ export class CursorSession extends EventEmitter {
         this.openCalls.delete(callId);
         const call = obj(u.toolCall);
         const task = this.tasks.get(callId);
-        if (task) {
-          this.endTask(callId, task, call, Date.now() - at);
-          break;
+        if (task) this.endTask(callId, task, call, Date.now() - at);
+        else {
+          this.emit("event", {
+            ...toolResult(call),
+            toolUseId: callId,
+            durationMs: Date.now() - at,
+          });
         }
-        this.emit("event", {
-          ...toolResult(call),
-          toolUseId: callId,
-          durationMs: Date.now() - at,
-        });
+        this.awaitHidden();
+        break;
+      }
+      case "tool-requests-listed": {
+        this.hidden = Math.max(0, num(u.callCount) - this.callsListed);
+        this.callsListed = 0;
+        this.awaitHidden();
         break;
       }
       case "turn-ended": {
@@ -577,10 +663,12 @@ export class CursorSession extends EventEmitter {
         const id = text(u.callId);
         if (!id || task.calls.has(id)) break;
         this.flushTaskText(callId, task);
-        task.calls.set(id, Date.now());
+        const startedAt = Date.now();
+        task.calls.set(id, startedAt);
         this.emitInner(callId, {
           ...toolUse(obj(u.toolCall), this.panelToolNames()),
           toolUseId: id,
+          startedAt,
         });
         break;
       }
@@ -741,6 +829,11 @@ function toolResult(call: Obj): StreamEvent {
     case "shell": {
       const output = [text(v.stdout), text(v.stderr)].filter(Boolean).join("\n");
       const failed = typeof v.exitCode === "number" && v.exitCode !== 0;
+      // Sent to the background (block_until_ms 0), a command has no timeout
+      // and completes at once with nothing: cursor/background-shell.
+      if (!failed && !output && obj(call.args).timeout === undefined) {
+        return { kind: "tool_result", content: "Running in the background." };
+      }
       const status = failed ? ` (exit code ${String(v.exitCode)})` : "";
       return {
         kind: "tool_result",

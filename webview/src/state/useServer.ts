@@ -105,6 +105,8 @@ export interface StreamEvent {
   // A finished thinking block: how long it took and, once its API call
   // ends, how many tokens it spent. A tool call: from call to result.
   durationMs?: number;
+  // A tool call's start, when its backend gives it: a running one counts up.
+  startedAt?: number;
   tokens?: number;
   subagent?: SubAgentInfo;
   // Present on summary pages instead of the bodies.
