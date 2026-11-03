@@ -58,7 +58,7 @@ vi.mock("../../src/session/codex", () => ({
 import { QuotaMonitor } from "../../src/server/quota";
 
 const flush = () => new Promise((r) => setTimeout(r, 5));
-const ENV_KEYS = ["HOME", "https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"];
+const ENV_KEYS = ["HOME", "CODEX_HOME", "https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"];
 let savedEnv: Record<string, string | undefined>;
 let home: string;
 
@@ -66,7 +66,10 @@ beforeEach(() => {
   // Keys are restored one by one: replacing process.env itself detaches it
   // from the real environment os.homedir() reads.
   savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
-  for (const k of ["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"]) delete process.env[k];
+  // CODEX_HOME would point every monitor at a real Codex login.
+  for (const k of ["CODEX_HOME", "https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"]) {
+    delete process.env[k];
+  }
   home = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-quota-"));
   fs.mkdirSync(path.join(home, ".claude"));
   fs.writeFileSync(
