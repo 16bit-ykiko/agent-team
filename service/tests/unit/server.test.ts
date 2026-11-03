@@ -25,16 +25,6 @@ let remote: http.Server;
 let remotePort: number;
 let cookie: string;
 
-function freePort(): Promise<number> {
-  return new Promise((resolve) => {
-    const s = net.createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = (s.address() as net.AddressInfo).port;
-      s.close(() => resolve(p));
-    });
-  });
-}
-
 function request(
   pathname: string,
   opts: { method?: string; headers?: Record<string, string>; body?: string | Buffer } = {},
@@ -148,11 +138,10 @@ type = "local"
   saveIndex(base, ["ws-h"]);
   closeHistory(base);
 
-  port = await freePort();
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
     HOME: home,
-    AGENT_TEAM_PORT: String(port),
+    AGENT_TEAM_PORT: "0",
     AGENT_TEAM_HOST: "127.0.0.1",
     AGENT_TEAM_BASE_DIR: base,
     AGENT_TEAM_WEB_DIR: web,
@@ -168,7 +157,9 @@ type = "local"
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("server did not start")), 20000);
     child.stdout!.on("data", (d: Buffer) => {
-      if (d.toString().includes("listening")) {
+      const listening = /listening on http:\/\/[^:]+:(\d+)/.exec(d.toString());
+      if (listening) {
+        port = Number(listening[1]);
         clearTimeout(timer);
         resolve();
       }

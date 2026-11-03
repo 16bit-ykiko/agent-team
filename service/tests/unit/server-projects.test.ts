@@ -4,7 +4,6 @@
 // probe is stubbed so no API request is made.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
-import * as net from "net";
 import * as os from "os";
 import * as path from "path";
 import WebSocket from "ws";
@@ -114,16 +113,6 @@ afterEach(() => {
     else process.env[k] = v;
   }
 });
-
-function freePort(): Promise<number> {
-  return new Promise((resolve) => {
-    const s = net.createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = (s.address() as net.AddressInfo).port;
-      s.close(() => resolve(p));
-    });
-  });
-}
 
 const until = async (cond: () => boolean, what: string) => {
   for (let i = 0; i < 200 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));
@@ -295,8 +284,8 @@ function seed(
 }
 
 async function start(base: string, web: string) {
-  const port = await freePort();
-  const server = new Server(port, base, web);
+  const server = new Server(0, base, web);
+  const port = await server.listening;
   const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
   const frames: Array<Record<string, unknown>> = [];
   ws.on("message", (raw: Buffer) => frames.push(JSON.parse(raw.toString()) as never));

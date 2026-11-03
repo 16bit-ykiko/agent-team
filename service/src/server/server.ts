@@ -1,4 +1,5 @@
 import * as http from "http";
+import type { AddressInfo } from "net";
 import * as os from "os";
 import * as fs from "fs";
 import * as path from "path";
@@ -58,6 +59,8 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 
 export class Server {
   private httpServer: http.Server;
+  // The port it listens on, once it does: the one the system chose for 0.
+  readonly listening: Promise<number>;
   private wss: WebSocketServer;
   private workspaces = new Map<string, Workspace>();
   private uiClients = new Set<WebSocket>();
@@ -147,9 +150,13 @@ export class Server {
     this.archiveTimer = setInterval(() => this.sweepArchives(), 3600_000);
 
     const host = process.env.AGENT_TEAM_HOST || "0.0.0.0";
-    this.httpServer.listen(port, host, () => {
-      console.log(`Agent Team server listening on http://${host}:${port}`);
-    });
+    this.listening = new Promise((resolve) =>
+      this.httpServer.listen(port, host, () => {
+        const bound = (this.httpServer.address() as AddressInfo).port;
+        console.log(`Agent Team server listening on http://${host}:${bound}`);
+        resolve(bound);
+      }),
+    );
   }
 
   private initHosts(): HostRegistry {
