@@ -7,7 +7,8 @@ import { render, fireEvent, screen, within, waitFor } from "@testing-library/rea
 import { BoardPage } from "../src/project/BoardPage";
 import { InlineMd, MdBlock, ProsePathContext, prosePaths } from "../src/chat/markdown";
 import { FileOpenContext } from "../src/chat/fileRef";
-import { inVSCode, reachable, refFrom } from "../src/project/NotesView";
+import { reachable, refFrom } from "../src/project/NotesView";
+import { inVSCode } from "../src/vscode";
 import type { IssueModules, Objective, Project } from "../src/state/useServer";
 
 const o = (id: string, over: Partial<Objective> = {}): Objective => ({

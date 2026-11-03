@@ -121,6 +121,9 @@ describe("extractImageFiles", () => {
   });
 });
 
+const VSCODE_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Code/1.140.0 Chrome/138.0.7204.251 Electron/37.6.0 Safari/537.36";
+
 describe("installMacCtrlClipboard", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -181,6 +184,7 @@ describe("installMacCtrlClipboard", () => {
       () => ta,
       () => {},
       "MacIntel",
+      VSCODE_UA,
     )!;
     const e = press("c", { metaKey: true }, ta);
     expect(exec).toHaveBeenCalledWith("copy");
@@ -215,6 +219,7 @@ describe("installMacCtrlClipboard", () => {
       () => null,
       () => {},
       "MacIntel",
+      VSCODE_UA,
     )!;
     const e = press("a", { metaKey: true });
     expect(exec).toHaveBeenCalledWith("selectAll");
@@ -233,6 +238,7 @@ describe("installMacCtrlClipboard", () => {
       () => ta,
       () => {},
       "MacIntel",
+      VSCODE_UA,
     )!;
     expect(press("z", { metaKey: true }).defaultPrevented).toBe(true);
     expect(press("Z", { metaKey: true, shiftKey: true }).defaultPrevented).toBe(true);
@@ -250,6 +256,7 @@ describe("installMacCtrlClipboard", () => {
       () => null,
       () => {},
       "MacIntel",
+      VSCODE_UA,
     )!;
     expect(press("z", { metaKey: true }).defaultPrevented).toBe(false);
     expect(exec).not.toHaveBeenCalled();
@@ -281,6 +288,7 @@ describe("installMacCtrlClipboard", () => {
       () => ta,
       () => {},
       "MacIntel",
+      VSCODE_UA,
     )!;
     const e = press("v", { metaKey: true });
     expect(ta).toBe(document.activeElement);
@@ -289,9 +297,12 @@ describe("installMacCtrlClipboard", () => {
     cleanup();
   });
 
-  it("leaves Cmd+V to the browser when execCommand cannot paste", () => {
-    const readText = vi.fn(() => Promise.resolve("pasted"));
-    vi.stubGlobal("navigator", { ...navigator, platform: "MacIntel", clipboard: { readText } });
+  it("pastes from the clipboard on Cmd+V in VS Code when execCommand cannot", async () => {
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      platform: "MacIntel",
+      clipboard: { readText: () => Promise.resolve("pasted") },
+    });
     document.execCommand = vi.fn(() => false);
     const ta = document.createElement("textarea");
     document.body.appendChild(ta);
@@ -301,9 +312,36 @@ describe("installMacCtrlClipboard", () => {
       () => ta,
       () => {},
       "MacIntel",
+      VSCODE_UA,
     )!;
-    expect(press("v", { metaKey: true }).defaultPrevented).toBe(false);
+    expect(press("v", { metaKey: true }).defaultPrevented).toBe(true);
+    await vi.waitFor(() => expect(ta.value).toBe("pasted"));
+    cleanup();
+  });
+
+  it("leaves Cmd's shortcuts to any other Mac browser, Ctrl's still taken", () => {
+    const readText = vi.fn(() => Promise.resolve("pasted"));
+    vi.stubGlobal("navigator", { ...navigator, platform: "MacIntel", clipboard: { readText } });
+    const exec = vi.fn(() => true);
+    document.execCommand = exec;
+    const ta = document.createElement("textarea");
+    ta.value = "hello";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.setSelectionRange(0, 5);
+
+    const cleanup = installMacCtrlClipboard(
+      () => ta,
+      () => {},
+      "MacIntel",
+    )!;
+    for (const key of ["c", "x", "v", "a", "z"]) {
+      expect(press(key, { metaKey: true }).defaultPrevented).toBe(false);
+    }
+    expect(exec).not.toHaveBeenCalled();
     expect(readText).not.toHaveBeenCalled();
+    expect(press("c", { ctrlKey: true }).defaultPrevented).toBe(true);
+    expect(exec).toHaveBeenCalledWith("copy");
     cleanup();
   });
 
@@ -318,6 +356,7 @@ describe("installMacCtrlClipboard", () => {
       () => ta,
       () => {},
       "MacIntel",
+      VSCODE_UA,
     )!;
     expect(press("z", { metaKey: true, isComposing: true }).defaultPrevented).toBe(false);
     expect(press("a", { metaKey: true, isComposing: true }).defaultPrevented).toBe(false);

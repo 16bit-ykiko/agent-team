@@ -49,7 +49,8 @@ import {
 } from "./issues";
 import { IssueDetail, IssueList, IssueNav } from "./IssuesView";
 import { DetailSection, FilterChip } from "./parts";
-import { NotesView, inVSCode, openInEditor, reachable, type BoardFile } from "./NotesView";
+import { NotesView, openInEditor, reachable, type BoardFile } from "./NotesView";
+import { inVSCode } from "../vscode";
 
 // A worker session as the board shows it.
 export interface SessionInfo {

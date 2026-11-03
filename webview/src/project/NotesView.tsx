@@ -4,6 +4,7 @@ import { FileOpenContext, parseFileRef, type FileRef } from "../chat/fileRef";
 import { CodeView, languageFor, type FileView } from "../panels/FilesPanel";
 import { FileIcon, Icon } from "../panels/Icon";
 import { formatSize, utf8Length } from "../format";
+import { inVSCode } from "../vscode";
 
 // The project's notes on the board page: their folders as a tree on the
 // left, a file in full on the right. Paths are as the board writes them:
@@ -14,11 +15,6 @@ import { formatSize, utf8Length } from "../format";
 // shown here rather than in VS Code.
 export interface BoardFile extends FileRef {
   notice?: string;
-}
-
-// The panel open in VS Code's own browser: there a file opens in the editor.
-export function inVSCode(ua = navigator.userAgent): boolean {
-  return /\bCode(?: - Insiders)?\/\d/.test(ua) && /\bElectron\//.test(ua);
 }
 
 // Opens a file of the project in the user's VS Code. When it could not, why,

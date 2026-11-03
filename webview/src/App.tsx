@@ -18,6 +18,7 @@ import { FilesPanel } from "./panels/FilesPanel";
 import { fileRoots, scopeSessions, scopeSummary, sessionState, stateSummary } from "./panels/scope";
 import { FileOpenContext, parseFileRef, type FileRef } from "./chat/fileRef";
 import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
+import { installMacTextKeys } from "./chat/textKeys";
 import { isImeKeyEvent } from "./chat/ime";
 import { AgentAvatar } from "./workspace/avatar";
 import { formatRelative, shortModel } from "./format";
@@ -409,6 +410,7 @@ export function App() {
       ),
     [],
   );
+  useEffect(() => installMacTextKeys(), []);
   const draggingRef = useRef(false);
 
   const sortedWorkspaces = useMemo(

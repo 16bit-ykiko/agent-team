@@ -1,4 +1,5 @@
 import TurndownService from "turndown";
+import { inVSCode } from "../vscode";
 
 const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced" });
 // Text copies as it reads: a path keeps its underscores and backslashes.
@@ -99,21 +100,24 @@ export function extractImageFiles(dt: DataTransfer | null): File[] {
 
 // VS Code's macOS webviews can consume Edit menu shortcuts before a nested
 // browser frame gets the corresponding select/copy/cut/paste/undo/redo event.
-// The keydown still reaches this document, so execute the editing command here.
-// Handle Ctrl as well for users who use PC-style shortcuts or remap Ctrl to
-// Cmd. Returns a cleanup function, or undefined off Apple platforms where the
-// browser already treats Ctrl as the clipboard modifier.
+// The keydown still reaches this document, so execute the editing command here;
+// any other browser does Cmd's itself. Ctrl does the same on every Apple
+// platform, for users who use PC-style shortcuts or remap Ctrl to Cmd. Returns
+// a cleanup function, or undefined off Apple platforms where the browser
+// already treats Ctrl as the clipboard modifier.
 export function installMacCtrlClipboard(
   getFallbackTarget: () => HTMLTextAreaElement | null,
   addImages: (files: File[]) => void,
   platform: string = navigator.platform,
+  ua: string = navigator.userAgent,
 ): (() => void) | undefined {
   if (!/Mac|iP(hone|ad|od)/.test(platform)) return undefined;
+  const vscode = inVSCode(ua);
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.isComposing) return;
     const hasSingleClipboardModifier = (e.ctrlKey || e.metaKey) && !(e.ctrlKey && e.metaKey);
-    if (!hasSingleClipboardModifier || e.altKey) return;
+    if (!hasSingleClipboardModifier || e.altKey || (e.metaKey && !vscode)) return;
     const key = e.key.toLowerCase();
     if (key === "z") {
       const el = document.activeElement;
@@ -162,11 +166,10 @@ export function installMacCtrlClipboard(
         }
       }
 
-      // Cmd+V outside such a webview pastes natively, files and rich content
-      // included, where the async API would ask for permission. Reading the
-      // clipboard from JS needs a secure context and may also be denied by
-      // an iframe Permissions Policy: the key is left alone without it.
-      if (!e.ctrlKey || !navigator.clipboard?.readText) return;
+      // Reading the clipboard from JS needs a secure context and may also be
+      // denied by an iframe Permissions Policy. Only suppress the swallowed
+      // shortcut when an API fallback is actually available.
+      if (!navigator.clipboard?.readText) return;
       e.preventDefault();
       void pasteFromClipboard(getFallbackTarget, addImages);
     }
