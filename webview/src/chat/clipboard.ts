@@ -97,12 +97,12 @@ export function extractImageFiles(dt: DataTransfer | null): File[] {
   return files;
 }
 
-// macOS reserves clipboard shortcuts for Cmd; Ctrl+C/X/V do nothing natively
-// in a browser there. Users with PC muscle memory — or an OS-level Ctrl→Cmd
-// remap that doesn't reach this window (e.g. a Karabiner rule conditioned on
-// browser bundle ids while the app runs as an installed PWA) — still press
-// them, so mirror the Cmd behavior. Returns a cleanup function, or undefined
-// off-mac where the browser already treats Ctrl as the clipboard modifier.
+// VS Code's macOS webviews can consume Edit menu shortcuts before a nested
+// browser frame gets the corresponding select/copy/cut/paste/undo/redo event.
+// The keydown still reaches this document, so execute the editing command here.
+// Handle Ctrl as well for users who use PC-style shortcuts or remap Ctrl to
+// Cmd. Returns a cleanup function, or undefined off Apple platforms where the
+// browser already treats Ctrl as the clipboard modifier.
 export function installMacCtrlClipboard(
   getFallbackTarget: () => HTMLTextAreaElement | null,
   addImages: (files: File[]) => void,
@@ -111,30 +111,70 @@ export function installMacCtrlClipboard(
   if (!/Mac|iP(hone|ad|od)/.test(platform)) return undefined;
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+    if (e.isComposing) return;
+    const hasSingleClipboardModifier = (e.ctrlKey || e.metaKey) && !(e.ctrlKey && e.metaKey);
+    if (!hasSingleClipboardModifier || e.altKey) return;
     const key = e.key.toLowerCase();
-    if (key === "c" || key === "x") {
+    if (key === "z") {
+      const el = document.activeElement;
+      if (!(el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)) return;
+      const command = e.shiftKey ? "redo" : "undo";
+      if (document.execCommand(command)) e.preventDefault();
+      return;
+    }
+    if (e.shiftKey) return;
+    if (key === "a") {
+      const el = document.activeElement;
+      if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+        el.select();
+        e.preventDefault();
+      } else if (document.execCommand("selectAll")) {
+        e.preventDefault();
+      }
+    } else if (key === "c" || key === "x") {
       const el = document.activeElement;
       const editable = el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement;
       const hasSelection = editable
         ? el.selectionStart !== el.selectionEnd
         : !(window.getSelection()?.isCollapsed ?? true);
       if (!hasSelection) return;
-      e.preventDefault();
       // Goes through the copy event, so copySelectionAsMarkdown still applies.
-      document.execCommand(key === "c" ? "copy" : "cut");
+      if (document.execCommand(key === "c" ? "copy" : "cut")) e.preventDefault();
     } else if (key === "v") {
-      // Reading the clipboard from JS needs the async clipboard API, which
-      // only exists in secure contexts (https / localhost). Over plain http
-      // there is nothing we can do — leave the key alone.
-      if (!navigator.clipboard?.readText) return;
+      const el = document.activeElement;
+      const target =
+        el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement
+          ? el
+          : getFallbackTarget();
+      if (target) {
+        target.focus();
+
+        // execCommand is deprecated for normal web apps, but in an Electron
+        // webview it is the only synchronous bridge to the host clipboard. It
+        // also preserves the native paste event (including clipboard images).
+        try {
+          if (document.execCommand("paste")) {
+            e.preventDefault();
+            return;
+          }
+        } catch {
+          // Fall through to the async Clipboard API when the host rejects it.
+        }
+      }
+
+      // Cmd+V outside such a webview pastes natively, files and rich content
+      // included, where the async API would ask for permission. Reading the
+      // clipboard from JS needs a secure context and may also be denied by
+      // an iframe Permissions Policy: the key is left alone without it.
+      if (!e.ctrlKey || !navigator.clipboard?.readText) return;
       e.preventDefault();
       void pasteFromClipboard(getFallbackTarget, addImages);
     }
   };
 
-  window.addEventListener("keydown", onKeyDown);
-  return () => window.removeEventListener("keydown", onKeyDown);
+  // Capture before React or another component can stop propagation.
+  window.addEventListener("keydown", onKeyDown, true);
+  return () => window.removeEventListener("keydown", onKeyDown, true);
 }
 
 async function pasteFromClipboard(
