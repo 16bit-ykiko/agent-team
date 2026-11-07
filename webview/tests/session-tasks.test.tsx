@@ -92,9 +92,8 @@ describe("a session's background work, in its card", () => {
     expect(rows).toEqual([
       ["shell", "npm run build", "1m 35s"],
       ["agent", "Profile the indexer", "5s"],
-      ["wake-up", "check the CI run", "in 12m"],
+      ["wake-up", "check the CI run", `${at} · in 12m`],
     ]);
-    expect(container.querySelector(".tp-wake .tp-when")!.getAttribute("title")).toBe(`at ${at}`);
     // Each agent's under its own row, not under a name of its own again.
     expect(
       [...container.querySelectorAll(".tp-tasks")].map(
@@ -104,6 +103,17 @@ describe("a session's background work, in its card", () => {
     expect(workCount([busy, quiet])).toBe(3);
     // A quiet session has none to list.
     expect(panel([quiet]).querySelector(".tp-tasks")).toBeNull();
+  });
+
+  it("shows a wake-up past its time as due until it fires", () => {
+    const late = ws("late", [
+      agent("isla", { state: "sleeping", wake: { at: NOW - 30_000, reason: "check the CI run" } }),
+    ]);
+    const at = new Date(NOW - 30_000).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    expect(panel([late]).querySelector(".tp-wake .tp-when")!.textContent).toBe(`${at} · due`);
   });
 
   it("stops one task, cancels a wake-up, or stops everything of the session", () => {

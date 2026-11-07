@@ -52,8 +52,8 @@ export function AgentTasks({
           <span className="tp-desc" title={a.wake.reason}>
             {a.wake.reason || "scheduled wake-up"}
           </span>
-          <span className="tp-when" title={`at ${clock(a.wake.at)}`}>
-            in {soon(a.wake.at - now)}
+          <span className="tp-when">
+            {clock(a.wake.at)} · {a.wake.at > now ? `in ${soon(a.wake.at - now)}` : "due"}
           </span>
           {canCancelWake(a) && (
             <button
