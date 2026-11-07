@@ -7,7 +7,7 @@ const build = {
   bundle: true,
   format: "cjs",
   platform: "node",
-  target: "node22",
+  target: "node26",
   sourcemap: true,
   minify: false,
   // The search index runs in a worker thread of its own (history-service.ts).

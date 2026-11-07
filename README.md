@@ -92,7 +92,7 @@ them.
 
 ## Requirements
 
-- Node.js 24+ (the history is stored with `node:sqlite`)
+- Node.js 26+ (the history is stored with `node:sqlite`)
 - [`claude`](https://docs.claude.com/en/docs/claude-code/overview) on `PATH`, if
   you use Claude
 - A [Codex](https://developers.openai.com/codex/cli) login, if you use Codex

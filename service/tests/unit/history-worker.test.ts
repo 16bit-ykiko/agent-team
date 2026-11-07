@@ -19,7 +19,7 @@ beforeAll(() => {
     bundle: true,
     format: "cjs",
     platform: "node",
-    target: "node22",
+    target: "node26",
     entryPoints: {
       "history-worker": path.resolve(__dirname, "../../src/workspace/history-worker.ts"),
     },

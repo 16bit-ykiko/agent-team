@@ -49,7 +49,7 @@ Tests and tooling:
 
 ## Build, Check, Test
 
-- Node ≥ 24 (the history is in `node:sqlite`), npm workspaces rooted at the repo top level — `npm install` at the root only. TypeScript scripts run through `tsx` (`npm run capture -- …`), never compiled.
+- Node ≥ 26 (the history is in `node:sqlite`), npm workspaces rooted at the repo top level — `npm install` at the root only. TypeScript scripts run through `tsx` (`npm run capture -- …`), never compiled.
 - `npm run check` — root `tsc` (scripts + cross-package test), per-workspace strict `tsc`, ESLint (`typescript-eslint` recommendedTypeChecked + react-hooks), prettier. Zero tolerance; no `eslint-disable` except `react-hooks/exhaustive-deps` with a stated reason.
 - `npm test` — vitest in `service/` (`tests/unit` + `tests/snap`) then `webview/` (jsdom + testing-library).
 - `npm run build` — Vite bundle then esbuild server bundle into `dist/`. The Claude and Cursor SDKs are `external` and the codex binary is found in `node_modules`: the server resolves them at runtime.
