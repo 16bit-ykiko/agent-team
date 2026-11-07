@@ -395,6 +395,12 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
         if (backend === "cursor") cursor.play(e.frame as Record<string, unknown>);
         else live.feeder?.push(e.frame);
         await flush();
+        // The queue moves on a timer after a turn ends: a message it sends
+        // reaches the CLI before the next turn's frames, as it did live.
+        if ((e.frame as { type?: string }).type === "result") {
+          await new Promise((r) => setTimeout(r, 2));
+          await flush();
+        }
       } else if ("error" in e) {
         live.feeder?.fail(new Error(e.error));
         await flush();
@@ -406,6 +412,9 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
     }
     await flush();
   } finally {
+    // A wake-up still pending when the recording ends must not be sent once
+    // its time comes: through the real SDK, or the next replay's player.
+    for (const s of host.created) s.removeAllListeners("wakeDue");
     ClaudeSession.sdk = null;
     CodexSession.hooks = null;
     CursorSession.sdk = null;

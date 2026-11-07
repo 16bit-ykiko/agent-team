@@ -1878,7 +1878,7 @@ describe("stopping a turn, not the session", () => {
   type Internals = {
     queryInstance: unknown;
     processing: boolean;
-    wakeAt: number | null;
+    scheduled: { at: number; reason: string; prompt: string } | null;
     buildOptions(sdk: unknown): Record<string, unknown>;
   };
 
@@ -1921,8 +1921,8 @@ describe("stopping a turn, not the session", () => {
     const close = vi.fn();
     inner.queryInstance = { close, interrupt: () => Promise.resolve() };
     expect(session.cancelWake()).toBe("No wake-up to cancel");
-    inner.wakeAt = Date.now() + 60_000;
-    expect(session.wake).toEqual({ at: inner.wakeAt, reason: "" });
+    inner.scheduled = { at: Date.now() + 60_000, reason: "", prompt: "p" };
+    expect(session.wake).toEqual({ at: inner.scheduled.at, reason: "" });
     inner.processing = true;
     expect(session.cancelWake()).toBe("Stop the running turn first");
     inner.processing = false;
@@ -1958,7 +1958,7 @@ describe("stopping a turn, not the session", () => {
     const inner = session as unknown as Internals & { backgroundTasks: Map<string, string> };
     const close = vi.fn();
     inner.queryInstance = { close, interrupt: () => Promise.resolve() };
-    inner.wakeAt = Date.now() + 60_000;
+    inner.scheduled = { at: Date.now() + 60_000, reason: "", prompt: "p" };
     inner.backgroundTasks.set("b1", "sleep 100");
     expect(session.cancelWake()).toMatch(/background task/);
     expect(close).not.toHaveBeenCalled();
@@ -2020,6 +2020,437 @@ describe("stopping a turn, not the session", () => {
     const session = new ClaudeSession({ cwd: "/tmp" });
     const opts = (session as unknown as Internals).buildOptions({ query: () => null });
     expect(opts.perTaskStopAffordance).toBe(true);
+  });
+});
+
+describe("scheduled wake-ups", () => {
+  type Inner = { queryInstance: unknown; processing: boolean; handleSDKMessage(m: unknown): void };
+  const SCHEDULED = "Next wakeup scheduled for 12:51:00 (in 60s). Nothing more to do this turn.";
+
+  function sleeping(result = SCHEDULED) {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    const inner = session as unknown as Inner;
+    inner.queryInstance = { close: () => {}, interrupt: () => Promise.resolve() };
+    const dispatch = (m: unknown) => inner.handleSDKMessage(m);
+    // The time itself rides in the frame's tool_use_result, on a minute
+    // boundary (snap fixture claude/wakeup-bg).
+    const schedule = (text: string, input: Record<string, unknown>) => {
+      const delay = Number(input.delaySeconds ?? 0);
+      const scheduledFor = Math.ceil((Date.now() + delay * 1000) / 60_000) * 60_000;
+      inner.processing = true;
+      dispatch({
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "tool_use", id: "t1", name: "ScheduleWakeup", input }] },
+      });
+      dispatch({
+        type: "user",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "t1", content: text }],
+        },
+        tool_use_result: input.stop ? { stopped: true } : { scheduledFor },
+      });
+      dispatch({ type: "result", subtype: "success", session_id: "s", result: "" });
+      return scheduledFor;
+    };
+    schedule(result, { delaySeconds: 60, reason: "check the runs", prompt: "Check the runs." });
+    const output = () =>
+      dispatch({
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { content: [{ type: "text", text: "ok" }] },
+      });
+    const result_ = () =>
+      dispatch({ type: "result", subtype: "success", session_id: "s", result: "" });
+    // The CLI's command for a fired wake-up, naming the time it was for.
+    const fire = (scheduledFor: number) =>
+      dispatch({
+        type: "command_lifecycle",
+        command_uuid: "c1",
+        state: "started",
+        wakeup_source: "loop_wakeup",
+        scheduled_for: scheduledFor,
+      });
+    return { session, inner, events, dispatch, schedule, output, result: result_, fire };
+  }
+  const banners = (events: StreamEvent[]) =>
+    events.filter((e) => e.kind === "notice" && e.level === "wakeup").map((e) => e.content);
+
+  it("stays pending through a background task's report; the CLI's own command fires it", () => {
+    const { session, events, dispatch, output, result, fire } = sleeping();
+    expect(session.runState).toBe("sleeping");
+    dispatch({ type: "system", subtype: "task_notification", task_id: "b1", status: "completed" });
+    output();
+    expect(banners(events)).toEqual([expect.stringContaining("Resumed on its own") as string]);
+    expect(session.wake).toMatchObject({ reason: "check the runs" });
+    result();
+    expect(session.runState).toBe("sleeping");
+
+    // A message sent from here on waits for this turn.
+    fire(session.wake!.at);
+    expect(session.isRunning).toBe(true);
+    expect(session.wake).toBeNull();
+    expect(banners(events).at(-1)).toBe("Scheduled wake-up fired.");
+    output();
+    result();
+    expect(session.runState).toBe("idle");
+  });
+
+  it("is not fired by a turn the CLI starts without a command of its own, even at its time", () => {
+    const { session, events, output } = sleeping();
+    vi.useFakeTimers({ now: session.wake!.at, toFake: ["Date"] });
+    try {
+      output();
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(banners(events)).not.toContain("Scheduled wake-up fired.");
+    expect(session.wake).not.toBeNull();
+  });
+
+  it("is replaced by the next one, and ends with a stop or a loop the CLI ended", () => {
+    const { session, schedule } = sleeping();
+    const first = session.wake!.at;
+    schedule(SCHEDULED.replace("60s", "600s"), { delaySeconds: 600, reason: "later", prompt: "p" });
+    expect(session.wake!.at - first).toBeGreaterThanOrEqual(540_000);
+    schedule("Loop stopped — cancelled 1 pending wakeup(s).", { stop: true });
+    expect(session.wake).toBeNull();
+    schedule(SCHEDULED, { delaySeconds: 60, reason: "again", prompt: "p" });
+    schedule(
+      "Wakeup not scheduled. The loop reached its maximum duration — the loop has ended; do not re-issue.",
+      { delaySeconds: 60, reason: "again", prompt: "p" },
+    );
+    expect(session.wake).toBeNull();
+    expect(session.runState).toBe("idle");
+  });
+
+  it("is the live process's to fire, and given up five minutes after it was free past its time", () => {
+    vi.useFakeTimers();
+    try {
+      const { session, events } = sleeping();
+      const due = vi.fn();
+      session.on("wakeDue", due);
+      vi.advanceTimersByTime(session.wake!.at + 4 * 60_000 - Date.now());
+      expect(session.wake).not.toBeNull();
+      expect(session.wakeDue).toBe(false);
+      vi.advanceTimersByTime(60_000);
+      expect(session.wake).toBeNull();
+      expect(due).not.toHaveBeenCalled();
+      expect(events.at(-1)).toMatchObject({ kind: "notice", level: "warning" });
+      expect(events.at(-1)!.content).toMatch(/did not fire/);
+      expect(session.runState).toBe("idle");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is the panel's once the process that held it is gone, or another took its place", () => {
+    vi.useFakeTimers();
+    try {
+      const { session, inner } = sleeping();
+      // A process the next message started after a crash holds none.
+      inner.queryInstance = { close: () => {}, interrupt: () => Promise.resolve() };
+      vi.advanceTimersByTime(session.wake!.at - Date.now());
+      expect(session.wakeDue).toBe(true);
+      // Not while a turn runs.
+      inner.processing = true;
+      expect(session.wakeDue).toBe(false);
+      inner.processing = false;
+      expect(session.takeWake()).toEqual({ prompt: "Check the runs.", reason: "check the runs" });
+      expect(session.wake).toBeNull();
+      expect(session.runState).toBe("idle");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("outlives the CLI process, and is due at its time once none holds it", () => {
+    vi.useFakeTimers();
+    try {
+      const { session, inner } = sleeping();
+      const at = session.wake!.at;
+      // The process went away on its own (the session's loop ended).
+      (session as unknown as { detachQuery(): void; clearTrackingState(): void }).detachQuery();
+      (session as unknown as { clearTrackingState(): void }).clearTrackingState();
+      expect(inner.queryInstance).toBeNull();
+      expect(session.runState).toBe("sleeping");
+      expect(session.wake?.at).toBe(at);
+      vi.setSystemTime(at);
+      expect(session.wakeDue).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("goes with an abort", () => {
+    const { session } = sleeping();
+    session.abort();
+    expect(session.wake).toBeNull();
+    expect(session.wakeDue).toBe(false);
+  });
+
+  // Our prompt went in: what pushMessage sets.
+  const ourTurn = (inner: Inner) => {
+    const s = inner as Inner & { expectingTurn: boolean; awaitingFirstOutput: boolean };
+    s.processing = true;
+    s.expectingTurn = true;
+    s.awaitingFirstOutput = true;
+  };
+
+  it("stays pending through a task's report turn whose notification came during our turn", () => {
+    const { session, inner, events, dispatch, output, result } = sleeping();
+    // Fixture claude/resumed-agent-bg: the agent's task_notification arrives
+    // while our turn runs, and its report turn follows our result at once.
+    ourTurn(inner);
+    dispatch({ type: "system", subtype: "task_notification", task_id: "a1", status: "completed" });
+    output();
+    result();
+    output();
+    dispatch({
+      type: "result",
+      subtype: "success",
+      session_id: "s",
+      result: "",
+      origin: { kind: "task-notification" },
+    });
+    expect(banners(events)).not.toContain("Scheduled wake-up fired.");
+    expect(session.wake).toMatchObject({ reason: "check the runs" });
+    expect(session.runState).toBe("sleeping");
+  });
+
+  // Our prompt went in just as the CLI took its fire: the CLI runs the fire
+  // first and our prompt in a turn of its own (old snap claude/wakeup-interrupt:
+  // a message sent before the fire's first output answered after it).
+  it("fired just as our prompt went in: the wake-up's turn, then ours", () => {
+    const { session, inner, events, dispatch, output, result, fire } = sleeping();
+    ourTurn(inner);
+    fire(session.wake!.at);
+    expect(session.wake).toBeNull();
+    expect(banners(events)).toEqual(["Scheduled wake-up fired."]);
+    output();
+    result();
+    dispatch({ type: "command_lifecycle", command_uuid: "c1", state: "completed" });
+    // Our prompt's own turn: no banner of a turn the CLI started.
+    output();
+    result();
+    expect(banners(events)).toEqual(["Scheduled wake-up fired."]);
+    expect(session.runState).toBe("idle");
+    expect(session.wakeDue).toBe(false);
+  });
+
+  it("is kept when an older fire that waited behind a turn runs", () => {
+    const { session, inner, schedule, output, result, fire } = sleeping();
+    const first = session.wake!.at;
+    // Our turn runs past the first one's time and schedules a second.
+    ourTurn(inner);
+    output();
+    const second = schedule(SCHEDULED.replace("60s", "600s"), {
+      delaySeconds: 600,
+      reason: "later",
+      prompt: "Later.",
+    });
+    expect(session.wake?.at).toBe(second);
+    fire(first);
+    output();
+    result();
+    expect(session.wake).toMatchObject({ reason: "later" });
+    expect(session.runState).toBe("sleeping");
+  });
+
+  it("is not fired by a command of the CLI's own that is no wake-up", () => {
+    const { session, events, dispatch, output, result } = sleeping();
+    dispatch({ type: "command_lifecycle", command_uuid: "c1", state: "started" });
+    output();
+    result();
+    expect(banners(events)).not.toContain("Scheduled wake-up fired.");
+    expect(session.wake).toMatchObject({ reason: "check the runs" });
+  });
+
+  it("takes its time from the result's scheduledFor", () => {
+    const { session } = sleeping();
+    expect(session.wake!.at % 60_000).toBe(0);
+  });
+
+  it("keeps its label when the CLI process exits or fails, and falls due at its time", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      const queries = fakeClaude();
+      const session = new ClaudeSession({ cwd: "/tmp" });
+      const activity: Array<string | null> = [];
+      session.on("activity", (a: string | null) => activity.push(a));
+      const due = vi.fn();
+      session.on("wakeDue", due);
+      await session.send("loop");
+      queries[0].frames.push(
+        frame.toolUse("w", "ScheduleWakeup", { delaySeconds: 60, prompt: "Check." }),
+      );
+      queries[0].frames.push(scheduled("w", 60));
+      queries[0].frames.push(frame.result());
+      await flush();
+      const label = activity.at(-1);
+      expect(label).toMatch(/^sleeping until /);
+
+      // A turn of the user's whose process dies under it.
+      await session.send("go on");
+      queries[0].frames.push(frame.delta("working"));
+      await flush();
+      expect(session.runState).toBe("working");
+      queries[0].frames.fail(new Error("Claude Code process exited with code 1"));
+      await flush();
+      expect(session.runState).toBe("sleeping");
+      expect(activity.at(-1)).toBe(label);
+      expect(session.wakeDue).toBe(false);
+      vi.advanceTimersByTime(60_000);
+      expect(due).toHaveBeenCalledTimes(1);
+      expect(session.wakeDue).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("a wake-up fired just as a message went in", () => {
+  it("answers the message after the wake-up's turn, and holds the queue till then", async () => {
+    const all = fakeClaude();
+    const { ws, entry } = claudeWorkspace();
+    await ws.sendMessage("loop");
+    await flush();
+    all[0].frames.push(frame.toolUse("w", "ScheduleWakeup", { delaySeconds: 60, prompt: "W?" }));
+    all[0].frames.push(scheduled("w", 60));
+    all[0].frames.push(frame.result());
+    await flush();
+    expect(entry.session.runState).toBe("sleeping");
+    // M1 reaches the CLI, which takes its fire first (claude/wakeup-queued).
+    await ws.sendMessage("M1");
+    await flush();
+    all[0].frames.push({
+      type: "command_lifecycle",
+      command_uuid: "c1",
+      state: "started",
+      wakeup_source: "loop_wakeup",
+      scheduled_for: entry.session.wake!.at,
+    });
+    await flush();
+    await ws.sendMessage("M2");
+    all[0].frames.push(frame.delta("W"));
+    all[0].frames.push(frame.result());
+    await new Promise((r) => setTimeout(r, 5));
+    await flush();
+    expect(all[0].prompts).toEqual(["loop", "M1"]);
+    expect(entry.session.isRunning).toBe(true);
+    all[0].frames.push(frame.delta("answer to M1"));
+    all[0].frames.push(frame.result());
+    await new Promise((r) => setTimeout(r, 5));
+    await flush();
+    expect(all[0].prompts).toEqual(["loop", "M1", "M2"]);
+    const replies = ws.messages.filter((m) => m.kind === "agent");
+    const wake = replies.find((m) => m.content === "W")!;
+    expect(wake.events?.[0]).toMatchObject({ kind: "notice", level: "wakeup" });
+    const answer = replies.find((m) => m.content === "answer to M1")!;
+    expect(answer.events?.some((e) => e.kind === "notice")).toBe(false);
+  });
+});
+
+describe("lost transcript writes", () => {
+  it("say a resume may miss part of the conversation", () => {
+    const session = new ClaudeSession({ cwd: "/tmp" });
+    const events: StreamEvent[] = [];
+    session.on("event", (e: StreamEvent) => events.push(e));
+    const unhandled = vi.fn();
+    session.on("unhandled", unhandled);
+    (session as unknown as { handleSDKMessage(m: unknown): void }).handleSDKMessage({
+      type: "system",
+      subtype: "session_writes_lost",
+      error_code: "ENOSPC",
+      lost: ["transcript"],
+      transcript_session_ids: ["s"],
+      session_id: "s",
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: "notice", level: "warning" });
+    expect(events[0].content).toContain("ENOSPC");
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+});
+
+describe("a wake-up the CLI let pass, in the workspace", () => {
+  async function sleepingThenGone() {
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    const queries = fakeClaude();
+    const w = claudeWorkspace();
+    await w.ws.sendMessage("loop");
+    await flush();
+    queries[0].frames.push(
+      frame.toolUse("w", "ScheduleWakeup", { delaySeconds: 60, prompt: "Check the runs." }),
+    );
+    queries[0].frames.push(scheduled("w", 60));
+    queries[0].frames.push(frame.result());
+    await flush();
+    expect(w.entry.session.runState).toBe("sleeping");
+    queries[0].frames.end();
+    await flush();
+    return { ...w, queries };
+  }
+  const tick = async (ms: number) => {
+    vi.advanceTimersByTime(ms);
+    await flush();
+  };
+
+  it("goes out under a wakeup banner through a new process at its time", async () => {
+    try {
+      const { ws, queries } = await sleepingThenGone();
+      await tick(59_000);
+      expect(queries).toHaveLength(1);
+      await tick(1_000);
+      expect(queries).toHaveLength(2);
+      expect(queries[1].prompts).toEqual(["Check the runs."]);
+      queries[1].frames.push(frame.delta("checked"));
+      queries[1].frames.push(frame.result());
+      await tick(10);
+      const reply = ws.messages.filter((m) => m.kind === "agent").at(-1)!;
+      expect(reply.content).toBe("checked");
+      const wakeups = reply.events!.filter((e) => e.kind === "notice" && e.level === "wakeup");
+      expect(wakeups.map((e) => e.content)).toEqual([expect.stringContaining("sent by the panel")]);
+      expect(ws.messages.filter((m) => m.kind === "user").map((m) => m.content)).toEqual(["loop"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("goes out after the turn of a process a message started since", async () => {
+    try {
+      const { ws, entry, queries } = await sleepingThenGone();
+      // Before its time, the user writes: a new process, holding no wake-up.
+      await ws.sendMessage("hello");
+      await flush();
+      expect(queries).toHaveLength(2);
+      queries[1].frames.push(frame.delta("hi"));
+      queries[1].frames.push(frame.result());
+      await tick(10);
+      expect(entry.session.runState).toBe("sleeping");
+      await tick(60_000);
+      expect(queries[1].prompts).toEqual(["hello", "Check the runs."]);
+      expect(entry.session.wake).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is dropped by clearing the context", async () => {
+    try {
+      const { ws, entry, agentId, queries } = await sleepingThenGone();
+      expect(ws.clearContext(agentId)).toBe(true);
+      expect(entry.session.wake).toBeNull();
+      expect(entry.session.runState).toBe("idle");
+      await tick(10 * 60_000);
+      expect(queries).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

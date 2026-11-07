@@ -11,19 +11,23 @@ export default fixture({
   options: { perTaskStopAffordance: true },
   steps: [
     send(
-      'Call the ScheduleWakeup tool exactly once with delaySeconds 60, reason "wake A" and prompt "Reply with the single word A.". Then end your turn without any other tool call.',
+      'Call the ScheduleWakeup tool exactly once with delaySeconds 60, reason "wake A", prompt "Reply with the single word A." and noop false. Then end your turn without any other tool call.',
     ),
     wait("result"),
     wait(2000),
     interrupt(),
-    wait(95_000),
+    // The fired wake-up's turn ends with its command.
+    wait({ frame: '"state":"completed"' }),
     send(
-      'Call the ScheduleWakeup tool exactly once with delaySeconds 60, reason "wake B" and prompt "Reply with the single word B.". Then end your turn without any other tool call.',
+      'Call the ScheduleWakeup tool exactly once with delaySeconds 60, reason "wake B", prompt "Reply with the single word B." and noop false. Then end your turn without any other tool call.',
     ),
     wait("result"),
-    wait(95_000),
   ],
   verify(r) {
-    expect(agentMessages(r).map((m) => m.content)).toContain("A");
+    // Sleeping through the idle interrupt, straight into the fire's turn.
+    expect(r.states).toEqual(["sleeping", "working", "idle", "working", "sleeping"]);
+    const wake = agentMessages(r).find((m) => m.content.trim() === "A");
+    expect(wake?.events?.[0]).toMatchObject({ kind: "notice", level: "wakeup" });
+    expect(wake?.events?.[0].content).toContain("Scheduled wake-up fired");
   },
 });

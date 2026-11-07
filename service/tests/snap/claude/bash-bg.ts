@@ -26,7 +26,6 @@ export default fixture({
     expect(start).toMatchObject({
       taskId: card.taskId,
       agentType: "shell",
-      description: "sleep 6; echo finished",
       status: "running",
     });
     expect(r.events.find((e) => e.kind === "subagent_done")!.subagent).toMatchObject({

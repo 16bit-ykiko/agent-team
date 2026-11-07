@@ -40,6 +40,9 @@ export interface HostSessionHandle extends EventEmitter {
   // Null once cancelled, else why it was not.
   cancelWake?(): string | null;
   readonly wake?: { at: number; reason: string } | null;
+  // A wake-up the backend let pass, its prompt for the workspace to send.
+  readonly wakeDue?: boolean;
+  takeWake?(): { prompt: string; reason: string } | null;
   setPanelTools?(tools: PanelToolset | null): void;
   stopTask?(taskId: string): Promise<void>;
   simulateRateLimit?(info: { rateLimitType?: string; resetsAt?: number }): void;

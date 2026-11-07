@@ -173,6 +173,18 @@ export interface SessionState {
 // task list, so the agent may start, read and stop such tasks itself.
 const DISALLOWED_TOOLS = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"];
 
+// A process that is free past a wake-up's time fires it within a second; one
+// still pending this long after is given up (the CLI can drop a fire it
+// could not prepare).
+const WAKE_EXPIRY_MS = 5 * 60_000;
+
+interface Wake {
+  at: number;
+  reason: string;
+  prompt: string;
+  holder: Query | null;
+}
+
 // A live background task of the CLI (background Bash, subagent, Monitor).
 export interface BackgroundTask {
   id: string;
@@ -311,16 +323,19 @@ export class ClaudeSession extends EventEmitter {
   // ScheduleWakeup calls of this turn awaiting their result: a call the
   // interrupt rejected, or that failed, schedules nothing.
   private scheduleCalls = new Map<string, Record<string, unknown>>();
-  // Wake-up scheduled during the current turn; becomes the idle activity
-  // label ("sleeping until …") once the turn ends.
-  private pendingWake: { at: number; reason: string; stop: boolean } | null = null;
-  // Why the agent sleeps, while it does.
-  private wakeReason = "";
+  // The wake-up the agent scheduled and nothing has fired yet, and the CLI
+  // process that holds it. Turns the user or a background task's report
+  // starts in the meantime leave it pending, as the CLI does.
+  private scheduled: Wake | null = null;
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  // When the last turn ended.
+  private idleSince = 0;
+  // Since the last result: the turn is a wake-up the CLI fired. Our prompt
+  // sent before that turn's first output waits behind it.
+  private wakeTurn = false;
+  private promptBehindWake = false;
   // An interrupt we asked for: the error result it produces is a stop.
   private interruptRequested = false;
-  // When the pending wake-up fires; set while sleeping. A turn the user
-  // starts in the meantime does not cancel it.
-  private wakeAt: number | null = null;
   // Live, non-ambient background tasks as reported by background_tasks_changed
   // (id → description). Level signal: replaced wholesale on every message.
   // Bash commands by tool_use id, so a background shell card can show what
@@ -390,7 +405,7 @@ export class ClaudeSession extends EventEmitter {
       ? "working"
       : this.backgroundTasks.size > 0
         ? "waiting"
-        : this.wakeAt !== null
+        : this.scheduled !== null
           ? "sleeping"
           : "idle";
     if (next === this.runState) return;
@@ -406,7 +421,7 @@ export class ClaudeSession extends EventEmitter {
     } else if (next === "sleeping") {
       // Time only: the reason is already in the SCHEDULED banner, and the
       // label must fit an agent pill and a message header on a phone.
-      this.setActivity(`sleeping until ${formatClock(this.wakeAt!)}`);
+      this.setActivity(`sleeping until ${formatClock(this.scheduled!.at)}`);
     } else if (prev === "waiting" || prev === "sleeping") {
       this.setActivity(null);
     }
@@ -538,17 +553,77 @@ export class ClaudeSession extends EventEmitter {
     this.processing = true;
     this.turnStartTime = Date.now();
     this.stepCounter = 0;
-    const wasSleeping = this.wakeAt !== null;
-    this.wakeAt = null;
     this.updateRunState();
     if (!this.expectingTurn) {
-      const why = wasSleeping
+      const why = this.wakeTurn
         ? "Scheduled wake-up fired."
         : this.backgroundTasks.size > 0 || Date.now() - this.bgDrainedAt < 15_000
           ? "A background task reported back — resumed to handle its result."
           : "Resumed on its own — a wake-up or background task notification started this turn.";
       this.emit("event", { kind: "notice", level: "wakeup", content: why });
     }
+  }
+
+  private setScheduled(wake: Wake | null): void {
+    const had = this.scheduled;
+    this.scheduled = wake;
+    this.armWake();
+    this.updateRunState();
+    if (had || wake) this.emit("wake", this.wake);
+  }
+
+  // The process that scheduled a wake-up fires it, even while background
+  // tasks run (snap fixture claude/wakeup-bg); sending it as well would run
+  // it twice. A process started since, after that one went away, does not
+  // hold it (the CLI re-arms wake-ups on resume only for background jobs):
+  // it is the panel's at its time.
+  private wakeHeld(): boolean {
+    return this.scheduled !== null && this.scheduled.holder === this.queryInstance;
+  }
+
+  private armWake(): void {
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    this.wakeTimer = null;
+    const w = this.scheduled;
+    if (!w || this.isRunning) return;
+    const held = this.wakeHeld();
+    const at = held ? Math.max(w.at, this.idleSince) + WAKE_EXPIRY_MS : w.at;
+    this.wakeTimer = setTimeout(
+      () => {
+        this.wakeTimer = null;
+        if (this.scheduled !== w || this.isRunning) return;
+        if (!held) {
+          this.emit("wakeDue");
+          return;
+        }
+        this.setScheduled(null);
+        this.emit("event", {
+          kind: "notice",
+          level: "warning",
+          content: `The wake-up scheduled for ${formatClock(w.at)} did not fire.`,
+        });
+      },
+      Math.max(0, at - Date.now()),
+    );
+    this.wakeTimer.unref?.();
+  }
+
+  // A wake-up no process holds. Whoever drives the session sends its prompt
+  // (takeWake) once the agent is free; "wakeDue" says when to look.
+  get wakeDue(): boolean {
+    const w = this.scheduled;
+    return !!w && !this.isRunning && !this.wakeHeld() && Date.now() >= w.at;
+  }
+
+  takeWake(): { prompt: string; reason: string } | null {
+    const wake = this.scheduled;
+    if (!wake) return null;
+    this.setScheduled(null);
+    // An empty prompt, or the /loop sentinel only the CLI's own fire expands.
+    const prompt = /^(<<autonomous-loop(-dynamic)?>>)?$/.test(wake.prompt)
+      ? `Your scheduled wake-up is due${wake.reason ? `: ${wake.reason}` : "."}`
+      : wake.prompt;
+    return { prompt, reason: wake.reason };
   }
 
   // Swap credentials/env for this session. The env is baked into the SDK
@@ -670,12 +745,14 @@ export class ClaudeSession extends EventEmitter {
     this.taskStartedAt.clear();
     this.agentToolUseIds.clear();
     this.pendingNested.clear();
-    this.setActivity(null);
-    this.wakeAt = null;
-    this.pendingWake = null;
+    // A pending wake-up outlives the process: its label stays.
+    if (this.runState !== "sleeping") this.setActivity(null);
+    this.wakeTurn = false;
+    this.promptBehindWake = false;
     this.scheduleCalls.clear();
     if (this.setBackgroundTasks([])) this.emit("backgroundTasks", []);
     this.updateRunState();
+    this.armWake();
   }
 
   // Forget the query; its loop then sees it is no longer current and stays
@@ -743,7 +820,6 @@ export class ClaudeSession extends EventEmitter {
     "control_request",
     "control_response",
     "control_cancel_request",
-    "command_lifecycle",
   ]);
   private static readonly SILENT_SYSTEM_SUBTYPES = new Set([
     "init",
@@ -838,6 +914,39 @@ export class ClaudeSession extends EventEmitter {
   private handleSDKMessage(msg: SDKMessage): void {
     if ("session_id" in msg && msg.session_id) {
       this.sessionId = msg.session_id;
+    }
+
+    const raw = msg as unknown as Record<string, unknown>;
+    if (raw.type === "command_lifecycle") {
+      // A command of the CLI's own starts a turn: ours carry no uuid and get
+      // no lifecycle. A fired wake-up's names its source and time (snap
+      // fixture claude/wakeup-bg); taken as the turn's start, a message sent
+      // meanwhile queues behind it (claude/wakeup-queued).
+      if (raw.state === "started") {
+        this.wakeTurn = raw.wakeup_source === "loop_wakeup";
+        // One the model scheduled while this fire waited stays pending.
+        const at = typeof raw.scheduled_for === "number" ? raw.scheduled_for : null;
+        // Wake-ups fall on minute boundaries: half a minute tells them apart.
+        const fired =
+          this.wakeTurn &&
+          this.scheduled !== null &&
+          (at === null || Math.abs(at - this.scheduled.at) < 30_000);
+        // Working before the wake-up goes: no idle in between to move the
+        // queue.
+        if (!this.processing) this.setProcessing();
+        else if (this.wakeTurn && this.expectingTurn && this.awaitingFirstOutput) {
+          // The CLI took its fire before our prompt: the output that
+          // follows is the wake-up's, our prompt's turn comes after.
+          this.promptBehindWake = true;
+          this.emit("event", {
+            kind: "notice",
+            level: "wakeup",
+            content: "Scheduled wake-up fired.",
+          });
+        }
+        if (fired) this.setScheduled(null);
+      }
+      return;
     }
 
     switch (msg.type) {
@@ -1240,6 +1349,18 @@ export class ClaudeSession extends EventEmitter {
         }
         return true;
       }
+      // Disk full or over quota: the transcript lost lines, which a resume
+      // will miss.
+      case "session_writes_lost": {
+        const lost = (sys.lost as string[] | undefined) ?? [];
+        if (lost.includes("transcript")) {
+          notice(
+            `The session's transcript could not be saved (${(sys.error_code as string) ?? "disk error"}): resuming it may miss part of the conversation.`,
+            "warning",
+          );
+        }
+        return true;
+      }
       case "session_state_changed": {
         const state = sys.state as string;
         if (state === "requires_action") this.setActivity("waiting for input");
@@ -1456,7 +1577,7 @@ export class ClaudeSession extends EventEmitter {
         !parentToolUseId && toolUseId ? this.scheduleCalls.get(toolUseId) : undefined;
       if (schedule) {
         this.scheduleCalls.delete(toolUseId!);
-        if (b.is_error !== true) this.noteSchedule(schedule, text);
+        if (b.is_error !== true) this.noteSchedule(schedule, text, msg.tool_use_result);
       }
       this.forgetToolUse(toolUseId);
     }
@@ -1561,9 +1682,18 @@ export class ClaudeSession extends EventEmitter {
       this.usage.duration_ms += Date.now() - this.turnStartTime;
       this.turnStartTime = 0;
     }
-    this.processing = false;
-    this.expectingTurn = false;
-    this.awaitingFirstOutput = false;
+    // Our prompt that waited behind a wake-up's turn runs next, in a turn of
+    // its own (snap fixture claude/wakeup-queued): still working, so the
+    // queue holds what was sent meanwhile.
+    this.processing = this.promptBehindWake;
+    this.expectingTurn = this.promptBehindWake;
+    this.awaitingFirstOutput = this.promptBehindWake;
+    if (this.promptBehindWake) {
+      this.turnStartTime = Date.now();
+      this.stepCounter = 0;
+    }
+    this.promptBehindWake = false;
+    this.wakeTurn = false;
     this.pendingNested.clear();
     this.closedTasks.clear();
     // Tool calls of subagents that have finished; a background subagent
@@ -1573,21 +1703,20 @@ export class ClaudeSession extends EventEmitter {
       if (!this.agentTaskIds.has(parent)) this.nestedToolUseToParent.delete(toolUseId);
     }
     this.setActivity(null);
-    if (this.pendingWake) {
-      this.wakeAt = this.pendingWake.stop ? null : this.pendingWake.at;
-      this.wakeReason = this.pendingWake.stop ? "" : this.pendingWake.reason;
-    }
-    this.pendingWake = null;
+    this.idleSince = Date.now();
     this.updateRunState();
+    this.armWake();
   }
 
   // A scheduled wake-up is the agent announcing what it will do next and
   // when. Surface it as a banner now, and as the idle label after the turn.
   // The CLI rounds the time up to a minute boundary and says by how much in
-  // its result ("… (in 93s)", snap fixture claude/wakeup-interrupt).
-  private noteSchedule(input: Record<string, unknown>, result: string): void {
+  // its result ("… (in 93s)", snap fixture claude/wakeup-interrupt), and
+  // the time itself in the frame's tool_use_result (claude/wakeup-bg). A new
+  // one replaces the pending one, in the CLI as here.
+  private noteSchedule(input: Record<string, unknown>, result: string, meta: unknown): void {
     if (input.stop) {
-      this.pendingWake = { at: 0, reason: "", stop: true };
+      this.setScheduled(null);
       this.emit("event", {
         kind: "notice",
         level: "schedule",
@@ -1595,11 +1724,21 @@ export class ClaudeSession extends EventEmitter {
       });
       return;
     }
-    const delay = Number(/\(in (\d+)s\)/.exec(result)?.[1] ?? input.delaySeconds ?? 0);
-    const at = Date.now() + delay * 1000;
+    // "Wakeup not scheduled. The loop reached its maximum duration": the
+    // pending one is gone too.
+    if (/not scheduled/i.test(result)) {
+      this.setScheduled(null);
+      return;
+    }
+    const exact = (meta as { scheduledFor?: unknown } | undefined)?.scheduledFor;
+    const delay =
+      typeof exact === "number" && exact > 0
+        ? Math.max(0, Math.round((exact - Date.now()) / 1000))
+        : Number(/\(in (\d+)s\)/.exec(result)?.[1] ?? input.delaySeconds ?? 0);
+    const at = typeof exact === "number" && exact > 0 ? exact : Date.now() + delay * 1000;
     const reason = str(input.reason ?? "").trim();
     const prompt = str(input.prompt ?? "").trim();
-    this.pendingWake = { at, reason, stop: false };
+    this.setScheduled({ at, reason, prompt, holder: this.queryInstance });
     const when = `${formatDelay(delay)} (${formatClock(at)})`;
     const what = reason ? ` — ${reason}` : "";
     const next = prompt ? `\n\n> ${prompt.replace(/\n/g, "\n> ")}` : "";
@@ -1681,9 +1820,11 @@ export class ClaudeSession extends EventEmitter {
     this.restartForOptions();
   }
 
+  // Ends everything, the pending wake-up included.
   abort(): void {
     this.generation++;
     this.starting = null;
+    this.setScheduled(null);
     this.closeQuery();
   }
 
@@ -1712,7 +1853,7 @@ export class ClaudeSession extends EventEmitter {
   // it goes with the process, and so would every background task. The
   // session resumes on the next message. Null once cancelled, else why not.
   cancelWake(): string | null {
-    if (this.wakeAt === null) return "No wake-up to cancel";
+    if (this.scheduled === null) return "No wake-up to cancel";
     if (this.processing) return "Stop the running turn first";
     if (this.backgroundTasks.size > 0) {
       return "Stop its background tasks first: the wake-up ends only with the process they run in";
@@ -1722,7 +1863,7 @@ export class ClaudeSession extends EventEmitter {
   }
 
   get wake(): { at: number; reason: string } | null {
-    return this.wakeAt === null ? null : { at: this.wakeAt, reason: this.wakeReason };
+    return this.scheduled && { at: this.scheduled.at, reason: this.scheduled.reason };
   }
 
   getState(): SessionState {

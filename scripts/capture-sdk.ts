@@ -103,6 +103,9 @@ async function claudeDriver(
   const seen: string[] = [];
 
   const start = () => {
+    // A new process runs none of the last one's background tasks; it may
+    // only report them stopped (snap fixture claude/resume-orphan-bg).
+    bg = 0;
     let resolve: ((r: IteratorResult<UserMsg>) => void) | null = null;
     const buffer: UserMsg[] = [];
     let done = false;

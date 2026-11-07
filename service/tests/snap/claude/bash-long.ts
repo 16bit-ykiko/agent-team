@@ -6,7 +6,7 @@ export default fixture({
     "a long foreground command gets task_started with is_backgrounded=false and stays a plain tool call",
   steps: [
     send(
-      "Run `sleep 8; echo slow` with the Bash tool in the foreground (do NOT use run_in_background), wait for it, then reply with the single word done.",
+      "Run `python3 -c 'import time; time.sleep(8)'; echo slow` with the Bash tool in the foreground (do NOT use run_in_background), wait for it, then reply with the single word done.",
     ),
     wait("idle"),
   ],

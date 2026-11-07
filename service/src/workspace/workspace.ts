@@ -892,6 +892,11 @@ export class Workspace {
       const entry = this.agents.get(agentId);
       if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
     });
+    session.on("wake", () => {
+      const entry = this.agents.get(agentId);
+      if (entry) this.cb?.onAgentUpdated?.(this.id, this.agentInfo(entry), true);
+    });
+    session.on("wakeDue", () => this.dequeueNext(agentId));
     session.on("runState", (state: RunState) => {
       const entry = this.agents.get(agentId);
       if (entry) entry.runState = state;
@@ -1378,7 +1383,13 @@ export class Workspace {
     return "steered";
   }
 
-  private async dispatchPrompt(agent: AgentEntry, prompt: string, input?: Message): Promise<void> {
+  // `banner` opens the reply of a turn no message of the user's started.
+  private async dispatchPrompt(
+    agent: AgentEntry,
+    prompt: string,
+    input?: Message,
+    banner?: StreamEvent,
+  ): Promise<void> {
     agent.lastPrompt = prompt;
     if (input) {
       agent.input = { id: input.id, replies: [] };
@@ -1390,6 +1401,7 @@ export class Workspace {
     agent.currentMsg = this.makeAgentMsg(agent.info.id);
     agent.input?.replies.push(agent.currentMsg.id);
     this.pushMessage(agent.currentMsg);
+    if (banner) agent.handler(banner);
 
     try {
       await agent.session.send(prompt);
@@ -1421,7 +1433,19 @@ export class Workspace {
     const msg = this.messages.find(
       (m) => m.status === "queued" && m.queuedFor === agentId && !m.steering,
     );
-    if (!msg) return;
+    if (!msg) {
+      // After the queue, as the CLI orders its own wake-ups.
+      const wake = entry.session.wakeDue ? entry.session.takeWake?.() : null;
+      if (wake) {
+        void this.dispatchPrompt(entry, wake.prompt, undefined, {
+          kind: "notice",
+          level: "wakeup",
+          content:
+            "Scheduled wake-up fired — sent by the panel: the CLI process that held it is gone.",
+        });
+      }
+      return;
+    }
     const prompt = msg.queuedPrompt ?? msg.content;
     msg.status = "done";
     delete msg.queuedPrompt;

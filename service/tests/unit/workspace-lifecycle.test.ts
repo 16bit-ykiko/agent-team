@@ -30,6 +30,18 @@ class FakeSession extends EventEmitter implements HostSessionHandle {
   abort(): void {
     this.isRunning = false;
   }
+  // As ClaudeSession's: never while a turn runs.
+  due = false;
+  get wakeDue(): boolean {
+    return this.due && !this.isRunning;
+  }
+  pendingWake: { prompt: string; reason: string } | null = null;
+  takeWake(): { prompt: string; reason: string } | null {
+    const w = this.pendingWake;
+    this.pendingWake = null;
+    this.due = false;
+    return w;
+  }
   getState(): SessionState {
     return { sessionId: this.sessionId, config: this.config, usage: this.usage };
   }
@@ -195,5 +207,67 @@ describe("Workspace persistence", () => {
     expect(reply.status).toBe("done");
     expect(reply.content).toBe("half\n\n*\\[interrupted\\]*");
     expect(ws.messages.map((m) => m.id)).toEqual(["u", "r", "q1"]);
+  });
+});
+
+describe("Workspace wake-ups", () => {
+  it("sends a wake-up the backend let pass once the agent is free, after its queue", async () => {
+    const { ws, session } = makeWorkspace();
+    const finish = async () => {
+      session.isRunning = false;
+      session.emit("event", { kind: "result", content: "" });
+      await tick();
+    };
+    await ws.sendMessage("first");
+    await ws.sendMessage("queued");
+    session.pendingWake = { prompt: "Check the runs.", reason: "runs" };
+    session.due = true;
+    session.emit("wakeDue");
+    await tick();
+    expect(session.sent).toEqual(["first"]);
+    await finish();
+    expect(session.sent).toEqual(["first", "queued"]);
+    await finish();
+    expect(session.sent).toEqual(["first", "queued", "Check the runs."]);
+    const reply = ws.messages.at(-1)!;
+    expect(reply.kind).toBe("agent");
+    expect(reply.events?.[0]).toMatchObject({ kind: "notice", level: "wakeup" });
+    expect(ws.messages.filter((m) => m.kind === "user").map((m) => m.content)).toEqual([
+      "first",
+      "queued",
+    ]);
+  });
+
+  it("holds a due wake-up while the queue is paused, and sends it once the pause ends", async () => {
+    const { ws, agent, session } = makeWorkspace();
+    ws.pauseAgent(agent.id, Date.now() + 60_000);
+    session.pendingWake = { prompt: "Check the runs.", reason: "runs" };
+    session.due = true;
+    session.emit("wakeDue");
+    await tick();
+    expect(session.sent).toEqual([]);
+    ws.endPause(agent.id);
+    await tick();
+    expect(session.sent).toEqual(["Check the runs."]);
+  });
+
+  it("a pending rate-limit retry goes before a due wake-up", async () => {
+    const { ws, agent, session } = makeWorkspace();
+    await ws.sendMessage("first");
+    session.isRunning = false;
+    session.emit("event", { kind: "error", content: "Usage limit reached (session)." });
+    await tick();
+    ws.pauseAgent(agent.id, Date.now() - 1, true);
+    session.pendingWake = { prompt: "Check the runs.", reason: "runs" };
+    session.due = true;
+    session.emit("wakeDue");
+    await tick();
+    expect(session.sent).toEqual(["first"]);
+    expect(ws.retryLast(agent.id)).toBe(true);
+    expect(session.sent).toEqual(["first", "first"]);
+    session.isRunning = false;
+    session.emit("event", { kind: "result", content: "" });
+    await tick();
+    expect(session.sent).toEqual(["first", "first", "Check the runs."]);
   });
 });

@@ -54,7 +54,7 @@ A Cursor frame is tagged by where it came from: `delta` (onDelta), `step` (onSte
 - `api: "usage-limit"` points the backend at a local stand-in that refuses every request as a spent limit does: Claude's CLI through `ANTHROPIC_BASE_URL` (the five-hour limit), codex through a provider of its own (`usage_limit_reached` and the `x-codex-*` rate-limit headers). A limit recorded without spending any quota. Never hit a real limit on purpose.
 - Uses the user's own logins (Cursor: the key file, billed to the user's plan); default models `claude-sonnet-5` / `gpt-6-luna` / `cursor/composer-2.5` (`model:` in the fixture overrides, e.g. a bad model for a failure recording). Codex turns run at low effort on the standard tier, whatever `~/.codex/config.toml` says.
 - Recording cwd is `/tmp/sdk-capture`; `files` are written there first. Strings are trimmed to 400 chars and base64 payloads replaced, so recordings are safe to commit — still read the transcript before committing.
-- Prompts must force the exact behaviour ("foreground", "run_in_background set to true", "do not poll", "each as its own command").
+- Prompts must force the exact behaviour ("foreground", "run_in_background set to true", "do not poll", "each as its own command"). Claude CLI 2.1.319 refuses a foreground Bash command that starts with `sleep` ("Blocked: standalone sleep …"): a foreground wait is `python3 -c 'import time; time.sleep(90)'`; `sleep` with `run_in_background` still runs.
 
 ## Workflow for a stream bug
 
