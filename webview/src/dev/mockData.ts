@@ -11,7 +11,7 @@ const MOCK_AGENTS = [
   {
     id: "agent-1",
     name: "Coder",
-    model: "claude-fable-5-1",
+    model: "claude-fable-5-2",
     avatar: "🧑‍💻",
     color: "#528bff",
     isDefault: true,
@@ -184,7 +184,7 @@ export const MOCK_PRESETS: AgentPreset[] = [
 
 export const MOCK_MODELS: ModelOption[] = [
   { id: "claude-opus-5-5", label: "Opus 5.5", backend: "claude" },
-  { id: "claude-fable-5-1", label: "Fable 5.1", backend: "claude" },
+  { id: "claude-fable-5-2", label: "Fable 5.2", backend: "claude" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", backend: "codex" },
 ];
 
