@@ -319,6 +319,10 @@ export interface HostConfig {
   type: "local" | "remote";
 }
 
+// Set before the page reloads itself for a new build: nobody asked for that
+// load, so it is no sign that someone is at the screen.
+export const AUTO_RELOAD = "agentTeamAutoReload";
+
 export interface Workspace {
   id: string;
   name: string;
@@ -497,6 +501,9 @@ export function useServer() {
           if (buildId && buildIdRef.current && buildIdRef.current !== buildId) {
             // The server was redeployed while we were connected; pick up the
             // new bundle instead of running stale code against it.
+            try {
+              sessionStorage.setItem(AUTO_RELOAD, "1");
+            } catch {}
             window.location.reload();
             return;
           }

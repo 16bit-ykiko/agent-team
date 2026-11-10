@@ -269,3 +269,26 @@ describe("Issues from the server", () => {
     expect(rows()).toEqual(["10-07#1", "10-07#2"]);
   });
 });
+
+describe("the board over a session", () => {
+  it("leaves the session's new messages unread while it covers it", () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    const { sock, recv } = boot([lead, worker], [project()], "lead");
+    const marks = () => sock.frames().filter((f) => f.type === "mark_seen");
+    openBoard();
+    sock.sent = [];
+    recv({
+      type: "new_message",
+      workspaceId: "lead",
+      message: {
+        id: "n1",
+        kind: "agent",
+        agentId: "a-lead",
+        content: "x",
+        timestamp: NOW,
+        status: "done",
+      },
+    });
+    expect(marks()).toEqual([]);
+  });
+});

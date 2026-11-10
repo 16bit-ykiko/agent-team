@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from "react";
 import {
+  AUTO_RELOAD,
   useServer,
   type Message,
   type AgentInfo,
@@ -713,7 +714,8 @@ export function App() {
   // the reconnect), when a turn of it starts or ends, and on coming back.
   const marked = useRef("");
   useEffect(() => {
-    if (!activeWsId || !hasActive || !attended || !connected) {
+    // The board covers the session.
+    if (!activeWsId || !hasActive || !attended || !connected || boardProjectId) {
       marked.current = "";
       return;
     }
@@ -727,7 +729,7 @@ export function App() {
       delete next[activeWsId];
       return next;
     });
-  }, [activeWsId, hasActive, needsMark, activeBusy, attended, connected, markSeen]);
+  }, [activeWsId, hasActive, needsMark, activeBusy, attended, connected, boardProjectId, markSeen]);
 
   // A session another device showed is no longer "finished" here either.
   const seenTicks = useRef<Record<string, number>>({});
@@ -758,7 +760,8 @@ export function App() {
     for (const ws of workspaces) {
       const isRunning = runningSnapshot[ws.id];
       const wasRunning = prevRunningRef.current[ws.id];
-      if (wasRunning && !isRunning && ws.id !== activeWsId) {
+      // Nothing unread: another device was showing it.
+      if (wasRunning && !isRunning && ws.id !== activeWsId && (ws.unread ?? 0) > 0) {
         const lastAgent = [...ws.messages].reverse().find((m) => m.kind === "agent");
         updates[ws.id] = lastAgent?.status === "error" ? "failed" : "done";
       }
@@ -1825,15 +1828,29 @@ const PHONE = "(max-width: 768px), (max-height: 500px)";
 // The page is in front of the user: visible, focused, and touched in the
 // last few minutes (a desktop left on reads nothing for the phone).
 const IDLE_MS = 5 * 60_000;
-const INPUT_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
+const INPUT_EVENTS = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"] as const;
 function usePageAttended(): boolean {
   const [present, setPresent] = useState(
     () => document.visibilityState === "visible" && document.hasFocus(),
   );
-  const [active, setActive] = useState(true);
+  // A page that reloaded itself waits for a touch.
+  const [reloaded] = useState(() => {
+    try {
+      const yes = sessionStorage.getItem(AUTO_RELOAD) !== null;
+      sessionStorage.removeItem(AUTO_RELOAD);
+      return yes;
+    } catch {
+      return false;
+    }
+  });
+  const [active, setActive] = useState(!reloaded);
   useEffect(() => {
     let idle: ReturnType<typeof setTimeout> | undefined;
+    let last = 0;
     const touched = () => {
+      // Pointer moves come many a second; the timer restarts at most every 10s.
+      if (Date.now() - last < 10_000 && idle) return;
+      last = Date.now();
       setActive(true);
       clearTimeout(idle);
       idle = setTimeout(() => setActive(false), IDLE_MS);
@@ -1843,7 +1860,7 @@ function usePageAttended(): boolean {
       setPresent(now);
       if (now) touched();
     };
-    touched();
+    if (!reloaded) touched();
     document.addEventListener("visibilitychange", update);
     window.addEventListener("focus", update);
     window.addEventListener("blur", update);
@@ -1855,7 +1872,7 @@ function usePageAttended(): boolean {
       window.removeEventListener("blur", update);
       for (const e of INPUT_EVENTS) window.removeEventListener(e, touched);
     };
-  }, []);
+  }, [reloaded]);
   return present && active;
 }
 

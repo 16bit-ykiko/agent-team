@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } fr
 import { render, act, fireEvent } from "@testing-library/react";
 import { App } from "../src/App";
 import css from "../src/styles.css?raw";
-import type { AgentInfo, Message } from "../src/state/useServer";
+import { AUTO_RELOAD, type AgentInfo, type Message } from "../src/state/useServer";
 
 // The server end of the socket: the test opens it, feeds frames and reads
 // what the app sent.
@@ -736,6 +736,7 @@ describe("read state shared by every device", () => {
   it("keeps a finished mark across a reconnect", () => {
     const sock = boot([settled(1)], { others: ["w2"] });
     sock.receive({ type: "workspace_seen", workspaceId: "w2" });
+    sock.receive(newMessage("w2", "n1"));
     sock.receive({ type: "agent_busy", workspaceId: "w2", agentId: "a1" });
     sock.receive({ type: "agent_idle", workspaceId: "w2", agentId: "a1" });
     openSocket(reconnect(sock), [AGENT], ["w2"]);
@@ -761,11 +762,26 @@ describe("read state shared by every device", () => {
   });
 
   it("drops a session's finished mark once another device has shown it", () => {
-    const sock = boot([settled(1)], { others: ["w2"] });
-    sock.receive({ type: "agent_busy", workspaceId: "w2", agentId: "a1" });
-    sock.receive({ type: "agent_idle", workspaceId: "w2", agentId: "a1" });
+    const sock = boot([settled(1)], { others: ["w2", "w3"] });
+    sock.receive(newMessage("w2", "n1"));
+    for (const w of ["w2", "w3"]) {
+      sock.receive({ type: "agent_busy", workspaceId: w, agentId: "a1" });
+      sock.receive({ type: "agent_idle", workspaceId: w, agentId: "a1" });
+    }
     expect(row("w2").querySelector(".task-status")!.className).toContain("done");
+    // Nothing of w3 unread: a device was showing it as it ended.
+    expect(row("w3").querySelector(".task-status")!.className).not.toContain("done");
     sock.receive({ type: "workspace_seen", workspaceId: "w2" });
     expect(row("w2").querySelector(".task-status")!.className).not.toContain("done");
+  });
+
+  it("reads nothing after reloading itself for a new build until someone touches the page", () => {
+    sessionStorage.setItem(AUTO_RELOAD, "1");
+    const sock = boot([settled(1)]);
+    expect(marks(sock)).toEqual([]);
+    act(() => {
+      window.dispatchEvent(new Event("keydown"));
+    });
+    expect(marks(sock)).toEqual(["w1"]);
   });
 });
