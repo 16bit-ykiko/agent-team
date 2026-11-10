@@ -696,6 +696,70 @@ describe("read state shared by every device", () => {
     expect(row("w2").querySelector(".unread-badge")).toBeNull();
   });
 
+  const reconnect = (sock: FakeSocket) => {
+    sock.drop();
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+    });
+    return FakeSocket.instances.at(-1)!;
+  };
+
+  it("marks again after a reconnect when a mark went into a dead socket", () => {
+    const sock = boot([settled(1)]);
+    setVisibility("hidden");
+    sock.receive(newMessage("w1", "n1"));
+    sock.close();
+    setVisibility("visible");
+    const next = reconnect(sock);
+    act(() => next.open());
+    next.receive({
+      type: "init",
+      workspaces: [
+        {
+          id: "w1",
+          name: "w",
+          project: "p",
+          hostId: "local",
+          cwd: "/tmp",
+          agents: [AGENT],
+          messages: [],
+          createdAt: 1,
+          unread: 1,
+        },
+      ],
+      config: { presets: [], models: [], commands: [], hosts: {} },
+      hosts: [],
+    });
+    expect(marks(next)).toContain("w1");
+  });
+
+  it("keeps a finished mark across a reconnect", () => {
+    const sock = boot([settled(1)], { others: ["w2"] });
+    sock.receive({ type: "workspace_seen", workspaceId: "w2" });
+    sock.receive({ type: "agent_busy", workspaceId: "w2", agentId: "a1" });
+    sock.receive({ type: "agent_idle", workspaceId: "w2", agentId: "a1" });
+    openSocket(reconnect(sock), [AGENT], ["w2"]);
+    expect(row("w2").querySelector(".task-status")!.className).toContain("done");
+  });
+
+  it("reads nothing from a page left untouched for minutes", () => {
+    boot([settled(1)]);
+    act(() => {
+      vi.advanceTimersByTime(5 * 60_000);
+    });
+    // The fake server never answers the liveness probe: talk to the socket
+    // the app has now.
+    const sock = FakeSocket.instances.at(-1)!;
+    if (sock.readyState !== FakeSocket.OPEN) openSocket(sock, [AGENT]);
+    sock.sent = [];
+    sock.receive(newMessage("w1", "n1"));
+    expect(marks(sock)).toEqual([]);
+    act(() => {
+      window.dispatchEvent(new Event("pointerdown"));
+    });
+    expect(marks(sock)).toEqual(["w1"]);
+  });
+
   it("drops a session's finished mark once another device has shown it", () => {
     const sock = boot([settled(1)], { others: ["w2"] });
     sock.receive({ type: "agent_busy", workspaceId: "w2", agentId: "a1" });

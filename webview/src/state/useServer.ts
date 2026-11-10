@@ -507,15 +507,16 @@ export function useServer() {
             const prevMap = new Map(prev.map((w) => [w.id, w]));
             return incoming.map((w) => {
               const existing = prevMap.get(w.id);
+              const kept = existing?.seenTick ? { ...w, seenTick: existing.seenTick } : w;
               if (existing?.messagesLoaded) {
                 return {
-                  ...w,
+                  ...kept,
                   messages: existing.messages,
                   messagesLoaded: true,
                   hasMore: existing.hasMore,
                 };
               }
-              return w;
+              return kept;
             });
           });
           const config = msg.config as {

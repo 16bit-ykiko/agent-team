@@ -707,9 +707,19 @@ export function App() {
   const attended = usePageAttended();
   const hasActive = !!activeWs;
   const activeBusy = activeWs?.agents.some((a) => a.busy) ?? false;
-  const activeMessages = activeWs?.messages.length;
+  const needsMark = (activeWs?.unread ?? 0) > 0;
+  // What was last marked: the session and whether it ran. Marked again when
+  // it has unread messages (a mark lost with a dead socket comes back after
+  // the reconnect), when a turn of it starts or ends, and on coming back.
+  const marked = useRef("");
   useEffect(() => {
-    if (!activeWsId || !hasActive || !attended) return;
+    if (!activeWsId || !hasActive || !attended || !connected) {
+      marked.current = "";
+      return;
+    }
+    const key = `${activeWsId} ${activeBusy}`;
+    if (!needsMark && key === marked.current) return;
+    marked.current = key;
     markSeen(activeWsId);
     setFinishedStatus((prev) => {
       if (!(activeWsId in prev)) return prev;
@@ -717,7 +727,7 @@ export function App() {
       delete next[activeWsId];
       return next;
     });
-  }, [activeWsId, hasActive, activeMessages, activeBusy, attended, markSeen]);
+  }, [activeWsId, hasActive, needsMark, activeBusy, attended, connected, markSeen]);
 
   // A session another device showed is no longer "finished" here either.
   const seenTicks = useRef<Record<string, number>>({});
@@ -1812,22 +1822,41 @@ const WORKSPACE_ROOT: FileRef = { path: "." };
 // Where side panels become full-screen sheets (styles.css).
 const PHONE = "(max-width: 768px), (max-height: 500px)";
 
-// The page is in front of the user: visible and focused.
+// The page is in front of the user: visible, focused, and touched in the
+// last few minutes (a desktop left on reads nothing for the phone).
+const IDLE_MS = 5 * 60_000;
+const INPUT_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
 function usePageAttended(): boolean {
-  const read = () => document.visibilityState === "visible" && document.hasFocus();
-  const [attended, setAttended] = useState(read);
+  const [present, setPresent] = useState(
+    () => document.visibilityState === "visible" && document.hasFocus(),
+  );
+  const [active, setActive] = useState(true);
   useEffect(() => {
-    const update = () => setAttended(read());
+    let idle: ReturnType<typeof setTimeout> | undefined;
+    const touched = () => {
+      setActive(true);
+      clearTimeout(idle);
+      idle = setTimeout(() => setActive(false), IDLE_MS);
+    };
+    const update = () => {
+      const now = document.visibilityState === "visible" && document.hasFocus();
+      setPresent(now);
+      if (now) touched();
+    };
+    touched();
     document.addEventListener("visibilitychange", update);
     window.addEventListener("focus", update);
     window.addEventListener("blur", update);
+    for (const e of INPUT_EVENTS) window.addEventListener(e, touched, { passive: true });
     return () => {
+      clearTimeout(idle);
       document.removeEventListener("visibilitychange", update);
       window.removeEventListener("focus", update);
       window.removeEventListener("blur", update);
+      for (const e of INPUT_EVENTS) window.removeEventListener(e, touched);
     };
   }, []);
-  return attended;
+  return present && active;
 }
 
 function readSetting(key: string): string | null {
