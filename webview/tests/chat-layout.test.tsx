@@ -271,6 +271,9 @@ describe("the transcript's rules", () => {
     expect(rule(".event-summary-line").body).not.toMatch(/display:\s*none/);
     expect(rule(".subagent-label").body).toMatch(/text-overflow:\s*ellipsis/);
     expect(rule(".subagent-label").body).not.toMatch(/flex-shrink:\s*0/);
+    // Shrinking goes by each item's natural width: a long description sized
+    // that way cut a short type to "s…" before it gave way itself.
+    expect(rule(".subagent-desc").body).toMatch(/flex:\s*1 1 0;/);
   });
 
   it("float a code block's Copy over its corner, taking no room from the code", () => {
