@@ -459,6 +459,18 @@ export class Server {
         return;
       }
 
+      // A client showed the session: its messages are read on every device.
+      case "mark_seen": {
+        const workspace = this.workspaces.get(msg.workspaceId as string);
+        if (!workspace) return;
+        if (workspace.unseen) {
+          workspace.unseen = 0;
+          this.persistWorkspace(workspace.id);
+        }
+        this.broadcastUI({ type: "workspace_seen", workspaceId: workspace.id });
+        return;
+      }
+
       case "set_default_account":
         this.setDefaultAccount(ws, (msg.account as string | null) ?? null);
         return;

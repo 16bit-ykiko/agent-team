@@ -133,6 +133,7 @@ type = "local"
     agents: [],
     createdAt: 1,
     messages: HISTORY,
+    unread: 3,
   };
   saveWorkspace(base, state);
   saveIndex(base, ["ws-h"]);
@@ -351,6 +352,27 @@ describe("server websocket", () => {
     const errors = [(await next("error")).message, (await next("error")).message];
     ws.close();
     expect(errors).toEqual(["Agent not found: first", "Agent not found: second"]);
+  });
+
+  it("reads a session on every client once one of them shows it", async () => {
+    const phone = await connect();
+    const desk = await connect();
+    const unread = (init: Record<string, unknown>) =>
+      (init.workspaces as Array<{ id: string; unread: number }>).find((w) => w.id === "ws-h")!
+        .unread;
+    expect(unread(await phone.next("init"))).toBeGreaterThan(0);
+    await desk.next("init");
+    phone.ws.send(JSON.stringify({ type: "mark_seen", workspaceId: "ws-h" }));
+    expect(await desk.next("workspace_seen")).toEqual({
+      type: "workspace_seen",
+      workspaceId: "ws-h",
+    });
+    await phone.next("workspace_seen");
+    phone.ws.close();
+    desk.ws.close();
+    const later = await connect();
+    expect(unread(await later.next("init"))).toBe(0);
+    later.ws.close();
   });
 
   it("stops turns without a word and says when there is no wake-up to cancel", async () => {

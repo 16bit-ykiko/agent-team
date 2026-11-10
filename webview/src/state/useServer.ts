@@ -335,6 +335,10 @@ export interface Workspace {
   projectLink?: ProjectLink;
   // A worker stopped on the user's reply (its task asked them something).
   awaitsUser?: boolean;
+  // Messages since any client last showed the session (the server counts).
+  unread?: number;
+  // Client only: bumped each time a client marks the session seen.
+  seenTick?: number;
   hasMore?: boolean;
   messagesLoaded?: boolean;
   // An older page has been requested and not yet arrived.
@@ -549,8 +553,19 @@ export function useServer() {
                     messagesLoaded: w.messagesLoaded,
                     hasMore: w.hasMore,
                     loadingOlder: w.loadingOlder,
+                    seenTick: w.seenTick,
                   }
                 : w,
+            ),
+          );
+          break;
+        }
+
+        case "workspace_seen": {
+          const wsId = msg.workspaceId as string;
+          setWorkspaces((prev) =>
+            prev.map((w) =>
+              w.id === wsId ? { ...w, unread: 0, seenTick: (w.seenTick ?? 0) + 1 } : w,
             ),
           );
           break;
@@ -691,7 +706,12 @@ export function useServer() {
           setWorkspaces((prev) =>
             prev.map((w) =>
               w.id === wsId
-                ? { ...w, messages: [...w.messages, message], lastMessageAt: message.timestamp }
+                ? {
+                    ...w,
+                    messages: [...w.messages, message],
+                    lastMessageAt: message.timestamp,
+                    unread: (w.unread ?? 0) + 1,
+                  }
                 : w,
             ),
           );
@@ -1212,6 +1232,7 @@ export function useServer() {
       (wsId: string, agentId?: string) => send({ type: "interrupt", workspaceId: wsId, agentId }),
       [send],
     ),
+    markSeen: useCallback((wsId: string) => send({ type: "mark_seen", workspaceId: wsId }), [send]),
     cancelWakeup: useCallback(
       (wsId: string, agentId: string) =>
         send({ type: "cancel_wakeup", workspaceId: wsId, agentId }),

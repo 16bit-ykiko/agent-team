@@ -38,6 +38,23 @@ const subagentStart = (taskId: string): Partial<StreamEvent> => ({
   subagent: { taskId, description: "desc", status: "running", events: [] },
 });
 
+describe("unread messages", () => {
+  it("counts every new message until a client shows the session, across a restart", () => {
+    const { ws, emit, host } = makeWorkspace();
+    ws.unseen = 0;
+    ws.postSystemMessage("note");
+    emit({ kind: "text_delta", content: "reply" });
+    emit({ kind: "text_delta", content: " grows" });
+    expect(ws.getInfo(false).unread).toBe(2);
+    const registry = new HostRegistry();
+    registry.register(host);
+    const back = Workspace.fromState(ws.getState(), registry);
+    expect(back.getInfo(false).unread).toBe(2);
+    ws.unseen = 0;
+    expect(ws.getState()).not.toHaveProperty("unread");
+  });
+});
+
 describe("Workspace event aggregation", () => {
   it("accumulates text deltas into message content", () => {
     const { emit, agentMsgs } = makeWorkspace();

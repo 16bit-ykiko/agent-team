@@ -647,3 +647,61 @@ describe("files panel", () => {
     expect(panel()!.querySelector(".dir-view")).not.toBeNull();
   });
 });
+
+describe("read state shared by every device", () => {
+  // jsdom's document never has focus.
+  let focused: MockInstance<() => boolean>;
+  beforeEach(() => {
+    focused = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  });
+  const row = (name: string) =>
+    [...document.querySelectorAll(".task-item")].find(
+      (el) => el.querySelector(".task-name-text")!.firstChild!.textContent === name,
+    )!;
+  const marks = (sock: FakeSocket) =>
+    sock
+      .frames()
+      .filter((f) => f.type === "mark_seen")
+      .map((f) => f.workspaceId);
+  const newMessage = (workspaceId: string, id: string): unknown => ({
+    type: "new_message",
+    workspaceId,
+    message: { ...settled(9), id },
+  });
+
+  it("marks the session on screen read, but not from a page in the background", () => {
+    const sock = boot([settled(1)], { others: ["w2"] });
+    expect(marks(sock)).toContain("w1");
+    sock.sent = [];
+    setVisibility("hidden");
+    sock.receive(newMessage("w1", "n1"));
+    expect(marks(sock)).toEqual([]);
+    setVisibility("visible");
+    expect(marks(sock)).toEqual(["w1"]);
+    sock.sent = [];
+    focused.mockReturnValue(false);
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    sock.receive(newMessage("w1", "n2"));
+    expect(marks(sock)).toEqual([]);
+  });
+
+  it("counts a session's new messages until any device shows it", () => {
+    const sock = boot([settled(1)], { others: ["w2"] });
+    sock.receive(newMessage("w2", "n1"));
+    sock.receive(newMessage("w2", "n2"));
+    expect(row("w2").querySelector(".unread-badge")!.textContent).toBe("2");
+    sock.receive({ type: "workspace_seen", workspaceId: "w2" });
+    expect(row("w2").querySelector(".unread-badge")).toBeNull();
+  });
+
+  it("drops a session's finished mark once another device has shown it", () => {
+    const sock = boot([settled(1)], { others: ["w2"] });
+    sock.receive({ type: "agent_busy", workspaceId: "w2", agentId: "a1" });
+    sock.receive({ type: "agent_idle", workspaceId: "w2", agentId: "a1" });
+    expect(row("w2").querySelector(".task-status")!.className).toContain("done");
+    sock.receive({ type: "workspace_seen", workspaceId: "w2" });
+    expect(row("w2").querySelector(".task-status")!.className).not.toContain("done");
+  });
+});

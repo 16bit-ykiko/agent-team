@@ -139,6 +139,7 @@ export function App() {
     abort,
     interrupt,
     cancelWakeup,
+    markSeen,
     clearContext,
     loadMessages,
     loadMessageDetails,
@@ -391,7 +392,6 @@ export function App() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [highlightMsgId, setHighlightMsgId] = useState<string | null>(null);
-  const seenCountRef = useRef<Record<string, number>>({});
   const prevRunningRef = useRef<Record<string, boolean>>({});
   const [finishedStatus, setFinishedStatus] = useState<Record<string, "done" | "failed">>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -530,7 +530,6 @@ export function App() {
   const workspaceIds = useMemo(() => new Set(workspaces.map((w) => w.id)), [workspaces]);
   // Sidebar folder groups; explicit expand/collapse choices persist.
   const wsGroups = useMemo(() => groupWorkspaces(workspaces, projects), [workspaces, projects]);
-  const [seenTick, setSeenTick] = useState(0);
   const [groupOverrides, setGroupOverrides] = useState<Record<string, boolean>>(() => {
     try {
       return JSON.parse(localStorage.getItem("wsGroupOverrides") ?? "{}") as Record<
@@ -703,27 +702,40 @@ export function App() {
     [boardProjectId, archiveProject],
   );
 
+  // The session on screen is read on every device, also when a turn of it
+  // ends; a page in the background or out of focus reads nothing.
+  const attended = usePageAttended();
+  const hasActive = !!activeWs;
+  const activeBusy = activeWs?.agents.some((a) => a.busy) ?? false;
+  const activeMessages = activeWs?.messages.length;
   useEffect(() => {
-    for (const ws of workspaces) {
-      if (!(ws.id in seenCountRef.current)) {
-        seenCountRef.current[ws.id] = ws.messages.length;
-      }
-    }
-  }, [workspaces]);
+    if (!activeWsId || !hasActive || !attended) return;
+    markSeen(activeWsId);
+    setFinishedStatus((prev) => {
+      if (!(activeWsId in prev)) return prev;
+      const next = { ...prev };
+      delete next[activeWsId];
+      return next;
+    });
+  }, [activeWsId, hasActive, activeMessages, activeBusy, attended, markSeen]);
 
+  // A session another device showed is no longer "finished" here either.
+  const seenTicks = useRef<Record<string, number>>({});
   useEffect(() => {
-    if (activeWsId && activeWs) {
-      seenCountRef.current[activeWsId] = activeWs.messages.length;
-      setSeenTick((t) => t + 1);
-      setFinishedStatus((prev) => {
-        if (!(activeWsId in prev)) return prev;
-        const next = { ...prev };
-        delete next[activeWsId];
-        return next;
-      });
+    const seen: string[] = [];
+    for (const ws of workspaces) {
+      const tick = ws.seenTick ?? 0;
+      if (tick !== (seenTicks.current[ws.id] ?? 0)) seen.push(ws.id);
+      seenTicks.current[ws.id] = tick;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on id + message count; activeWs changes identity on every stream update and would re-tick on each
-  }, [activeWsId, activeWs?.messages.length]);
+    if (seen.length === 0) return;
+    setFinishedStatus((prev) => {
+      if (!seen.some((id) => id in prev)) return prev;
+      const next = { ...prev };
+      for (const id of seen) delete next[id];
+      return next;
+    });
+  }, [workspaces]);
 
   const runningSnapshot = useMemo(
     () =>
@@ -1283,7 +1295,6 @@ export function App() {
             activeWsId={activeWsId}
             connected={connected}
             groupOverrides={groupOverrides}
-            seenCounts={seenTick >= 0 ? seenCountRef.current : {}}
             finishedStatus={finishedStatus}
             searchQuery={searchQuery}
             searchHits={searchHits}
@@ -1800,6 +1811,24 @@ type PanelId = "agents" | "files";
 const WORKSPACE_ROOT: FileRef = { path: "." };
 // Where side panels become full-screen sheets (styles.css).
 const PHONE = "(max-width: 768px), (max-height: 500px)";
+
+// The page is in front of the user: visible and focused.
+function usePageAttended(): boolean {
+  const read = () => document.visibilityState === "visible" && document.hasFocus();
+  const [attended, setAttended] = useState(read);
+  useEffect(() => {
+    const update = () => setAttended(read());
+    document.addEventListener("visibilitychange", update);
+    window.addEventListener("focus", update);
+    window.addEventListener("blur", update);
+    return () => {
+      document.removeEventListener("visibilitychange", update);
+      window.removeEventListener("focus", update);
+      window.removeEventListener("blur", update);
+    };
+  }, []);
+  return attended;
+}
 
 function readSetting(key: string): string | null {
   try {

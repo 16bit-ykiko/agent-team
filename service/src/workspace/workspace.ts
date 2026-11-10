@@ -156,6 +156,9 @@ export interface WorkspaceInfo {
   // A worker stopped on the user (project/manager.ts awaitsUser); the server
   // adds it to the list it sends.
   awaitsUser?: boolean;
+  // Messages since any client last showed the session: one count for every
+  // device, so a reply read on the phone is read on the desktop too.
+  unread: number;
 }
 
 export interface WorkspaceState {
@@ -172,6 +175,7 @@ export interface WorkspaceState {
   lastActivityAt?: number;
   archivedAt?: number | null;
   projectLink?: ProjectLink;
+  unread?: number;
 }
 
 type CommandOutcome = string | { forward: string } | null;
@@ -328,6 +332,8 @@ export class Workspace {
   lastActivityAt: number;
   archivedAt: number | null = null;
   projectLink?: ProjectLink;
+  // Messages since a client last showed it (WorkspaceInfo.unread).
+  unseen = 0;
   // False once the history has been unloaded (archived workspace). Every
   // path that touches `messages` must call ensureLoaded via the server first.
   messagesLoaded = true;
@@ -499,6 +505,7 @@ export class Workspace {
   private pushMessage(msg: Message): void {
     this.messages.push(msg);
     if (msg.timestamp > this.lastActivityAt) this.lastActivityAt = msg.timestamp;
+    this.unseen++;
     this.cb?.onNewMessage(this.id, msg);
   }
 
@@ -1709,6 +1716,7 @@ export class Workspace {
       lastMessageAt: this.lastActivityAt,
       archivedAt: this.archivedAt,
       ...(this.projectLink && { projectLink: this.projectLink }),
+      unread: this.unseen,
     };
   }
 
@@ -1741,6 +1749,7 @@ export class Workspace {
       lastActivityAt: this.lastActivityAt,
       archivedAt: this.archivedAt,
       ...(this.projectLink && { projectLink: this.projectLink }),
+      ...(this.unseen && { unread: this.unseen }),
     };
   }
 
@@ -1762,6 +1771,7 @@ export class Workspace {
     ws.createdAt = state.createdAt;
     ws.archivedAt = state.archivedAt ?? null;
     ws.projectLink = state.projectLink;
+    ws.unseen = state.unread ?? 0;
     // No messages: the history could not be read, and a save must not
     // write an empty one over it.
     ws.messagesLoaded = state.messages !== undefined;

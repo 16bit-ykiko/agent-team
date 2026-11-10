@@ -47,15 +47,6 @@ const worker = ws("w1", {
   lastMessageAt: NOW - 1000,
 });
 
-const msgOf = (id: string): Message => ({
-  id,
-  kind: "agent",
-  agentId: "a",
-  content: "x",
-  timestamp: NOW,
-  status: "done",
-});
-
 describe("project groups", () => {
   it("fold a project's sessions under it wherever they work, lead first, projects on top", () => {
     const groups = groupWorkspaces([ws("other", { lastMessageAt: NOW }), worker, lead], [project]);
@@ -70,7 +61,6 @@ describe("project groups", () => {
     activeWsId: "lead",
     connected: true,
     groupOverrides: {},
-    seenCounts: {},
     finishedStatus: {},
     searchQuery: "",
     searchHits: null,
@@ -232,7 +222,7 @@ describe("project groups", () => {
     const props = {
       ...sidebarProps(),
       activeWsId: "w1",
-      workspaces: [{ ...lead, messages: [msgOf("a"), msgOf("b")] }, worker],
+      workspaces: [{ ...lead, unread: 2 }, worker],
     };
     const { container } = render(<Sidebar {...props} />);
     const header = container.querySelector(".ws-group-project")!;
@@ -434,7 +424,6 @@ describe("archives in the sidebar", () => {
     activeWsId: "lead",
     connected: true,
     groupOverrides: {},
-    seenCounts: {},
     finishedStatus: {},
     searchQuery: "",
     searchHits: null,

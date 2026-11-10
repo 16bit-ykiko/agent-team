@@ -122,7 +122,6 @@ export interface SidebarProps {
   activeWsId: string | null;
   connected: boolean;
   groupOverrides: Record<string, boolean>;
-  seenCounts: Record<string, number>;
   finishedStatus: Record<string, "done" | "failed">;
   searchQuery: string;
   searchHits: SearchHit[] | null;
@@ -276,7 +275,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
       : undefined;
     const items = g.workspaces.filter((w) => w !== lead);
     const past = g.archived.filter((w) => w !== lead);
-    const leadUnread = lead ? lead.messages.length - (p.seenCounts[lead.id] ?? 0) : 0;
+    const leadUnread = lead?.unread ?? 0;
     const hasContent = items.length > 0 || past.length > 0;
     // A project of archived sessions only (its lead archived too) has no live one.
     const git = (g.workspaces[0] ?? g.archived[0])?.git;
@@ -382,7 +381,7 @@ export const Sidebar = memo(function Sidebar(p: SidebarProps) {
           <div className="ws-group-items">
             {items.map((ws) => {
               const running = ws.agents.some(isAgentActive);
-              const unread = ws.messages.length - (p.seenCounts[ws.id] ?? 0);
+              const unread = ws.unread ?? 0;
               const awaits = ws.awaitsUser && !running && ws.id !== p.activeWsId;
               return (
                 <div
