@@ -328,6 +328,17 @@ describe("html in agent markdown", () => {
     );
   });
 
+  it("bolds **…** around quotes, brackets and code in Chinese prose", () => {
+    const html = (md: string) => render(<MdBlock>{md}</MdBlock>).container.innerHTML;
+    expect(html("状态是**“done”**。")).toBe("<p>状态是<strong>“done”</strong>。</p>");
+    expect(html('看**"x"**和**「y」**')).toBe(
+      '<p>看<strong>"x"</strong>和<strong>「y」</strong></p>',
+    );
+    expect(html("说明**`code`**结束")).toBe("<p>说明<strong><code>code</code></strong>结束</p>");
+    expect(html("**注意：**后面")).toBe("<p><strong>注意：</strong>后面</p>");
+    expect(html("这是*“斜体”*字")).toBe("<p>这是<em>“斜体”</em>字</p>");
+  });
+
   it("keeps a reply with a fold in one block while it streams", () => {
     const text = "intro\n\n<details><summary>S</summary>\n\n- x\n\n</details>\n\nend";
     expect(markdownBlocks(text)).toEqual([text]);

@@ -12,6 +12,7 @@ import {
 } from "react";
 import Markdown, { defaultUrlTransform, type ExtraProps, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkCjkFriendly from "remark-cjk-friendly";
 import { rehypeCodeHighlight } from "./highlight";
 import { prepareSource } from "./mdSource";
 import { FILE_EXT, FILE_NAME, FileOpenContext, linkFileRef, parseFileRef } from "./fileRef";
@@ -377,7 +378,14 @@ function remarkDetails() {
 }
 
 const mdComponents = { pre: CodeBlock, table: ScrollTable, a: Link, code: InlineCode };
-const mdRemarkPlugins: Options["remarkPlugins"] = [remarkGfm, remarkHtmlBreaks, remarkDetails];
+// CommonMark opens **…** only where the ** is not stuck between a letter
+// and punctuation: in Chinese prose ("状态是**“done”**。") it stayed literal.
+const mdRemarkPlugins: Options["remarkPlugins"] = [
+  remarkGfm,
+  remarkCjkFriendly,
+  remarkHtmlBreaks,
+  remarkDetails,
+];
 const mdRehypePlugins: Options["rehypePlugins"] = [rehypeCodeHighlight];
 
 interface MathPlugins {
