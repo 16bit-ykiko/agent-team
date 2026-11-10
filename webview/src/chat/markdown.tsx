@@ -331,7 +331,9 @@ function remarkHtmlBreaks() {
 // HTML block can hold several tags (folds back to back); a tag inside a
 // sentence is text.
 const DETAILS_TAG = /<details(\s+open)?\s*>|<\/details\s*>|<summary>([\s\S]*?)<\/summary>/gi;
-const DETAILS_OPENS = /^<details[\s>]/i;
+// An opener stands alone on its line or right before its summary: "<details> is
+// an HTML element" is prose.
+const DETAILS_OPENS = /^<details(?:\s+open)?\s*>(?:[ \t]*(?:\n|$)|\s*<summary>)/i;
 const DETAILS_GOES_ON = /^(?:<\/details\s*>|<summary>)/i;
 const BLOCK_CONTAINERS = new Set(["root", "blockquote", "listItem", "footnoteDefinition"]);
 function remarkDetails() {

@@ -343,6 +343,9 @@ describe("html in agent markdown", () => {
     const html = (md: string) => render(<MdBlock>{md}</MdBlock>).container.innerHTML;
     // In a sentence the tag is text, in a reply and in a board row alike.
     expect(html("use <details> here")).toBe("<p>use &lt;details&gt; here</p>");
+    expect(html("<details> is an HTML element.\n\n## Next")).toBe(
+      "&lt;details&gt; is an HTML element.\n<h2>Next</h2>",
+    );
     expect(render(<InlineMd>{"Render <details> folds"}</InlineMd>).container.textContent).toBe(
       "Render <details> folds",
     );
