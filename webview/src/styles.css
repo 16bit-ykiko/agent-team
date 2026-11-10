@@ -1291,6 +1291,16 @@ pre .copy-btn:hover,
 .message-content li {
   margin: 2px 0;
 }
+.message-content details {
+  margin: 6px 0;
+}
+.message-content summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.message-content details[open] > summary {
+  margin-bottom: 4px;
+}
 /* The global reset zeroes list padding; every other markdown container
    (tool bodies, thinking, subagent prompts/summaries, banners) gets it back
    here, or the markers hang outside the box over the step border. */

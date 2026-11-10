@@ -301,6 +301,40 @@ describe("html in agent markdown", () => {
     expect(html("a <kbd>Ctrl</kbd>")).toBe("<p>a &lt;kbd&gt;Ctrl&lt;/kbd&gt;</p>");
   });
 
+  it("folds <details><summary> around the markdown between the tags, however they are laid out", () => {
+    const html = (md: string) => render(<MdBlock>{md}</MdBlock>).container.innerHTML;
+    expect(
+      html("Done.\n\n<details><summary>Facts so far</summary>\n\n- **a**: `b`\n- c\n\n</details>"),
+    ).toBe(
+      "<p>Done.</p>\n<details><summary>Facts so far</summary>" +
+        "<ul>\n<li><strong>a</strong>: <code>b</code></li>\n<li>c</li>\n</ul></details>",
+    );
+    expect(html("<details>\n<summary>Two lines</summary>\n\nbody *x*\n\n</details>\nafter")).toBe(
+      "<details><summary>Two lines</summary><p>body <em>x</em></p></details>\n<p>after</p>",
+    );
+    // One HTML block, no blank line inside: its body stays text.
+    expect(html("<details>\n<summary>Tight</summary>\nbody *x*\n</details>")).toBe(
+      "<details><summary>Tight</summary><p>body *x*</p></details>",
+    );
+    expect(html("<details open>\n\nno summary\n\n</details>")).toBe(
+      '<details open=""><summary>Details</summary><p>no summary</p></details>',
+    );
+    // Still streaming: the fold holds everything so far.
+    expect(html("<details><summary>S</summary>\n\nfirst")).toBe(
+      "<details><summary>S</summary><p>first</p></details>",
+    );
+    expect(html("a </details> b\n\n</details>")).toBe(
+      "<p>a &lt;/details&gt; b</p>\n&lt;/details&gt;",
+    );
+  });
+
+  it("keeps a reply with a fold in one block while it streams", () => {
+    const text = "intro\n\n<details><summary>S</summary>\n\n- x\n\n</details>\n\nend";
+    expect(markdownBlocks(text)).toEqual([text]);
+    const { container } = render(<StreamingMdBlock>{text}</StreamingMdBlock>);
+    expect(container.querySelector("details ul li")!.textContent).toBe("x");
+  });
+
   it("puts no stray attribute on a table or a code block", () => {
     const { container } = render(<MdBlock>{"| a |\n|---|\n| b |\n\n```\nx\n```"}</MdBlock>);
     expect(container.querySelector("table")!.getAttributeNames()).toEqual([]);

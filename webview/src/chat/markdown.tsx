@@ -76,6 +76,7 @@ interface MdNode {
   value?: string;
   url?: string;
   children?: MdNode[];
+  data?: { hName?: string; hProperties?: Record<string, unknown> };
 }
 
 interface Found {
@@ -323,8 +324,60 @@ function remarkHtmlBreaks() {
   return walk;
 }
 
+// Agents fold long detail into <details><summary>…</summary> … </details>.
+// The tags arrive as HTML nodes around the markdown between them; they
+// become the two elements, and no other HTML gets through.
+const DETAILS_OPEN = /^<details(\s+open)?\s*>\s*(?:<summary>([\s\S]*?)<\/summary>)?([\s\S]*)$/i;
+const DETAILS_CLOSE = /^<\/details\s*>([\s\S]*)$/i;
+function remarkDetails() {
+  const prose = (value: string): MdNode[] =>
+    value.trim() ? [{ type: "paragraph", children: [{ type: "text", value: value.trim() }] }] : [];
+  const walk = (node: MdNode) => {
+    if (!node.children) return;
+    const top: MdNode[] = [];
+    const outer: MdNode[][] = [];
+    let into = top;
+    const close = (after: string) => {
+      into = outer.pop()!;
+      into.push(...prose(after));
+    };
+    for (const child of node.children) {
+      const html = child.type === "html" ? (child.value?.trim() ?? "") : null;
+      const open = html !== null ? DETAILS_OPEN.exec(html) : null;
+      if (open) {
+        const summary: MdNode = {
+          type: "detailsSummary",
+          data: { hName: "summary" },
+          children: [{ type: "text", value: open[2]?.trim() || "Details" }],
+        };
+        const details: MdNode = {
+          type: "details",
+          data: { hName: "details", hProperties: open[1] ? { open: true } : {} },
+          children: [summary],
+        };
+        into.push(details);
+        outer.push(into);
+        into = details.children!;
+        const [body, ...after] = open[3].split(/<\/details\s*>/i);
+        into.push(...prose(body));
+        if (after.length) close(after.join(""));
+        continue;
+      }
+      const end = html !== null && outer.length ? DETAILS_CLOSE.exec(html) : null;
+      if (end) {
+        close(end[1]);
+        continue;
+      }
+      walk(child);
+      into.push(child);
+    }
+    node.children = top;
+  };
+  return walk;
+}
+
 const mdComponents = { pre: CodeBlock, table: ScrollTable, a: Link, code: InlineCode };
-const mdRemarkPlugins: Options["remarkPlugins"] = [remarkGfm, remarkHtmlBreaks];
+const mdRemarkPlugins: Options["remarkPlugins"] = [remarkGfm, remarkHtmlBreaks, remarkDetails];
 const mdRehypePlugins: Options["rehypePlugins"] = [rehypeCodeHighlight];
 
 interface MathPlugins {
@@ -483,11 +536,13 @@ const CONTINUES = /^(\s|[-*+](\s|$)|\d{1,9}[.)](\s|$))/;
 // Link and footnote definitions resolve across the whole text, from inside
 // quotes and list items too; HTML blocks of CommonMark types 1-5 (<pre>,
 // <script>, <style>, <textarea>, comments, <?, <!X, CDATA) run across blank
-// lines. Text with either is parsed whole.
+// lines; a <details> fold holds the blocks up to its </details>. Text with
+// any of these is parsed whole.
 const WHOLE_ONLY = new RegExp(
   [
     /^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*\[[^\]]+\]:/.source,
     /^ {0,3}(?:<(?:script|pre|style|textarea)(?:\s|>|$)|<!--|<\?|<![A-Za-z]|<!\[CDATA\[)/.source,
+    /^[ \t>]*<details[\s>]/.source,
   ].join("|"),
   "im",
 );
