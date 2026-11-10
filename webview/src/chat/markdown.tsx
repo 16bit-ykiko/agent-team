@@ -326,51 +326,70 @@ function remarkHtmlBreaks() {
 }
 
 // Agents fold long detail into <details><summary>…</summary> … </details>.
-// The tags arrive as HTML nodes around the markdown between them; they
-// become the two elements, and no other HTML gets through.
-const DETAILS_OPEN = /^<details(\s+open)?\s*>\s*(?:<summary>([\s\S]*?)<\/summary>)?([\s\S]*)$/i;
-const DETAILS_CLOSE = /^<\/details\s*>([\s\S]*)$/i;
+// The tags arrive as block-level HTML nodes around the markdown between
+// them; they become the two elements, and no other HTML gets through. One
+// HTML block can hold several tags (folds back to back); a tag inside a
+// sentence is text.
+const DETAILS_TAG = /<details(\s+open)?\s*>|<\/details\s*>|<summary>([\s\S]*?)<\/summary>/gi;
+const DETAILS_OPENS = /^<details[\s>]/i;
+const DETAILS_GOES_ON = /^(?:<\/details\s*>|<summary>)/i;
+const BLOCK_CONTAINERS = new Set(["root", "blockquote", "listItem", "footnoteDefinition"]);
 function remarkDetails() {
   const prose = (value: string): MdNode[] =>
     value.trim() ? [{ type: "paragraph", children: [{ type: "text", value: value.trim() }] }] : [];
+  const summary = (text: string): MdNode => ({
+    type: "detailsSummary",
+    data: { hName: "summary" },
+    children: [{ type: "text", value: text }],
+  });
   const walk = (node: MdNode) => {
-    if (!node.children) return;
+    if (node.type === "list") node.children?.forEach(walk);
+    if (!BLOCK_CONTAINERS.has(node.type) || !node.children) return;
     const top: MdNode[] = [];
     const outer: MdNode[][] = [];
     let into = top;
-    const close = (after: string) => {
-      into = outer.pop()!;
-      into.push(...prose(after));
+    // The fold just opened, while it still has only its stand-in summary.
+    let untitled: MdNode[] | null = null;
+    const fold = (html: string) => {
+      let at = 0;
+      for (const m of html.matchAll(DETAILS_TAG)) {
+        into.push(...prose(html.slice(at, m.index)));
+        at = m.index + m[0].length;
+        if (m[0][1] === "/") {
+          if (outer.length) into = outer.pop()!;
+          else into.push(...prose(m[0]));
+        } else if (m[0][1] === "d" || m[0][1] === "D") {
+          const details: MdNode = {
+            type: "details",
+            data: { hName: "details", hProperties: m[1] ? { open: true } : {} },
+            children: [summary("Details")],
+          };
+          into.push(details);
+          outer.push(into);
+          into = untitled = details.children!;
+          continue;
+        } else if (into === untitled && into.length === 1) {
+          into[0] = summary(m[2].trim() || "Details");
+        } else {
+          into.push(...prose(m[0]));
+        }
+        untitled = null;
+      }
+      into.push(...prose(html.slice(at)));
+      if (into.length > 1) untitled = null;
     };
     for (const child of node.children) {
       const html = child.type === "html" ? (child.value?.trim() ?? "") : null;
-      const open = html !== null ? DETAILS_OPEN.exec(html) : null;
-      if (open) {
-        const summary: MdNode = {
-          type: "detailsSummary",
-          data: { hName: "summary" },
-          children: [{ type: "text", value: open[2]?.trim() || "Details" }],
-        };
-        const details: MdNode = {
-          type: "details",
-          data: { hName: "details", hProperties: open[1] ? { open: true } : {} },
-          children: [summary],
-        };
-        into.push(details);
-        outer.push(into);
-        into = details.children!;
-        const [body, ...after] = open[3].split(/<\/details\s*>/i);
-        into.push(...prose(body));
-        if (after.length) close(after.join(""));
-        continue;
-      }
-      const end = html !== null && outer.length ? DETAILS_CLOSE.exec(html) : null;
-      if (end) {
-        close(end[1]);
+      if (
+        html !== null &&
+        (DETAILS_OPENS.test(html) || (outer.length && DETAILS_GOES_ON.test(html)))
+      ) {
+        fold(html);
         continue;
       }
       walk(child);
       into.push(child);
+      untitled = null;
     }
     node.children = top;
   };
@@ -385,6 +404,12 @@ const mdRemarkPlugins: Options["remarkPlugins"] = [
   remarkCjkFriendly,
   remarkHtmlBreaks,
   remarkDetails,
+];
+// A row of text has no blocks to fold.
+const inlineRemarkPlugins: Options["remarkPlugins"] = [
+  remarkGfm,
+  remarkCjkFriendly,
+  remarkHtmlBreaks,
 ];
 const mdRehypePlugins: Options["rehypePlugins"] = [rehypeCodeHighlight];
 
@@ -507,11 +532,11 @@ export const InlineMd = memo(function InlineMd({ children }: { children: string 
     () =>
       refs || paths
         ? [
-            ...(mdRemarkPlugins ?? []),
+            ...(inlineRemarkPlugins ?? []),
             ...(refs ? [remarkIssueRefs(refs.pattern)] : []),
             ...(paths ? [remarkProsePaths(paths)] : []),
           ]
-        : mdRemarkPlugins,
+        : inlineRemarkPlugins,
     [refs, paths],
   );
   return (
@@ -550,7 +575,7 @@ const WHOLE_ONLY = new RegExp(
   [
     /^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*\[[^\]]+\]:/.source,
     /^ {0,3}(?:<(?:script|pre|style|textarea)(?:\s|>|$)|<!--|<\?|<![A-Za-z]|<!\[CDATA\[)/.source,
-    /^[ \t>]*<details[\s>]/.source,
+    /^ {0,3}(?:>[ \t]?)*<details[\s>]/.source,
   ].join("|"),
   "im",
 );

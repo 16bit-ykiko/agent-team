@@ -339,6 +339,34 @@ describe("html in agent markdown", () => {
     expect(html("这是*“斜体”*字")).toBe("<p>这是<em>“斜体”</em>字</p>");
   });
 
+  it("takes a fold's tags only where they stand as blocks", () => {
+    const html = (md: string) => render(<MdBlock>{md}</MdBlock>).container.innerHTML;
+    // In a sentence the tag is text, in a reply and in a board row alike.
+    expect(html("use <details> here")).toBe("<p>use &lt;details&gt; here</p>");
+    expect(render(<InlineMd>{"Render <details> folds"}</InlineMd>).container.textContent).toBe(
+      "Render <details> folds",
+    );
+    // Folds back to back, with no blank line, and on one line.
+    const two = render(
+      <MdBlock>
+        {
+          "<details><summary>A</summary>\n\nx\n\n</details>\n<details><summary>B</summary>\n\ny\n\n</details>"
+        }
+      </MdBlock>,
+    ).container;
+    expect([...two.querySelectorAll("summary")].map((s) => s.textContent)).toEqual(["A", "B"]);
+    expect(two.innerHTML).not.toContain("&lt;");
+    expect(
+      html("<details><summary>A</summary>a</details><details><summary>B</summary>b</details>"),
+    ).toBe(
+      "<details><summary>A</summary><p>a</p></details>\n<details><summary>B</summary><p>b</p></details>",
+    );
+    // A summary written as a block of its own titles the fold.
+    expect(html("<details>\n\n<summary>Title</summary>\n\nbody\n\n</details>")).toBe(
+      "<details><summary>Title</summary><p>body</p></details>",
+    );
+  });
+
   it("keeps a reply with a fold in one block while it streams", () => {
     const text = "intro\n\n<details><summary>S</summary>\n\n- x\n\n</details>\n\nend";
     expect(markdownBlocks(text)).toEqual([text]);
