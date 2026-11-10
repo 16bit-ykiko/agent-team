@@ -53,9 +53,9 @@ const CODEX_FAST = "priority";
 const CURSOR_PREFIX = "cursor/";
 
 // The picker's list. Models dropped from it move to LEGACY_MODELS, so agents
-// still on one keep their settings until switched with /model. Opus 5.5,
-// Fable 5.1 and Fable 5 come only with the 1M window: the plain id already
-// has it (the CLI reports 1,000,000), so there is no "[1m]" entry.
+// still on one keep their settings until switched with /model. Opus 5.5 and
+// the Fables come only with the 1M window: the plain id already has it (the
+// CLI reports 1,000,000), so there is no "[1m]" entry.
 export const MODEL_OPTIONS: ModelOption[] = [
   {
     id: "claude-opus-5-5",
@@ -65,8 +65,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
     effortLevels: EFFORT_FIVE,
   },
   {
-    id: "claude-fable-5-1",
-    label: "Claude Fable 5.1",
+    id: "claude-fable-5-2",
+    label: "Claude Fable 5.2",
     backend: "claude",
     effortLevels: EFFORT_FIVE,
   },
@@ -246,6 +246,12 @@ export const LEGACY_MODELS: ModelOption[] = [
   },
   {
     id: "claude-fable-5-1[1m]",
+    label: "Claude Fable 5.1",
+    backend: "claude",
+    effortLevels: EFFORT_FIVE,
+  },
+  {
+    id: "claude-fable-5-1",
     label: "Claude Fable 5.1",
     backend: "claude",
     effortLevels: EFFORT_FIVE,

@@ -879,16 +879,16 @@ describe("project edge cases", () => {
     const { create, workers, manager } = setup();
     const { lead } = create("a");
     const [agent] = lead.agents.values();
-    agent.info.model = "claude-fable-5-1";
+    agent.info.model = "claude-fable-5-2";
     const start = manager.toolsFor(lead)!.tools.find((t) => t.name === "start_session")!;
     expect((start.shape.model as z.ZodString).description).toContain("Default claude-opus-5-5");
     expect(await start.handler({ title: "w", cwd: "wt", task: "t" })).toContain(
       "on claude-opus-5-5",
     );
-    await start.handler({ title: "f", cwd: "wt", task: "t", model: "claude-fable-5-1" });
+    await start.handler({ title: "f", cwd: "wt", task: "t", model: "claude-fable-5-2" });
     expect(workers().map((w) => [...w.agents.values()][0].info.model)).toEqual([
       "claude-opus-5-5",
-      "claude-fable-5-1",
+      "claude-fable-5-2",
     ]);
   });
 

@@ -63,7 +63,7 @@ describe("the model list", () => {
   it("offers only current models, and still knows the ones dropped from it", () => {
     expect(MODEL_OPTIONS.filter((m) => m.backend === "claude").map((m) => m.id)).toEqual([
       "claude-opus-5-5",
-      "claude-fable-5-1",
+      "claude-fable-5-2",
       "claude-fable-5",
       "claude-opus-5[1m]",
       "claude-opus-4-8[1m]",
@@ -73,6 +73,13 @@ describe("the model list", () => {
     // An agent still on a dropped model keeps its effort levels and thinking.
     expect(effortLevelsForModel("claude-opus-4-6[1m]")).toEqual(["low", "medium", "high", "max"]);
     expect(supportsAdaptiveThinking("claude-opus-4-6")).toBe(true);
+    expect(effortLevelsForModel("claude-fable-5-1")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
     expect(supportsAdaptiveThinking("claude-haiku-4-5-20251001")).toBe(false);
   });
 

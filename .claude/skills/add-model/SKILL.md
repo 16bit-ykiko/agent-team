@@ -21,7 +21,7 @@ If the id is missing: `npm install @anthropic-ai/claude-agent-sdk@latest -w serv
 Smoke test through the same path the server uses:
 
 ```bash
-npm run smoke:claude -- claude-fable-5-1 high     # prints init model/effort + PONG
+npm run smoke:claude -- claude-fable-5-2 high     # prints init model/effort + PONG
 ```
 
 Then the preset: id, label, `backend: "claude"`, `defaultEffort`, whether it `supportsFastMode` (only models the SDK reports `fast_mode_state` for). Effort levels come from the picker; check `defaultEffortForModel`.
