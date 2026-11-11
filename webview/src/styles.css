@@ -4614,10 +4614,15 @@ button.action-target:hover {
   color: var(--text-muted);
   user-select: none;
 }
+/* Over highlight.js's theme, which paints .hljs its own darker colour: a
+   box as wide as the longest line in a file, the whole width in a diff. */
+.code-text.hljs,
+.diff-inner.hljs {
+  background: none;
+}
 .code-text {
   margin: 0;
   padding: 0 16px 0 4px;
-  background: none;
   font: inherit;
   white-space: pre;
 }
@@ -4738,6 +4743,9 @@ button.action-target:hover {
   font-size: var(--fs-meta);
   color: var(--text-muted);
 }
+.fp-bar .change-count {
+  padding: 0 6px;
+}
 .diff-plus {
   color: var(--success);
 }
@@ -4757,7 +4765,6 @@ button.action-target:hover {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 18px;
-  background: none;
 }
 .diff-row {
   display: flex;

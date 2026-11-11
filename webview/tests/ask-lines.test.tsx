@@ -214,4 +214,10 @@ describe("asking about lines from the Files panel", () => {
   it("draws native controls dark: a select's option list follows the page", () => {
     expect(css).toMatch(/:root\s*\{[^}]*color-scheme:\s*dark;/);
   });
+
+  it("paints a file and a diff on the panel's background, not highlight.js's darker one", () => {
+    // highlight.js's theme colours .hljs; a single class of ours, loaded
+    // before it, would lose.
+    expect(css).toMatch(/\.code-text\.hljs,\s*\.diff-inner\.hljs\s*\{\s*background:\s*none;/);
+  });
 });

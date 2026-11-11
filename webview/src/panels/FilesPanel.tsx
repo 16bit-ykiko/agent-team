@@ -16,7 +16,9 @@ import { FileOpenContext, parseFileRef, type FileRef } from "../chat/fileRef";
 import { formatSize, utf8Length } from "../format";
 import { FileIcon, Icon } from "./Icon";
 import {
+  ChangeCount,
   ChangesList,
+  changeTotals,
   DiffView,
   type ChangedFile,
   type Changes,
@@ -392,6 +394,11 @@ export function FilesPanel({
           <span className="fp-path" title={shown}>
             <bdi>{changed ? changed.path : changesOnly ? (root?.label ?? top) : "Changes"}</bdi>
           </span>
+          {changed ? (
+            <ChangeCount added={changed.added} removed={changed.removed} />
+          ) : (
+            "value" in changes && <ChangeCount {...changeTotals(changes.value.files)} />
+          )}
           {changed && changed.status !== "deleted" && (
             <button
               className="fp-btn"

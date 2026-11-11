@@ -79,6 +79,14 @@ export interface ChangeDir {
   files: ChangedFile[];
 }
 
+// The lines a branch adds and removes, binary files aside.
+export function changeTotals(files: ChangedFile[]): { added: number; removed: number } {
+  return {
+    added: files.reduce((s, f) => s + (f.added ?? 0), 0),
+    removed: files.reduce((s, f) => s + (f.removed ?? 0), 0),
+  };
+}
+
 // A changed path's last part: a nested repository git lists as "wt/feat/"
 // keeps its slash.
 function changeName(path: string): string {
@@ -116,7 +124,8 @@ export function changeTree(files: ChangedFile[]): ChangeDir {
   return tidy(root);
 }
 
-function Count({ added, removed }: { added: number | null; removed: number | null }) {
+// Lines added and removed, "binary" when git cannot count them.
+export function ChangeCount({ added, removed }: { added: number | null; removed: number | null }) {
   return (
     <span className="change-count">
       {added === null ? (
@@ -143,8 +152,6 @@ export function ChangesList({
   closed: ReadonlySet<string>;
   toggle: (folder: string) => void;
 }) {
-  const added = changes.files.reduce((s, f) => s + (f.added ?? 0), 0);
-  const removed = changes.files.reduce((s, f) => s + (f.removed ?? 0), 0);
   const n = changes.files.length;
   const tree = useMemo(() => changeTree(changes.files), [changes.files]);
   const rows: ReactNode[] = [];
@@ -183,7 +190,7 @@ export function ChangesList({
           </span>
           <FileIcon name={changeName(f.path).replace(/\/$/, "")} dir={f.path.endsWith("/")} />
           <span className="dir-entry-name">{changeName(f.path)}</span>
-          <Count added={f.added} removed={f.removed} />
+          <ChangeCount added={f.added} removed={f.removed} />
         </button>,
       );
     }
@@ -201,13 +208,6 @@ export function ChangesList({
         )}
         {" · "}
         {n} {n === 1 ? "file" : "files"}
-        {n > 0 && (
-          <>
-            {" · "}
-            {added > 0 && <span className="diff-plus">+{added}</span>}{" "}
-            {removed > 0 && <span className="diff-minus">−{removed}</span>}
-          </>
-        )}
       </div>
       {rows}
       {n === 0 && <div className="file-note">No changes</div>}

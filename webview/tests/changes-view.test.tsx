@@ -109,8 +109,10 @@ describe("the Files panel's icons and changes", () => {
     await waitFor(() => expect(container.querySelector(".changes")).not.toBeNull());
     expect(urls.at(-1)).toBe("api/diff?ws=w1&dir=%2Fw");
     expect(container.querySelector(".changes-head")!.textContent).toBe(
-      "against origin/main · 3 files · +5 −1",
+      "against origin/main · 3 files",
     );
+    // The lines of all of them over the list, of one over its diff.
+    expect(container.querySelector(".fp-bar .change-count")!.textContent).toBe("+5 −1");
     const rows = [...container.querySelectorAll(".change-entry")];
     expect(rows.map((r) => r.querySelector(".change-status")!.textContent)).toEqual([
       "U",
@@ -121,6 +123,7 @@ describe("the Files panel's icons and changes", () => {
 
     fireEvent.click(rows[1]);
     await waitFor(() => expect(container.querySelector(".diff-view")).not.toBeNull());
+    expect(container.querySelector(".fp-bar .change-count")!.textContent).toBe("+3 −1");
     expect(urls.at(-1)).toBe(
       `api/diff/file?ws=w1&dir=%2Fw&path=src%2Flexer.cpp&against=${"a".repeat(40)}`,
     );
@@ -238,7 +241,7 @@ describe("the Files panel's icons and changes", () => {
     ).toEqual(["a.txt", "feat/"]);
   });
 
-  it("counts only what there is: no −0 in the head when nothing was removed", async () => {
+  it("counts only what there is: no −0 when nothing was removed", async () => {
     changes.files = changes.files.filter((f) => f.removed === 0);
     try {
       const { container, getByTitle } = panel();
@@ -246,8 +249,9 @@ describe("the Files panel's icons and changes", () => {
       fireEvent.click(getByTitle("Changes against the base branch"));
       await waitFor(() => expect(container.querySelector(".changes")).not.toBeNull());
       expect(container.querySelector(".changes-head")!.textContent).toBe(
-        "against origin/main · 1 file · +2 ",
+        "against origin/main · 1 file",
       );
+      expect(container.querySelector(".fp-bar .change-count")!.textContent).toBe("+2 ");
     } finally {
       changes.files = [
         { path: "src/lexer.cpp", status: "modified", added: 3, removed: 1 },
