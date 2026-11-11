@@ -616,7 +616,12 @@ describe("files panel", () => {
     const path = new URLSearchParams(url.split("?")[1]).get("path")!;
     const view =
       path === "."
-        ? { kind: "dir", path: "/tmp", truncated: false, entries: [] }
+        ? {
+            kind: "dir",
+            path: "/tmp",
+            truncated: false,
+            entries: [{ name: "b.ts", dir: false, size: 3 }],
+          }
         : { kind: "text", path: `/tmp/${path}`, size: 3, content: "hi\n", truncated: false };
     return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(view) });
   });
@@ -645,6 +650,122 @@ describe("files panel", () => {
     await act(async () => {});
     expect(lastFetch()).toBe("api/file?ws=w2&path=.");
     expect(panel()!.querySelector(".dir-view")).not.toBeNull();
+  });
+  it("quotes lines picked in a file into the composer, under their path", async () => {
+    boot([{ ...settled(1), content: "Changed `src/a.ts:3`." }]);
+    const input = document.querySelector("textarea")!;
+    fireEvent.input(input, { target: { value: "context first" } });
+    fireEvent.click(document.querySelector(".message-content .file-ref")!);
+    await act(async () => {});
+    const pickAll = () =>
+      act(() => {
+        const range = document.createRange();
+        range.selectNodeContents(panel()!.querySelector(".code-text")!);
+        document.getSelection()!.removeAllRanges();
+        document.getSelection()!.addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+      });
+    pickAll();
+    fireEvent.click(panel()!.querySelector(".fp-ask")!);
+    expect(input.value).toBe("context first\n\n`src/a.ts:1`\n```typescript\nhi\n```\n");
+    expect(document.activeElement).toBe(input);
+    expect(panel()).not.toBeNull();
+
+    // A phone's panel covers the composer: it steps aside.
+    vi.stubGlobal("matchMedia", (media: string) => ({
+      matches: true,
+      media,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    fireEvent.input(input, { target: { value: "" } });
+    pickAll();
+    fireEvent.click(panel()!.querySelector(".fp-ask")!);
+    expect(input.value).toBe("`src/a.ts:1`\n```typescript\nhi\n```\n");
+    expect(panel()).toBeNull();
+    vi.unstubAllGlobals();
+    vi.stubGlobal("fetch", fetchMock);
+
+    // A panel maximised over the chat covers the composer too.
+    fireEvent.click(document.querySelector(".message-content .file-ref")!);
+    await act(async () => {});
+    fireEvent.click(panel()!.querySelector(".side-panel-max")!);
+    expect(panel()!.classList.contains("maximized")).toBe(true);
+    pickAll();
+    fireEvent.click(panel()!.querySelector(".fp-ask")!);
+    expect(panel()!.classList.contains("maximized")).toBe(false);
+  });
+
+  it("keeps where the reader went in each session's panel", async () => {
+    boot([settled(1)], { others: ["w2"] });
+    fireEvent.click(document.querySelector('.side-rail [aria-label="Files"]')!);
+    await act(async () => {});
+    fireEvent.click(panel()!.querySelector(".dir-entry")!);
+    await act(async () => {});
+    expect(lastFetch()).toBe("api/file?ws=w1&path=%2Ftmp%2Fb.ts");
+
+    selectWorkspace("w2");
+    await act(async () => {});
+    expect(lastFetch()).toBe("api/file?ws=w2&path=.");
+    selectWorkspace("w");
+    await act(async () => {});
+    expect(lastFetch()).toBe("api/file?ws=w1&path=%2Ftmp%2Fb.ts");
+    expect(panel()!.querySelector(".code-text")!.textContent).toBe("hi\n");
+  });
+});
+
+describe("changes panel", () => {
+  const urls: string[] = [];
+  const fetchMock = vi.fn((url: string) => {
+    urls.push(url);
+    const body = url.startsWith("api/diff/file")
+      ? { path: "src/a.ts", binary: false, truncated: false, diff: "@@ -1 +1 @@\n-a\n+b\n" }
+      : url.startsWith("api/diff")
+        ? {
+            top: "/tmp",
+            branch: "feature",
+            base: "origin/main",
+            against: "a".repeat(40),
+            truncated: false,
+            files: [{ path: "src/a.ts", status: "modified", added: 1, removed: 1 }],
+          }
+        : { kind: "text", path: "/tmp/src/a.ts", size: 2, content: "b\n", truncated: false };
+    return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+  });
+  beforeEach(() => {
+    urls.length = 0;
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const aside = (label: string) => document.querySelector(`aside[aria-label="${label}"]`);
+
+  it("opens the session's changes from the rail, and a changed file in the Files panel", async () => {
+    boot([settled(1)], { others: ["w2"] });
+    fireEvent.click(document.querySelector('.side-rail [aria-label="Changes"]')!);
+    await act(async () => {});
+    expect(urls).toEqual(["api/diff?ws=w1&dir=%2Ftmp"]);
+    const panel = aside("Changes")!;
+    expect(panel.querySelector(".change-entry")).not.toBeNull();
+    // Nothing to go back to, nor files to switch to.
+    expect(panel.querySelector(".fp-up")).toBeNull();
+    expect(panel.querySelector(".fp-toggle")).toBeNull();
+
+    fireEvent.click(panel.querySelector(".change-entry")!);
+    await act(async () => {});
+    expect(panel.querySelector(".diff-view")).not.toBeNull();
+    fireEvent.click(panel.querySelector('[title="Open the file"]')!);
+    await act(async () => {});
+    expect(aside("Changes")).toBeNull();
+    expect(aside("Files")!.querySelector(".code-text")!.textContent).toBe("b\n");
+    expect(urls.at(-1)).toBe("api/file?ws=w1&path=%2Ftmp%2Fsrc%2Fa.ts");
+
+    // Another session's changes are its own.
+    fireEvent.click(document.querySelector('.side-rail [aria-label="Changes"]')!);
+    await act(async () => {});
+    selectWorkspace("w2");
+    await act(async () => {});
+    expect(urls.at(-1)).toBe("api/diff?ws=w2&dir=%2Ftmp");
   });
 });
 

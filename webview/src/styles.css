@@ -5,6 +5,9 @@
    ========================================================================== */
 
 :root {
+  /* Native controls follow it: a <select>'s option list is drawn by the
+     browser, light unless the page says it is dark. */
+  color-scheme: dark;
   --bg-primary: #282c34;
   --bg-secondary: #21252b;
   --bg-tertiary: #1d1f23;
@@ -4486,10 +4489,23 @@ button.action-target:hover {
   text-underline-offset: 3px;
 }
 .files-panel {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+/* Over the code, not in the bar: appearing mid-selection, it must not move
+   the lines being selected. */
+.files-panel .fp-ask {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2;
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  color: var(--accent);
 }
 .fp-roots {
   flex: 0 1 auto;
@@ -4706,8 +4722,16 @@ button.action-target:hover {
 .cs-deleted {
   color: var(--error);
 }
-.change-dir {
-  color: var(--text-muted);
+/* A step in per folder; a file's status letter where a folder has its caret. */
+.changes .dir-entry {
+  padding-left: calc(16px + var(--depth, 0) * 14px);
+}
+.change-folder {
+  color: var(--text-primary);
+}
+.changes .change-status {
+  width: 10px;
+  text-align: center;
 }
 .change-count {
   flex-shrink: 0;
@@ -5317,6 +5341,9 @@ button.action-target:hover {
   }
   .dir-entry {
     padding: 11px 16px;
+  }
+  .changes .dir-entry {
+    padding-left: calc(16px + var(--depth, 0) * 14px);
   }
   .ap-model {
     min-height: 32px;

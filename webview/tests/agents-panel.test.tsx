@@ -506,8 +506,8 @@ describe("the agents panel in the app", () => {
     boot();
     const rail = document.querySelector(".header-rail")!;
     expect(rail.parentElement!.className).toBe("workspace-info-bar");
-    // Objectives, agents (background work included), files.
-    expect(rail.querySelectorAll(".rail-btn")).toHaveLength(3);
+    // Objectives, agents (background work included), files, changes.
+    expect(rail.querySelectorAll(".rail-btn")).toHaveLength(4);
   });
 
   it("leaves the lead to the sidebar: a worker's branch line has no button for it", () => {

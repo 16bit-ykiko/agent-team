@@ -342,7 +342,7 @@ describe("the files panel in a project", () => {
   });
   beforeEach(() => vi.stubGlobal("fetch", fetchMock));
 
-  it("keeps a file opened from the lead while a worker is open, offering both folders", async () => {
+  it("shows each session its own file or folder, offering every folder of the project", async () => {
     const reply: Message = {
       id: "r1",
       kind: "agent",
@@ -363,15 +363,20 @@ describe("the files panel in a project", () => {
       [...panel().querySelectorAll(".fp-roots option")].map((o) => o.textContent);
     expect(folders()).toEqual(["clice", "clice-modules"]);
 
-    const calls = fetchMock.mock.calls.length;
-    fireEvent.click(
-      [...document.querySelectorAll(".task-item")].find(
-        (el) => el.querySelector(".task-name-text")!.textContent === "modules",
-      )!,
-    );
+    const select = (name: string) =>
+      fireEvent.click(
+        [...document.querySelectorAll(".task-item")].find(
+          (el) => el.querySelector(".task-name-text")!.textContent === name,
+        )!,
+      );
+    select("modules");
     await act(async () => {});
     expect(title()).toContain("modules");
-    expect(fetchMock.mock.calls.length).toBe(calls);
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe("api/file?ws=w1&path=.");
+
+    fireEvent.click(document.querySelector(".ws-group-project")!);
+    await act(async () => {});
+    expect(fetchMock.mock.calls.at(-1)![0]).toBe("api/file?ws=lead&path=src%2Fx.cpp");
     expect(panel().querySelector(".fp-path")!.getAttribute("title")).toBe("/repo/clice/src/x.cpp");
   });
 });

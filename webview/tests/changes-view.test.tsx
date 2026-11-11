@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/react";
 import css from "../src/styles.css?raw";
 import { FilesPanel } from "../src/panels/FilesPanel";
-import { parseDiff } from "../src/panels/ChangesView";
+import { ChangesList, changeTree, parseDiff } from "../src/panels/ChangesView";
 import { fileIconName } from "../src/panels/Icon";
 
 const listing = {
@@ -113,14 +113,13 @@ describe("the Files panel's icons and changes", () => {
     );
     const rows = [...container.querySelectorAll(".change-entry")];
     expect(rows.map((r) => r.querySelector(".change-status")!.textContent)).toEqual([
-      "M",
       "U",
+      "M",
       "D",
     ]);
-    expect(rows[0].querySelector(".change-dir")!.textContent).toBe("src/");
     expect(rows[2].querySelector(".change-count")!.textContent).toBe("binary");
 
-    fireEvent.click(rows[0]);
+    fireEvent.click(rows[1]);
     await waitFor(() => expect(container.querySelector(".diff-view")).not.toBeNull());
     expect(urls.at(-1)).toBe(
       `api/diff/file?ws=w1&dir=%2Fw&path=src%2Flexer.cpp&against=${"a".repeat(40)}`,
@@ -146,7 +145,7 @@ describe("the Files panel's icons and changes", () => {
     fireEvent.click(getByTitle("All changes"));
     await waitFor(() => expect(container.querySelector(".changes")).not.toBeNull());
     // A file git does not know yet is asked for as such.
-    fireEvent.click(container.querySelectorAll(".change-entry")[1]);
+    fireEvent.click(container.querySelectorAll(".change-entry")[0]);
     await waitFor(() => expect(urls.at(-1)).toContain("path=docs%2Fnew.md"));
     expect(urls.at(-1)).toContain("&untracked=1");
     await waitFor(() => expect(container.querySelector(".diff-view")).not.toBeNull());
@@ -154,6 +153,89 @@ describe("the Files panel's icons and changes", () => {
     await waitFor(() => expect(container.querySelector(".changes")).not.toBeNull());
     fireEvent.click(getByTitle("Files"));
     await waitFor(() => expect(container.querySelector(".dir-view:not(.changes)")).not.toBeNull());
+  });
+
+  it("lists the changes as folders, a folder of one folder as one row, each to fold", async () => {
+    changes.files = [
+      { path: "src/sched/batch.cpp", status: "modified", added: 1, removed: 1 },
+      { path: "src/sched/queue.cpp", status: "added", added: 9, removed: 0 },
+      { path: "src/a.cpp", status: "modified", added: 1, removed: 0 },
+      { path: "docs/guide/intro.md", status: "modified", added: 2, removed: 0 },
+      { path: "README.md", status: "modified", added: 1, removed: 0 },
+    ];
+    try {
+      const { container, getByTitle } = panel();
+      await waitFor(() => expect(container.querySelector(".dir-view")).not.toBeNull());
+      fireEvent.click(getByTitle("Changes against the base branch"));
+      await waitFor(() => expect(container.querySelector(".changes .dir-entry")).not.toBeNull());
+      const rows = () =>
+        [...container.querySelectorAll(".changes .dir-entry")].map(
+          (r) =>
+            `${(r as HTMLElement).style.getPropertyValue("--depth")}:${r.querySelector(".dir-entry-name")!.textContent}`,
+        );
+      expect(rows()).toEqual([
+        "0:docs/guide",
+        "1:intro.md",
+        "0:src",
+        "1:sched",
+        "2:batch.cpp",
+        "2:queue.cpp",
+        "1:a.cpp",
+        "0:README.md",
+      ]);
+      fireEvent.click(getByTitle("src/sched"));
+      expect(getByTitle("src/sched").getAttribute("aria-expanded")).toBe("false");
+      expect(rows()).toEqual([
+        "0:docs/guide",
+        "1:intro.md",
+        "0:src",
+        "1:sched",
+        "1:a.cpp",
+        "0:README.md",
+      ]);
+      fireEvent.click(getByTitle("src"));
+      expect(rows()).toEqual(["0:docs/guide", "1:intro.md", "0:src", "0:README.md"]);
+      fireEvent.click(getByTitle("src"));
+      expect(rows()).toContain("1:sched");
+      expect(rows()).not.toContain("2:batch.cpp");
+
+      // Folds stay as they were after a diff, and after the files.
+      fireEvent.click(getByTitle("README.md"));
+      await waitFor(() => expect(container.querySelector(".diff-view")).not.toBeNull());
+      fireEvent.click(getByTitle("All changes"));
+      await waitFor(() => expect(container.querySelector(".changes .dir-entry")).not.toBeNull());
+      expect(rows()).not.toContain("2:batch.cpp");
+      fireEvent.click(getByTitle("Files"));
+      fireEvent.click(getByTitle("Changes against the base branch"));
+      await waitFor(() => expect(container.querySelector(".changes .dir-entry")).not.toBeNull());
+      expect(rows()).not.toContain("2:batch.cpp");
+    } finally {
+      changes.files = [
+        { path: "src/lexer.cpp", status: "modified", added: 3, removed: 1 },
+        { path: "docs/new.md", status: "untracked", added: 2, removed: 0 },
+        { path: "old.png", status: "deleted", added: null, removed: null },
+      ];
+    }
+  });
+
+  it("names a nested repository git lists with a slash", () => {
+    const tree = changeTree([
+      { path: "wt/feat/", status: "untracked", added: null, removed: null },
+      { path: "wt/a.txt", status: "untracked", added: 1, removed: 0 },
+    ]);
+    expect(tree.dirs.map((d) => d.name)).toEqual(["wt"]);
+    expect(tree.dirs[0].files.map((f) => f.path)).toEqual(["wt/a.txt", "wt/feat/"]);
+    const { container } = render(
+      <ChangesList
+        changes={{ ...changes, files: tree.dirs[0].files }}
+        open={() => {}}
+        closed={new Set()}
+        toggle={() => {}}
+      />,
+    );
+    expect(
+      [...container.querySelectorAll(".change-entry .dir-entry-name")].map((n) => n.textContent),
+    ).toEqual(["a.txt", "feat/"]);
   });
 
   it("counts only what there is: no −0 in the head when nothing was removed", async () => {

@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/react";
-import { FilesPanel, languageFor, type FileRoot, type FileView } from "../src/panels/FilesPanel";
+import { render, fireEvent, waitFor, act } from "@testing-library/react";
+import {
+  FilesPanel,
+  languageFor,
+  type CodeQuote,
+  type FileRoot,
+  type FileView,
+} from "../src/panels/FilesPanel";
 import { fileRoots } from "../src/panels/scope";
 import { autoPanelWidth } from "../src/panels/SidePanel";
 import { FileOpenContext, parseFileRef } from "../src/chat/fileRef";
@@ -151,6 +157,76 @@ describe("FilesPanel", () => {
     fireEvent.click(getByText("Preview"));
     fireEvent.click(container.querySelector(".file-markdown .file-ref")!);
     await waitFor(() => expect(requested.at(-1)).toBe("/w/docs/api/ref.md"));
+  });
+
+  it("reads a note's paths as the board does: notes/, ./ from the note, the rest from the session", async () => {
+    const note = (path: string, content: string, ref?: string): FileView => ({
+      kind: "text",
+      path,
+      size: content.length,
+      content,
+      truncated: false,
+      ...(ref && { ref }),
+    });
+    views = {
+      "notes/plan.md": note(
+        "/p/notes/plan.md",
+        "See `notes/rules.md`, `./steps.md` and `service/src/http.ts`.",
+        "notes/plan.md",
+      ),
+      "docs/guide.md": note("/w/docs/guide.md", "See `notes/rules.md`."),
+    };
+    const follow = async (file: string, i: number) => {
+      const { container, unmount } = open(file);
+      await waitFor(() =>
+        expect(container.querySelector(".file-markdown .file-ref")).not.toBeNull(),
+      );
+      fireEvent.click(container.querySelectorAll(".file-markdown .file-ref")[i]);
+      await waitFor(() => expect(requested.at(-1)).not.toBe(file));
+      unmount();
+      return requested.at(-1);
+    };
+    expect(await follow("notes/plan.md", 0)).toBe("/p/notes/rules.md");
+    expect(await follow("notes/plan.md", 1)).toBe("/p/notes/steps.md");
+    expect(await follow("notes/plan.md", 2)).toBe("service/src/http.ts");
+    // In a file of the repository, notes/ is a folder beside it.
+    expect(await follow("docs/guide.md", 0)).toBe("/w/docs/notes/rules.md");
+  });
+
+  it("quotes a note under its full path, which agents are told", async () => {
+    views = {
+      "notes/plan.md": {
+        kind: "text",
+        path: "/p/notes/plan.md",
+        size: 3,
+        content: "a\nb\n",
+        truncated: false,
+        ref: "notes/plan.md",
+      },
+    };
+    const asked: CodeQuote[] = [];
+    const { container, getByText } = render(
+      <FilesPanel
+        wsId="w1"
+        target={{ path: "notes/plan.md" }}
+        roots={[]}
+        onAsk={(q) => asked.push(q)}
+      />,
+    );
+    await waitFor(() => expect(container.querySelector(".file-markdown")).not.toBeNull());
+    fireEvent.click(getByText("Source"));
+    act(() => {
+      const range = document.createRange();
+      range.selectNodeContents(container.querySelector(".code-text")!);
+      document.getSelection()!.removeAllRanges();
+      document.getSelection()!.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    fireEvent.click(container.querySelector(".fp-ask")!);
+    expect(asked).toEqual([
+      { path: "/p/notes/plan.md", lang: "markdown", from: 1, to: 2, text: "a\nb" },
+    ]);
+    document.getSelection()!.removeAllRanges();
   });
 
   it("shows images, names binaries, and reports errors", async () => {

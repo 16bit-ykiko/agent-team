@@ -15,7 +15,7 @@ import { SidePanel } from "./panels/SidePanel";
 import { Rail, type RailItem } from "./panels/Rail";
 import { AgentsPanel, type AgentsPanelActions } from "./panels/AgentsPanel";
 import { workCount } from "./panels/SessionTasks";
-import { FilesPanel } from "./panels/FilesPanel";
+import { FilesPanel, type CodeQuote } from "./panels/FilesPanel";
 import { fileRoots, scopeSessions, scopeSummary, sessionState, stateSummary } from "./panels/scope";
 import { FileOpenContext, parseFileRef, type FileRef } from "./chat/fileRef";
 import { extractImageFiles, installMacCtrlClipboard } from "./chat/clipboard";
@@ -328,18 +328,16 @@ export function App() {
     () => setMaxFor((m) => (m === activeWsId ? null : activeWsId)),
     [activeWsId],
   );
-  // What the Files panel shows: a path named in the chat (relative to the
-  // workspace it was named in), kept while the chat open is in the same
-  // project (`scope`), or else the open workspace's folder. `seq` starts the
-  // panel over for each file opened.
-  const [fileTarget, setFileTarget] = useState<{
-    wsId: string;
-    ref: FileRef;
-    scope: string;
-    seq: number;
-  } | null>(null);
-  const showFile = useCallback((wsId: string, ref: FileRef, scope: string) => {
-    setFileTarget((t) => ({ wsId, ref, scope, seq: (t?.seq ?? 0) + 1 }));
+  // What the Files panel shows for each session: the last path named in its
+  // chat (relative to the workspace it was named in), or else the session's
+  // own folder. `seq` starts the panel over for each file opened.
+  const [fileTargets, setFileTargets] = useState<
+    Record<string, { wsId: string; ref: FileRef; seq: number }>
+  >({});
+  const fileSeq = useRef(0);
+  const showFile = useCallback((wsId: string, ref: FileRef, session: string) => {
+    const seq = ++fileSeq.current;
+    setFileTargets((t) => ({ ...t, [session]: { wsId, ref, seq } }));
     setOpenPanel("files");
   }, []);
   const togglePin = useCallback(() => {
@@ -508,12 +506,21 @@ export function App() {
       active: openPanel === "files",
       onClick: () => togglePanel("files"),
     },
+    {
+      id: "changes",
+      label: "Changes",
+      icon: "changes" as const,
+      active: openPanel === "changes",
+      onClick: () => togglePanel("changes"),
+    },
   ];
-  const fileScope = activeProject?.id ?? activeWsId ?? "";
+  const fileScope = activeWsId ?? "";
   const files =
-    fileTarget && fileTarget.scope === fileScope
-      ? fileTarget
-      : activeWs && { wsId: activeWs.id, ref: WORKSPACE_ROOT, scope: fileScope, seq: 0 };
+    fileTargets[fileScope] ?? (activeWs && { wsId: activeWs.id, ref: WORKSPACE_ROOT, seq: 0 });
+  // Where the reader went in the panel, kept for the session without
+  // starting the panel over.
+  const keepFile = (ref: FileRef) =>
+    files && setFileTargets((t) => ({ ...t, [fileScope]: { ...files, ref } }));
   const roots = useMemo(() => fileRoots(scope), [scope]);
   // Opens a file named in the chat, relative to a workspace's folder: a
   // message delivered from another session names paths in that session's.
@@ -1062,6 +1069,27 @@ export function App() {
       setHasInput(text.trim().length > 0);
     },
     [activeWsId],
+  );
+
+  // Lines picked in the Files panel, quoted into the composer under their
+  // path (relative to the session's folder when inside it; in backticks, so
+  // an absolute one does not open the message as a slash command), ready for
+  // the question. A panel covering the composer (a phone's, a maximised
+  // one) steps aside.
+  const askAbout = useCallback(
+    (q: CodeQuote) => {
+      const cwd = activeWsRef.current?.cwd;
+      const path = cwd && q.path.startsWith(`${cwd}/`) ? q.path.slice(cwd.length + 1) : q.path;
+      const where = `\`${path}:${q.to > q.from ? `${q.from}-${q.to}` : q.from}\``;
+      const longest = Math.max(0, ...(q.text.match(/`{3,}/g) ?? []).map((m) => m.length));
+      const fence = "`".repeat(Math.max(3, longest + 1));
+      const quote = `${where}\n${fence}${q.lang ?? ""}\n${q.text}\n${fence}\n`;
+      const draft = textareaRef.current?.value ?? "";
+      setDivText(draft.trim() ? `${draft.trimEnd()}\n\n${quote}` : quote);
+      if (window.matchMedia?.(PHONE).matches) setOpenPanel(null);
+      setMaxFor(null);
+    },
+    [setDivText],
   );
 
   // From the board: open the project's lead with the objective named in the
@@ -1710,6 +1738,34 @@ export function App() {
               wsId={files.wsId}
               target={files.ref}
               roots={roots}
+              onAsk={askAbout}
+              onOpen={keepFile}
+            />
+          </SidePanel>
+        )}
+        {activeWs && openPanel === "changes" && (
+          <SidePanel
+            title="Changes"
+            subtitle={activeWs.name}
+            kind="wide"
+            pinned={panelPinned}
+            maximized={panelMax}
+            inset={sidebarWidth}
+            width={filesWidth}
+            onPin={togglePin}
+            onMaximize={toggleMax}
+            onClose={closePanel}
+            onWidth={setFilesWidth}
+            flush
+          >
+            <FilesPanel
+              key={activeWs.id}
+              wsId={activeWs.id}
+              target={{ path: activeWs.cwd }}
+              roots={roots}
+              onAsk={askAbout}
+              changesOnly
+              openFile={(path) => showFile(activeWs.id, { path }, fileScope)}
             />
           </SidePanel>
         )}
@@ -1820,7 +1876,7 @@ function purgeBody(workspaces: Workspace[], projects: Project[], projectId: stri
   return `Permanently delete the ${doomed.length} archived session(s)${whose}, with their message history and logs.`;
 }
 
-type PanelId = "agents" | "files";
+type PanelId = "agents" | "files" | "changes";
 const WORKSPACE_ROOT: FileRef = { path: "." };
 // Where side panels become full-screen sheets (styles.css).
 const PHONE = "(max-width: 768px), (max-height: 500px)";

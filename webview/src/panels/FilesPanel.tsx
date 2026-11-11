@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import { highlightTree } from "../chat/highlight";
@@ -14,6 +22,13 @@ import {
   type Changes,
   type FileDiff,
 } from "./ChangesView";
+import { pickLines, textOffset, useSelectedLines, type PickedLines } from "./selection";
+
+// Lines picked out of a file or a diff, to ask about in the chat.
+export interface CodeQuote extends PickedLines {
+  path: string;
+  lang: string | null;
+}
 
 interface DirEntry {
   name: string;
@@ -21,10 +36,12 @@ interface DirEntry {
   size: number;
 }
 
-export type FileView =
+// `ref`: a note's notes/... path, its notes/... links being the project's.
+export type FileView = (
   | { kind: "dir"; path: string; entries: DirEntry[]; truncated: boolean }
   | { kind: "text"; path: string; size: number; content: string; truncated: boolean }
-  | { kind: "image" | "binary"; path: string; size: number };
+  | { kind: "image" | "binary"; path: string; size: number }
+) & { ref?: string };
 
 type Load = { loading: true } | { error: string; path?: string } | { view: FileView };
 type Fetched<T> = { loading: true } | { error: string } | { value: T };
@@ -135,10 +152,12 @@ export function CodeView({
   content,
   lang,
   target,
+  onPick,
 }: {
   content: string;
   lang: string | null;
   target: FileRef;
+  onPick?: (lines: PickedLines | null) => void;
 }) {
   const lines = useMemo(() => {
     const n = content.split("\n").length;
@@ -157,6 +176,17 @@ export function CodeView({
     }
   }, [target.line, content]);
   const gutter = useMemo(() => Array.from({ length: lines }, (_, i) => i + 1).join("\n"), [lines]);
+  const text = useRef<HTMLPreElement>(null);
+  const read = useCallback(
+    (range: Range) => {
+      const pre = text.current;
+      return (
+        pre && pickLines(content, textOffset(pre, range, "start"), textOffset(pre, range, "end"))
+      );
+    },
+    [content],
+  );
+  useSelectedLines(text, read, onPick);
   return (
     <div className="code-view" ref={scroller}>
       <div className="code-view-inner">
@@ -172,7 +202,7 @@ export function CodeView({
         <div className="code-gutter" aria-hidden="true">
           {gutter}
         </div>
-        <pre className="code-text hljs">
+        <pre className="code-text hljs" ref={text}>
           <code>{body}</code>
         </pre>
       </div>
@@ -219,16 +249,27 @@ export interface FileRoot {
 // Read-only preview of a file or folder, in the Files panel: code with line
 // numbers (jumping to the referenced line), rendered markdown, images,
 // folder listings; and the branch's changes against its base, file by
-// file. Relative paths resolve against `wsId`'s folder; the parent
-// remounts it (a new key) for each file opened from the chat.
+// file. Lines selected in a file or a diff can be asked about in the chat.
+// Relative paths resolve against `wsId`'s folder; the parent remounts it
+// (a new key) for each file opened from the chat.
 export function FilesPanel({
   wsId,
   target,
   roots,
+  onAsk,
+  onOpen,
+  changesOnly,
+  openFile,
 }: {
   wsId: string;
   target: FileRef;
   roots: FileRoot[];
+  onAsk?: (quote: CodeQuote) => void;
+  // Each path the reader opens within the panel.
+  onOpen?: (ref: FileRef) => void;
+  // Only the changes of `target`'s folder, a changed file opened elsewhere.
+  changesOnly?: boolean;
+  openFile?: (path: string) => void;
 }) {
   const [ref, setRef] = useState(target);
   const [load, setLoad] = useState<Load>({ loading: true });
@@ -236,12 +277,39 @@ export function FilesPanel({
   const [source, setSource] = useState(!!target.line);
   const [copied, setCopied] = useState(false);
   // The branch's changes, and the one whose diff is shown.
-  const [changesOn, setChangesOn] = useState(false);
+  const [changesOn, setChangesOn] = useState(!!changesOnly);
   const [changes, setChanges] = useState<Fetched<Changes>>({ loading: true });
   const [changed, setChanged] = useState<ChangedFile | null>(null);
   const [diff, setDiff] = useState<Fetched<FileDiff>>({ loading: true });
+  const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
+  const fold = (folder: string) =>
+    setFolded((c) => {
+      const next = new Set(c);
+      if (!next.delete(folder)) next.add(folder);
+      return next;
+    });
+  const [picked, setPicked] = useState<PickedLines | null>(null);
+  const pick = onAsk && setPicked;
+  const askButton = (path: string, lang: string | null) =>
+    onAsk &&
+    picked && (
+      <button
+        className="fp-btn fp-ask"
+        title="Ask about these lines in the chat"
+        // Keeps the selection: the click reads it.
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => {
+          onAsk({ ...picked, path, lang });
+          document.getSelection()?.removeAllRanges();
+        }}
+      >
+        Ask · L{picked.from}
+        {picked.to > picked.from && `–${picked.to}`}
+      </button>
+    );
 
   useEffect(() => {
+    if (changesOnly) return;
     let cancelled = false;
     setLoad({ loading: true });
     const query = `ws=${encodeURIComponent(wsId)}&path=${encodeURIComponent(ref.path)}`;
@@ -257,20 +325,31 @@ export function FilesPanel({
     return () => {
       cancelled = true;
     };
-  }, [wsId, ref.path]);
+  }, [wsId, ref.path, changesOnly]);
 
   const view = "view" in load ? load.view : null;
   const path = view?.path ?? ("path" in load && load.path ? load.path : ref.path);
   const raw = `api/file/raw?ws=${encodeURIComponent(wsId)}&path=${encodeURIComponent(path)}`;
   const isMarkdown = view?.kind === "text" && languageFor(path) === "markdown";
-  const open = (p: string) => {
-    setSource(false);
-    setRef({ path: p });
+  const go = (next: FileRef) => {
+    setSource(!!next.line);
+    setRef(next);
+    onOpen?.(next);
+  };
+  const open = (p: string) => go({ path: p });
+  // A note reads paths as the board does: notes/... in the project's notes,
+  // ./ and ../ from the note, the rest from the session's folder.
+  const noteRef = (p: string): string => {
+    const notes = path.slice(0, path.length - view!.ref!.length + "notes".length);
+    if (/^notes(\/|$)/.test(p)) return notes + p.slice("notes".length);
+    return /^\.\.?\//.test(p) ? resolveFrom(parentOf(path), p) : p;
   };
   const openRef = (r: string) => {
     const parsed = parseFileRef(r) ?? { path: r };
-    setSource(!!parsed.line);
-    setRef({ ...parsed, path: resolveFrom(parentOf(path), parsed.path) });
+    go({
+      ...parsed,
+      path: view?.ref ? noteRef(parsed.path) : resolveFrom(parentOf(path), parsed.path),
+    });
   };
   // Worktrees usually live inside the repository: the deepest folder wins.
   const root = roots
@@ -301,21 +380,24 @@ export function FilesPanel({
     return (
       <div className="files-panel">
         <div className="fp-bar">
-          <button
-            className="fp-btn fp-up"
-            title={changed ? "All changes" : "Files"}
-            onClick={() => (changed ? setChanged(null) : setChangesOn(false))}
-          >
-            <Icon name="up" />
-          </button>
+          {(changed || !changesOnly) && (
+            <button
+              className="fp-btn fp-up"
+              title={changed ? "All changes" : "Files"}
+              onClick={() => (changed ? setChanged(null) : setChangesOn(false))}
+            >
+              <Icon name="up" />
+            </button>
+          )}
           <span className="fp-path" title={shown}>
-            <bdi>{changed ? changed.path : "Changes"}</bdi>
+            <bdi>{changed ? changed.path : changesOnly ? (root?.label ?? top) : "Changes"}</bdi>
           </span>
           {changed && changed.status !== "deleted" && (
             <button
               className="fp-btn"
               title="Open the file"
               onClick={() => {
+                if (changesOnly) return openFile?.(shown);
                 setChangesOn(false);
                 setChanged(null);
                 open(shown);
@@ -324,17 +406,19 @@ export function FilesPanel({
               Open
             </button>
           )}
-          <button
-            className="fp-btn fp-toggle on"
-            title="Back to the files"
-            aria-pressed="true"
-            onClick={() => {
-              setChangesOn(false);
-              setChanged(null);
-            }}
-          >
-            <Icon name="changes" />
-          </button>
+          {!changesOnly && (
+            <button
+              className="fp-btn fp-toggle on"
+              title="Back to the files"
+              aria-pressed="true"
+              onClick={() => {
+                setChangesOn(false);
+                setChanged(null);
+              }}
+            >
+              <Icon name="changes" />
+            </button>
+          )}
         </div>
         <div className="fp-body">
           {!changed && "loading" in changes && <div className="file-note">Loading…</div>}
@@ -342,14 +426,15 @@ export function FilesPanel({
             <div className="file-note file-error">{changes.error}</div>
           )}
           {!changed && "value" in changes && (
-            <ChangesList changes={changes.value} open={setChanged} />
+            <ChangesList changes={changes.value} open={setChanged} closed={folded} toggle={fold} />
           )}
           {changed && "loading" in diff && <div className="file-note">Loading…</div>}
           {changed && "error" in diff && <div className="file-note file-error">{diff.error}</div>}
           {changed && "value" in diff && (
-            <DiffView diff={diff.value} lang={languageFor(changed.path)} />
+            <DiffView diff={diff.value} lang={languageFor(changed.path)} onPick={pick} />
           )}
         </div>
+        {changed && askButton(shown, "diff")}
       </div>
     );
   }
@@ -422,7 +507,7 @@ export function FilesPanel({
               </FileOpenContext.Provider>
             </div>
           ) : (
-            <CodeView content={view.content} lang={languageFor(path)} target={ref} />
+            <CodeView content={view.content} lang={languageFor(path)} target={ref} onPick={pick} />
           ))}
         {view?.kind === "text" && view.truncated && (
           <div className="file-note">
@@ -443,6 +528,7 @@ export function FilesPanel({
           </div>
         )}
       </div>
+      {view?.kind === "text" && askButton(path, languageFor(path))}
     </div>
   );
 }
