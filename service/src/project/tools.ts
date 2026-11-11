@@ -39,6 +39,7 @@ export interface StartSessionArgs {
   cwd: string;
   task: string;
   model?: string;
+  effort?: string;
   objectiveId?: string;
   taskId?: string;
   isolated?: boolean;
@@ -233,6 +234,10 @@ export function leadToolset(
             .describe(
               `Default ${models[0]}; another where the task suits it better, or the user asks`,
             ),
+          effort: z
+            .string()
+            .optional()
+            .describe("Reasoning effort, one the model has; default its own, or the user's"),
           objective_id: z.string().optional(),
           task_id: z.string().optional().describe("Doing now, review when it finishes"),
           isolated: z
@@ -249,6 +254,7 @@ export function leadToolset(
               cwd: String(a.cwd),
               task: String(a.task),
               ...(typeof a.model === "string" && { model: a.model }),
+              ...(typeof a.effort === "string" && a.effort && { effort: a.effort }),
               ...(typeof a.objective_id === "string" && { objectiveId: a.objective_id }),
               ...(typeof a.task_id === "string" && { taskId: a.task_id }),
               ...(a.isolated === true && { isolated: true }),

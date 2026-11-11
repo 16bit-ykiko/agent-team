@@ -855,6 +855,16 @@ export class ProjectManager {
     if (a.model && !models.includes(a.model)) {
       throw new Error(`Unknown model ${a.model}; one of: ${models.join(", ")}`);
     }
+    const defaults = this.defaultModel();
+    const model = a.model ?? defaults.model;
+    const levels = effortLevelsForModel(model);
+    if (a.effort && !levels.includes(a.effort)) {
+      throw new Error(
+        levels.length
+          ? `${model} has no effort ${a.effort}; one of: ${levels.join(", ")}`
+          : `${model} takes no effort level`,
+      );
+    }
     const objective = a.objectiveId ? this.objective(projectId, a.objectiveId) : undefined;
     if (objective?.archived) throw new Error(`${objective.id} is in the archive: read-only`);
     if (objective?.status === "dropped") {
@@ -865,9 +875,7 @@ export class ProjectManager {
       throw new Error(`No task ${a.taskId} in ${objective!.id}`);
     }
 
-    const defaults = this.defaultModel();
-    const model = a.model ?? defaults.model;
-    const effort = model === defaults.model ? defaults.effort : undefined;
+    const effort = a.effort ?? (model === defaults.model ? defaults.effort : undefined);
     const preset = AGENT_PRESETS[this.workers(projectId).length % AGENT_PRESETS.length];
     const w = this.host.createWorkspace(a.title, cwd, {
       projectId,

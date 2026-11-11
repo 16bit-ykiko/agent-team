@@ -90,8 +90,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
     effort: "xhigh",
     effortLevels: EFFORT_FIVE,
   },
-  { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", backend: "claude" },
-  { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", backend: "claude" },
+  { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", backend: "claude", effortLevels: [] },
+  { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", backend: "claude", effortLevels: [] },
   // Codex models available on ChatGPT accounts. Bare gpt-5.6 / gpt-5.6-pro are
   // API-key only and rejected with a ChatGPT login, so they are not listed.
   {
@@ -357,8 +357,12 @@ export function defaultEffortForModel(modelId: string): string | null {
   return opt?.effort ?? opt?.defaultEffort ?? null;
 }
 
+// A Cursor model the list lacks gets none: its effort is a model parameter
+// only the list names (cursorParams).
 export function effortLevelsForModel(modelId: string): string[] {
-  return findModelOption(modelId)?.effortLevels ?? EFFORT_FIVE;
+  return (
+    findModelOption(modelId)?.effortLevels ?? (modelId.startsWith(CURSOR_PREFIX) ? [] : EFFORT_FIVE)
+  );
 }
 
 // Adaptive thinking (with a display option) is a Claude 4.6+ feature; codex

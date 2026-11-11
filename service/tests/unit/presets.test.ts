@@ -83,6 +83,12 @@ describe("the model list", () => {
     expect(supportsAdaptiveThinking("claude-haiku-4-5-20251001")).toBe(false);
   });
 
+  it("gives no effort levels where none would be sent: DeepSeek, a Cursor model the list lacks", () => {
+    expect(effortLevelsForModel("deepseek-v4-pro")).toEqual([]);
+    expect(effortLevelsForModel("cursor/claude-opus-5-5")).toEqual([]);
+    expect(effortLevelsForModel("cursor/gemini-4-argon")).toEqual(["low", "medium", "high"]);
+  });
+
   it("treats a Claude id in neither list as a newer Claude model", () => {
     expect(backendForModel("claude-opus-6")).toBe("claude");
     expect(supportsAdaptiveThinking("claude-opus-6")).toBe(true);

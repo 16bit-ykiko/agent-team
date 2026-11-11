@@ -375,6 +375,45 @@ describe("server websocket", () => {
     later.ws.close();
   });
 
+  it("adds no agent at an effort its model lacks", async () => {
+    const { ws, next } = await connect();
+    ws.send(
+      JSON.stringify({
+        type: "add_agent",
+        workspaceId: "ws-h",
+        name: "G",
+        model: "cursor/gemini-4-argon",
+        avatar: "x",
+        color: "#888",
+        effort: "max",
+      }),
+    );
+    expect((await next("error")).message).toBe("cursor/gemini-4-argon has no effort max");
+    ws.close();
+  });
+
+  it("adds an agent at the effort chosen, telling every client the levels it takes", async () => {
+    const { ws, next } = await connect();
+    await next("init");
+    ws.send(
+      JSON.stringify({
+        type: "add_agent",
+        workspaceId: "ws-h",
+        name: "G",
+        model: "cursor/gemini-4-argon",
+        avatar: "x",
+        color: "#888",
+        effort: "high",
+      }),
+    );
+    expect((await next("agent_added")).agent).toMatchObject({
+      name: "G",
+      effort: "high",
+      effortLevels: ["low", "medium", "high"],
+    });
+    ws.close();
+  });
+
   it("stops turns without a word and says when there is no wake-up to cancel", async () => {
     const { ws, next } = await connect();
     ws.send(JSON.stringify({ type: "interrupt", workspaceId: "ws-h" }));

@@ -15,7 +15,6 @@ import {
   MODEL_OPTIONS,
   backendForModel,
   defaultEffortForModel,
-  findModelOption,
   effortLevelsForModel,
   supportsFastMode,
 } from "../config/presets";
@@ -87,6 +86,8 @@ export interface AgentRuntimeInfo extends AgentInfo {
   state: RunState;
   activity: string | null;
   effort: string | null;
+  // The levels /effort takes for its model.
+  effortLevels: string[];
   fast: boolean;
   // Codex goal objective in force, if one was set with /goal.
   goal: string | null;
@@ -1122,8 +1123,7 @@ export class Workspace {
     }
     // The effort carries over where the new model declares it, else it starts
     // as a fresh agent on that model would; fast mode where it has one.
-    const preset = findModelOption(next);
-    const declared = preset ? (preset.effortLevels ?? []) : effortLevelsForModel(next);
+    const declared = effortLevelsForModel(next);
     const effort = agent.session.getState().config.effort;
     const keep =
       effort && declared.includes(effort) ? effort : (defaultEffortForModel(next) ?? undefined);
@@ -1679,6 +1679,7 @@ export class Workspace {
       state: this.agentState(a),
       activity: a.activity ?? null,
       effort: a.session.getState().config.effort ?? null,
+      effortLevels: effortLevelsForModel(a.info.model),
       fast: Boolean(a.session.getState().config.fast),
       goal: a.session.getState().config.goal ?? null,
       backgroundTasks: a.session.backgroundTaskList ?? [],

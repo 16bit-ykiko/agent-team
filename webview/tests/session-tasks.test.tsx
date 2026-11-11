@@ -56,6 +56,7 @@ const actions = (): AgentsPanelActions => ({
   onClearContext: vi.fn(),
   onRemoveAgent: vi.fn(),
   onSetModel: vi.fn(),
+  onSetEffort: vi.fn(),
   onStopTask: vi.fn(),
   onCancelWake: vi.fn(),
   onStopAll: vi.fn(),

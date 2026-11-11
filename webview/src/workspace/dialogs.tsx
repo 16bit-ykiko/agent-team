@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, type RefObject } from "react";
+import { EffortSelect, effortOf } from "./EffortSelect";
 import type { AgentPreset, ModelOption, HostInfo } from "../state/useServer";
 import { isImageAvatar } from "./avatar";
 
@@ -83,10 +84,23 @@ export function AddAgentDialog({
   models: ModelOption[];
   accounts: string[];
   onClose: () => void;
-  onAdd: (name: string, model: string, avatar: string, color: string, account?: string) => void;
+  onAdd: (
+    name: string,
+    model: string,
+    avatar: string,
+    color: string,
+    account?: string,
+    effort?: string,
+  ) => void;
 }) {
   const [selectedPreset, setSelectedPreset] = useState(0);
   const [model, setModel] = useState(models[0]?.id ?? "");
+  // "" for the model's default; kept across models that have the level.
+  const [effort, setEffort] = useState("");
+  const chooseModel = (next: string) => {
+    setModel(next);
+    if (!effortOf(models, next).levels.includes(effort)) setEffort("");
+  };
   const [customName, setCustomName] = useState("");
   const [account, setAccount] = useState("");
 
@@ -148,7 +162,7 @@ export function AddAgentDialog({
 
         <label className="dialog-field">
           <span>Model</span>
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
+          <select value={model} onChange={(e) => chooseModel(e.target.value)}>
             {BACKEND_GROUPS.map(([backend, label]) => {
               const group = models.filter((m) => m.backend === backend);
               return (
@@ -165,6 +179,19 @@ export function AddAgentDialog({
             })}
           </select>
         </label>
+
+        {effortOf(models, model).levels.length > 0 && (
+          <label className="dialog-field">
+            <span>Effort</span>
+            <EffortSelect
+              {...effortOf(models, model)}
+              value={effort}
+              onChange={setEffort}
+              label="Reasoning effort"
+              fresh
+            />
+          </label>
+        )}
 
         {accounts.length > 0 && onAccount && (
           <label className="dialog-field">
@@ -193,6 +220,7 @@ export function AddAgentDialog({
                 preset?.avatar ?? "🤖",
                 preset?.color ?? "#888",
                 (onAccount && account) || undefined,
+                effort || undefined,
               );
               onClose();
             }}

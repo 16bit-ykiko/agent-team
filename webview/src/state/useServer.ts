@@ -287,6 +287,8 @@ export interface AgentInfo {
   activity?: string | null;
   // Current reasoning effort level, when the model supports one.
   effort?: string | null;
+  // The levels /effort takes for its model.
+  effortLevels?: string[];
   // Fast mode on (/fast) and the Codex goal being pursued (/goal).
   fast?: boolean;
   goal?: string | null;
@@ -384,6 +386,11 @@ export interface ModelOption {
   id: string;
   label: string;
   backend: "claude" | "codex" | "cursor";
+  // The effort levels it takes (none: it takes none), and the one it runs at
+  // when none is chosen (`effort` the panel sets, else the backend's own).
+  effortLevels?: string[];
+  effort?: string;
+  defaultEffort?: string;
 }
 
 export interface CommandInfo {
@@ -1188,7 +1195,9 @@ export function useServer() {
         avatar: string,
         color: string,
         account?: string,
-      ) => send({ type: "add_agent", workspaceId: wsId, name, model, avatar, color, account }),
+        effort?: string,
+      ) =>
+        send({ type: "add_agent", workspaceId: wsId, name, model, avatar, color, account, effort }),
       [send],
     ),
     accounts,

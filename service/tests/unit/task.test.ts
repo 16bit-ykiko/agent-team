@@ -563,7 +563,11 @@ describe("effort on the wire", () => {
     };
     const ws = new Workspace("ws-1", "test", "proj", "local", "/tmp", registry, cb);
     const agent = ws.addAgent("A", "claude-fable-5-1", "🤖", "#888", { effort: "high" });
-    expect(ws.getInfo(false).agents[0].effort).toBe("high");
+    expect(ws.getInfo(false).agents[0]).toMatchObject({
+      effort: "high",
+      // What /effort takes, for the panel to offer.
+      effortLevels: ["low", "medium", "high", "xhigh", "max"],
+    });
 
     const session = host.lastSession! as FakeSession & { setEffort?: (l: string) => void };
     session.setEffort = (l: string) => {
@@ -1092,6 +1096,10 @@ describe("/model", () => {
     expect(session.getState().config).toMatchObject({ model: "deepseek-v4-pro" });
     expect(session.getState().config.effort).toBeUndefined();
     expect(session.getState().config.fast).toBeUndefined();
+    // Nor offered, nor taken by /effort: every path agrees.
+    expect(ws.getInfo(false).agents[0].effortLevels).toEqual([]);
+    await ws.sendMessage("/effort high");
+    expect(session.getState().config.effort).toBeUndefined();
   });
 
   it("stays within its backend, and warns about a model the list does not know", async () => {

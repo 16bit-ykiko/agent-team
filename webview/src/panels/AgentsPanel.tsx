@@ -1,6 +1,7 @@
 import { Fragment, memo, useState } from "react";
 import type { AgentInfo, ModelOption, Project, Workspace } from "../state/useServer";
 import { AgentAvatar } from "../workspace/avatar";
+import { EffortSelect, effortOf } from "../workspace/EffortSelect";
 import { agentState, stateLabel } from "../workspace/agents";
 import { formatRelative, formatTokens, shortModel } from "../format";
 import { DEFAULT_BRANCH, sessionName, sessionState, sessionWork } from "./scope";
@@ -18,6 +19,7 @@ export interface AgentsPanelActions extends TaskActions {
   onClearContext: (workspaceId: string, agentId: string) => void;
   onRemoveAgent: (workspaceId: string, agentId: string) => void;
   onSetModel: (workspaceId: string, agentId: string, model: string) => void;
+  onSetEffort: (workspaceId: string, agentId: string, effort: string) => void;
 }
 
 const STATE_LABEL = {
@@ -200,6 +202,7 @@ function SessionCard({
                   onClear={() => actions.onClearContext(w.id, a.id)}
                   onRemove={() => actions.onRemoveAgent(w.id, a.id)}
                   onModel={(model) => actions.onSetModel(w.id, a.id, model)}
+                  onEffort={(effort) => actions.onSetEffort(w.id, a.id, effort)}
                 />
                 {state !== "archived" && hasWork(a) && (
                   <AgentTasks session={w} agent={a} actions={actions} />
@@ -269,6 +272,7 @@ function AgentRow({
   onClear,
   onRemove,
   onModel,
+  onEffort,
 }: {
   agent: AgentInfo;
   connected: boolean;
@@ -277,6 +281,7 @@ function AgentRow({
   onClear: () => void;
   onRemove: () => void;
   onModel: (model: string) => void;
+  onEffort: (effort: string) => void;
 }) {
   const state = agentState(a);
   const ctx = a.context;
@@ -308,7 +313,21 @@ function AgentRow({
                 ))}
               </select>
             )}
-            {a.effort ? ` · ${a.effort}` : ""}
+            {archived || !connected || !a.effortLevels?.length ? (
+              a.effort && ` · ${a.effort}`
+            ) : (
+              <>
+                {" · "}
+                <EffortSelect
+                  className="ap-model ap-effort"
+                  levels={a.effortLevels}
+                  fallback={effortOf(models, a.model).fallback}
+                  value={a.effort ?? ""}
+                  onChange={(level) => level && onEffort(level)}
+                  label={`${a.name}'s reasoning effort`}
+                />
+              </>
+            )}
             {a.fast ? " · ⚡" : ""}
             {a.account ? ` · @${a.account}` : ""}
           </span>
@@ -346,13 +365,13 @@ function AgentRow({
   );
 }
 
-// Models an agent can move to mid-session: Claude ones (the session is a
-// transcript any of them resumes), Cursor ones for a Cursor agent (each run
-// names its model); a Codex thread stays on its model. The current one leads
-// even when the list has dropped it.
+// Models an agent can move to mid-session: those of its backend (a Claude
+// transcript, a Codex thread, a Cursor agent goes on only on its own kind).
+// The current one leads even when the list has dropped it.
 function switchable(a: AgentInfo, models: ModelOption[]): string[] {
-  if (a.model.startsWith("gpt-")) return [a.model];
-  const backend = a.model.startsWith("cursor/") ? "cursor" : "claude";
+  const backend =
+    models.find((m) => m.id === a.model)?.backend ??
+    (a.model.startsWith("cursor/") ? "cursor" : a.model.startsWith("gpt-") ? "codex" : "claude");
   const ids = models.filter((m) => m.backend === backend).map((m) => m.id);
   return ids.includes(a.model) ? ids : [a.model, ...ids];
 }

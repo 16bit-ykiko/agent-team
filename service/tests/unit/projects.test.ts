@@ -348,6 +348,49 @@ describe("ProjectManager", () => {
     });
   });
 
+  it("starts a worker at the effort asked for, one its model has", async () => {
+    const { create, call, session, workspaces, root } = setup();
+    fs.mkdirSync(path.join(root, "wt"), { recursive: true });
+    const { lead } = create("clice");
+    const workers = () => [...workspaces.values()].filter((w) => w.projectLink?.role === "worker");
+    await call(lead, "start_session", {
+      title: "w",
+      cwd: "wt",
+      task: "t",
+      model: "claude-fable-5-2",
+      effort: "max",
+    });
+    expect([...workers()[0].agents.values()][0].info.model).toBe("claude-fable-5-2");
+    expect(session(workers()[0]).getState().config.effort).toBe("max");
+    // On the default model too.
+    await call(lead, "start_session", { title: "w2", cwd: "wt", task: "t", effort: "low" });
+    expect(session(workers()[1]).getState().config.effort).toBe("low");
+
+    await expect(
+      call(lead, "start_session", {
+        title: "w3",
+        cwd: "wt",
+        task: "t",
+        model: "cursor/gemini-4-argon",
+        effort: "max",
+      }),
+    ).rejects.toThrow("cursor/gemini-4-argon has no effort max; one of: low, medium, high");
+    await expect(
+      call(lead, "start_session", {
+        title: "w4",
+        cwd: "wt",
+        task: "t",
+        model: "cursor/composer-2.5",
+        effort: "high",
+      }),
+    ).rejects.toThrow("cursor/composer-2.5 takes no effort level");
+    expect(workers()).toHaveLength(2);
+
+    // An empty effort is none: the model's default stands.
+    await call(lead, "start_session", { title: "w5", cwd: "wt", task: "t", effort: "" });
+    expect(session(workers()[2]).getState().config.effort).toBeUndefined();
+  });
+
   it("runs leads and unnamed workers on the configured model and effort, if a lead may run on it", async () => {
     const { manager, root, workspaces, call, host, session } = setup();
     fs.mkdirSync(path.join(root, "wt"), { recursive: true });

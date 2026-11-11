@@ -28,7 +28,12 @@ import {
   RuntimeSettings,
 } from "../workspace/state";
 import { loadConfig, AppConfig, effectiveAccount, pickFailoverAccount } from "../config/config";
-import { AGENT_PRESETS, MODEL_OPTIONS, backendForModel } from "../config/presets";
+import {
+  AGENT_PRESETS,
+  MODEL_OPTIONS,
+  backendForModel,
+  effortLevelsForModel,
+} from "../config/presets";
 import { CommandInfo, StreamEvent } from "../session/claude";
 import { HostRegistry, LocalHost } from "../session/host";
 import { completeDirs, resolveWorkspacePath } from "../repo/dirs";
@@ -256,7 +261,8 @@ export class Server {
         accounts: Object.keys(this.config.accounts),
         defaultAccount: this.defaultAccount,
         presets: AGENT_PRESETS,
-        models: MODEL_OPTIONS,
+        // Each with the effort levels /effort and add_agent accept for it.
+        models: MODEL_OPTIONS.map((m) => ({ ...m, effortLevels: effortLevelsForModel(m.id) })),
         commands: this.commands,
         hosts: this.config.hosts,
         archiveAfterDays: this.config.workspace.archive_after_days,
@@ -390,6 +396,7 @@ export class Server {
           msg.color as string,
           msg.permissionMode as string | undefined,
           msg.account as string | undefined,
+          (msg.effort as string | undefined) || undefined,
         );
         return;
 
@@ -682,6 +689,7 @@ export class Server {
     color: string,
     permissionMode?: string,
     account?: string,
+    effort?: string,
   ): void {
     const workspace = this.workspaces.get(workspaceId);
     if (!workspace) {
@@ -694,7 +702,11 @@ export class Server {
         this.sendJson(ws, { type: "error", message: `Unknown account: ${account}` });
         return;
       }
-      this.addAgentTo(workspace, name, model, avatar, color, permissionMode, account);
+      if (effort && !effortLevelsForModel(model).includes(effort)) {
+        this.sendJson(ws, { type: "error", message: `${model} has no effort ${effort}` });
+        return;
+      }
+      this.addAgentTo(workspace, name, model, avatar, color, permissionMode, account, effort);
     } catch (e) {
       this.sendJson(ws, {
         type: "error",
@@ -731,7 +743,13 @@ export class Server {
     const tools = this.projects.toolsFor(workspace);
     if (tools) workspace.agents.get(agent.id)?.session.setPanelTools?.(tools);
     this.persistWorkspaceNow(workspace.id);
-    this.broadcastUI({ type: "agent_added", workspaceId: workspace.id, agent });
+    // With its runtime state (effort, the levels it takes), as agent_updated sends it.
+    const entry = workspace.agents.get(agent.id);
+    this.broadcastUI({
+      type: "agent_added",
+      workspaceId: workspace.id,
+      agent: entry ? workspace.agentInfo(entry) : agent,
+    });
   }
 
   // Long-lived OAuth token (from `claude setup-token`) for a named account;

@@ -652,6 +652,7 @@ export function App() {
       onRemoveAgent: (id, agentId) => removeAgent(id, agentId),
       // Through the chat, so the switch shows where it happened.
       onSetModel: (id, agentId, model) => void sendMessage(id, `/model ${model}`, agentId),
+      onSetEffort: (id, agentId, effort) => void sendMessage(id, `/effort ${effort}`, agentId),
       onStopTask: (id, agentId, taskId) => cancelSubagent(id, agentId, taskId),
       onCancelWake: (id, agentId) => cancelWakeup(id, agentId),
       onStopAll: (id) => abort(id),
@@ -1844,8 +1845,8 @@ export function App() {
             models={models}
             accounts={accounts}
             onClose={() => setAddAgentFor(null)}
-            onAdd={(name, model, avatar, color, account) =>
-              addAgent(addAgentFor, name, model, avatar, color, account)
+            onAdd={(name, model, avatar, color, account, effort) =>
+              addAgent(addAgentFor, name, model, avatar, color, account, effort)
             }
           />
         )}

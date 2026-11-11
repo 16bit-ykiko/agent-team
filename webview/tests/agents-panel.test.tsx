@@ -122,6 +122,7 @@ describe("AgentsPanel", () => {
     onClearContext: vi.fn(),
     onRemoveAgent: vi.fn(),
     onSetModel: vi.fn(),
+    onSetEffort: vi.fn(),
     onStopTask: vi.fn(),
     onCancelWake: vi.fn(),
     onStopAll: vi.fn(),
@@ -311,6 +312,7 @@ describe("a session's actions by its state", () => {
           onClearContext: vi.fn(),
           onRemoveAgent: vi.fn(),
           onSetModel: vi.fn(),
+          onSetEffort: vi.fn(),
           onStopTask: vi.fn(),
           onCancelWake: vi.fn(),
           onStopAll: vi.fn(),
@@ -559,6 +561,22 @@ describe("the agents panel in the app", () => {
     });
   });
 
+  it("sets an agent's effort through the chat as well", () => {
+    const levels = {
+      ...w1,
+      agents: w1.agents.map((a) => ({ ...a, effortLevels: ["low", "high"] })),
+    };
+    const sock = boot("w1", [lead, levels, w2]);
+    fireEvent.click(document.querySelector(".agents-chip")!);
+    const card = document.querySelector('[aria-label="modules"]')!;
+    fireEvent.change(card.querySelector(".ap-effort")!, { target: { value: "high" } });
+    expect(sock.frames().find((f) => f.type === "send_message")).toMatchObject({
+      workspaceId: "w1",
+      content: "/effort high",
+      target: "kisara",
+    });
+  });
+
   it("offers Cursor's models in their own group, and moves a Cursor agent only among them", () => {
     const cursor = [
       { id: "cursor/composer-2.5", label: "Composer 2.5", backend: "cursor" },
@@ -659,6 +677,7 @@ describe("an agent's state line", () => {
           onClearContext: vi.fn(),
           onRemoveAgent: vi.fn(),
           onSetModel: vi.fn(),
+          onSetEffort: vi.fn(),
           onStopTask: vi.fn(),
           onCancelWake: vi.fn(),
           onStopAll: vi.fn(),
@@ -710,14 +729,24 @@ describe("the summary of a workspace on its own", () => {
   });
 });
 
-describe("switching an agent's model", () => {
+describe("switching an agent's model and effort", () => {
+  const five = ["low", "medium", "high", "xhigh", "max"];
   const models = [
-    { id: "claude-opus-5-5", label: "Opus 5.5", backend: "claude" as const },
-    { id: "claude-fable-5-1", label: "Fable 5.1", backend: "claude" as const },
-    { id: "gpt-6-astra", label: "GPT-6 Astra", backend: "codex" as const },
+    { id: "claude-opus-5-5", label: "Opus 5.5", backend: "claude" as const, effortLevels: five },
+    { id: "claude-fable-5-1", label: "Fable 5.1", backend: "claude" as const, effortLevels: five },
+    {
+      id: "gpt-6-astra",
+      label: "GPT-6 Astra",
+      backend: "codex" as const,
+      effortLevels: ["low", "high"],
+      defaultEffort: "high",
+    },
+    { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", backend: "codex" as const, effortLevels: ["low"] },
+    { id: "cursor/composer-2.5", label: "Composer", backend: "cursor" as const, effortLevels: [] },
   ];
   const render1 = (a: AgentInfo, connected = true) => {
     const onSetModel = vi.fn();
+    const onSetEffort = vi.fn();
     const utils = render(
       <AgentsPanel
         sessions={[ws("s", { agents: [a] })]}
@@ -734,14 +763,17 @@ describe("switching an agent's model", () => {
           onClearContext: vi.fn(),
           onRemoveAgent: vi.fn(),
           onSetModel,
+          onSetEffort,
           onStopTask: vi.fn(),
           onCancelWake: vi.fn(),
           onStopAll: vi.fn(),
         }}
       />,
     );
-    return { ...utils, onSetModel };
+    return { ...utils, onSetModel, onSetEffort };
   };
+  const options = (el: Element | null) =>
+    [...(el as HTMLSelectElement).options].map((o) => o.textContent);
 
   it("offers the Claude models, the current one first when the list has dropped it", () => {
     const { container, onSetModel } = render1(agent("a", { model: "claude-opus-4-6" }));
@@ -755,12 +787,50 @@ describe("switching an agent's model", () => {
     expect(onSetModel).toHaveBeenCalledWith("s", "a", "claude-fable-5-1");
   });
 
-  it("offers no switch for a Codex thread or while offline", () => {
-    expect(
-      render1(agent("c", { model: "gpt-6-astra" })).container.querySelector(".ap-model"),
-    ).toBeNull();
+  it("moves a Codex thread between Codex models, and offers nothing while offline", () => {
+    const { container, onSetModel } = render1(agent("c", { model: "gpt-6-astra" }));
+    const select = container.querySelector(".ap-model:not(.ap-effort)")!;
+    expect(options(select)).toEqual(["gpt 6 astra", "gpt 5.6 sol"]);
+    fireEvent.change(select, { target: { value: "gpt-5.6-sol" } });
+    expect(onSetModel).toHaveBeenCalledWith("s", "c", "gpt-5.6-sol");
     expect(
       render1(agent("a", { model: "claude-opus-5-5" }), false).container.querySelector(".ap-model"),
     ).toBeNull();
+  });
+
+  it("offers the model's effort levels, its default while none is set", () => {
+    const fresh = render1(agent("c", { model: "gpt-6-astra", effortLevels: ["low", "high"] }));
+    const select = fresh.container.querySelector(".ap-effort")!;
+    expect(options(select)).toEqual(["default (high)", "low", "high"]);
+    fireEvent.change(select, { target: { value: "low" } });
+    expect(fresh.onSetEffort).toHaveBeenCalledWith("s", "c", "low");
+    fresh.unmount();
+
+    const set = render1(
+      agent("a", { model: "claude-opus-5-5", effort: "max", effortLevels: five }),
+    );
+    expect(options(set.container.querySelector(".ap-effort"))).toEqual(five);
+    expect((set.container.querySelector(".ap-effort") as HTMLSelectElement).value).toBe("max");
+    set.unmount();
+
+    // A level its model's list has since lost still shows as it is.
+    const lost = render1(
+      agent("c", { model: "gpt-6-astra", effort: "xhigh", effortLevels: ["low", "high"] }),
+    );
+    const kept = lost.container.querySelector(".ap-effort") as HTMLSelectElement;
+    expect(options(kept)).toEqual(["xhigh", "low", "high"]);
+    expect(kept.value).toBe("xhigh");
+    lost.unmount();
+
+    // A model with no levels, or no connection: the effort as text, if any.
+    const none = render1(agent("k", { model: "cursor/composer-2.5", effortLevels: [] }));
+    expect(none.container.querySelector(".ap-effort")).toBeNull();
+    none.unmount();
+    const offline = render1(
+      agent("a", { model: "claude-opus-5-5", effort: "max", effortLevels: five }),
+      false,
+    );
+    expect(offline.container.querySelector(".ap-effort")).toBeNull();
+    expect(offline.container.querySelector(".ap-meta")!.textContent).toContain(" · max");
   });
 });
