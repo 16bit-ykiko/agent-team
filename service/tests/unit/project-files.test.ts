@@ -371,3 +371,65 @@ describe("VS Code's CLI", () => {
     ).rejects.toThrow(/not installed/);
   });
 });
+
+describe("api/file for a session of a project", () => {
+  let server: http.Server;
+  let port: number;
+  let worktree: string;
+
+  beforeAll(async () => {
+    worktree = path.join(base, "worktree");
+    fs.mkdirSync(path.join(worktree, "own", "notes"), { recursive: true });
+    fs.writeFileSync(path.join(worktree, "own", "notes", "todo.md"), "mine\n");
+    const handler = new HttpHandler(
+      new Auth(() => null),
+      base,
+      base,
+      base,
+      (id) => ({ w1: worktree, w2: path.join(worktree, "own") })[id],
+      () => undefined,
+      () => undefined,
+      undefined,
+      (id) => (id === "w1" || id === "w2" ? notes : undefined),
+    );
+    server = http.createServer((req, res) => handler.handle(req, res));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    port = (server.address() as net.AddressInfo).port;
+  });
+  afterAll(() => new Promise<void>((r) => server.close(() => r())));
+
+  const get = (q: string) =>
+    fetch(`http://127.0.0.1:${port}/api/file?${q}`).then(async (r) => ({
+      status: r.status,
+      body: (await r.json()) as Record<string, unknown>,
+    }));
+
+  it("read notes/... from the project's notes, unless the workspace has that file itself", async () => {
+    expect((await get("ws=w1&path=notes/rules/cli.md")).body).toMatchObject({
+      kind: "text",
+      content: "# CLI\n",
+      path: path.join(notes, "rules", "cli.md"),
+      ref: "notes/rules/cli.md",
+    });
+    expect((await get("ws=w1&path=notes")).body).toMatchObject({
+      kind: "dir",
+      path: notes,
+      ref: "notes",
+    });
+    // A note opened by its full path still says which note it is.
+    expect(
+      (await get(`ws=w1&path=${encodeURIComponent(path.join(notes, "rules"))}`)).body,
+    ).toMatchObject({ kind: "dir", ref: "notes/rules" });
+    const own = (await get("ws=w2&path=notes/todo.md")).body;
+    expect(own).toMatchObject({ content: "mine\n" });
+    expect(own.ref).toBeUndefined();
+    expect((await get("ws=w2&path=notes/rules/cli.md")).body).toMatchObject({
+      ref: "notes/rules/cli.md",
+    });
+    expect((await get("ws=w1&path=notes/nope.md")).body).toMatchObject({
+      error: "No such file or directory",
+      path: path.join(notes, "nope.md"),
+    });
+    expect((await get("ws=w1&path=./notes/rules/cli.md")).status).toBe(404);
+  });
+});

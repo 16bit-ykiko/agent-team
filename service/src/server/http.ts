@@ -58,6 +58,8 @@ export class HttpHandler {
     private prBaseOf: (workspaceId: string) => string | null | undefined = () => undefined,
     private projectOf: (projectId: string) => ProjectPaths | undefined = () => undefined,
     private openFile: (file: string, line: number | undefined) => Promise<void> = openInVSCode,
+    // The notes of the project a workspace belongs to.
+    private notesOf: (workspaceId: string) => string | undefined = () => undefined,
   ) {}
 
   handle(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -195,8 +197,8 @@ export class HttpHandler {
     const input = url.searchParams.get("path") ?? "";
     const project = url.searchParams.get("project");
     if (project === null) {
-      const cwd = this.cwdOf(url.searchParams.get("ws") ?? "") ?? os.homedir();
-      return this.sendFile(resolveFilePath(cwd, input || "."), raw, res);
+      const found = this.workspacePath(url.searchParams.get("ws") ?? "", input);
+      return this.sendFile(found.abs, raw, res, undefined, found.ref);
     }
     this.projectPath(project, input).then(
       (found) =>
@@ -205,6 +207,23 @@ export class HttpHandler {
           : this.sendFile(found.abs, raw, res, found.candidates, found.ref),
       (e: unknown) => json(res, 500, { error: e instanceof Error ? e.message : String(e) }),
     );
+  }
+
+  // Sessions of a project write notes/... for its notes, as its board does;
+  // a file at that path in the workspace's own folder comes first. A note
+  // comes with `ref`, its notes/... path, for the notes/... links in it.
+  private workspacePath(ws: string, input: string): { abs: string; ref?: string } {
+    const own = resolveFilePath(this.cwdOf(ws) ?? os.homedir(), input || ".");
+    const notes = this.notesOf(ws);
+    if (!notes) return { abs: own };
+    const p = input.trim();
+    const abs =
+      /^notes(\/|$)/.test(p) && !fs.existsSync(own)
+        ? path.resolve(notes, p.slice("notes".length).replace(/^\/+/, "") || ".")
+        : own;
+    const rel = path.relative(notes, abs);
+    if (rel === ".." || rel.startsWith("../") || path.isAbsolute(rel)) return { abs };
+    return { abs, ref: rel ? `notes/${rel}` : "notes" };
   }
 
   // For a project's board: `ref`, the path as it writes it (the one found

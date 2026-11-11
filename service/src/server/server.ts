@@ -125,6 +125,11 @@ export class Server {
       (id) => this.workspaces.get(id)?.cwd,
       (id) => this.workspaces.get(id)?.pr?.base,
       (id) => this.projects.paths(id),
+      undefined,
+      (id) => {
+        const project = this.workspaces.get(id)?.projectLink?.projectId;
+        return project && this.projects.paths(project)?.notesDir;
+      },
     );
     this.httpServer = http.createServer((req, res) => this.http.handle(req, res));
     this.wss = new WebSocketServer({
