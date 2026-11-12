@@ -385,7 +385,7 @@ export interface AgentPreset {
 export interface ModelOption {
   id: string;
   label: string;
-  backend: "claude" | "codex" | "cursor";
+  backend: "claude" | "codex" | "cursor" | "agy";
   // The effort levels it takes (none: it takes none), and the one it runs at
   // when none is chosen (`effort` the panel sets, else the backend's own).
   effortLevels?: string[];

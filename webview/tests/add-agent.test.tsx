@@ -19,6 +19,14 @@ const models: ModelOption[] = [
     defaultEffort: "medium",
   },
   { id: "cursor/composer-2.5", label: "Composer", backend: "cursor", effortLevels: [] },
+  {
+    id: "agy/gemini-4-carbon",
+    label: "Gemini 4 Carbon",
+    backend: "agy",
+    effortLevels: ["low", "medium", "high"],
+    effort: "high",
+    defaultEffort: "medium",
+  },
 ];
 
 const dialog = () => {
@@ -68,6 +76,23 @@ describe("adding an agent", () => {
       undefined,
       "low",
     );
+  });
+
+  it("groups the models by backend, agy's under Antigravity", () => {
+    const d = dialog();
+    const groups = [...d.model().querySelectorAll("optgroup")].map((g) => [
+      g.label,
+      [...g.querySelectorAll("option")].map((o) => o.value),
+    ]);
+    expect(groups).toEqual([
+      ["Claude", ["claude-opus-5-5"]],
+      ["Cursor", ["cursor/gemini-4-argon", "cursor/composer-2.5"]],
+      ["Antigravity", ["agy/gemini-4-carbon"]],
+    ]);
+    fireEvent.change(d.model(), { target: { value: "agy/gemini-4-carbon" } });
+    expect(d.levels()).toEqual(["default (high)", "low", "medium", "high"]);
+    fireEvent.click(d.getByText("Add"));
+    expect(d.onAdd.mock.calls[0][1]).toBe("agy/gemini-4-carbon");
   });
 
   it("leaves the effort to the model when none is chosen", () => {

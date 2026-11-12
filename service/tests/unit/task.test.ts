@@ -703,6 +703,12 @@ describe("fast mode and goal commands", () => {
     expect(lastReply(ws).content).toContain("Codex feature");
     expect(session.sent).toEqual([]);
   });
+
+  it("/goal goes to an agy agent as typed: agy keeps goals itself", async () => {
+    const { ws, session } = makeWorkspace("agy/gemini-4-carbon");
+    await ws.sendMessage("/goal make the tests green");
+    expect(session.sent).toEqual(["/goal make the tests green"]);
+  });
 });
 
 describe("events between turns and late results", () => {

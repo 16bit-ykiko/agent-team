@@ -24,7 +24,8 @@
     "sarasa-font": "tsx scripts/sarasa-font.ts",
     "smoke:claude": "tsx scripts/smoke-claude.ts",
     "smoke:codex": "tsx scripts/smoke-codex.ts",
-    "smoke:cursor": "tsx scripts/smoke-cursor.ts"
+    "smoke:cursor": "tsx scripts/smoke-cursor.ts",
+    "smoke:agy": "tsx scripts/smoke-agy.ts"
   },
   "devDependencies": {
     "eslint": "^10.10.0",

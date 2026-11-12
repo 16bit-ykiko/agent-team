@@ -743,6 +743,18 @@ describe("switching an agent's model and effort", () => {
     },
     { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", backend: "codex" as const, effortLevels: ["low"] },
     { id: "cursor/composer-2.5", label: "Composer", backend: "cursor" as const, effortLevels: [] },
+    {
+      id: "agy/gemini-4-carbon",
+      label: "Gemini 4 Carbon",
+      backend: "agy" as const,
+      effortLevels: ["low", "medium", "high"],
+    },
+    {
+      id: "agy/gemini-3.8-flash",
+      label: "Gemini 3.8 Flash",
+      backend: "agy" as const,
+      effortLevels: ["low", "medium", "high"],
+    },
   ];
   const render1 = (a: AgentInfo, connected = true) => {
     const onSetModel = vi.fn();
@@ -785,6 +797,18 @@ describe("switching an agent's model and effort", () => {
     ]);
     fireEvent.change(select, { target: { value: "claude-fable-5-1" } });
     expect(onSetModel).toHaveBeenCalledWith("s", "a", "claude-fable-5-1");
+  });
+
+  it("moves an agy conversation between agy models, one the list lacks first", () => {
+    const { container, onSetModel } = render1(agent("g", { model: "agy/gemini-4-argon" }));
+    const select = container.querySelector(".ap-model:not(.ap-effort)") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual([
+      "agy/gemini-4-argon",
+      "agy/gemini-4-carbon",
+      "agy/gemini-3.8-flash",
+    ]);
+    fireEvent.change(select, { target: { value: "agy/gemini-3.8-flash" } });
+    expect(onSetModel).toHaveBeenCalledWith("s", "g", "agy/gemini-3.8-flash");
   });
 
   it("moves a Codex thread between Codex models, and offers nothing while offline", () => {

@@ -44,6 +44,8 @@ describe("shortModel", () => {
     expect(shortModel("deepseek-v4-pro")).toBe("deepseek v4 pro");
     expect(shortModel("cursor/composer-2.5")).toBe("composer 2.5");
     expect(shortModel("cursor/gemini-4-argon")).toBe("gemini 4 argon");
+    expect(shortModel("agy/gemini-4-carbon")).toBe("gemini 4 carbon");
+    expect(shortModel("agy/gemini-3.8-flash")).toBe("gemini 3.8 flash");
   });
 });
 

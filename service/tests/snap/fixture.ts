@@ -4,8 +4,10 @@
 import type { Message } from "../../src/workspace/workspace";
 import type { StreamEvent, UsageStats } from "../../src/session/claude";
 import type { RpcMessage } from "../../src/session/codex-rpc";
+import type { PanelToolset } from "../../src/project/tools";
+import { z } from "zod";
 
-export type Backend = "claude" | "codex" | "cursor";
+export type Backend = "claude" | "codex" | "cursor" | "agy";
 
 export type Step =
   // Codex: turn/start when no turn runs, turn/steer into the running one.
@@ -34,8 +36,13 @@ export interface Replay {
   // What the sessions reported as usage limits (the server's rateLimit).
   limits: { rateLimitType?: string; resetsAt?: number }[];
   // Every session handle the workspace created, in order (a restart adds one).
-  sessions: { sessionId: string | null; usage: UsageStats }[];
-  // Codex: every message the sessions wrote to the app-server.
+  sessions: {
+    sessionId: string | null;
+    usage: UsageStats;
+    runState?: string;
+    backgroundTaskList?: { id: string }[];
+  }[];
+  // Codex, agy: every message the sessions wrote to the backend process.
   sent: RpcMessage[];
   // Cursor: the SDK calls the sessions made, in order ("create", "resume
   // <id>", "send", "cancel"), and what each send passed.
@@ -44,7 +51,8 @@ export interface Replay {
 }
 
 // Codex: a tool the client defines (thread/start dynamicTools) and answers
-// itself when the model calls it (item/tool/call).
+// itself when the model calls it (item/tool/call). agy: a panel tool, served
+// by the session's MCP server.
 export interface CodexTool {
   namespace?: string;
   name: string;
@@ -61,8 +69,9 @@ export interface Fixture {
   // perTaskStopAffordance), codex thread/start params, Cursor agent options
   // (local.customTools).
   options?: Record<string, unknown>;
-  // Codex: client-defined tools.
+  // Codex, agy: the panel's tools, and the instructions that go with them.
   tools?: CodexTool[];
+  instructions?: string;
   // Files materialised in the recording cwd (skills, images).
   files?: Record<string, string | { base64: string }>;
   // The backend's API calls go to a local stand-in instead of Anthropic or
@@ -71,6 +80,48 @@ export interface Fixture {
   api?: "usage-limit";
   steps: Step[];
   verify?: (replay: Replay) => void;
+}
+
+// A fixture's tools as the panel's: JSON Schema properties of strings and
+// numbers, all the fixtures use.
+export function panelTools(tools: CodexTool[], instructions?: string): PanelToolset {
+  return {
+    instructions: instructions ?? "Panel tools of a recorded fixture.",
+    tools: tools.map((t) => {
+      const props = (t.inputSchema.properties ?? {}) as Record<string, { type: string }>;
+      const required = new Set((t.inputSchema.required ?? []) as string[]);
+      const shape: Record<string, z.ZodType> = {};
+      for (const [k, p] of Object.entries(props)) {
+        const type = p.type === "number" ? z.number() : z.string();
+        shape[k] = required.has(k) ? type : type.optional();
+      }
+      return {
+        name: t.name,
+        description: t.description,
+        shape,
+        handler: () =>
+          t.success === false ? Promise.reject(new Error(t.reply)) : Promise.resolve(t.reply),
+      };
+    }),
+  };
+}
+
+// What a tape keeps of a frame or a request: strings cut at 400
+// characters, base64 payloads replaced (scripts/capture-sdk.ts). A replay
+// compares what the session writes the same way.
+export function tapeTrim(v: unknown): unknown {
+  if (typeof v === "string") return v.length > 400 ? v.slice(0, 400) + `…(+${v.length - 400})` : v;
+  if (Array.isArray(v)) return v.map(tapeTrim);
+  if (v && typeof v === "object") {
+    const o: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) {
+      if (k === "data" && typeof val === "string" && val.length > 100)
+        o[k] = `<base64 ${val.length}>`;
+      else o[k] = tapeTrim(val);
+    }
+    return o;
+  }
+  return v;
 }
 
 export const fixture = (f: Fixture): Fixture => f;
@@ -93,8 +144,12 @@ export const DEFAULT_MODEL: Record<Backend, string> = {
   claude: "claude-sonnet-5",
   codex: "gpt-6-luna",
   cursor: "cursor/composer-2.5",
+  agy: "agy/gemini-3.8-flash",
 };
 export const RECORD_CWD = "/tmp/sdk-capture";
+// agy: the thought level a recording runs at (the replay's agent too, as
+// the requests setting it depend on it).
+export const RECORD_EFFORT: Partial<Record<Backend, string>> = { agy: "low" };
 
 export interface Header {
   backend: Backend;
@@ -108,12 +163,13 @@ export interface Header {
 export type Entry = { t: number } & (
   | { step: Step & { i: number } }
   | { frame: unknown }
-  // Codex: a JSON-RPC message the recorder sent to the app-server.
+  // Codex, agy: a JSON-RPC message the recorder sent to the backend.
   | { sent: unknown }
   | { error: string }
   // The backend's event stream closed (process exit).
   | { close: true }
-  // A control request the recorder made (interrupt, stop_task) and its answer.
+  // A control request the recorder made (interrupt, stop_task) and its answer;
+  // agy: "idleCheck", the session looking at what agy did while idle.
   | { control: { op: string; taskId?: string; response?: unknown; error?: string } }
 );
 

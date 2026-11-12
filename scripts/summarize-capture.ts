@@ -121,7 +121,46 @@ function codexFrame(m: Obj, parts: string[]): void {
   if (m.error) parts.push(`error=${JSON.stringify(m.error)}`);
 }
 
+// A JSON-RPC message of `agy acp` (ACP), either way.
+function agyFrame(m: Obj, parts: string[]): void {
+  const p = obj(m.params);
+  if (m.method) parts.push(str(m.method) + (m.id != null ? ` [req ${str(m.id)}]` : ""));
+  else parts.push(`[res ${str(m.id)}]`);
+  const u = obj(p.update);
+  if (u.sessionUpdate) {
+    parts.push(str(u.sessionUpdate));
+    if (u.toolCallId) parts.push(`${str(u.name ?? u.kind)}#${tail(u.toolCallId)}`);
+    if (u.status) parts.push(`status=${str(u.status)}`);
+    if (u.title) parts.push(`title=${JSON.stringify(str(u.title).slice(0, 50))}`);
+    if (u.rawOutput) parts.push(`out=${JSON.stringify(u.rawOutput).slice(0, 80)}`);
+    const c = obj(u.content);
+    if (typeof c.text === "string") parts.push(JSON.stringify(c.text.slice(0, 70)));
+    if (Array.isArray(u.availableCommands)) parts.push(`${u.availableCommands.length} commands`);
+    if (Array.isArray(u.entries)) parts.push(JSON.stringify(u.entries).slice(0, 120));
+    if (u.used != null) parts.push(`used=${str(u.used)} size=${str(u.size)}`);
+  } else if (m.method === "session/prompt") {
+    const text = (Array.isArray(p.prompt) ? p.prompt : []).map((i) => str(obj(i).text)).join(" ");
+    parts.push(JSON.stringify(text.slice(0, 60)));
+  } else if (m.method === "session/set_config_option") {
+    parts.push(`${str(p.configId)}=${str(p.value)}`);
+  } else if (m.method === "session/request_permission") {
+    parts.push(JSON.stringify(p.options).slice(0, 120));
+  } else if (m.method) {
+    parts.push(JSON.stringify(p).slice(0, 120));
+  }
+  if (m.result !== undefined) {
+    const r = obj(m.result);
+    parts.push(
+      r.stopReason
+        ? `stop=${str(r.stopReason)} usage=${JSON.stringify(r.usage)}`
+        : JSON.stringify(m.result).slice(0, 120),
+    );
+  }
+  if (m.error) parts.push(`error=${JSON.stringify(m.error)}`);
+}
+
 const DELTA = /\/(delta|outputDelta|summaryTextDelta|textDelta)$/;
+const AGY_CHUNK = /^(agent_message|agent_thought)_chunk$/;
 
 // Cursor frames are tagged by source (see the recorder's cursorDriver).
 function cursorFrame(f: Obj, parts: string[]): void {
@@ -182,6 +221,17 @@ for (const file of process.argv.slice(2)) {
       run.text += str(p.delta);
       continue;
     }
+    const u = obj(p.update);
+    if (header.backend === "agy" && AGY_CHUNK.test(str(u.sessionUpdate))) {
+      const key = `chunk ${str(u.sessionUpdate)}`;
+      if (run?.key !== key) {
+        flush();
+        run = { key, t: e.t, method: "session/update", n: 0, text: "" };
+      }
+      run.n++;
+      run.text += str(obj(u.content).text);
+      continue;
+    }
     flush();
     const parts = [String(e.t).padStart(6) + "ms"];
     if (e.step) {
@@ -193,11 +243,13 @@ for (const file of process.argv.slice(2)) {
       );
     } else if (e.frame) {
       if (header.backend === "codex") codexFrame(obj(e.frame), parts);
+      else if (header.backend === "agy") agyFrame(obj(e.frame), parts);
       else if (header.backend === "cursor") cursorFrame(obj(e.frame), parts);
       else claudeFrame(obj(e.frame), parts);
     } else if (e.sent) {
       parts.push(">>");
-      codexFrame(obj(e.sent), parts);
+      if (header.backend === "agy") agyFrame(obj(e.sent), parts);
+      else codexFrame(obj(e.sent), parts);
     } else if (e.error) parts.push(`!! error ${str(e.error)}`);
     else if (e.close) parts.push("-- stream closed");
     else if (e.control) parts.push(`<< control ${JSON.stringify(e.control)}`);

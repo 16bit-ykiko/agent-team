@@ -761,6 +761,8 @@ export class Server {
   }
 
   private sessionEnv(model: string, account?: string): Record<string, string> | undefined {
+    // agy runs on its own Google login.
+    if (backendForModel(model) === "agy") return undefined;
     if (backendForModel(model) === "cursor") {
       const key = this.config.cursor?.api_key;
       return key ? { CURSOR_API_KEY: key } : undefined;

@@ -1030,7 +1030,9 @@ export class Workspace {
     if (text === "/fast" || text.startsWith("/fast ")) {
       return this.handleFastCommand(text.slice("/fast".length).trim(), agent);
     }
-    if (text === "/goal" || text.startsWith("/goal ")) {
+    // agy keeps goals itself: its /goal goes through as typed.
+    const agy = backendForModel(agent.info.model) === "agy";
+    if (!agy && (text === "/goal" || text.startsWith("/goal "))) {
       return this.handleGoalCommand(text.slice("/goal".length).trim(), agent);
     }
     return null;
@@ -1115,6 +1117,7 @@ export class Workspace {
         claude: ["Claude session", "Claude"],
         codex: ["Codex thread", "Codex"],
         cursor: ["Cursor agent", "Cursor"],
+        agy: ["agy conversation", "agy"],
       }[backend];
       return `**${name}** cannot move to \`${next}\`: a ${kind} continues only on a ${of} model.`;
     }

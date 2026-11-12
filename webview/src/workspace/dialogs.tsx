@@ -71,6 +71,7 @@ const BACKEND_GROUPS: Array<[ModelOption["backend"], string]> = [
   ["claude", "Claude"],
   ["codex", "Codex"],
   ["cursor", "Cursor"],
+  ["agy", "Antigravity"],
 ];
 
 export function AddAgentDialog({

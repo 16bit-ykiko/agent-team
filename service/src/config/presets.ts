@@ -10,7 +10,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
   { name: "Alice", avatar: "avatars/Alice.jpg", color: "#F0D264" },
 ];
 
-export type Backend = "claude" | "codex" | "cursor";
+export type Backend = "claude" | "codex" | "cursor" | "agy";
 
 export interface ModelOption {
   id: string;
@@ -51,6 +51,9 @@ const CODEX_FAST = "priority";
 // Cursor models are `cursor/` + the SDK's id (Cursor.models.list()), which
 // alone can collide with ours (it lists claude-opus-5-5 and gpt-5.5 too).
 const CURSOR_PREFIX = "cursor/";
+// agy (Antigravity CLI) models are `agy/` + its model config option's value;
+// effort is its thought_level option, whose values each model lists.
+const AGY_PREFIX = "agy/";
 
 // The picker's list. Models dropped from it move to LEGACY_MODELS, so agents
 // still on one keep their settings until switched with /model. Opus 5.5 and
@@ -233,6 +236,37 @@ export const MODEL_OPTIONS: ModelOption[] = [
     effortLevels: ["none", "low", "medium", "high", "max"],
     cursorParams: { effort: "reasoning_effort" },
   },
+  // Gemini through agy on the user's Google AI Ultra plan (`agy acp`
+  // session/new: model and thought_level options; agy defaults to medium).
+  {
+    id: "agy/gemini-4-carbon",
+    label: "Gemini 4 Carbon",
+    backend: "agy",
+    effort: "high",
+    defaultEffort: "medium",
+    effortLevels: ["low", "medium", "high"],
+  },
+  {
+    id: "agy/gemini-4-argon",
+    label: "Gemini 4 Argon",
+    backend: "agy",
+    defaultEffort: "medium",
+    effortLevels: ["low", "medium", "high"],
+  },
+  {
+    id: "agy/gemini-4-hydrogen",
+    label: "Gemini 4 Hydrogen",
+    backend: "agy",
+    defaultEffort: "medium",
+    effortLevels: ["low", "medium", "high", "xhigh"],
+  },
+  {
+    id: "agy/gemini-3.8-flash",
+    label: "Gemini 3.8 Flash",
+    backend: "agy",
+    defaultEffort: "medium",
+    effortLevels: ["low", "medium", "high"],
+  },
 ];
 
 export const LEGACY_MODELS: ModelOption[] = [
@@ -303,6 +337,7 @@ export function backendForModel(modelId: string): Backend {
   const known = findModelOption(modelId)?.backend;
   if (known) return known;
   if (modelId.startsWith(CURSOR_PREFIX)) return "cursor";
+  if (modelId.startsWith(AGY_PREFIX)) return "agy";
   return modelId.startsWith("gpt-") ? "codex" : "claude";
 }
 
@@ -321,6 +356,11 @@ export function cursorModel(
     params.push({ id: opt.cursorParams.effort, value: level });
   if (opt?.cursorParams?.fast) params.push({ id: "fast", value: fast ? "true" : "false" });
   return params.length ? { id, params } : { id };
+}
+
+// The model as agy's model config option takes it.
+export function agyModelId(modelId: string): string {
+  return modelId.startsWith(AGY_PREFIX) ? modelId.slice(AGY_PREFIX.length) : modelId;
 }
 
 // The id the backend CLI understands: codex has no `[1m]` suffix convention,
@@ -357,12 +397,12 @@ export function defaultEffortForModel(modelId: string): string | null {
   return opt?.effort ?? opt?.defaultEffort ?? null;
 }
 
-// A Cursor model the list lacks gets none: its effort is a model parameter
-// only the list names (cursorParams).
+// A Cursor or agy model the list lacks gets none: which levels it takes
+// only the list names.
 export function effortLevelsForModel(modelId: string): string[] {
-  return (
-    findModelOption(modelId)?.effortLevels ?? (modelId.startsWith(CURSOR_PREFIX) ? [] : EFFORT_FIVE)
-  );
+  const known = findModelOption(modelId)?.effortLevels;
+  if (known) return known;
+  return modelId.startsWith(CURSOR_PREFIX) || modelId.startsWith(AGY_PREFIX) ? [] : EFFORT_FIVE;
 }
 
 // Adaptive thinking (with a display option) is a Claude 4.6+ feature; codex

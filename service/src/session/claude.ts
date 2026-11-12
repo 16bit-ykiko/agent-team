@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { supportsAdaptiveThinking } from "../config/presets";
+import { supportsAdaptiveThinking, type Backend } from "../config/presets";
 import type { PanelToolset } from "../project/tools";
 import type {
   Query,
@@ -145,7 +145,7 @@ export interface UsageStats {
 
 export interface SessionConfig {
   cwd: string;
-  backend?: "claude" | "codex" | "cursor";
+  backend?: Backend;
   model?: string;
   effort?: string;
   // Fast mode (Claude: SDK fastMode; codex: the model's fast service tier).

@@ -366,12 +366,15 @@ function AgentRow({
 }
 
 // Models an agent can move to mid-session: those of its backend (a Claude
-// transcript, a Codex thread, a Cursor agent goes on only on its own kind).
-// The current one leads even when the list has dropped it.
+// transcript, a Codex thread, a Cursor agent, an agy conversation goes on
+// only on its own kind). The current one leads even when the list has
+// dropped it.
 function switchable(a: AgentInfo, models: ModelOption[]): string[] {
+  const prefix = /^(cursor|agy)\//.exec(a.model)?.[1] as "cursor" | "agy" | undefined;
   const backend =
     models.find((m) => m.id === a.model)?.backend ??
-    (a.model.startsWith("cursor/") ? "cursor" : a.model.startsWith("gpt-") ? "codex" : "claude");
+    prefix ??
+    (a.model.startsWith("gpt-") ? "codex" : "claude");
   const ids = models.filter((m) => m.backend === backend).map((m) => m.id);
   return ids.includes(a.model) ? ids : [a.model, ...ids];
 }

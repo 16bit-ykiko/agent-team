@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   MODEL_OPTIONS,
+  agyModelId,
   backendForModel,
   codexContextWindow,
   codexFastTier,
@@ -87,6 +88,30 @@ describe("the model list", () => {
     expect(effortLevelsForModel("deepseek-v4-pro")).toEqual([]);
     expect(effortLevelsForModel("cursor/claude-opus-5-5")).toEqual([]);
     expect(effortLevelsForModel("cursor/gemini-4-argon")).toEqual(["low", "medium", "high"]);
+  });
+
+  it("knows agy's Gemini models by their agy/ prefix, effort as agy's thought level", () => {
+    expect(MODEL_OPTIONS.filter((m) => m.backend === "agy").map((m) => m.id)).toEqual([
+      "agy/gemini-4-carbon",
+      "agy/gemini-4-argon",
+      "agy/gemini-4-hydrogen",
+      "agy/gemini-3.8-flash",
+    ]);
+    expect(backendForModel("agy/gemini-4-carbon")).toBe("agy");
+    expect(backendForModel("agy/gemini-5")).toBe("agy");
+    expect(agyModelId("agy/gemini-3.8-flash")).toBe("gemini-3.8-flash");
+    expect(defaultEffortForModel("agy/gemini-4-carbon")).toBe("high");
+    expect(defaultEffortForModel("agy/gemini-4-argon")).toBe("medium");
+    expect(effortLevelsForModel("agy/gemini-4-hydrogen")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    // One the list lacks: which levels it takes, only agy's own list knows.
+    expect(effortLevelsForModel("agy/gemini-5")).toEqual([]);
+    expect(supportsFastMode("agy/gemini-4-carbon")).toBe(false);
+    expect(supportsAdaptiveThinking("agy/gemini-4-carbon")).toBe(false);
   });
 
   it("treats a Claude id in neither list as a newer Claude model", () => {

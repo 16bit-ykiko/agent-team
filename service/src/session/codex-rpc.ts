@@ -40,6 +40,8 @@ export interface Transport {
   // The server is gone (exit code or signal, or why it never started).
   onClose(cb: (reason: string) => void): void;
   close(): void;
+  // The process, where it is one (agy runs each command as a child of it).
+  readonly pid?: number;
 }
 
 const PLATFORM_PACKAGES: Record<string, [string, string]> = {

@@ -7,11 +7,11 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, vi } from "vitest";
 import type { Query, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { z } from "zod";
 import { ClaudeSession, type StreamEvent } from "../../src/session/claude";
 import { CodexSession } from "../../src/session/codex";
 import type { RpcMessage, Transport } from "../../src/session/codex-rpc";
 import { CursorSession, type CursorSdk } from "../../src/session/cursor";
+import { AgySession } from "../../src/session/agy";
 import { LocalHost, HostRegistry, type HostSessionHandle } from "../../src/session/host";
 import type { PanelToolset } from "../../src/project/tools";
 import { Workspace, type Message, type WorkspaceCallbacks } from "../../src/workspace/workspace";
@@ -20,7 +20,6 @@ import { applyEventsToMessage } from "../../../webview/src/state/stream";
 
 import {
   type Backend,
-  type CodexTool,
   type Entry,
   type Fixture,
   type Header,
@@ -28,6 +27,9 @@ import {
   type Replay as BaseReplay,
   DEFAULT_MODEL,
   RECORD_CWD,
+  RECORD_EFFORT,
+  panelTools,
+  tapeTrim,
 } from "./fixture.ts";
 
 export * from "./fixture.ts";
@@ -123,8 +125,8 @@ async function flush(): Promise<void> {
   for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r));
 }
 
-// A codex recording's app-server, one connection per process the recorder
-// started. Each line the recorder wrote is the next one the session must
+// A codex or agy recording's backend, one connection per process the
+// recorder started. Each line the recorder wrote is the next one the session must
 // write: the same method (an answer to a server request: the same id) and
 // the same thread and turn ids; the recorded responses go back under the
 // session's request ids. Nothing else may be written.
@@ -139,6 +141,10 @@ class AppServerPlayer {
   // as a userMessage's clientId.
   private tags = new Map<unknown, unknown>();
   sent: RpcMessage[] = [];
+
+  // agy: the requests' parameters must be the recorder's too, but for the
+  // panel MCP server's command (its socket path is the recording's).
+  constructor(private strict = false) {}
 
   connect(): Transport {
     const conn = {
@@ -176,9 +182,19 @@ class AppServerPlayer {
     }
     const ids = (x: RpcMessage) => {
       const p = (x.params ?? {}) as Record<string, unknown>;
-      return [p.threadId, p.turnId, p.expectedTurnId];
+      return [p.threadId, p.turnId, p.expectedTurnId, p.sessionId];
     };
     expect(ids(m), `ids of ${what(m)} (${where})`).toEqual(ids(rec));
+    if (this.strict && rec.method) {
+      const params = (x: RpcMessage) => {
+        const p = tapeTrim(JSON.parse(JSON.stringify(x.params ?? {}))) as Record<string, unknown>;
+        if (Array.isArray(p.mcpServers)) {
+          p.mcpServers = p.mcpServers.map((s: { name?: string }) => ({ name: s.name }));
+        }
+        return p;
+      };
+      expect(params(m), `params of ${what(m)} (${where})`).toEqual(params(rec));
+    }
     if (rec.method && rec.id != null && m.id != null) this.ids.set(rec.id, m.id);
     const tag = (x: RpcMessage) =>
       (x.params as { clientUserMessageId?: unknown })?.clientUserMessageId;
@@ -212,32 +228,8 @@ class AppServerPlayer {
   close(): void {
     const conn = this.conn;
     this.conn = null;
-    for (const cb of conn?.closers ?? []) cb("codex app-server exited (recording)");
+    for (const cb of conn?.closers ?? []) cb("the backend exited (recording)");
   }
-}
-
-// A fixture's tools as the panel's: JSON Schema properties of strings and
-// numbers, all the fixtures use.
-function panelTools(tools: CodexTool[]): PanelToolset {
-  return {
-    instructions: "Panel tools of a recorded fixture.",
-    tools: tools.map((t) => {
-      const props = (t.inputSchema.properties ?? {}) as Record<string, { type: string }>;
-      const required = new Set((t.inputSchema.required ?? []) as string[]);
-      const shape: Record<string, z.ZodType> = {};
-      for (const [k, p] of Object.entries(props)) {
-        const type = p.type === "number" ? z.number() : z.string();
-        shape[k] = required.has(k) ? type : type.optional();
-      }
-      return {
-        name: t.name,
-        description: t.description,
-        shape,
-        handler: () =>
-          t.success === false ? Promise.reject(new Error(t.reply)) : Promise.resolve(t.reply),
-      };
-    }),
-  };
 }
 
 class SnapHost extends LocalHost {
@@ -262,7 +254,7 @@ function makeWorkspace(model: string) {
   const backend = backendForModel(model);
   // The recording's agent stands in for the SDK, so no real key is read.
   const providerEnv = backend === "cursor" ? { CURSOR_API_KEY: "replay" } : undefined;
-  ws.addAgent("A", model, "🤖", "#888", { backend, providerEnv });
+  ws.addAgent("A", model, "🤖", "#888", { backend, providerEnv, effort: RECORD_EFFORT[backend] });
   return { ws, host };
 }
 
@@ -287,7 +279,7 @@ function restart(ws: Workspace, host: SnapHost, tools: PanelToolset | null): voi
 export async function replay(backend: Backend, rec: Recording, fixture: Fixture): Promise<Replay> {
   const model = rec.header.model || DEFAULT_MODEL[backend];
   const { ws, host } = makeWorkspace(model);
-  const tools = fixture.tools ? panelTools(fixture.tools) : null;
+  const tools = fixture.tools ? panelTools(fixture.tools, fixture.instructions) : null;
   for (const entry of ws.agents.values()) entry.session.setPanelTools?.(tools);
   const events: StreamEvent[] = [];
   const states: string[] = [];
@@ -306,7 +298,12 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
   };
 
   const live = { feeder: null as Feeder<unknown> | null };
-  const player = new AppServerPlayer();
+  const player = new AppServerPlayer(backend === "agy");
+  if (backend === "agy" && rec.entries.some((e) => "error" in e)) {
+    throw new Error(
+      `the recording of ${rec.header.fixture} failed (it has an error entry): re-record it`,
+    );
+  }
   const cursor = new CursorPlayer();
   // The recording's own clock, so times in the transcript (wake-ups) are
   // the same on every run. recordedAt is stamped when the capture ends.
@@ -335,6 +332,15 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
     };
   } else if (backend === "cursor") {
     CursorSession.sdk = cursor.sdk;
+  } else if (backend === "agy") {
+    AgySession.hooks = {
+      transport: (session) => {
+        if (!host.created.includes(session)) throw new Error("a session from another replay");
+        return player.connect();
+      },
+      mcpServer: () => ({ name: "panel", command: "node", args: [], env: [] }),
+      idleTimers: false,
+    };
   } else {
     // Only this replay's sessions: one a failed replay left behind must not
     // write into the next one's recording.
@@ -357,8 +363,8 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
   };
   let pending: Promise<void> | null = null;
   try {
-    if (backend === "codex") {
-      await replayCodex(rec, ws, host, player, tools, at, attach);
+    if (backend === "codex" || backend === "agy") {
+      await replayRpc(rec, ws, host, player, tools, at, attach);
       return {
         messages: ws.messages,
         events,
@@ -418,6 +424,7 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
     ClaudeSession.sdk = null;
     CodexSession.hooks = null;
     CursorSession.sdk = null;
+    AgySession.hooks = null;
   }
   return {
     messages: ws.messages,
@@ -527,9 +534,11 @@ class CursorPlayer {
   }
 }
 
-// A codex recording through the workspace: each step as the panel takes
-// it, without waiting on what it starts (the answers are later lines).
-async function replayCodex(
+// A codex or agy recording through the workspace: each step as the panel
+// takes it, without waiting on what it starts (the answers are later lines).
+// An agy session's look at what agy did while idle comes where the recorder's
+// did: its timers do not run here.
+async function replayRpc(
   rec: Recording,
   ws: Workspace,
   host: SnapHost,
@@ -556,6 +565,15 @@ async function replayCodex(
       await flush();
     } else if ("close" in e) {
       player.close();
+      await flush();
+    } else if ("control" in e && (e.control.op === "idleCheck" || e.control.op === "toolAnswer")) {
+      const session = host.created.at(-1);
+      if (!(session instanceof AgySession)) throw new Error(`${e.control.op} outside agy`);
+      if (e.control.op === "idleCheck") session.checkIdle();
+      else {
+        const answer = e.control.response as { args: unknown; text: string; isError: boolean };
+        session.noteToolAnswer(e.control.taskId ?? "", answer.args, answer.text, answer.isError);
+      }
       await flush();
     }
   }

@@ -2,7 +2,7 @@
 // (service/tests/snap/<backend>/<name>.ts) and writes the raw SDK frames,
 // interleaved with step markers, to <name>.jsonl next to it.
 //
-// Usage: npm run capture -- <claude|codex|cursor> <name...>
+// Usage: npm run capture -- <claude|codex|cursor|agy> <name...>
 //
 // Every run is a real session on the user's account. Bursts of sessions
 // risk an account ban: at most a few fixtures per run, one at a time, with
@@ -21,6 +21,9 @@ import {
   type Step,
   DEFAULT_MODEL,
   RECORD_CWD,
+  RECORD_EFFORT,
+  panelTools,
+  tapeTrim,
 } from "../service/tests/snap/fixture.ts";
 import {
   AppServerClient,
@@ -36,20 +39,7 @@ const MAX_PER_RUN = 4;
 // A request can hang ~2 min before the CLI times it out and retries.
 const STEP_DEADLINE_MS = 300_000;
 
-function trim(v: unknown): unknown {
-  if (typeof v === "string") return v.length > 400 ? v.slice(0, 400) + `…(+${v.length - 400})` : v;
-  if (Array.isArray(v)) return v.map(trim);
-  if (v && typeof v === "object") {
-    const o: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(v)) {
-      if (k === "data" && typeof val === "string" && val.length > 100)
-        o[k] = `<base64 ${val.length}>`;
-      else o[k] = trim(val);
-    }
-    return o;
-  }
-  return v;
-}
+const trim = tapeTrim;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -645,6 +635,110 @@ async function cursorDriver(
   };
 }
 
+// --- agy --------------------------------------------------------------------
+
+// The server's own AgySession drives `agy acp`, so the recording holds the
+// requests the replayed session must write: every line both ways, and each
+// time the session looked at what agy did while idle (its log watch and
+// timers fire it live; the replay calls it at these marks).
+async function agyDriver(tape: Tape, model: string, fixture: Fixture): Promise<Driver> {
+  const { AgySession } = await import("../service/src/session/agy.ts");
+  const { agyBinary, spawnAgy } = await import("../service/src/session/acp.ts");
+  const version = `agy ${execFileSync(agyBinary(), ["--version"], { encoding: "utf-8" }).trim()}`;
+  let lastAt = Date.now();
+  let results = 0;
+  let closed: (() => void) | null = null;
+  const seen: string[] = [];
+  AgySession.hooks = {
+    transport: (_session, args) => {
+      const t = spawnAgy({ cwd: RECORD_CWD, args });
+      return {
+        write: (m) => {
+          tape.add({ sent: trim(m) });
+          t.write(m);
+        },
+        onMessage: (cb) =>
+          t.onMessage((m) => {
+            lastAt = Date.now();
+            seen.push(JSON.stringify(m));
+            tape.frame(redact(m));
+            cb(m);
+          }),
+        onClose: (cb) =>
+          t.onClose((reason) => {
+            if (!closed) tape.add({ error: reason });
+            tape.add({ close: true });
+            closed?.();
+            cb(reason);
+          }),
+        close: () => t.close(),
+        pid: t.pid,
+      };
+    },
+    onIdleCheck: () => tape.add({ control: { op: "idleCheck" } }),
+    onToolAnswer: (tool, args, text, isError) =>
+      tape.add({ control: { op: "toolAnswer", taskId: tool, response: { args, text, isError } } }),
+  };
+  const session = new AgySession({
+    cwd: RECORD_CWD,
+    backend: "agy",
+    model,
+    effort: RECORD_EFFORT.agy,
+  });
+  if (fixture.tools) session.setPanelTools(panelTools(fixture.tools, fixture.instructions));
+  session.on("event", (e: { kind: string }) => {
+    lastAt = Date.now();
+    if (e.kind === "result" || e.kind === "error") results++;
+  });
+  const stop = async () => {
+    const done = new Promise<void>((r) => (closed = r));
+    session.abort();
+    await Promise.race([done, sleep(10_000)]);
+    closed = null;
+  };
+  return {
+    async send(text) {
+      results = 0;
+      void session.send(text);
+      await sleep(50);
+    },
+    async wait(until) {
+      if (typeof until === "number") return sleep(until);
+      const deadline = Date.now() + STEP_DEADLINE_MS;
+      while (Date.now() < deadline) {
+        const quiet = Date.now() - lastAt;
+        if (typeof until === "object" && seen.some((f) => f.includes(until.frame))) return;
+        if (until === "result" && results > 0 && !session.isRunning && quiet > 300) return;
+        if (until === "idle" && results > 0 && session.runState === "idle" && quiet > 4000) return;
+        await sleep(200);
+      }
+      throw new Error(`wait(${JSON.stringify(until)}) timed out`);
+    },
+    end: stop,
+    async abort() {
+      await session.interrupt();
+    },
+    async interrupt() {
+      tape.add({ control: { op: "interrupt", response: await session.interrupt() } });
+    },
+    // The latest background command; the kill is outside the protocol, so
+    // the replay sees only what agy reports of it.
+    async stopTask() {
+      const task = session.backgroundTaskList.at(-1);
+      if (!task) return tape.add({ control: { op: "stop_task", error: "no background command" } });
+      try {
+        await session.stopTask(task.id);
+        tape.add({ control: { op: "stop_task", taskId: task.id, response: "ok" } });
+      } catch (e) {
+        const error = e instanceof Error ? e.message : String(e);
+        tape.add({ control: { op: "stop_task", taskId: task.id, error } });
+      }
+    },
+    compact: () => Promise.reject(new Error("agy fixtures compact by sending /compact")),
+    cli: () => version,
+  };
+}
+
 // --- local API stand-in ------------------------------------------------------
 
 // Refuses every request as the five-hour limit does: a 429 with the unified
@@ -719,7 +813,9 @@ async function codexUsageLimitApi(): Promise<{ url: string; close(): void }> {
 
 // --- run --------------------------------------------------------------------
 
-function materialize(files: Fixture["files"]): void {
+// agy writes in its folder unasked: it starts from an empty one.
+function materialize(backend: Backend, files: Fixture["files"]): void {
+  if (backend === "agy") fs.rmSync(RECORD_CWD, { recursive: true, force: true });
   fs.mkdirSync(RECORD_CWD, { recursive: true });
   for (const [rel, content] of Object.entries(files ?? {})) {
     const file = path.join(RECORD_CWD, rel);
@@ -733,7 +829,7 @@ async function record(backend: Backend, name: string): Promise<void> {
   const file = path.join(SNAP, backend, `${name}.ts`);
   const fixture = ((await import(file)) as { default: Fixture }).default;
   const model = fixture.model ?? DEFAULT_MODEL[backend];
-  materialize(fixture.files);
+  materialize(backend, fixture.files);
   const tape = new Tape();
   const api =
     fixture.api !== "usage-limit"
@@ -752,7 +848,9 @@ async function record(backend: Backend, name: string): Promise<void> {
         )
       : backend === "cursor"
         ? await cursorDriver(tape, model, fixture.options)
-        : codexDriver(tape, model, fixture, api);
+        : backend === "agy"
+          ? await agyDriver(tape, model, fixture)
+          : codexDriver(tape, model, fixture, api);
   const run = async (step: Step) => {
     switch (step.op) {
       case "send":
@@ -808,8 +906,8 @@ async function record(backend: Backend, name: string): Promise<void> {
 }
 
 const [backend, ...names] = process.argv.slice(2);
-if (!["claude", "codex", "cursor"].includes(backend) || names.length === 0) {
-  console.error("usage: npm run capture -- <claude|codex|cursor> <name...>");
+if (!["claude", "codex", "cursor", "agy"].includes(backend) || names.length === 0) {
+  console.error("usage: npm run capture -- <claude|codex|cursor|agy> <name...>");
   process.exit(2);
 }
 if (names.length > MAX_PER_RUN) {
