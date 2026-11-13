@@ -82,13 +82,15 @@ export class AgySession extends EventEmitter {
 
   // Replaced by the tests and the recorder: the connection a session opens,
   // the panel's MCP server it names, whether it watches agy's log and runs
-  // the idle timers (the snap replay calls checkIdle() where the recording
-  // did), and a call each time it checks while idle.
+  // the idle timers (the snap replay calls logActivity() and checkIdle()
+  // where the recording did), and a call each time the log shows agy at
+  // work while idle and each time the session checks.
   static hooks: {
     transport?: (session: AgySession, args: string[]) => Transport;
     mcpServer?: (session: AgySession) => StdioServer;
     idleTimers?: boolean;
     onIdleCheck?: (session: AgySession) => void;
+    onLogActivity?: (session: AgySession) => void;
     onToolAnswer?: (tool: string, args: unknown, text: string, isError: boolean) => void;
   } | null = null;
 
@@ -99,6 +101,8 @@ export class AgySession extends EventEmitter {
   private logFile: string | null = null;
   private logWatch: fs.FSWatcher | null = null;
   private logOffset = 0;
+  // agy's log showed a model call while idle since the last load began.
+  private idleActivity = false;
   private agyPid: number | undefined;
   // The model and thought level agy's session has now.
   private applied: { model?: string; effort?: string } = {};
@@ -371,6 +375,7 @@ export class AgySession extends EventEmitter {
     this.loading = null;
     this.known = null;
     this.ownTurn = null;
+    this.idleActivity = false;
     this.awaitReply = 0;
     this.stopCalls();
     this.calls.clear();
@@ -465,9 +470,11 @@ export class AgySession extends EventEmitter {
         this.endTurn({ kind: "result", content: "", interrupted: true });
         return;
       }
-      // What agy did since the last load comes first: the load after this
-      // turn is told the turn's own items from the rest by this one.
-      if (this.known) await this.startLoad();
+      // What agy did since the last load comes first, when it may have done
+      // anything: its log showed it at work, a command of its runs, a reply
+      // to one is awaited, or there is no log to tell. The load after this
+      // turn tells the turn's own items from the rest by the last one.
+      if (this.known && this.mayHaveWorked()) await this.startLoad();
       if (generation !== this.generation) return;
       if (this.interruptRequested) {
         this.endTurn({ kind: "result", content: "", interrupted: true });
@@ -695,6 +702,8 @@ export class AgySession extends EventEmitter {
         break;
       case "tool_call":
       case "tool_call_update":
+        // A call agy made while idle, streamed before the prompt's echo.
+        if (!this.echoed && !this.calls.has(u.toolCallId)) this.leftoverBanner();
         this.toolCall(u);
         break;
       case "plan": {
@@ -728,11 +737,14 @@ export class AgySession extends EventEmitter {
       if (text === null || this.shownWake.startsWith(this.leftoverText)) return true;
       this.shownWake = "";
     }
-    if (!this.leftoverShown) {
-      this.leftoverShown = true;
-      this.emit("event", { kind: "notice", level: "wakeup", content: "agy carried on while idle" });
-    }
+    this.leftoverBanner();
     return false;
+  }
+
+  private leftoverBanner(): void {
+    if (this.leftoverShown) return;
+    this.leftoverShown = true;
+    this.emit("event", { kind: "notice", level: "wakeup", content: "agy carried on while idle" });
   }
 
   private text(delta: string): void {
@@ -912,11 +924,18 @@ export class AgySession extends EventEmitter {
     const file = this.logFile;
     if (!file || !this.idleTimers() || this.logWatch) return;
     try {
-      this.logWatch = fs.watch(file, () => this.readLog());
-      this.logWatch.on("error", () => {});
+      const watch = fs.watch(file, () => this.readLog());
+      watch.on("error", () => this.unwatchLog(watch));
+      this.logWatch = watch;
     } catch {
       this.logWatch = null;
     }
+  }
+
+  // A watch that failed, or a log gone: no log to tell when agy works.
+  private unwatchLog(watch: fs.FSWatcher | null): void {
+    watch?.close();
+    if (this.logWatch === watch) this.logWatch = null;
   }
 
   private readLog(): void {
@@ -936,10 +955,17 @@ export class AgySession extends EventEmitter {
         fs.closeSync(fd);
       }
       this.logOffset = size;
-    } catch {
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") this.unwatchLog(this.logWatch);
       return;
     }
-    if (this.busy || !MODEL_CALL.test(added)) return;
+    if (!this.busy && MODEL_CALL.test(added)) this.logActivity();
+  }
+
+  logActivity(): void {
+    this.idleActivity = true;
+    AgySession.hooks?.onLogActivity?.(this);
+    if (!this.idleTimers()) return;
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = setTimeout(() => {
       this.settleTimer = null;
@@ -967,6 +993,20 @@ export class AgySession extends EventEmitter {
     void this.startLoad();
   }
 
+  // Also when a call of agy's is still open (a panel tool it ran while
+  // idle, whose answer is waiting), or the load after the last turn never
+  // landed.
+  private mayHaveWorked(): boolean {
+    return (
+      this.idleActivity ||
+      this.awaitReply > 0 ||
+      this.answers.length > 0 ||
+      this.ownTurn !== null ||
+      [...this.calls.values()].some((c) => !c.done) ||
+      (this.idleTimers() && !this.logWatch)
+    );
+  }
+
   private startLoad(): Promise<void> {
     const loading: Promise<void> = this.load().finally(() => {
       if (this.loading === loading) this.loading = null;
@@ -981,6 +1021,7 @@ export class AgySession extends EventEmitter {
     const client = this.client;
     if (!client) return;
     const updates: SessionUpdate[] = [];
+    this.idleActivity = false;
     this.replay = updates;
     try {
       await client.request("session/load", {

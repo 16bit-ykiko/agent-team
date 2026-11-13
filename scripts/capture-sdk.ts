@@ -676,6 +676,7 @@ async function agyDriver(tape: Tape, model: string, fixture: Fixture): Promise<D
       };
     },
     onIdleCheck: () => tape.add({ control: { op: "idleCheck" } }),
+    onLogActivity: () => tape.add({ control: { op: "logActivity" } }),
     onToolAnswer: (tool, args, text, isError) =>
       tape.add({ control: { op: "toolAnswer", taskId: tool, response: { args, text, isError } } }),
   };

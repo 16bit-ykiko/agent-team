@@ -534,6 +534,8 @@ class CursorPlayer {
   }
 }
 
+const AGY_CONTROLS = new Set(["idleCheck", "logActivity", "toolAnswer"]);
+
 // A codex or agy recording through the workspace: each step as the panel
 // takes it, without waiting on what it starts (the answers are later lines).
 // An agy session's look at what agy did while idle comes where the recorder's
@@ -566,10 +568,11 @@ async function replayRpc(
     } else if ("close" in e) {
       player.close();
       await flush();
-    } else if ("control" in e && (e.control.op === "idleCheck" || e.control.op === "toolAnswer")) {
+    } else if ("control" in e && AGY_CONTROLS.has(e.control.op)) {
       const session = host.created.at(-1);
       if (!(session instanceof AgySession)) throw new Error(`${e.control.op} outside agy`);
       if (e.control.op === "idleCheck") session.checkIdle();
+      else if (e.control.op === "logActivity") session.logActivity();
       else {
         const answer = e.control.response as { args: unknown; text: string; isError: boolean };
         session.noteToolAnswer(e.control.taskId ?? "", answer.args, answer.text, answer.isError);

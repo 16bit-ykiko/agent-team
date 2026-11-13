@@ -277,8 +277,9 @@ describe("AgySession", () => {
     void restored.send("again");
     await flush();
     expect(fake.sent("session/new")).toEqual([]);
-    // The load instead of the resume, and the one before the prompt.
-    expect(fake.sent("session/load")).toHaveLength(2);
+    // The load instead of the resume; agy did nothing since: none before the
+    // prompt.
+    expect(fake.sent("session/load")).toHaveLength(1);
     expect(fake.sent("session/prompt")).toHaveLength(1);
     expect(events.filter((e) => e.kind === "notice")).toEqual([]);
   });
@@ -659,6 +660,7 @@ describe("AgySession", () => {
     await flush();
     fake.turn([user("one"), agent("a")]);
     await flush();
+    s.logActivity();
     const release = fake.holdNextLoad();
     void s.send("two");
     await flush();
@@ -669,6 +671,114 @@ describe("AgySession", () => {
     expect(fake.sent("session/cancel")).toEqual([]);
     expect(events.at(-1)).toMatchObject({ kind: "result", interrupted: true });
     expect(s.interruptPending).toBe(false);
+  });
+
+  it("loads before a prompt only when agy may have worked since the last load", async () => {
+    const { s } = session();
+    const loads = () => fake.sent("session/load").length;
+    void s.send("one");
+    await flush();
+    fake.turn([user("one"), agent("a")]);
+    await flush();
+    expect(loads()).toBe(1);
+    // Nothing since the load after that turn: the prompt goes out at once.
+    void s.send("two");
+    await flush();
+    expect(loads()).toBe(1);
+    fake.turn([user("two"), agent("b")]);
+    await flush();
+    expect(loads()).toBe(2);
+    // agy's log showed a model call while idle.
+    s.logActivity();
+    void s.send("three");
+    await flush();
+    expect(loads()).toBe(3);
+    fake.turn([user("three"), agent("c")]);
+    await flush();
+    // That load cleared it.
+    void s.send("four");
+    await flush();
+    expect(loads()).toBe(4);
+  });
+
+  it("shows what agy streams before the prompt's echo once, when no load came before it", async () => {
+    const { s, events } = session();
+    void s.send("go");
+    await flush();
+    fake.turn([user("go"), agent("one")]);
+    await flush();
+    // agy carried on unseen (its log told nothing): the next prompt's stream
+    // starts with that, as agy streams a backlog.
+    void s.send("two");
+    await flush();
+    events.length = 0;
+    const idle = command(
+      "c9",
+      "ls",
+      "completed",
+      "Command exited with code 0.\n\nCommand output:\na.txt\r\n",
+    );
+    fake.turn([idle, agent("Woke up."), user("two"), agent("ok")]);
+    fake.stored = [user("go"), agent("one"), idle, agent("Woke up."), user("two"), agent("ok")];
+    await flush();
+    expect(events.map((e) => [e.kind, e.content])).toEqual([
+      ["notice", "agy carried on while idle"],
+      ["tool_use", "**Bash**\n```bash\nls\n```"],
+      ["tool_result", "a.txt"],
+      ["text_delta", "Woke up."],
+      ["text_delta", "\n\nok"],
+      ["result", ""],
+    ]);
+  });
+
+  it("loads before a prompt while a panel call agy made while idle is open", async () => {
+    const { s, events } = session();
+    void s.send("go");
+    await flush();
+    fake.turn([user("go"), agent("one")]);
+    await flush();
+    const call = {
+      sessionUpdate: "tool_call",
+      toolCallId: "m1",
+      name: "mcp_panel_report",
+      args: { text: "built" },
+      status: "in_progress",
+    };
+    fake.stored.push(call);
+    s.checkIdle();
+    await flush();
+    s.noteToolAnswer("report", { text: "built" }, "Reported to the lead.", false);
+    fake.stored = [user("go"), agent("one"), { ...call, status: "completed" }];
+    void s.send("two");
+    await flush();
+    expect(fake.sent("session/load")).toHaveLength(3);
+    expect(events.find((e) => e.kind === "tool_result")).toMatchObject({
+      toolUseId: "m1",
+      content: "Reported to the lead.",
+    });
+  });
+
+  it("loads before a prompt when the load after the last turn failed", async () => {
+    const { s, events } = session();
+    void s.send("one");
+    await flush();
+    fake.turn([user("one"), agent("a")]);
+    await flush();
+    void s.send("two");
+    await flush();
+    const load = fake.handlers["session/load"];
+    fake.handlers["session/load"] = () => {
+      fake.handlers["session/load"] = load;
+      throw new Error("busy");
+    };
+    fake.turn([user("two"), agent("second reply")]);
+    await flush();
+    void s.send("three");
+    await flush();
+    fake.turn([user("three"), agent("third")]);
+    await flush();
+    expect(events.some((e) => e.kind === "notice")).toBe(false);
+    expect(events.filter((e) => e.content === "second reply")).toHaveLength(1);
   });
 
   it("switches agy's model and thought level before the next prompt, and only then", async () => {
