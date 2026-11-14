@@ -199,6 +199,24 @@ button {
   cursor: not-allowed;
 }
 
+.ws-report-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  margin-right: 6px;
+}
+.ws-report-btn::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.ws-report-btn.on::before {
+  background: var(--success);
+}
+
 /* ---- Sidebar ------------------------------------------------------------ */
 
 .sidebar {

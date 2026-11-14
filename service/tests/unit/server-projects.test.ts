@@ -691,7 +691,11 @@ describe("server restart with projects", () => {
       expect(projects).toHaveLength(1);
       expect(projects[0]).toMatchObject({ root: live.cwd, objectives: [] });
       expect(projects[0].archivedAt ?? null).toBeNull();
-      expect(live.projectLink).toEqual({ projectId: projects[0].id, role: "worker" });
+      expect(live.projectLink).toEqual({
+        projectId: projects[0].id,
+        role: "worker",
+        unreported: true,
+      });
       expect(infos.map((w) => w.id)).toContain(projects[0].leadWorkspaceId);
     } finally {
       again.stop();

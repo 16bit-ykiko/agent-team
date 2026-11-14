@@ -27,6 +27,7 @@ import { MessageItem, MessageBoundary, originLabel, SessionLinkContext } from ".
 import { AddAgentDialog, CreateWorkspaceDialog, ConfirmDialog } from "./workspace/dialogs";
 import { Sidebar } from "./sidebar/Sidebar";
 import { GitBar } from "./workspace/GitBar";
+import { ReportSwitch } from "./workspace/ReportSwitch";
 import { BoardPage, type SessionInfo } from "./project/BoardPage";
 import { HistoryHint } from "./chat/HistoryHint";
 import {
@@ -159,6 +160,7 @@ export function App() {
     dirSuggestions,
     archiveWorkspace,
     unarchiveWorkspace,
+    setReporting,
     purgeArchived,
     archiveProject,
     archiveAfterDays,
@@ -1402,6 +1404,10 @@ export function App() {
                   <span className="ws-info-spacer" />
                   {/* Phones: the panels' rail shares the branch's line. */}
                   <Rail className="header-rail" items={railItems} />
+                  <ReportSwitch
+                    link={activeWs.projectLink}
+                    onSet={(reports) => setReporting(activeWs.id, reports)}
+                  />
                   {/* A lead goes with its project. */}
                   {activeWs.archivedAt == null && activeWs.projectLink?.role !== "lead" ? (
                     <button

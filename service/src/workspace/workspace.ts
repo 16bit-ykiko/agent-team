@@ -118,6 +118,10 @@ export interface ProjectLink {
   // A worker kept to its own task: its panel tools reach nothing else of
   // the project.
   isolated?: boolean;
+  // A worker that does not report to the lead (one the user made, or one
+  // the user switched off): it reads the project, the lead neither hears
+  // from it nor sends it work.
+  unreported?: boolean;
 }
 
 // Who sent a message the user did not type: the project's lead, one of its

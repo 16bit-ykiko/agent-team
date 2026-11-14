@@ -84,11 +84,12 @@ describe("a folder's project", () => {
     expect(repo.archivedAt ?? null).toBeNull();
     expect(clice2.archivedAt).toBeGreaterThan(0);
     expect(workspaces.get(clice2.leadWorkspaceId!)!.isArchived).toBe(true);
+    // The lead started none of them: none reports to it.
     expect([live, past].map((w) => w.projectLink)).toEqual([
-      { projectId: repo.id, role: "worker" },
-      { projectId: repo.id, role: "worker" },
+      { projectId: repo.id, role: "worker", unreported: true },
+      { projectId: repo.id, role: "worker", unreported: true },
     ]);
-    expect(stale.projectLink).toEqual({ projectId: clice2.id, role: "worker" });
+    expect(stale.projectLink).toEqual({ projectId: clice2.id, role: "worker", unreported: true });
     expect(past.isArchived).toBe(true);
     // Once is enough: nothing is left out the second time.
     const count = workspaces.size;
@@ -107,8 +108,10 @@ describe("a folder's project", () => {
     manager.restored(w);
     const project = manager.list()[0];
     expect(project.root).toBe(root);
-    expect(w.projectLink).toEqual({ projectId: project.id, role: "worker" });
-    expect(manager.toolsFor(w)!.tools.map((t) => t.name)).toContain("finish_task");
+    expect(w.projectLink).toEqual({ projectId: project.id, role: "worker", unreported: true });
+    const tools = manager.toolsFor(w)!.tools.map((t) => t.name);
+    expect(tools).toContain("search_history");
+    expect(tools).not.toContain("finish_task");
   });
 });
 

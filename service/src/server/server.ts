@@ -531,6 +531,12 @@ export class Server {
         );
         return;
 
+      case "set_reporting":
+        this.projectAction(ws, () =>
+          this.projects.setReporting(msg.workspaceId as string, msg.reports === true),
+        );
+        return;
+
       case "cancel_queued": {
         const workspace = this.workspaces.get(msg.workspaceId as string);
         if (!workspace || !this.ensureLoaded(workspace)) return;
@@ -621,7 +627,11 @@ export class Server {
     // if the folder has none yet).
     this.projectAction(ws, () => {
       const project = this.projects.ensureFor(cwd, projectName);
-      this.makeWorkspace(name, cwd, hostId, { projectId: project.id, role: "worker" });
+      this.makeWorkspace(name, cwd, hostId, {
+        projectId: project.id,
+        role: "worker",
+        unreported: true,
+      });
     });
   }
 

@@ -208,6 +208,7 @@ export function leadToolset(
         "Worker sessions report back; their messages reach you prefixed [From session …]: finished (its tasks on the board move to review) or, rarely, progress that changes the plan. Take a finished report as you would a subagent's result: when it shows the work is done, mark the tasks done (dropped when the user called the work off), delete the objective once all its work is done, and tell the user in a sentence; when it says something was replaced, check the board keeps nothing about the old one. Read the session (read_session) or the changes only when something in it is unclear or risky. When something looks missing or wrong, tell the user what: they take it up with the worker. Bring a progress report to the user only when it changes the plan.",
         "The panel tells you, prefixed [From the panel, about session …], when a worker's turn on what you sent failed, and when it answered your later message without calling finish_task, with its last reply. Act on it when there is something to do; a question in it for the user is theirs to answer in that session: tell them in a sentence that the worker waits for them. Do not message the worker only to ask for a report. Retry a failed turn once at most; if it fails again, tell the user. A turn a server restart cut off, the panel has the worker carry on; cut off again, you are told: tell it to carry on. A worker the user has written to since, or stopped, is theirs: you are not told of it.",
         "When a worker's worktree is about to be reused or removed, archive its session with archive_session.",
+        "Sessions the user made, or switched off, do not report to you (project_status marks them): they are the user's, not yours to message, stop or archive.",
       ].join(" "),
       [
         "The objectives are the project's board, one per piece of work (id area/name): goal, context (where it stands), depends_on (the user sees the board as a dependency view), tasks and open decisions. Workers write what changes the plan as it happens and the context when they finish: read the board or the session rather than asking them, and do not mirror their progress onto it.",
@@ -710,14 +711,17 @@ const OWN_TASK =
   "You work on this one task alone, from what the task, the repository and the messages here say. The project's board, notes, issues, history and other sessions are not yours to look at, through tools or through the files behind them. When unsure what exactly the task is (a long task, a compacted context), call current_task. finish_task moves your tasks on the board to review. When your work replaces something (a module, an API, a workflow), it is done only when its traces are gone from the repository (docs, CLAUDE.md, skills, scripts, comments); name in finish_task what it replaced.";
 
 // A worker's tools; an isolated one, kept to its own task, gets only those
-// that report to the lead and recall the task.
+// that report to the lead and recall the task. One that does not report
+// only reads the project (an isolated one, nothing).
 export function workerToolset(
   api: PanelApi,
   workspaceId: string,
   project: Project,
   notesDir: string,
   isolated = false,
+  unreported = false,
 ): PanelToolset {
+  if (unreported) return ownSessionToolset(api, project, notesDir, isolated);
   return {
     instructions: [
       `You are a session of the project "${project.name}" (repository ${project.root}). Its lead agent coordinates the work there and may have started you with a task; the user may also talk to you directly.`,
@@ -738,6 +742,37 @@ export function workerToolset(
             ...historyTools(api, project.id),
           ]),
     ],
+  };
+}
+
+const READS = new Set(["list_objectives", "read_objective", "list_issues", "read_issue"]);
+
+function ownSessionToolset(
+  api: PanelApi,
+  project: Project,
+  notesDir: string,
+  isolated: boolean,
+): PanelToolset {
+  return {
+    instructions: [
+      `You are a session of the project "${project.name}" (repository ${project.root}). The user works with you here directly: you do not report to the project's lead and take no work from it.`,
+      LANGUAGE,
+      ...(isolated
+        ? []
+        : [
+            `You may read the project: its board (list_objectives, read_objective), its issues (list_issues, read_issue), its sessions (project_status) and their history; you do not write to the board or the issues. The project's notes are markdown files under ${notesDir}. Contexts and issues say when and at which commit they were written: check them against the code before acting on them.`,
+            HISTORY,
+          ]),
+    ].join("\n\n"),
+    tools: isolated
+      ? []
+      : [
+          ...[...boardTools(api, project.id), ...issueTools(api, project.id)].filter((t) =>
+            READS.has(t.name),
+          ),
+          projectStatusTool(api, project.id),
+          ...historyTools(api, project.id),
+        ],
   };
 }
 

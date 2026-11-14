@@ -212,6 +212,39 @@ describe("archiving from the chat header", () => {
   });
 });
 
+describe("reporting to the lead from the chat header", () => {
+  const open = (name: string) =>
+    fireEvent.click(
+      [...document.querySelectorAll(".task-item .task-name-text")].find(
+        (e) => e.textContent === name,
+      )!,
+    );
+  const last = (sock: FakeSocket) => JSON.parse(sock.sent.at(-1)!) as Record<string, unknown>;
+
+  it("shows a session's state and switches it; a lead has none", () => {
+    const own = ws("w2", {
+      name: "mine",
+      projectLink: { projectId: "p1", role: "worker", unreported: true },
+    });
+    const { sock } = boot([lead, worker, own], [project()], "lead");
+    expect(document.querySelector(".ws-report-btn")).toBeNull();
+
+    open("modules");
+    const on = document.querySelector<HTMLButtonElement>(".ws-report-btn")!;
+    expect(on.textContent).toBe("Reports to lead");
+    expect(on.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(on);
+    expect(last(sock)).toEqual({ type: "set_reporting", workspaceId: "w1", reports: false });
+
+    open("mine");
+    const off = document.querySelector<HTMLButtonElement>(".ws-report-btn")!;
+    expect(off.textContent).toBe("Not reporting");
+    expect(off.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(off);
+    expect(last(sock)).toEqual({ type: "set_reporting", workspaceId: "w2", reports: true });
+  });
+});
+
 describe("the board page", () => {
   const withBoard = project({
     objectives: [

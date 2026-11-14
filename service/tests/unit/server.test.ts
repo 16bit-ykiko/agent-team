@@ -432,11 +432,18 @@ describe("server websocket", () => {
     const first = (await next("workspace_created")).workspace as Record<string, unknown>;
     expect(lead).toMatchObject({ name: "fresh · lead", projectLink: { role: "lead" } });
     expect(project).toMatchObject({ name: "fresh", root: folder, leadWorkspaceId: lead.id });
+    // The user's own session: it does not report to the lead until switched on.
     expect(first).toMatchObject({
       name: "first",
       cwd: folder,
-      projectLink: { projectId: project.id, role: "worker" },
+      projectLink: { projectId: project.id, role: "worker", unreported: true },
     });
+    ws.send(JSON.stringify({ type: "set_reporting", workspaceId: first.id, reports: true }));
+    const on = (await next("workspace_updated")).workspace as Record<string, unknown>;
+    expect(on).toMatchObject({ id: first.id, projectLink: { role: "worker" } });
+    expect((on.projectLink as Record<string, unknown>).unreported).toBeUndefined();
+    ws.send(JSON.stringify({ type: "set_reporting", workspaceId: lead.id, reports: false }));
+    expect((await next("error")).message).toMatch(/report to its lead/);
     // A name given for the project is the project's only when it brings one.
     ws.send(
       JSON.stringify({ type: "create_workspace", name: "second", path: folder, projectName: "X" }),

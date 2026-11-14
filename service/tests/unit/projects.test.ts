@@ -774,6 +774,70 @@ describe("ProjectManager", () => {
     expect(worker.isArchived).toBe(true);
   });
 
+  it("lets the user switch a worker's reports to the lead off and on: it then only reads the project", async () => {
+    const { create, call, session, workspaces, frames, manager } = setup();
+    const { lead } = create("clice");
+    await withTask(call, lead);
+    await call(lead, "start_session", { title: "w", cwd: "wt", task: "t" });
+    const worker = [...workspaces.values()].find((w) => w.projectLink?.role === "worker")!;
+    const names = () => session(worker).panelTools!.tools.map((t) => t.name);
+    expect(names()).toContain("finish_task");
+    const finish = session(worker).panelTools!.tools.find((t) => t.name === "finish_task")!;
+    // What the lead still had queued for it goes with the switch.
+    session(worker).isRunning = true;
+    await call(lead, "message_session", { session_id: worker.id, text: "and the tests" });
+    expect(worker.messages.some((m) => m.status === "queued")).toBe(true);
+
+    manager.setReporting(worker.id, false);
+    expect(worker.projectLink).toMatchObject({ role: "worker", unreported: true });
+    expect(worker.messages.some((m) => m.status === "queued")).toBe(false);
+    expect(frames).toContainEqual(
+      expect.objectContaining({ type: "workspace_updated", id: worker.id }),
+    );
+    expect(names().sort()).toEqual(
+      [
+        "list_objectives",
+        "read_objective",
+        "list_issues",
+        "read_issue",
+        "project_status",
+        "read_session",
+        "search_history",
+        "read_entry",
+        "query_history",
+      ].sort(),
+    );
+    expect(session(worker).panelTools!.instructions).toContain(
+      "do not report to the project's lead",
+    );
+    expect(await call(worker, "list_objectives")).toContain("core/modules");
+    // A tool definition the agent still remembers sends nothing.
+    await expect(finish.handler({ summary: "done" })).rejects.toThrow(
+      "does not report to the lead",
+    );
+    expect(lead.messages.some((m) => m.from?.role === "worker")).toBe(false);
+    // The lead can no longer send it work, stop or archive it; it sees whose it is.
+    for (const [tool, args] of [
+      ["message_session", { session_id: worker.id, text: "x" }],
+      ["stop_session", { session_id: worker.id }],
+      ["archive_session", { session_id: worker.id }],
+    ] as const) {
+      await expect(call(lead, tool, args)).rejects.toThrow("the user's own session");
+    }
+    expect(await call(lead, "project_status")).toContain(
+      "(the user's own: does not report to you)",
+    );
+
+    manager.setReporting(worker.id, true);
+    expect(worker.projectLink).toEqual({
+      projectId: worker.projectLink!.projectId,
+      role: "worker",
+    });
+    expect(names()).toContain("finish_task");
+    // The lead has no switch of its own.
+    expect(() => manager.setReporting(lead.id, false)).toThrow();
+  });
+
   it("renames the project, its lead and the tools' instructions", () => {
     const { create, manager, session, frames } = setup();
     const { lead, project } = create("clice");

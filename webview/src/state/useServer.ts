@@ -133,6 +133,7 @@ export interface ProjectLink {
   projectId: string;
   role: ProjectRole;
   isolated?: boolean;
+  unreported?: boolean;
 }
 
 export interface MessageOrigin {
@@ -1269,6 +1270,11 @@ export function useServer() {
     ),
     unarchiveWorkspace: useCallback(
       (wsId: string) => send({ type: "unarchive_workspace", workspaceId: wsId }),
+      [send],
+    ),
+    setReporting: useCallback(
+      (wsId: string, reports: boolean) =>
+        send({ type: "set_reporting", workspaceId: wsId, reports }),
       [send],
     ),
     // One project's archived sessions, or (null) those in no project.

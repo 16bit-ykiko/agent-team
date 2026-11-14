@@ -247,7 +247,7 @@ export class ProjectManager {
         if (list.every((w) => w.isArchived)) this.setArchived(project.id, true);
       }
       for (const w of list) {
-        w.projectLink = { projectId: project.id, role: "worker" };
+        w.projectLink = { projectId: project.id, role: "worker", unreported: true };
         const tools = this.toolsFor(w);
         for (const a of w.agents.values()) a.session.setPanelTools?.(tools);
         this.host.saveWorkspaceNow(w);
@@ -293,7 +293,7 @@ export class ProjectManager {
       return;
     }
     const project = this.ensureFor(w.cwd);
-    w.projectLink = { projectId: project.id, role: "worker" };
+    w.projectLink = { projectId: project.id, role: "worker", unreported: true };
     const tools = this.toolsFor(w);
     for (const a of w.agents.values()) a.session.setPanelTools?.(tools);
     this.host.saveWorkspaceNow(w);
@@ -509,7 +509,29 @@ export class ProjectManager {
           project,
           this.store.notesDir(project.id),
           link.isolated === true,
+          link.unreported === true,
         );
+  }
+
+  // The user switches whether a worker session reports to the lead. One
+  // that stops loses what the lead had queued for it.
+  setReporting(workspaceId: string, reports: boolean): void {
+    const w = this.host.workspace(workspaceId);
+    const link = w?.projectLink;
+    if (!w || link?.role !== "worker")
+      throw new Error("Only a project's sessions report to its lead");
+    if (!reports === (link.unreported === true)) return;
+    const { unreported: _, ...rest } = link;
+    w.projectLink = reports ? rest : { ...rest, unreported: true };
+    if (!reports) {
+      this.dropQueuedFromLead(w);
+      this.markAnswered(w);
+    }
+    const tools = this.toolsFor(w);
+    for (const a of w.agents.values()) a.session.setPanelTools?.(tools);
+    this.host.saveWorkspaceNow(w);
+    this.host.workspaceChanged(w);
+    this.changed(link.projectId);
   }
 
   // A worker's turn ended or its agent went idle: the check waits until it
@@ -555,7 +577,7 @@ export class ProjectManager {
     let delay = SETTLE_MS;
     for (const w of this.host.workspaces()) {
       const link = w.projectLink;
-      if (link?.role !== "worker" || w.isArchived) continue;
+      if (link?.role !== "worker" || link.unreported || w.isArchived) continue;
       const lead = this.leadOf(link.projectId);
       const messages = w.getMessages();
       const owed = w
@@ -606,7 +628,8 @@ export class ProjectManager {
   private tellIfSilent(workspaceId: string): void {
     const w = this.host.workspace(workspaceId);
     const link = w?.projectLink;
-    if (!w || link?.role !== "worker" || w.isArchived || !w.messagesLoaded || !w.isQuiet) return;
+    if (!w || link?.role !== "worker" || link.unreported || w.isArchived) return;
+    if (!w.messagesLoaded || !w.isQuiet) return;
     const project = this.store.get(link.projectId);
     const lead = this.leadOf(link.projectId);
     if (!project || project.archivedAt || !lead || lead.isArchived) return;
@@ -761,6 +784,17 @@ export class ProjectManager {
     return w;
   }
 
+  // A session the lead may send work to, stop or archive.
+  private managed(projectId: string, sessionId: string): Workspace {
+    const w = this.session(projectId, sessionId);
+    if (w.projectLink?.unreported) {
+      throw new Error(
+        `"${w.name}" does not report to the lead: it is the user's own session, not yours to message, stop or archive`,
+      );
+    }
+    return w;
+  }
+
   // `text` is what the panel shows, `prompt` what the model reads. Throws
   // when the target cannot take it, so the tool reports the failure.
   private deliver(
@@ -817,7 +851,8 @@ export class ProjectManager {
       const cut = last && (last.status === "error" || last.content.endsWith(INTERRUPTED));
       const state = `${sessionState(w)}${cut ? ", its last turn did not finish" : ""}`;
       const excerpt = last ? ` — last reply: ${oneLine(last.content, 160)}` : "";
-      out.push(`- ${w.id} "${w.name}" in ${w.cwd} — ${state}${excerpt}`);
+      const own = w.projectLink?.unreported ? " (the user's own: does not report to you)" : "";
+      out.push(`- ${w.id} "${w.name}"${own} in ${w.cwd} — ${state}${excerpt}`);
     }
     out.push("", "## Active objectives", this.listObjectives(projectId, { status: "active" }));
     out.push("", "## Issues", this.issueBoard(projectId).summary());
@@ -1603,6 +1638,11 @@ export class ProjectManager {
     const projectId = w?.projectLink?.role === "worker" ? w.projectLink.projectId : undefined;
     const lead = projectId ? this.leadOf(projectId) : undefined;
     if (!w || !projectId || !lead) throw new Error("This session has no project lead");
+    if (w.projectLink?.unreported) {
+      throw new Error(
+        "This session does not report to the lead: the user switched that off. Tell the user here instead.",
+      );
+    }
     // A context too long is refused before anything is sent, to be written
     // shorter; one with nowhere to go does not hold the report back.
     let unwritten = "";
@@ -1660,7 +1700,7 @@ export class ProjectManager {
       this.readEntry(pid, entry, from, count, fromChar),
     queryHistory: (pid, query, project) => this.queryHistory(pid, query, project),
     messageSession: (pid, sid, text) => {
-      const w = this.session(pid, sid);
+      const w = this.managed(pid, sid);
       const delay = this.spaceStart(w);
       const outcome = this.deliver(w, text, ...this.fromLead(pid, text));
       if (delay > 0) {
@@ -1675,7 +1715,7 @@ export class ProjectManager {
       return `Sent to "${w.name}"${note}.`;
     },
     stopSession: (pid, sid) => {
-      const w = this.session(pid, sid);
+      const w = this.managed(pid, sid);
       this.dropQueuedFromLead(w);
       this.markAnswered(w);
       w.abortAll();
@@ -1683,7 +1723,7 @@ export class ProjectManager {
       return `Stopped "${w.name}".`;
     },
     archiveSession: (pid, sid) => {
-      const w = this.session(pid, sid);
+      const w = this.managed(pid, sid);
       if (w.isArchived) return `"${w.name}" is already archived.`;
       if (!this.host.archiveWorkspace(w)) {
         throw new Error(`"${w.name}" is still working or has queued messages; stop it first`);
