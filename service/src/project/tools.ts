@@ -165,6 +165,9 @@ export interface PanelApi {
     finish?: FinishPatch,
   ): Promise<string>;
   currentTask(workspaceId: string, objectiveId?: string): Promise<string>;
+  // Throws when the session no longer reports to the lead: its write tools
+  // may outlive the switch in a running turn.
+  checkReporting(workspaceId: string): void;
 }
 
 const run = (fn: () => string | Promise<string>) => new Promise<string>((ok) => ok(fn()));
@@ -712,7 +715,7 @@ const OWN_TASK =
 
 // A worker's tools; an isolated one, kept to its own task, gets only those
 // that report to the lead and recall the task. One that does not report
-// only reads the project (an isolated one, nothing).
+// only reads the project.
 export function workerToolset(
   api: PanelApi,
   workspaceId: string,
@@ -721,7 +724,7 @@ export function workerToolset(
   isolated = false,
   unreported = false,
 ): PanelToolset {
-  if (unreported) return ownSessionToolset(api, project, notesDir, isolated);
+  if (unreported) return ownSessionToolset(api, project, notesDir);
   return {
     instructions: [
       `You are a session of the project "${project.name}" (repository ${project.root}). Its lead agent coordinates the work there and may have started you with a task; the user may also talk to you directly.`,
@@ -736,8 +739,12 @@ export function workerToolset(
       ...(isolated
         ? []
         : [
-            ...boardTools(api, project.id, workspaceId).filter((t) => t.name !== "read_objective"),
-            ...issueTools(api, project.id, workspaceId),
+            ...[
+              ...boardTools(api, project.id, workspaceId).filter(
+                (t) => t.name !== "read_objective",
+              ),
+              ...issueTools(api, project.id, workspaceId),
+            ].map((t) => (READS.has(t.name) ? t : whileReporting(api, workspaceId, t))),
             projectStatusTool(api, project.id),
             ...historyTools(api, project.id),
           ]),
@@ -747,32 +754,34 @@ export function workerToolset(
 
 const READS = new Set(["list_objectives", "read_objective", "list_issues", "read_issue"]);
 
-function ownSessionToolset(
-  api: PanelApi,
-  project: Project,
-  notesDir: string,
-  isolated: boolean,
-): PanelToolset {
+function whileReporting(api: PanelApi, workspaceId: string, t: PanelTool): PanelTool {
+  return {
+    ...t,
+    handler: (a) =>
+      run(() => {
+        api.checkReporting(workspaceId);
+        return t.handler(a);
+      }),
+  };
+}
+
+// The user's own session (an isolated one the user took over too): it reads
+// the project.
+function ownSessionToolset(api: PanelApi, project: Project, notesDir: string): PanelToolset {
   return {
     instructions: [
       `You are a session of the project "${project.name}" (repository ${project.root}). The user works with you here directly: you do not report to the project's lead and take no work from it.`,
       LANGUAGE,
-      ...(isolated
-        ? []
-        : [
-            `You may read the project: its board (list_objectives, read_objective), its issues (list_issues, read_issue), its sessions (project_status) and their history; you do not write to the board or the issues. The project's notes are markdown files under ${notesDir}. Contexts and issues say when and at which commit they were written: check them against the code before acting on them.`,
-            HISTORY,
-          ]),
+      `You may read the project: its board (list_objectives, read_objective), its issues (list_issues, read_issue), its sessions (project_status) and their history; you do not write to the board or the issues. The project's notes are markdown files under ${notesDir}. Contexts and issues say when and at which commit they were written: check them against the code before acting on them.`,
+      HISTORY,
     ].join("\n\n"),
-    tools: isolated
-      ? []
-      : [
-          ...[...boardTools(api, project.id), ...issueTools(api, project.id)].filter((t) =>
-            READS.has(t.name),
-          ),
-          projectStatusTool(api, project.id),
-          ...historyTools(api, project.id),
-        ],
+    tools: [
+      ...[...boardTools(api, project.id), ...issueTools(api, project.id)].filter((t) =>
+        READS.has(t.name),
+      ),
+      projectStatusTool(api, project.id),
+      ...historyTools(api, project.id),
+    ],
   };
 }
 

@@ -523,9 +523,13 @@ export class ProjectManager {
     if (!reports === (link.unreported === true)) return;
     const { unreported: _, ...rest } = link;
     w.projectLink = reports ? rest : { ...rest, unreported: true };
+    // What a running turn already took stays: the switch stops nothing.
+    // The board no longer says it works on the lead's tasks.
     if (!reports) {
-      this.dropQueuedFromLead(w);
+      this.dropQueuedFromLead(w, false);
+      w.dropLeadRetries();
       this.markAnswered(w);
+      this.forget(w);
     }
     const tools = this.toolsFor(w);
     for (const a of w.agents.values()) a.session.setPanelTools?.(tools);
@@ -722,12 +726,12 @@ export class ProjectManager {
   // What the lead said that has not run yet (a task still waiting for its
   // start slot, follow-ups queued behind a turn or steered into it unread),
   // and the panel's word to carry on.
-  private dropQueuedFromLead(w: Workspace): void {
+  private dropQueuedFromLead(w: Workspace, evenSteered = true): void {
     const queued = w.messages.filter(
       (m) => m.status === "queued" && (m.from?.role === "lead" || m.from?.role === "panel"),
     );
     for (const m of queued) {
-      if (w.cancelQueued(m.id, true)) {
+      if (w.cancelQueued(m.id, evenSteered)) {
         this.host.broadcast({ type: "message_removed", workspaceId: w.id, messageId: m.id });
       }
     }
@@ -784,6 +788,14 @@ export class ProjectManager {
     return w;
   }
 
+  private checkReporting(w: Workspace | undefined): void {
+    if (w?.projectLink?.unreported) {
+      throw new Error(
+        "This session does not report to the lead: the user switched that off. Tell the user here instead.",
+      );
+    }
+  }
+
   // A session the lead may send work to, stop or archive.
   private managed(projectId: string, sessionId: string): Workspace {
     const w = this.session(projectId, sessionId);
@@ -834,7 +846,12 @@ export class ProjectManager {
       // Which live sessions work there: a worktree no one uses can be reused.
       const users = this.members(projectId).filter((w) => !w.isArchived && w.cwd === wt);
       const use = users.length
-        ? `in use by ${users.map((w) => `${w.id} (${sessionState(w)})`).join(", ")}`
+        ? `in use by ${users
+            .map(
+              (w) =>
+                `${w.id} (${sessionState(w)}${w.projectLink?.unreported ? ", the user's own: not yours to reuse" : ""})`,
+            )
+            .join(", ")}`
         : "free";
       out.push(
         git
@@ -1638,11 +1655,7 @@ export class ProjectManager {
     const projectId = w?.projectLink?.role === "worker" ? w.projectLink.projectId : undefined;
     const lead = projectId ? this.leadOf(projectId) : undefined;
     if (!w || !projectId || !lead) throw new Error("This session has no project lead");
-    if (w.projectLink?.unreported) {
-      throw new Error(
-        "This session does not report to the lead: the user switched that off. Tell the user here instead.",
-      );
-    }
+    this.checkReporting(w);
     // A context too long is refused before anything is sent, to be written
     // shorter; one with nowhere to go does not hold the report back.
     let unwritten = "";
@@ -1667,6 +1680,8 @@ export class ProjectManager {
         }
       }
     }
+    // The user may switch it off while the context is written.
+    this.checkReporting(w);
     if (final) this.markAnswered(w);
     const body = `${final ? "Finished" : "Progress"}:\n\n${text}`;
     this.deliver(
@@ -1843,6 +1858,7 @@ export class ProjectManager {
     },
     messageProject: (pid, target, text) => this.messageProject(pid, target, text),
     workerReport: (wsId, text, final, finish) => this.workerReport(wsId, text, final, finish),
+    checkReporting: (wsId) => this.checkReporting(this.host.workspace(wsId)),
   };
 }
 
@@ -1854,7 +1870,8 @@ const INTERRUPTED = "*\\[interrupted\\]*";
 // Not what it answered the lead later, nor a turn that failed or was cut off.
 export function awaitsUser(w: Workspace): boolean {
   const link = w.projectLink;
-  if (link?.role !== "worker" || w.isArchived || !w.messagesLoaded || !w.isQuiet) return false;
+  if (link?.role !== "worker" || link.unreported) return false;
+  if (w.isArchived || !w.messagesLoaded || !w.isQuiet) return false;
   const messages = w.getMessages();
   const task = taskOf(messages);
   if (!task) return false;

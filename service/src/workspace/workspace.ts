@@ -469,6 +469,17 @@ export class Workspace {
     }
   }
 
+  // The session no longer reports to the lead: a rate-limit retry of what
+  // the lead sent is not run.
+  dropLeadRetries(): void {
+    for (const a of this.agents.values()) {
+      const from = this.messages.find((m) => m.id === a.input?.id)?.from?.role;
+      if (from !== "lead" && from !== "panel") continue;
+      this.dropRetry(a);
+      a.lastPrompt = undefined;
+    }
+  }
+
   // Its sender has heard what came of a delivered message.
   markAnswered(messageId: string): void {
     for (const a of this.agents.values()) {
@@ -1348,10 +1359,16 @@ export class Workspace {
   }
 
   // Steered messages a turn ended without reading: the queue's again, and
-  // it runs them next.
+  // it runs them next; the lead's, once the session no longer reports to
+  // it, are dropped.
   private unread(ids: string[]): void {
-    for (const m of this.messages) {
-      if (m.steering && ids.includes(m.id)) delete m.steering;
+    const back = this.messages.filter((m) => m.steering && ids.includes(m.id));
+    for (const m of back) {
+      delete m.steering;
+      if (this.projectLink?.unreported && (m.from?.role === "lead" || m.from?.role === "panel")) {
+        this.messages.splice(this.messages.indexOf(m), 1);
+        this.cb?.onMessageRemoved?.(this.id, m.id);
+      }
     }
   }
 

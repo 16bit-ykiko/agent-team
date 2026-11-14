@@ -516,8 +516,10 @@ describe("the agents panel in the app", () => {
     boot("w1");
     const bar = document.querySelector(".workspace-info-bar")!;
     expect(bar.querySelector('[title^="Open the lead"]')).toBeNull();
-    expect(bar.querySelectorAll("button:not(.rail-btn)")).toHaveLength(1);
-    expect(bar.querySelector("button:not(.rail-btn)")!.textContent).toBe("Archive");
+    expect([...bar.querySelectorAll("button:not(.rail-btn)")].map((b) => b.textContent)).toEqual([
+      "Reports to lead",
+      "Archive",
+    ]);
   });
 
   it("maximises over the chat until closed", () => {

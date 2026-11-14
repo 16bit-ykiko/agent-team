@@ -66,6 +66,7 @@ describe("panel tool arguments", () => {
     messageProject: record("messageProject"),
     workerReport: (...a) => Promise.resolve(record("workerReport")(...a)),
     currentTask: (...a) => Promise.resolve(record("currentTask")(...a)),
+    checkReporting: () => {},
   };
   const byName = (tools: ReturnType<typeof leadToolset>) =>
     Object.fromEntries(tools.tools.map((t) => [t.name, t]));
@@ -717,7 +718,7 @@ describe("ProjectManager", () => {
   });
 
   it("shows which worktrees a session works in and which are free to reuse", async () => {
-    const { create, call, workers, root } = setup();
+    const { create, call, workers, root, manager } = setup();
     const git = (...args: string[]) =>
       execFileSync("git", ["-C", root, ...args], { stdio: "ignore" });
     git("init", "-q", "-b", "main");
@@ -735,6 +736,11 @@ describe("ProjectManager", () => {
     expect(line(used)).toMatch(new RegExp(`; in use by ${workers()[0].id} \\(`));
     expect(line(free)).toMatch(/; free$/);
     expect(line(root)).toContain(`in use by ${lead.id}`);
+    // The user's own session there: the lead is told the worktree is not its to reuse.
+    manager.setReporting(workers()[0].id, false);
+    expect(
+      (await call(lead, "project_status")).split("\n").find((l) => l.startsWith(`- ${used} `)),
+    ).toContain("the user's own: not yours to reuse");
   });
 
   it("lets leads message each other without waiting", async () => {
@@ -785,7 +791,7 @@ describe("ProjectManager", () => {
     const finish = session(worker).panelTools!.tools.find((t) => t.name === "finish_task")!;
     // What the lead still had queued for it goes with the switch.
     session(worker).isRunning = true;
-    await call(lead, "message_session", { session_id: worker.id, text: "and the tests" });
+    await call(lead, "message_session", { session_id: worker.id, message: "and the tests" });
     expect(worker.messages.some((m) => m.status === "queued")).toBe(true);
 
     manager.setReporting(worker.id, false);
@@ -818,7 +824,7 @@ describe("ProjectManager", () => {
     expect(lead.messages.some((m) => m.from?.role === "worker")).toBe(false);
     // The lead can no longer send it work, stop or archive it; it sees whose it is.
     for (const [tool, args] of [
-      ["message_session", { session_id: worker.id, text: "x" }],
+      ["message_session", { session_id: worker.id, message: "x" }],
       ["stop_session", { session_id: worker.id }],
       ["archive_session", { session_id: worker.id }],
     ] as const) {
@@ -836,6 +842,103 @@ describe("ProjectManager", () => {
     expect(names()).toContain("finish_task");
     // The lead has no switch of its own.
     expect(() => manager.setReporting(lead.id, false)).toThrow();
+  });
+
+  it("lets a switch off outlast what the worker's running turn holds: its writes and its report are refused, its steered message stays", async () => {
+    const { create, call, session, workers, manager, objectives, endTurn } = setup();
+    const { lead } = create("clice");
+    await withTask(call, lead);
+    await call(lead, "start_session", {
+      title: "w",
+      cwd: "wt",
+      task: "t",
+      objective_id: "core/modules",
+      task_id: "t1",
+    });
+    const [worker] = workers();
+    const s = session(worker);
+    const tool = (name: string) => s.panelTools!.tools.find((t) => t.name === name)!;
+
+    // A message the running turn already took, and one still waiting.
+    s.isRunning = true;
+    Object.assign(s, { steer: () => Promise.resolve(true) });
+    await call(lead, "message_session", { session_id: worker.id, message: "steered" });
+    Object.assign(s, { steer: () => Promise.resolve(false) });
+    await call(lead, "message_session", { session_id: worker.id, message: "waiting" });
+    await tick();
+    const write = tool("write_objective");
+
+    // A report whose context is still being written when the switch comes.
+    const m = manager as unknown as { stamp: (...a: unknown[]) => Promise<unknown> };
+    const stamp = m.stamp.bind(manager);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    m.stamp = async (...a) => {
+      await held;
+      return stamp(...a);
+    };
+    const report = tool("finish_task").handler({ summary: "done", context: "Done." });
+    manager.setReporting(worker.id, false);
+    release();
+    await expect(report).rejects.toThrow("does not report to the lead");
+    expect(lead.messages.some((x) => x.from?.role === "worker")).toBe(false);
+
+    const contents = () =>
+      worker.messages.filter((x) => x.from?.role === "lead").map((x) => x.content);
+    expect(contents()).toContain("steered");
+    expect(contents()).not.toContain("waiting");
+    // The board no longer says it works on the lead's task, and it waits on no one.
+    expect(objectives()[0].tasks[0]).toMatchObject({ state: "todo" });
+    expect(objectives()[0].tasks[0].session).toBeUndefined();
+    expect(objectives()[0].sessions).not.toContain(worker.id);
+    expect(manager.awaitsUser(worker)).toBe(false);
+    // The turn ends without the model having read the steered one: it is not run later.
+    const steered = worker.messages.find((x) => x.content === "steered")!;
+    s.emit("unread", [steered.id]);
+    endTurn(worker);
+    await tick();
+    expect(contents()).not.toContain("steered");
+    expect(s.sent.filter((p) => p.startsWith("[From the project lead]"))).toHaveLength(1);
+    await expect(write.handler({ id: "core/modules", title: "Renamed" })).rejects.toThrow(
+      "does not report to the lead",
+    );
+    expect(await call(worker, "read_objective", { id: "core/modules" })).toContain("Modules");
+    expect(await call(worker, "read_objective", { id: "core/modules" })).not.toContain("Renamed");
+  });
+
+  it("no longer shows a switched-off worker as waiting for the user on the lead's task", async () => {
+    const { create, call, session, workers, manager } = setup();
+    const { lead } = create("clice");
+    await call(lead, "start_session", { title: "w", cwd: "wt", task: "t" });
+    const [worker] = workers();
+    await tick();
+    // The task's turn ends in a question, with no report.
+    session(worker).isRunning = false;
+    session(worker).emit("event", { kind: "text_delta", content: "Which branch?" });
+    session(worker).emit("event", { kind: "result", content: "" });
+    await tick();
+    expect(awaitsUser(worker)).toBe(true);
+    manager.setReporting(worker.id, false);
+    expect(awaitsUser(worker)).toBe(false);
+  });
+
+  it("drops a rate-limit retry of the lead's task, and gives a switched-off isolated worker the project to read", async () => {
+    const { create, call, session, workers, manager } = setup();
+    const { lead } = create("clice");
+    await call(lead, "start_session", { title: "w", cwd: "wt", task: "t", isolated: true });
+    const [worker] = workers();
+    await tick();
+    const task = worker.messages.find((m) => m.from?.role === "lead")!;
+    const agent = [...worker.agents.values()][0];
+    Object.assign(agent, {
+      input: { id: task.id, replies: [] },
+      retryPending: true,
+      lastPrompt: "[From the project lead]\n\nt",
+    });
+    manager.setReporting(worker.id, false);
+    expect(agent).toMatchObject({ retryPending: false, lastPrompt: undefined });
+    expect(session(worker).panelTools!.tools.map((t) => t.name)).toContain("list_objectives");
+    expect(worker.projectLink).toMatchObject({ isolated: true, unreported: true });
   });
 
   it("renames the project, its lead and the tools' instructions", () => {
