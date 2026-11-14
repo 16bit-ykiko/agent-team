@@ -26,6 +26,24 @@ export interface StdioServer {
 
 type Rpc = { id?: number | string; method?: string; params?: Record<string, unknown> };
 
+// Gemini refuses a whole request whose tools hold an empty string in an
+// enum ("INVALID_ARGUMENT ... enum[5]: cannot be empty"), and agy sends
+// every tool with every request: such an enum becomes a string that names
+// its values. The call is still checked against the tool's own schema.
+export function forGemini(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(forGemini);
+  if (!v || typeof v !== "object") return v;
+  const o: Record<string, unknown> = Object.fromEntries(
+    Object.entries(v).map(([k, x]) => [k, forGemini(x)]),
+  );
+  if (Array.isArray(o.enum) && o.enum.includes("")) {
+    const values = o.enum.map((e) => JSON.stringify(e)).join(", ");
+    delete o.enum;
+    o.description = [o.description, `One of ${values}`].filter(Boolean).join(". ");
+  }
+  return o;
+}
+
 export class PanelMcpSocket {
   readonly path = path.join(
     os.tmpdir(),
@@ -105,7 +123,7 @@ export class PanelMcpSocket {
               string,
               unknown
             >;
-            return { name: t.name, description: t.description, inputSchema: schema };
+            return { name: t.name, description: t.description, inputSchema: forGemini(schema) };
           }),
         };
       case "tools/call":

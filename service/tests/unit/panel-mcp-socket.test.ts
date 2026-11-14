@@ -2,8 +2,13 @@ import { describe, it, expect, afterEach } from "vitest";
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
 import { z } from "zod";
-import { PanelMcpSocket } from "../../src/session/panel-mcp";
-import type { PanelToolset } from "../../src/project/tools";
+import { PanelMcpSocket, forGemini } from "../../src/session/panel-mcp";
+import {
+  leadToolset,
+  workerToolset,
+  type PanelApi,
+  type PanelToolset,
+} from "../../src/project/tools";
 
 const toolset: PanelToolset = {
   instructions: "x",
@@ -93,6 +98,60 @@ describe("the panel's MCP server", () => {
         false,
       ]);
       expect(answers[1]).toEqual(["refuse", {}, "no task to report on", true]);
+    } finally {
+      child.kill();
+    }
+  });
+});
+
+// Gemini refuses a request whose tools hold an empty enum value (a project
+// agy agent failed every turn on write_issues' evidence: "" clears).
+describe("the panel's tools as agy sends them to Gemini", () => {
+  const emptyEnums = (v: unknown, at = ""): string[] => {
+    if (Array.isArray(v)) return v.flatMap((x, i) => emptyEnums(x, `${at}[${i}]`));
+    if (!v || typeof v !== "object") return [];
+    const own =
+      Array.isArray((v as { enum?: unknown[] }).enum) &&
+      (v as { enum: unknown[] }).enum.includes("")
+        ? [at]
+        : [];
+    return [...own, ...Object.entries(v).flatMap(([k, x]) => emptyEnums(x, `${at}.${k}`))];
+  };
+
+  it("names an enum's values in its description when one is empty", () => {
+    expect(
+      forGemini({
+        type: "object",
+        properties: {
+          evidence: { type: "string", enum: ["R", "V", ""], description: '"" clears' },
+        },
+      }),
+    ).toEqual({
+      type: "object",
+      properties: { evidence: { type: "string", description: '"" clears. One of "R", "V", ""' } },
+    });
+    expect(forGemini({ enum: ["a", "b"] })).toEqual({ enum: ["a", "b"] });
+  });
+
+  it("lists no empty enum value in any lead or worker tool, and still takes one in a call", async () => {
+    const api = new Proxy({} as PanelApi, { get: () => () => Promise.resolve("ok") });
+    const project = { id: "p1", name: "x", root: "/r", leadWorkspaceId: null, createdAt: 0 };
+    const tools = [
+      ...leadToolset(api, project, "/n", ["m"]).tools,
+      ...workerToolset(api, "ws-1", project, "/n").tools,
+    ];
+    server = new PanelMcpSocket(() => ({ instructions: "x", tools }));
+    await server.listen();
+    const { call, child } = client(server);
+    try {
+      const list = (await call("tools/list")).result as { tools: Array<Record<string, unknown>> };
+      expect(list.tools.some((t) => t.name === "write_issues")).toBe(true);
+      expect(list.tools.flatMap((t) => emptyEnums(t.inputSchema, String(t.name)))).toEqual([]);
+      const cleared = await call("tools/call", {
+        name: "write_issues",
+        arguments: { issues: [{ id: "11-14#1", evidence: "" }] },
+      });
+      expect(cleared.result).not.toMatchObject({ isError: true });
     } finally {
       child.kill();
     }
