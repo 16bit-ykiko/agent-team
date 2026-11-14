@@ -84,8 +84,11 @@ export function SystemStatusPanel({
         />
         {status.quota.flatMap((q) => {
           // One Claude login is "Opus"; several go by their account names.
-          const claude = status.quota.filter((e) => e.label !== "Codex").length;
-          const tag = q.label === "Codex" || claude > 1 ? q.label : "Opus";
+          // Codex and agy's pools by theirs.
+          const isClaude = (e: typeof q) =>
+            (e.source ?? "claude") === "claude" && e.label !== "Codex";
+          const claude = status.quota.filter(isClaude).length;
+          const tag = !isClaude(q) || claude > 1 ? q.label : "Opus";
           const items = [];
           if (q.fiveHour) {
             const pct = Math.round(q.fiveHour.utilization * 100);

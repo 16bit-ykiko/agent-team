@@ -1,3 +1,4 @@
+import { spawn } from "child_process";
 import * as fs from "fs";
 import * as http from "http";
 import * as https from "https";
@@ -5,6 +6,7 @@ import * as os from "os";
 import * as path from "path";
 import type { AccountConfig } from "../config/config";
 import { readCodexRateLimits } from "../session/codex";
+import { agyBinary } from "../session/acp";
 import type { RateLimitSnapshot } from "../session/codex-rpc";
 
 export interface QuotaWindow {
@@ -14,6 +16,8 @@ export interface QuotaWindow {
 
 export interface QuotaEntry {
   label: string;
+  // Absent: a Claude login (entries from before it was added).
+  source?: "claude" | "codex" | "agy";
   fiveHour: QuotaWindow | null;
   sevenDay: QuotaWindow | null;
   fetchedAt: number;
@@ -22,6 +26,83 @@ export interface QuotaEntry {
 // The quota probe is a real (1-token) API request per account; only made
 // while someone is looking, and at most this often.
 const QUOTA_INTERVAL_MS = 5 * 60_000;
+// agy's is a process of its own (`agy -p /quota`, no model call, ~6 s):
+// only while agy agents exist, and less often.
+const AGY_INTERVAL_MS = 10 * 60_000;
+const AGY_TIMEOUT_MS = 60_000;
+
+// agy's pools by the name `/quota` gives them, Gemini first.
+const AGY_POOLS: Array<[string, string]> = [
+  ["Gemini Models", "Gemini"],
+  ["Claude and GPT models", "agy Claude/GPT"],
+];
+
+// `agy -p /quota` prints a line per pool and window: "<pool>\t<Weekly|Five
+// Hour> Limit Remaining\t<n>%\t<reset, ISO 8601>".
+export function parseAgyQuota(stdout: string, now = Date.now()): QuotaEntry[] {
+  const pools = new Map<string, QuotaEntry>();
+  for (const line of stdout.split("\n")) {
+    const [pool, window, remaining, reset] = line.trim().split("\t");
+    const pct = /^(\d+(?:\.\d+)?)%$/.exec(remaining ?? "")?.[1];
+    const at = Date.parse(reset ?? "");
+    const label = AGY_POOLS.find(([name]) => name === pool)?.[1];
+    if (!label || pct === undefined || Number.isNaN(at)) continue;
+    const entry = pools.get(label) ?? {
+      label,
+      source: "agy" as const,
+      fiveHour: null,
+      sevenDay: null,
+      fetchedAt: now,
+    };
+    const value = { utilization: 1 - Number(pct) / 100, resetsAt: Math.round(at / 1000) };
+    if (/^Weekly/i.test(window)) entry.sevenDay = value;
+    else if (/^Five Hour/i.test(window)) entry.fiveHour = value;
+    else continue;
+    pools.set(label, entry);
+  }
+  return AGY_POOLS.flatMap(([, label]) => pools.get(label) ?? []);
+}
+
+// One `agy -p /quota` in an empty folder of its own, its log there too.
+export function readAgyQuota(): Promise<QuotaEntry[] | null> {
+  // A test that forgot its stand-in would run the real agy.
+  if (process.env.VITEST) return Promise.resolve(null);
+  let dir: string;
+  let bin: string;
+  try {
+    bin = agyBinary();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-team-agy-quota-"));
+  } catch {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const child = spawn(bin, ["-p", "/quota", "--log-file", path.join(dir, "agy.log")], {
+      cwd: dir,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    let out = "";
+    child.stdout.on("data", (d: Buffer) => (out += d.toString()));
+    let settled = false;
+    // Killed at the deadline, and given up on even if a child of agy's
+    // still holds its output open.
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      done(null);
+    }, AGY_TIMEOUT_MS);
+    const done = (entries: QuotaEntry[] | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fs.rm(dir, { recursive: true, force: true }, () => {});
+      resolve(entries);
+    };
+    child.on("error", () => done(null));
+    child.on("close", (code) => {
+      const entries = code === 0 ? parseAgyQuota(out) : [];
+      done(entries.length ? entries : null);
+    });
+  });
+}
 
 // Rate-limit utilisation of the local login and every configured account,
 // read from the headers of a minimal API request, and of the Codex login,
@@ -29,20 +110,27 @@ const QUOTA_INTERVAL_MS = 5 * 60_000;
 export class QuotaMonitor {
   private claude: QuotaEntry[] = [];
   private codex: QuotaEntry | null = null;
+  private agy: QuotaEntry[] = [];
   private refreshedAt = 0;
+  private agyReadAt = 0;
+  private agyReading = false;
 
   constructor(
     private accounts: () => Record<string, AccountConfig>,
     private codexHome = process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"),
+    // Whether any agy agent exists, and how agy's quota is read.
+    private agyAgents: () => boolean = () => false,
+    private agyRead: () => Promise<QuotaEntry[] | null> = readAgyQuota,
   ) {}
 
   get entries(): QuotaEntry[] {
-    return this.codex ? [...this.claude, this.codex] : this.claude;
+    return [...this.claude, ...(this.codex ? [this.codex] : []), ...this.agy];
   }
 
   noteCodex(limits: RateLimitSnapshot): void {
     const entry: QuotaEntry = {
       label: "Codex",
+      source: "codex",
       fiveHour: null,
       sevenDay: null,
       fetchedAt: Date.now(),
@@ -57,8 +145,30 @@ export class QuotaMonitor {
   }
 
   refreshIfStale(): void {
+    this.refreshAgyIfStale();
     if (Date.now() - this.refreshedAt < QUOTA_INTERVAL_MS) return;
     this.refresh();
+  }
+
+  // Never two at once; the pools go from the display with the last agent.
+  private refreshAgyIfStale(): void {
+    if (!this.agyAgents()) {
+      this.agy = [];
+      // The next agy agent gets its pools read at once.
+      this.agyReadAt = 0;
+      return;
+    }
+    if (this.agyReading || Date.now() - this.agyReadAt < AGY_INTERVAL_MS) return;
+    this.agyReading = true;
+    this.agyReadAt = Date.now();
+    void this.agyRead()
+      .then((entries) => {
+        if (entries && this.agyAgents()) this.agy = entries;
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.agyReading = false;
+      });
   }
 
   // The accounts changed: the next check refreshes.
@@ -107,7 +217,7 @@ export class QuotaMonitor {
       this.fetchForToken(src.token, body, (entry) => {
         if (reported) return;
         reported = true;
-        if (entry) results.push({ ...entry, label: src.label });
+        if (entry) results.push({ ...entry, label: src.label, source: "claude" });
         if (++done === sources.length) {
           results.sort((a, b) => a.label.localeCompare(b.label));
           this.claude = results;

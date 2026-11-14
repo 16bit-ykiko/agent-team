@@ -913,11 +913,30 @@ describe("SystemStatusPanel quota", () => {
     ].map((e) => e.textContent);
   const week = { utilization: 0.12, resetsAt: 1794204562 };
 
-  it("names the Codex row Codex, alone or beside one Claude login", () => {
+  it("names the Codex and agy rows by their pools, alone or beside one Claude login", () => {
     const codex = { label: "Codex", fiveHour: null, sevenDay: week, fetchedAt: 0 };
     const local = { label: "local", fiveHour: week, sevenDay: week, fetchedAt: 0 };
     expect(labels([codex])).toEqual(["CPU", "Mem", "Codex 7d"]);
     expect(labels([local, codex])).toEqual(["CPU", "Mem", "Opus 5h", "Opus 7d", "Codex 7d"]);
+    const gemini = {
+      label: "Gemini",
+      source: "agy" as const,
+      fiveHour: week,
+      sevenDay: week,
+      fetchedAt: 0,
+    };
+    const pool = { ...gemini, label: "agy Claude/GPT" };
+    expect(labels([local, codex, gemini, pool])).toEqual([
+      "CPU",
+      "Mem",
+      "Opus 5h",
+      "Opus 7d",
+      "Codex 7d",
+      "Gemini 5h",
+      "Gemini 7d",
+      "agy Claude/GPT 5h",
+      "agy Claude/GPT 7d",
+    ]);
     expect(labels([local, { ...local, label: "work" }, codex])).toEqual([
       "CPU",
       "Mem",

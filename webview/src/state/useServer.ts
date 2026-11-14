@@ -358,6 +358,8 @@ export interface QuotaWindow {
 
 export interface QuotaEntry {
   label: string;
+  // Absent: a Claude login (a server from before it was sent).
+  source?: "claude" | "codex" | "agy";
   fiveHour: QuotaWindow | null;
   sevenDay: QuotaWindow | null;
   fetchedAt: number;

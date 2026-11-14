@@ -55,7 +55,7 @@ vi.mock("../../src/session/codex", () => ({
   },
 }));
 
-import { QuotaMonitor } from "../../src/server/quota";
+import { QuotaMonitor, parseAgyQuota, type QuotaEntry } from "../../src/server/quota";
 
 const flush = () => new Promise((r) => setTimeout(r, 5));
 const ENV_KEYS = ["HOME", "CODEX_HOME", "https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"];
@@ -196,6 +196,7 @@ describe("QuotaMonitor", () => {
     expect(q.entries).toEqual([
       {
         label: "Codex",
+        source: "codex",
         fiveHour: null,
         sevenDay: { utilization: 0.12, resetsAt: 1794204562 },
         fetchedAt: expect.any(Number) as number,
@@ -215,5 +216,85 @@ describe("QuotaMonitor", () => {
       fiveHour: { utilization: 1, resetsAt: 1700000000 },
       sevenDay: { utilization: 0.5, resetsAt: 1700500000 },
     });
+  });
+
+  it("reads agy's pools, Gemini first, only while agy agents exist and ten minutes apart", async () => {
+    let agents = false;
+    let reads = 0;
+    let answer: (e: QuotaEntry[] | null) => void = () => {};
+    const q = new QuotaMonitor(
+      () => ({}),
+      undefined,
+      () => agents,
+      () => {
+        reads++;
+        return new Promise((r) => (answer = r));
+      },
+    );
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      q.refreshIfStale();
+      expect(reads).toBe(0);
+      agents = true;
+      q.refreshIfStale();
+      // One at a time, however often the timer asks.
+      q.invalidate();
+      q.refreshIfStale();
+      expect(reads).toBe(1);
+      answer(parseAgyQuota(AGY_QUOTA));
+      await flush();
+      expect(q.entries.map((e) => [e.label, e.source])).toEqual([
+        ["Gemini", "agy"],
+        ["agy Claude/GPT", "agy"],
+      ]);
+      vi.setSystemTime(Date.now() + 9 * 60_000);
+      q.refreshIfStale();
+      expect(reads).toBe(1);
+      vi.setSystemTime(Date.now() + 2 * 60_000);
+      q.refreshIfStale();
+      expect(reads).toBe(2);
+      answer(null);
+      await flush();
+      // A failed read keeps the last one.
+      expect(q.entries).toHaveLength(2);
+      agents = false;
+      q.refreshIfStale();
+      expect(q.entries).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// `agy -p /quota` as agy 1.5.7 prints it.
+const AGY_QUOTA = [
+  "Gemini Models\tWeekly Limit Remaining\t100%\t2026-11-21T04:24:36Z",
+  "Gemini Models\tFive Hour Limit Remaining\t62%\t2026-11-14T09:24:36Z",
+  "Claude and GPT models\tWeekly Limit Remaining\t100%\t2026-11-21T04:24:36Z",
+  "Claude and GPT models\tFive Hour Limit Remaining\t100%\t2026-11-14T09:24:36Z",
+  "",
+].join("\n");
+
+describe("parseAgyQuota", () => {
+  it("turns agy's remaining percentages into used fractions with their resets", () => {
+    const [gemini, other] = parseAgyQuota(AGY_QUOTA, 5);
+    expect(gemini).toEqual({
+      label: "Gemini",
+      source: "agy",
+      fiveHour: { utilization: 0.38, resetsAt: Date.parse("2026-11-14T09:24:36Z") / 1000 },
+      sevenDay: { utilization: 0, resetsAt: Date.parse("2026-11-21T04:24:36Z") / 1000 },
+      fetchedAt: 5,
+    });
+    expect(other.label).toBe("agy Claude/GPT");
+  });
+
+  it("skips what it does not know: other lines, other pools, other windows", () => {
+    expect(parseAgyQuota("Error: not logged in\n")).toEqual([]);
+    expect(parseAgyQuota("Other pool\tWeekly Limit Remaining\t5%\t2026-11-21T04:24:36Z")).toEqual(
+      [],
+    );
+    expect(parseAgyQuota("Gemini Models\tDaily Limit Remaining\t5%\t2026-11-21T04:24:36Z")).toEqual(
+      [],
+    );
   });
 });

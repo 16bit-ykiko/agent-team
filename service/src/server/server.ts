@@ -113,7 +113,11 @@ export class Server {
     this.commands = mergeLocalCommands(settings.commands ?? []);
     this.hostRegistry = this.initHosts();
     this.auth = new Auth(() => this.config.auth);
-    this.quota = new QuotaMonitor(() => this.config.accounts);
+    this.quota = new QuotaMonitor(
+      () => this.config.accounts,
+      undefined,
+      () => this.hasAgyAgents(),
+    );
     this.git = new GitScanner(
       () => [...this.workspaces.values()].filter((w) => !w.isArchived),
       (w) =>
@@ -181,6 +185,14 @@ export class Server {
         .join(", ")}`,
     );
     return registry;
+  }
+
+  private hasAgyAgents(): boolean {
+    for (const ws of this.workspaces.values()) {
+      if (ws.isArchived) continue;
+      for (const a of ws.agents.values()) if (backendForModel(a.info.model) === "agy") return true;
+    }
+    return false;
   }
 
   private refreshQuotaIfStale(): void {
