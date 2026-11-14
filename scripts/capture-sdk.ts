@@ -637,6 +637,18 @@ async function cursorDriver(
 
 // --- agy --------------------------------------------------------------------
 
+// A frame of agy's as taped: the text of a message or thought whole (the
+// session aligns successive loads by it; a cut one would not match its
+// longer self), the rest trimmed.
+function agyFrame(m: unknown): unknown {
+  const text = (m as { params?: { update?: { content?: { text?: unknown } } } }).params?.update
+    ?.content?.text;
+  const out = trim(m) as { params?: { update?: { content?: { text?: unknown } } } };
+  const content = out.params?.update?.content;
+  if (content && typeof text === "string") content.text = text;
+  return out;
+}
+
 // The server's own AgySession drives `agy acp`, so the recording holds the
 // requests the replayed session must write: every line both ways, and each
 // time the session looked at what agy did while idle (its log watch and
@@ -644,6 +656,7 @@ async function cursorDriver(
 async function agyDriver(tape: Tape, model: string, fixture: Fixture): Promise<Driver> {
   const { AgySession } = await import("../service/src/session/agy.ts");
   const { agyBinary, spawnAgy } = await import("../service/src/session/acp.ts");
+  const { findSubagentConversation } = await import("../service/src/session/agy-store.ts");
   const version = `agy ${execFileSync(agyBinary(), ["--version"], { encoding: "utf-8" }).trim()}`;
   let lastAt = Date.now();
   let results = 0;
@@ -661,7 +674,7 @@ async function agyDriver(tape: Tape, model: string, fixture: Fixture): Promise<D
           t.onMessage((m) => {
             lastAt = Date.now();
             seen.push(JSON.stringify(m));
-            tape.frame(redact(m));
+            tape.add({ frame: agyFrame(redact(m)) });
             cb(m);
           }),
         onClose: (cb) =>
@@ -677,6 +690,11 @@ async function agyDriver(tape: Tape, model: string, fixture: Fixture): Promise<D
     },
     onIdleCheck: () => tape.add({ control: { op: "idleCheck" } }),
     onLogActivity: () => tape.add({ control: { op: "logActivity" } }),
+    findSubagent: (callId, since) => {
+      const conversation = findSubagentConversation(callId, since);
+      tape.add({ control: { op: "subagent", taskId: callId, response: conversation } });
+      return conversation;
+    },
     onToolAnswer: (tool, args, text, isError) =>
       tape.add({ control: { op: "toolAnswer", taskId: tool, response: { args, text, isError } } }),
   };

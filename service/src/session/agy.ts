@@ -25,6 +25,7 @@ import {
   type ToolCall,
 } from "./acp";
 import { PanelMcpSocket, type StdioServer } from "./panel-mcp";
+import { findSubagentConversation } from "./agy-store";
 import type { PanelToolset } from "../project/tools";
 import { agyModelId, defaultEffortForModel, effortLevelsForModel } from "../config/presets";
 
@@ -37,6 +38,16 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 // starts an empty conversation under it.
 const RESUME_FAILED = /failed to read session/i;
 
+// What every agy agent is told beside agy's own system prompt. A question
+// asked with ask_question waits for an answer ACP takes only as an
+// elicitation, which the panel does not offer: a prompt sent meanwhile gets
+// the question back and is dropped, the next nothing (probed with /teamwork,
+// whose interview asks so). A new
+// agy process has no question waiting: the session restarts it to send
+// the answer.
+export const AGY_INSTRUCTIONS =
+  "You run in the agent-team panel, which cannot answer the ask_question tool: never call it. Ask the user in plain text in your reply instead and end your turn; their next message is the answer.";
+
 // agy works on while no prompt runs (it wakes when a background command
 // ends) but streams nothing then; session/load replays the conversation,
 // what it did meanwhile included (snap fixture agy/background). Its log
@@ -45,6 +56,9 @@ const RESUME_FAILED = /failed to read session/i;
 // something is followed by another after `followUpMs`, and while
 // background work runs a load comes every `pollMs` in case the log says
 // nothing.
+// A subagent's load that takes longer found it mid model call.
+const CHILD_BUSY_MS = 1_000;
+
 export const IDLE_TIMINGS = { settleMs: 3_000, followUpMs: 10_000, pollMs: 60_000 };
 const MODEL_CALL = /streamGenerateContent/;
 
@@ -52,6 +66,23 @@ const MODEL_CALL = /streamGenerateContent/;
 // message (a reply's text comes whole, not in its streamed pieces) and per
 // tool call, in its latest state.
 type Item = { kind: "user" | "agent" | "thought"; text: string } | { kind: "tool"; call: ToolCall };
+
+// A subagent agy started (invoke_subagent): a card of the call's, its
+// conversation, once found, loaded with the main one's.
+interface Child {
+  startedAt: number;
+  description: string;
+  conversation: string | null;
+  calls: Map<string, { startedAt: number; done: boolean }>;
+  // Its messages shown so far, when a load last found something new, and
+  // what it reported back.
+  shown: number;
+  changedAt: number;
+  report: string;
+  // Loads in a row that found it idle with nothing new.
+  idleLoads: number;
+  done: boolean;
+}
 
 interface Call {
   startedAt: number;
@@ -91,6 +122,8 @@ export class AgySession extends EventEmitter {
     idleTimers?: boolean;
     onIdleCheck?: (session: AgySession) => void;
     onLogActivity?: (session: AgySession) => void;
+    // The conversation of the subagent a call started (agy-store.ts).
+    findSubagent?: (callId: string, since: number) => string | null;
     onToolAnswer?: (tool: string, args: unknown, text: string, isError: boolean) => void;
   } | null = null;
 
@@ -104,6 +137,8 @@ export class AgySession extends EventEmitter {
   // agy's log showed a model call while idle since the last load began.
   private idleActivity = false;
   private agyPid: number | undefined;
+  // When this agy process started: a subagent of its was created after.
+  private startedAt = 0;
   // The model and thought level agy's session has now.
   private applied: { model?: string; effort?: string } = {};
 
@@ -141,11 +176,17 @@ export class AgySession extends EventEmitter {
   private thinking = "";
   private thinkingSince = 0;
   private thinkingMs = 0;
+  // agy's last usage_update (1.5.8+): tokens in the context and its window.
   private context: ContextUsage | undefined;
   // Every tool call of the process, by id: a background one completes turns
   // later.
   private calls = new Map<string, Call>();
   private background = new Map<string, BackgroundTask>();
+  // agy waits on an ask_question in this process.
+  private questionPending = false;
+  private children = new Map<string, Child>();
+  // A subagent's load collects its replay here, by conversation.
+  private childReplay = new Map<string, SessionUpdate[]>();
   // What the panel's MCP server answered, oldest first, by tool and
   // arguments: agy's update for the call carries no result (agy/turn).
   private answers: Array<{ key: string; text: string; isError: boolean }> = [];
@@ -174,7 +215,21 @@ export class AgySession extends EventEmitter {
   }
 
   get backgroundTaskList(): BackgroundTask[] {
-    return [...this.background.values()];
+    const agents = [...this.children]
+      .filter(([, c]) => !c.done)
+      .map(([id, c]) => ({
+        id,
+        type: "local_agent",
+        description: c.description,
+        since: c.startedAt,
+      }));
+    return [...this.background.values(), ...agents];
+  }
+
+  private get runningChildren(): number {
+    let n = 0;
+    for (const c of this.children.values()) if (!c.done) n++;
+    return n;
   }
 
   get effectiveEffort(): string | null {
@@ -269,6 +324,7 @@ export class AgySession extends EventEmitter {
     });
     this.client = client;
     this.agyPid = transport.pid;
+    this.startedAt = Date.now();
     this.logFile = logFile;
     this.logOffset = 0;
     try {
@@ -310,9 +366,10 @@ export class AgySession extends EventEmitter {
 
   // What session/new, resume and load are given: the panel's tools as an
   // MCP server and its instructions appended to agy's system prompt.
-  private async sessionParams(): Promise<{ mcpServers: StdioServer[]; _meta?: Obj }> {
+  private async sessionParams(): Promise<{ mcpServers: StdioServer[]; _meta: Obj }> {
     const tools = this.panelTools;
-    if (!tools) return { mcpServers: [] };
+    const append = (text: string) => ({ antigravity: { systemPrompt: { append: text } } });
+    if (!tools) return { mcpServers: [], _meta: append(AGY_INSTRUCTIONS) };
     let server = AgySession.hooks?.mcpServer?.(this);
     if (!server) {
       if (!this.mcp) {
@@ -331,7 +388,7 @@ export class AgySession extends EventEmitter {
     }
     return {
       mcpServers: [server],
-      _meta: { antigravity: { systemPrompt: { append: tools.instructions } } },
+      _meta: append(`${AGY_INSTRUCTIONS}\n\n${tools.instructions}`),
     };
   }
 
@@ -376,6 +433,8 @@ export class AgySession extends EventEmitter {
     this.known = null;
     this.ownTurn = null;
     this.idleActivity = false;
+    this.childReplay.clear();
+    this.questionPending = false;
     this.awaitReply = 0;
     this.stopCalls();
     this.calls.clear();
@@ -460,7 +519,7 @@ export class AgySession extends EventEmitter {
     this.stopIdleTimers();
     this.setState("working");
     try {
-      const client = await this.connect();
+      let client = await this.connect();
       // A load still replaying: its updates are not this turn's.
       while (this.loading) await this.loading;
       if (generation !== this.generation) return;
@@ -474,8 +533,19 @@ export class AgySession extends EventEmitter {
       // anything: its log showed it at work, a command of its runs, a reply
       // to one is awaited, or there is no log to tell. The load after this
       // turn tells the turn's own items from the rest by the last one.
-      if (this.known && this.mayHaveWorked()) await this.startLoad();
+      // Subagents' cards wait for the loads after it.
+      if (this.known && this.mayHaveWorked()) await this.startLoad(false);
       if (generation !== this.generation) return;
+      // agy waits on a question in this process: the answer goes to a new
+      // one, unless that would end work still running here (agy then only
+      // asks again).
+      if (this.questionPending && !this.background.size && !this.runningChildren) {
+        this.closeProcess();
+        client = await this.connect();
+        if (generation !== this.generation) return;
+        await this.applyConfig(client);
+        if (generation !== this.generation) return;
+      }
       if (this.interruptRequested) {
         this.endTurn({ kind: "result", content: "", interrupted: true });
         return;
@@ -504,6 +574,12 @@ export class AgySession extends EventEmitter {
   // lone command (and a list's last) in place: a group whose argv is not
   // that is told by start order, when there are as many as commands open.
   stopTask(taskId: string): Promise<void> {
+    // agy offers no way to stop a subagent: its card stops following it.
+    const child = this.children.get(taskId);
+    if (child && !child.done) {
+      this.endChild(taskId, child, "stopped");
+      return Promise.resolve();
+    }
     const call = this.calls.get(taskId);
     if (!call?.background || call.done || !call.command) {
       return Promise.reject(new Error("No such command running in the background."));
@@ -559,9 +635,8 @@ export class AgySession extends EventEmitter {
     const prev = this.state;
     this.state = next;
     if (next === "waiting") {
-      const tasks = [...this.background.values()];
-      const label =
-        tasks.length === 1 ? tasks[0].description : `${tasks.length} background commands`;
+      const tasks = this.backgroundTaskList;
+      const label = tasks.length === 1 ? tasks[0].description : `${tasks.length} background tasks`;
       this.emit("activity", `waiting on ${label}`);
     } else if (prev === "waiting") {
       this.emit("activity", null);
@@ -570,7 +645,8 @@ export class AgySession extends EventEmitter {
   }
 
   private settleState(): void {
-    this.setState(this.busy ? "working" : this.background.size ? "waiting" : "idle");
+    const waiting = this.background.size > 0 || this.runningChildren > 0;
+    this.setState(this.busy ? "working" : waiting ? "waiting" : "idle");
     const poll = this.idleTimers() && !!this.client && this.state === "waiting";
     if (poll && !this.pollTimer) {
       this.pollTimer = setInterval(() => this.checkIdle(), IDLE_TIMINGS.pollMs);
@@ -661,10 +737,26 @@ export class AgySession extends EventEmitter {
 
   private onNotification(method: string, params: Obj): void {
     if (method !== "session/update") return;
-    if (this.sessionId && params.sessionId !== this.sessionId) return;
     const u = params.update as SessionUpdate;
+    if (this.sessionId && params.sessionId !== this.sessionId) {
+      const replay = this.childReplay.get(str(params.sessionId));
+      if (replay) replay.push(u);
+      // A loaded subagent's calls stream as they happen: it is at work.
+      else if (u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update") {
+        if ([...this.children.values()].some((c) => c.conversation === params.sessionId)) {
+          this.idleWork();
+        }
+      }
+      return;
+    }
     if (u.sessionUpdate === "config_option_update") {
       this.noteConfig(u.configOptions);
+      return;
+    }
+    // The context after each model call, also in a load's replay; the
+    // prompt's usage sums the turn's calls and is no context figure.
+    if (u.sessionUpdate === "usage_update") {
+      if (u.used && u.size) this.context = { tokens: u.used, window: u.size };
       return;
     }
     if (u.sessionUpdate === "available_commands_update") {
@@ -676,6 +768,11 @@ export class AgySession extends EventEmitter {
       return;
     }
     if (this.prompting) this.onTurnUpdate(u);
+    // agy streams a call that waits on the client (ask_question) while no
+    // prompt runs: a sign it works, as its log's model calls are.
+    else if (u.sessionUpdate === "tool_call" || u.sessionUpdate === "tool_call_update") {
+      this.idleWork();
+    }
   }
 
   private onTurnUpdate(u: SessionUpdate): void {
@@ -719,9 +816,6 @@ export class AgySession extends EventEmitter {
         }
         break;
       }
-      case "usage_update":
-        if (u.used && u.size) this.context = { tokens: u.used, window: u.size };
-        break;
       default:
         break;
     }
@@ -790,12 +884,57 @@ export class AgySession extends EventEmitter {
       };
       this.calls.set(u.toolCallId, call);
       this.emit("event", { ...use, toolUseId: u.toolCallId, startedAt: call.startedAt });
+      if (u.name === "invoke_subagent" && u.status !== "failed") {
+        this.startChild(u, call.startedAt);
+      }
     }
-    if (!call.done && (u.status === "completed" || u.status === "failed")) this.finish(u, call);
+    // agy waits on a question until the next prompt, which it reads as the
+    // answer: the call is over for the panel once shown.
+    const asked =
+      u.name === "ask_question" && (u.status === "pending" || u.status === "in_progress");
+    if (asked) this.questionPending = true;
+    else if (u.name === "ask_question" && finished(u)) this.questionPending = false;
+    if (!call.done && (asked || u.status === "completed" || u.status === "failed")) {
+      this.finish(u, call);
+    }
+  }
+
+  private startChild(u: ToolCall, startedAt: number): void {
+    const args = obj(u.args ?? u.rawInput);
+    const description = str(args.Role) || str(args.TypeName) || "subagent";
+    this.children.set(u.toolCallId, {
+      startedAt,
+      description,
+      conversation: null,
+      calls: new Map(),
+      shown: 0,
+      changedAt: startedAt,
+      report: "",
+      idleLoads: 0,
+      done: false,
+    });
+    this.emit("event", {
+      kind: "subagent_start",
+      content: description,
+      toolUseId: u.toolCallId,
+      subagent: {
+        taskId: u.toolCallId,
+        description,
+        prompt: str(args.Prompt) || undefined,
+        // "self": one like the agent itself.
+        agentType: (str(args.TypeName) !== "self" && str(args.TypeName)) || "subagent",
+        taskType: "local_agent",
+        status: "running",
+        events: [],
+      },
+    });
+    this.emit("backgroundTasks", this.backgroundTaskList);
   }
 
   private finish(u: ToolCall, call: Call): void {
     call.done = true;
+    const child = this.children.get(u.toolCallId);
+    if (child && !child.done && u.status === "failed") this.endChild(u.toolCallId, child, "failed");
     const panel = /^mcp_panel_(.+)$/.exec(u.name ?? "");
     const key = panel && callKey(panel[1], u.args ?? u.rawInput);
     const at = key ? this.answers.findIndex((a) => a.key === key) : -1;
@@ -891,7 +1030,14 @@ export class AgySession extends EventEmitter {
         durationMs: Date.now() - call.startedAt,
       });
     }
-    if (!this.background.size) return;
+    if (!this.background.size) {
+      if (this.runningChildren) {
+        this.stopChildren();
+        this.emit("backgroundTasks", this.backgroundTaskList);
+        this.settleState();
+      }
+      return;
+    }
     for (const id of this.background.keys()) {
       const call = this.calls.get(id);
       if (call) call.done = true;
@@ -908,8 +1054,28 @@ export class AgySession extends EventEmitter {
       });
     }
     this.background.clear();
+    this.stopChildren();
     this.emit("backgroundTasks", []);
     this.settleState();
+  }
+
+  // agy's subagents run in its process and end with it.
+  private stopChildren(): void {
+    for (const [id, c] of this.children) {
+      if (c.done) continue;
+      c.done = true;
+      this.emit("event", {
+        kind: "subagent_done",
+        content: "",
+        toolUseId: id,
+        subagent: {
+          taskId: id,
+          description: "",
+          status: "stopped",
+          durationMs: Date.now() - c.startedAt,
+        },
+      });
+    }
   }
 
   // --- while idle ------------------------------------------------------------
@@ -963,8 +1129,12 @@ export class AgySession extends EventEmitter {
   }
 
   logActivity(): void {
-    this.idleActivity = true;
     AgySession.hooks?.onLogActivity?.(this);
+    this.idleWork();
+  }
+
+  private idleWork(): void {
+    this.idleActivity = true;
     if (!this.idleTimers()) return;
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = setTimeout(() => {
@@ -1007,8 +1177,8 @@ export class AgySession extends EventEmitter {
     );
   }
 
-  private startLoad(): Promise<void> {
-    const loading: Promise<void> = this.load().finally(() => {
+  private startLoad(children = true): Promise<void> {
+    const loading: Promise<void> = this.load(children).finally(() => {
       if (this.loading === loading) this.loading = null;
     });
     this.loading = loading;
@@ -1017,7 +1187,7 @@ export class AgySession extends EventEmitter {
 
   // A load is not the turn's: a message sent meanwhile waits for it, and
   // what it found comes first in that message's reply.
-  private async load(): Promise<void> {
+  private async load(children: boolean): Promise<void> {
     const client = this.client;
     if (!client) return;
     const updates: SessionUpdate[] = [];
@@ -1042,6 +1212,9 @@ export class AgySession extends EventEmitter {
     // after their turn (that one is the baseline for the rest).
     const completed: ToolCall[] = [];
     for (const i of items) {
+      if (i.kind === "tool" && i.call.name === "ask_question" && finished(i.call)) {
+        if (this.calls.has(i.call.toolCallId)) this.questionPending = false;
+      }
       if (i.kind !== "tool" || !finished(i.call)) continue;
       const call = this.calls.get(i.call.toolCallId);
       if (call && !call.done) completed.push(i.call);
@@ -1062,7 +1235,8 @@ export class AgySession extends EventEmitter {
     // own, which a load may come before.
     if (ended && !said) this.awaitReply = 6;
     else if (said) this.awaitReply = 0;
-    const again = completed.length > 0 || fresh.length > 0 || this.awaitReply-- > 0;
+    const changed = children && (await this.loadChildren(client));
+    const again = changed || completed.length > 0 || fresh.length > 0 || this.awaitReply-- > 0;
     if (again && this.idleTimers()) {
       if (this.followUpTimer) clearTimeout(this.followUpTimer);
       this.followUpTimer = setTimeout(() => {
@@ -1070,6 +1244,135 @@ export class AgySession extends EventEmitter {
         this.checkIdle();
       }, IDLE_TIMINGS.followUpMs);
     }
+  }
+
+  // The running subagents' conversations, each loaded as the main one is:
+  // what they did since shows in their cards. One quiet for a poll's
+  // length after it last spoke is done. True when any changed.
+  private async loadChildren(client: AppServerClient): Promise<boolean> {
+    let changed = false;
+    const find = AgySession.hooks?.findSubagent ?? findSubagentConversation;
+    for (const [id, child] of this.children) {
+      if (child.done || client !== this.client) continue;
+      // The call may be seen only by a later load, well after it started.
+      child.conversation ??= find(id, this.startedAt);
+      if (!child.conversation) continue;
+      const updates: SessionUpdate[] = [];
+      this.childReplay.set(child.conversation, updates);
+      const asked = Date.now();
+      try {
+        await client.request("session/load", {
+          sessionId: child.conversation,
+          cwd: this.config.cwd,
+          mcpServers: [],
+        });
+      } catch {
+        continue;
+      } finally {
+        this.childReplay.delete(child.conversation);
+      }
+      if (client !== this.client || child.done) continue;
+      // agy answers a load of a subagent mid model call in seconds, of one
+      // at rest at once (agy/subagent: ~2 s and ~0.1 s).
+      const idle = Date.now() - asked < CHILD_BUSY_MS;
+      const items = conversation(updates);
+      const shown = this.showChildWork(id, child, items);
+      if (shown) changed = true;
+      child.idleLoads = idle && !shown ? child.idleLoads + 1 : 0;
+      if (idle && this.childDone(child, items)) this.endChild(id, child, "completed");
+    }
+    return changed;
+  }
+
+  private emitInner(taskId: string, inner: StreamEvent): void {
+    this.emit("event", {
+      kind: "subagent_progress",
+      content: "",
+      toolUseId: taskId,
+      subagent: { taskId, description: "", _innerEvent: inner },
+    });
+  }
+
+  // What the subagent's conversation holds that its card does not, in its
+  // order: its messages' text past what was shown, its calls by id (its
+  // thoughts, which agy folds between loads, are left out). Its report is
+  // the message it sends this conversation.
+  private showChildWork(taskId: string, child: Child, items: Item[]): boolean {
+    let shown = false;
+    // Its messages' text as one, however it was cut into chunks: what lies
+    // past what was shown is new.
+    let at = 0;
+    for (const item of items) {
+      if (item.kind === "agent") {
+        const end = at + item.text.length;
+        const fresh = end > child.shown ? item.text.slice(Math.max(0, child.shown - at)) : "";
+        at = end;
+        if (!fresh.trim()) continue;
+        child.shown = end;
+        this.emitInner(taskId, { kind: "text", content: fresh.trim() });
+        shown = true;
+        continue;
+      }
+      if (item.kind !== "tool") continue;
+      const u = item.call;
+      let call = child.calls.get(u.toolCallId);
+      if (!call) {
+        call = { startedAt: Date.now(), done: false };
+        child.calls.set(u.toolCallId, call);
+        this.emitInner(taskId, {
+          ...toolUse(u, new Set()),
+          toolUseId: u.toolCallId,
+          startedAt: call.startedAt,
+        });
+        shown = true;
+      }
+      if (!call.done && finished(u)) {
+        call.done = true;
+        this.emitInner(taskId, {
+          ...toolResult(u),
+          toolUseId: u.toolCallId,
+          durationMs: Date.now() - call.startedAt,
+        });
+        shown = true;
+        const args = obj(u.args ?? u.rawInput);
+        if (u.name === "send_message" && args.Recipient === this.sessionId) {
+          child.report = str(args.Message).trim() || child.report;
+        }
+      }
+    }
+    if (shown) child.changedAt = Date.now();
+    return shown;
+  }
+
+  // Done, found at rest by a load, once it has reported back here, nothing
+  // of it open and its last step that report or a message after it
+  // (agy/subagent); one that reports nothing, at rest on a message for two
+  // loads in a row.
+  private childDone(child: Child, items: Item[]): boolean {
+    if ([...child.calls.values()].some((c) => !c.done)) return false;
+    const last = items.filter((i) => i.kind !== "thought").at(-1);
+    if (child.report) {
+      return last?.kind === "agent" || (last?.kind === "tool" && last.call.name === "send_message");
+    }
+    return last?.kind === "agent" && child.idleLoads >= 2;
+  }
+
+  private endChild(taskId: string, child: Child, status: "completed" | "failed" | "stopped"): void {
+    child.done = true;
+    this.emit("event", {
+      kind: "subagent_done",
+      content: child.report,
+      toolUseId: taskId,
+      subagent: {
+        taskId,
+        description: "",
+        status,
+        durationMs: child.changedAt - child.startedAt,
+        summary: child.report,
+      },
+    });
+    this.emit("backgroundTasks", this.backgroundTaskList);
+    if (!this.busy) this.settleState();
   }
 
   // Of what the load after a turn has new, what is not the turn's own: its
@@ -1171,7 +1474,8 @@ export class AgySession extends EventEmitter {
       return;
     }
     this.busy = false;
-    this.emit("event", { kind: "result", content: "" });
+    const context = this.context;
+    this.emit("event", { kind: "result", content: "", ...(context && { context }) });
     this.settleState();
   }
 
@@ -1293,7 +1597,7 @@ function toolUse(u: ToolCall, panel: Set<string>): StreamEvent {
         new_string: str(args.Replacement),
       });
     // A subagent agy runs on its own, in a conversation of its own that
-    // streams nothing here; the call returns at once (agy/teamwork).
+    // streams nothing here; the call returns at once (agy/subagent).
     case "invoke_subagent": {
       const role = [str(args.Role), str(args.TypeName) && `(${str(args.TypeName)})`];
       const prompt = str(args.Prompt);
@@ -1301,6 +1605,29 @@ function toolUse(u: ToolCall, panel: Set<string>): StreamEvent {
         kind: "tool_use",
         toolName: "Agent",
         content: `**Agent** ${role.filter(Boolean).join(" ")}${prompt ? `\n\n> ${prompt.replace(/\n/g, "\n> ")}` : ""}`,
+      };
+    }
+    // A message to another of agy's conversations (a subagent's report).
+    case "send_message": {
+      const message = str(args.Message).trim();
+      return {
+        kind: "tool_use",
+        toolName: "SendMessage",
+        content: `**SendMessage**${message ? `\n\n> ${message.replace(/\n/g, "\n> ")}` : ""}`,
+      };
+    }
+    // Questions for the user, with the options agy offers.
+    case "ask_question": {
+      const questions = Array.isArray(args.questions) ? args.questions.map(obj) : [];
+      const body = questions.map((q) => {
+        const options = Array.isArray(q.options) ? q.options.map((o) => `- ${str(o)}`) : [];
+        const any = q.is_multi_select === true ? " *(any of)*" : "";
+        return [`**${str(q.question)}**${any}`, ...options].join("\n");
+      });
+      return {
+        kind: "tool_use",
+        toolName: "AskQuestion",
+        content: [`**AskQuestion**`, ...body].join("\n\n"),
       };
     }
     // A background command's state, by its task id ("<conversation>/task-8").
@@ -1333,8 +1660,14 @@ function toolResult(u: ToolCall): StreamEvent & { content: string } {
     const status = exit !== 0 ? ` (exit code ${exit})` : "";
     return { kind: "tool_result", content: `${commandOutput(out.output)}${status}`, ...error };
   }
+  if (u.name === "ask_question" && !failed && !u.content?.length) {
+    return {
+      kind: "tool_result",
+      content: "Answer in a message.",
+    };
+  }
   if (u.name === "invoke_subagent" && !failed && !u.content?.length) {
-    return { kind: "tool_result", content: "Started; agy goes on when it reports back." };
+    return { kind: "tool_result", content: "Started; it reports back to agy." };
   }
   if (u.name === "write_file" || u.name === "edit_file") {
     return { kind: "tool_result", content: failed ? "failed" : "applied", ...error };

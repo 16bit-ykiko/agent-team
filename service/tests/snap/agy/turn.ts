@@ -43,5 +43,9 @@ export default fixture({
     expect(r.sessions).toHaveLength(2);
     expect(r.sessions[1].sessionId).toBe(r.sessions[0].sessionId);
     expect(r.sent.filter((s) => s.method === "session/resume")).toHaveLength(1);
+    // The context is agy's last usage_update (1.5.8+), not the prompt's
+    // usage, which sums the turn's model calls.
+    expect(first.context?.window).toBe(1048576);
+    expect(first.context!.tokens).toBeLessThan(15_000);
   },
 });

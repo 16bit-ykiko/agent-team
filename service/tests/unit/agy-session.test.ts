@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
-import { AgySession, IDLE_TIMINGS } from "../../src/session/agy";
+import { AGY_INSTRUCTIONS, AgySession, IDLE_TIMINGS } from "../../src/session/agy";
 import type { RpcMessage, Transport } from "../../src/session/codex-rpc";
 import type { StreamEvent } from "../../src/session/claude";
 
@@ -34,8 +34,10 @@ class FakeAgy {
       p.configId === "model"
         ? { configOptions: options(p.value as string, "medium") }
         : { configOptions: options("gemini-3.8-flash", p.value as string) },
-    "session/load": () => {
-      for (const u of this.stored) this.update(u);
+    "session/load": async (p) => {
+      const id = p.sessionId as string;
+      if (id !== "s1") await this.childLoad?.();
+      for (const u of id === "s1" ? this.stored : (this.children.get(id) ?? [])) this.update(u, id);
       return {};
     },
     "session/prompt": () => new Promise((r) => (this.prompt = r)),
@@ -81,9 +83,13 @@ class FakeAgy {
     return () => release();
   }
 
-  update(update: Update): void {
+  // A subagent's conversation, by its id, and what a load of one waits on.
+  children = new Map<string, Update[]>();
+  childLoad: (() => Promise<void>) | null = null;
+
+  update(update: Update, sessionId = "s1"): void {
     for (const cb of this.listeners)
-      cb({ method: "session/update", params: { sessionId: "s1", update } });
+      cb({ method: "session/update", params: { sessionId, update } });
   }
 
   // Streams updates into the running prompt (and the stored conversation),
@@ -364,7 +370,7 @@ describe("AgySession", () => {
     await flush();
     expect(fake.sent("session/new")[0]).toMatchObject({
       mcpServers: [{ name: "panel" }],
-      _meta: { antigravity: { systemPrompt: { append: "Be brief." } } },
+      _meta: { antigravity: { systemPrompt: { append: `${AGY_INSTRUCTIONS}\n\nBe brief.` } } },
     });
     const call = {
       sessionUpdate: "tool_call",
@@ -779,6 +785,263 @@ describe("AgySession", () => {
     await flush();
     expect(events.some((e) => e.kind === "notice")).toBe(false);
     expect(events.filter((e) => e.content === "second reply")).toHaveLength(1);
+  });
+
+  it("puts agy's last usage_update on a turn's result as the context", async () => {
+    const { s, events } = session();
+    void s.send("one");
+    await flush();
+    fake.update({ sessionUpdate: "usage_update", used: 0, size: 1048576 });
+    fake.update(user("one"));
+    fake.update({ sessionUpdate: "usage_update", used: 9079, size: 1048576 });
+    fake.turn([agent("ok")]);
+    await flush();
+    expect(events.find((e) => e.kind === "result")?.context).toEqual({
+      tokens: 9079,
+      window: 1048576,
+    });
+    // The prompt's usage sums the turn's model calls: no context figure.
+    expect(await s.getContextUsage()).toMatchObject({ totalTokens: 9079, maxTokens: 1048576 });
+  });
+
+  it("gives a subagent a card of its own, filled from its conversation, done once it reported back", async () => {
+    let finds = 0;
+    AgySession.hooks = {
+      ...AgySession.hooks,
+      findSubagent: (callId) => (callId === "sa1" && ++finds > 2 ? "child1" : null),
+    };
+    const { s, events } = session();
+    void s.send("/teamwork make it");
+    await flush();
+    const invoke = {
+      sessionUpdate: "tool_call",
+      toolCallId: "sa1",
+      name: "invoke_subagent",
+      args: { Prompt: "make it", Role: "Team Coordinator", TypeName: "teamwork" },
+      status: "in_progress",
+    };
+    fake.turn([invoke, { ...invoke, status: "completed" }, agent("Handed off.")]);
+    await flush();
+    const card = events.find((e) => e.kind === "subagent_start");
+    expect(card).toMatchObject({
+      toolUseId: "sa1",
+      subagent: {
+        taskId: "sa1",
+        agentType: "teamwork",
+        description: "Team Coordinator",
+        prompt: "make it",
+      },
+    });
+    expect(s.runState).toBe("waiting");
+    expect(s.backgroundTaskList).toMatchObject([{ id: "sa1", type: "local_agent" }]);
+    // Its conversation is found on a later look, then loaded.
+    const write = { ...command("w1", "echo hi > hi.txt", "in_progress") };
+    fake.children.set("child1", [agent("Starting."), write]);
+    events.length = 0;
+    s.checkIdle();
+    await flush();
+    expect(fake.sent("session/load").map((p) => p.sessionId)).not.toContain("child1");
+    s.checkIdle();
+    await flush();
+    const inner = () =>
+      events
+        .filter((e) => e.kind === "subagent_progress")
+        .map((e) => [e.subagent!._innerEvent!.kind, e.subagent!._innerEvent!.content]);
+    expect(inner()).toEqual([
+      ["text", "Starting."],
+      ["tool_use", "**Bash**\n```bash\necho hi > hi.txt\n```"],
+    ]);
+    const report = {
+      sessionUpdate: "tool_call",
+      toolCallId: "r1",
+      name: "send_message",
+      args: { Message: "hi.txt is written.", Recipient: "s1" },
+      status: "completed",
+    };
+    const done = command(
+      "w1",
+      "echo hi > hi.txt",
+      "completed",
+      "Command exited with code 0.\n\nCommand output:\n",
+    );
+    // Quiet a long while without a report: still running.
+    fake.children.set("child1", [agent("Starting."), done, agent("Written.")]);
+    events.length = 0;
+    s.checkIdle();
+    await flush();
+    expect(inner()).toEqual([
+      ["tool_result", "(no output)"],
+      ["text", "Written."],
+    ]);
+    expect(events.some((e) => e.kind === "subagent_done")).toBe(false);
+    expect(s.runState).toBe("waiting");
+    // Its report back here, and its turn's end: done, the report its summary.
+    fake.children.set("child1", [
+      agent("Starting."),
+      done,
+      agent("Written."),
+      report,
+      agent("Reported."),
+    ]);
+    events.length = 0;
+    s.checkIdle();
+    await flush();
+    expect(inner()).toEqual([
+      ["tool_use", "**SendMessage**\n\n> hi.txt is written."],
+      ["tool_result", "done"],
+      ["text", "Reported."],
+    ]);
+    expect(events.find((e) => e.kind === "subagent_done")?.subagent).toMatchObject({
+      status: "completed",
+      summary: "hi.txt is written.",
+    });
+    expect(s.runState).toBe("idle");
+  });
+
+  describe("a subagent's card", () => {
+    const invoke = (status: string) => ({
+      sessionUpdate: "tool_call",
+      toolCallId: "sa1",
+      name: "invoke_subagent",
+      args: { Prompt: "do it", Role: "Helper", TypeName: "self" },
+      status,
+    });
+    const report = {
+      sessionUpdate: "tool_call",
+      toolCallId: "r1",
+      name: "send_message",
+      args: { Message: "Halfway.", Recipient: "s1" },
+      status: "completed",
+    };
+    const started = async () => {
+      AgySession.hooks = { ...AgySession.hooks, findSubagent: () => "child1" };
+      const t = session();
+      void t.s.send("go");
+      await flush();
+      fake.turn([invoke("in_progress"), invoke("completed"), agent("Started it.")]);
+      await flush();
+      return t;
+    };
+    const check = async (s: AgySession) => {
+      s.checkIdle();
+      await flush();
+    };
+    const done = (events: StreamEvent[]) => events.find((e) => e.kind === "subagent_done");
+
+    it("gets none for a failed call, and ends as failed when its call fails", async () => {
+      const { s, events } = session();
+      void s.send("go");
+      await flush();
+      fake.turn([
+        { ...invoke("failed"), toolCallId: "sa0" },
+        invoke("in_progress"),
+        invoke("failed"),
+        agent("Both failed."),
+      ]);
+      await flush();
+      const starts = events.filter((e) => e.kind === "subagent_start");
+      expect(starts.map((e) => e.subagent?.taskId)).toEqual(["sa1"]);
+      expect(done(events)?.subagent).toMatchObject({ taskId: "sa1", status: "failed" });
+      expect(s.backgroundTaskList).toEqual([]);
+    });
+
+    it("stays open on a report sent mid-work, found while the subagent was mid model call", async () => {
+      const { s, events } = await started();
+      fake.children.set("child1", [agent("Working."), report]);
+      // The load answers late: agy was mid model call for the subagent.
+      fake.childLoad = async () => {
+        vi.setSystemTime(Date.now() + 2_000);
+        await Promise.resolve();
+      };
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        await check(s);
+      } finally {
+        vi.useRealTimers();
+      }
+      fake.childLoad = null;
+      expect(done(events)).toBeUndefined();
+      // At rest after its report: done.
+      fake.children.set("child1", [agent("Working."), report, agent("All done.")]);
+      await check(s);
+      expect(done(events)?.subagent).toMatchObject({ status: "completed", summary: "Halfway." });
+    });
+
+    it("ends without a report once two loads in a row found it at rest on a message", async () => {
+      const { s, events } = await started();
+      fake.children.set("child1", [agent("I did it.")]);
+      await check(s);
+      await check(s);
+      expect(done(events)).toBeUndefined();
+      await check(s);
+      expect(done(events)?.subagent?.status).toBe("completed");
+      expect(s.runState).toBe("idle");
+    });
+
+    it("shows its text past what was shown, however agy cut it into chunks", async () => {
+      const { s, events } = await started();
+      fake.children.set("child1", [agent("I found"), agent(" the file a.")]);
+      await check(s);
+      fake.children.set("child1", [agent("I found the file a."), agent("It holds x.")]);
+      await check(s);
+      const texts = events
+        .filter((e) => e.kind === "subagent_progress" && e.subagent?._innerEvent?.kind === "text")
+        .map((e) => e.subagent!._innerEvent!.content);
+      expect(texts).toEqual(["I found", "the file a.", "It holds x."]);
+    });
+
+    it("stops following it on the card's Stop, as agy cannot stop it", async () => {
+      const { s, events } = await started();
+      await s.stopTask("sa1");
+      expect(done(events)?.subagent?.status).toBe("stopped");
+      expect(s.runState).toBe("idle");
+      expect(s.backgroundTaskList).toEqual([]);
+    });
+  });
+
+  it("shows agy's questions with their options, and sends the answer to a new agy process", async () => {
+    const { s, events } = session();
+    void s.send("go");
+    await flush();
+    fake.turn([user("go"), agent("ok")]);
+    await flush();
+    const ask = {
+      sessionUpdate: "tool_call",
+      toolCallId: "q1",
+      name: "ask_question",
+      args: {
+        questions: [
+          {
+            question: "1. Purpose?",
+            options: ["(Recommended) Test", "Production"],
+            is_multi_select: false,
+          },
+          { question: "2. Which?", options: ["A", "B"], is_multi_select: true },
+        ],
+      },
+      status: "pending",
+    };
+    fake.stored.push(ask);
+    events.length = 0;
+    s.checkIdle();
+    await flush();
+    const use = events.find((e) => e.kind === "tool_use");
+    expect(use?.toolName).toBe("AskQuestion");
+    expect(use?.content).toBe(
+      "**AskQuestion**\n\n**1. Purpose?**\n- (Recommended) Test\n- Production\n\n**2. Which?** *(any of)*\n- A\n- B",
+    );
+    expect(events.find((e) => e.kind === "tool_result")?.content).toBe("Answer in a message.");
+    // Nothing of it stays open.
+    expect(s.runState).toBe("idle");
+    // agy waits on it in this process, where a prompt would only get it back:
+    // the answer goes to a new one, which resumes the conversation.
+    void s.send("1, then 2");
+    await flush();
+    expect(fake.connections).toBe(2);
+    expect(fake.sent("session/resume")).toHaveLength(1);
+    expect(fake.sent("session/prompt").at(-1)).toMatchObject({
+      prompt: [{ type: "text", text: "1, then 2" }],
+    });
   });
 
   it("switches agy's model and thought level before the next prompt, and only then", async () => {

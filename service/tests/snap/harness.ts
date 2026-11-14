@@ -333,6 +333,11 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
   } else if (backend === "cursor") {
     CursorSession.sdk = cursor.sdk;
   } else if (backend === "agy") {
+    const found = new Map<string, unknown[]>();
+    for (const e of rec.entries) {
+      if (!("control" in e) || e.control.op !== "subagent" || !e.control.taskId) continue;
+      found.set(e.control.taskId, [...(found.get(e.control.taskId) ?? []), e.control.response]);
+    }
     AgySession.hooks = {
       transport: (session) => {
         if (!host.created.includes(session)) throw new Error("a session from another replay");
@@ -340,6 +345,8 @@ export async function replay(backend: Backend, rec: Recording, fixture: Fixture)
       },
       mcpServer: () => ({ name: "panel", command: "node", args: [], env: [] }),
       idleTimers: false,
+      // The subagents' conversations as the recorder found them, in order.
+      findSubagent: (callId) => (found.get(callId)?.shift() as string | null | undefined) ?? null,
     };
   } else {
     // Only this replay's sessions: one a failed replay left behind must not
